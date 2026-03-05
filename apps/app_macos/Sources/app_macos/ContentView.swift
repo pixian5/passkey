@@ -13,13 +13,14 @@ struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var selectedSidebarFilter: AccountSidebarFilter = .all
     @State private var selectedAccountIds: Set<UUID> = []
+    @State private var selectionAnchorAccountId: UUID?
     @State private var showCreateFolderSheet: Bool = false
     @State private var newFolderName: String = ""
     @State private var showMoveToFolderSheet: Bool = false
     @State private var pendingMoveAccountIds: [UUID] = []
+    @State private var moveFolderCheckedIds: Set<UUID> = []
     @State private var showRecycleBinPopup: Bool = false
-    @State private var totpDisplayDate: Date = Date()
-    private let totpTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    @State private var localKeyDownMonitor: Any?
 
     var body: some View {
         let activeAccounts = store.activeAccounts()
@@ -87,19 +88,51 @@ struct ContentView: View {
                         Text("暂无账号")
                             .foregroundStyle(.secondary)
                     } else {
-                        List(selection: $selectedAccountIds) {
-                            ForEach(accounts) { account in
-                                accountRow(account)
-                                    .tag(account.id)
-                                    .contextMenu {
-                                        Button("放入文件夹") {
-                                            prepareMoveToFolder(from: account.id)
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 6) {
+                                ForEach(accounts) { account in
+                                    accountRow(account)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 8)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                .fill(
+                                                    selectedAccountIds.contains(account.id)
+                                                        ? Color.accentColor.opacity(0.18)
+                                                        : Color.clear
+                                                )
+                                        )
+                                        .contentShape(Rectangle())
+                                        .onTapGesture {
+                                            handleAccountRowTap(
+                                                account.id,
+                                                orderedAccountIds: accounts.map(\.id)
+                                            )
                                         }
-                                        .disabled(store.folders.isEmpty)
-                                    }
+                                        .contextMenu {
+                                            Button("编辑") {
+                                                selectOnlyAccountIfNoMultiModifier(account.id)
+                                                store.beginEditing(account)
+                                            }
+
+                                            Divider()
+
+                                            Button("放入文件夹") {
+                                                prepareMoveToFolder(from: account.id)
+                                            }
+                                            .disabled(store.folders.isEmpty)
+
+                                            Divider()
+
+                                            Button("删除", role: .destructive) {
+                                                selectOnlyAccountIfNoMultiModifier(account.id)
+                                                store.moveToRecycleBin(for: account)
+                                            }
+                                        }
+                                }
                             }
                         }
-                        .listStyle(.inset(alternatesRowBackgrounds: true))
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -107,23 +140,39 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .frame(minWidth: 1180, minHeight: 700, alignment: .topLeading)
-            .onReceive(totpTimer) { value in
-                totpDisplayDate = value
+            .onAppear {
+                installLocalKeyDownMonitor()
+            }
+            .onDisappear {
+                removeLocalKeyDownMonitor()
             }
             .onChange(of: selectedSidebarFilter) { _ in
                 selectedAccountIds.removeAll()
+                selectionAnchorAccountId = nil
             }
             .onChange(of: store.selectAllAccountsSignal) { _ in
                 selectedAccountIds = Set(accounts.map(\.id))
+                selectionAnchorAccountId = accounts.first?.id
             }
             .onChange(of: accounts.map(\.id)) { ids in
                 selectedAccountIds = selectedAccountIds.intersection(Set(ids))
+                if let anchor = selectionAnchorAccountId, !ids.contains(anchor) {
+                    selectionAnchorAccountId = selectedAccountIds.first
+                }
             }
             .sheet(isPresented: $showCreateFolderSheet) {
                 createFolderSheet
             }
-            .sheet(isPresented: $showMoveToFolderSheet) {
+
+            if showMoveToFolderSheet {
+                Color.black.opacity(0.16)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        showMoveToFolderSheet = false
+                    }
+
                 moveToFolderSheet
+                    .padding(26)
             }
 
             if let editingAccount, !showRecycleBinPopup {
@@ -195,6 +244,19 @@ struct ContentView: View {
                             ) {
                                 selectedSidebarFilter = .folder(folder.id)
                             }
+                            .contextMenu {
+                                if folder.id == AccountStore.fixedNewAccountFolderId {
+                                    Button("固定文件夹不可删除") {}
+                                        .disabled(true)
+                                } else {
+                                    Button("删除文件夹", role: .destructive) {
+                                        if selectedSidebarFilter == .folder(folder.id) {
+                                            selectedSidebarFilter = .all
+                                        }
+                                        store.deleteFolder(id: folder.id)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -226,9 +288,17 @@ struct ContentView: View {
     private func accountRow(_ account: PasswordAccount) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(account.accountId)
-                    .font(store.textFont(size: store.scaledTextSize(17), weight: .semibold))
-                    .textSelection(.enabled)
+                Button {
+                    selectOnlyAccountIfNoMultiModifier(account.id)
+                    store.beginEditing(account)
+                } label: {
+                    Text(account.accountId)
+                        .font(store.textFont(size: store.scaledTextSize(17), weight: .semibold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .foregroundStyle(.primary)
+                }
+                .buttonStyle(.plain)
+                .help("点击打开编辑")
                 if account.isDeleted {
                     Text("已删除")
                         .font(store.textFont(size: store.scaledTextSize(11)))
@@ -241,6 +311,7 @@ struct ContentView: View {
             }
 
             Button {
+                selectOnlyAccountIfNoMultiModifier(account.id)
                 copyToPasteboard(account.username, successMessage: "用户名已复制")
             } label: {
                 Text("用户名: \(account.username)")
@@ -252,6 +323,7 @@ struct ContentView: View {
             .help("点击复制用户名")
 
             Button {
+                selectOnlyAccountIfNoMultiModifier(account.id)
                 copyToPasteboard(account.sites.joined(separator: "\n"), successMessage: "站点别名已复制")
             } label: {
                 Text("站点别名: \(account.sites.joined(separator: "  "))")
@@ -266,36 +338,14 @@ struct ContentView: View {
 
             let secret = account.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines)
             if !secret.isEmpty {
-                if let code = store.currentTotpCode(for: account, at: totpDisplayDate) {
-                    Button {
+                TotpRowView(
+                    store: store,
+                    account: account,
+                    onSelect: { selectOnlyAccountIfNoMultiModifier(account.id) },
+                    onCopy: { code in
                         copyTotpCode(code)
-                    } label: {
-                        Text("验证码: \(formattedTotpCode(code)) (剩余 \(store.totpRemainingSeconds(at: totpDisplayDate))s)")
-                            .font(store.textFont(size: store.scaledTextSize(15)).monospacedDigit())
-                            .foregroundStyle(.primary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .buttonStyle(.plain)
-                    .help("点击复制验证码")
-                } else {
-                    Text("验证码: TOTP 密钥无效")
-                        .font(store.textFont(size: store.scaledTextSize(12)))
-                        .foregroundStyle(.red)
-                }
-            }
-
-            HStack(spacing: 8) {
-                Button("编辑") {
-                    store.beginEditing(account)
-                }
-                .font(store.buttonFont())
-                .buttonStyle(.bordered)
-
-                Button("删除账号") {
-                    store.moveToRecycleBin(for: account)
-                }
-                .font(store.buttonFont())
-                .buttonStyle(.bordered)
+                )
             }
         }
         .padding(.vertical, 4)
@@ -331,6 +381,9 @@ struct ContentView: View {
         }
 
         pendingMoveAccountIds = Array(ids)
+        moveFolderCheckedIds = Set(
+            store.checkedFolderIdsForAccounts(accountIds: pendingMoveAccountIds)
+        )
         showMoveToFolderSheet = true
     }
 
@@ -372,14 +425,16 @@ struct ContentView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(store.folders) { folder in
-                        let checked = store.areAllAccountsInFolder(
-                            accountIds: pendingMoveAccountIds,
-                            folderId: folder.id
-                        )
+                        let checked = moveFolderCheckedIds.contains(folder.id)
                         Button {
-                            store.toggleAccountsFolderMembership(
+                            if checked {
+                                moveFolderCheckedIds.remove(folder.id)
+                            } else {
+                                moveFolderCheckedIds.insert(folder.id)
+                            }
+                            store.applyFolderSelection(
                                 accountIds: pendingMoveAccountIds,
-                                folderId: folder.id
+                                checkedFolderIds: Array(moveFolderCheckedIds)
                             )
                         } label: {
                             HStack(spacing: 10) {
@@ -414,6 +469,13 @@ struct ContentView: View {
         }
         .padding(18)
         .frame(width: 500)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+        }
+        .shadow(radius: 18)
     }
 
     private func formattedTotpCode(_ code: String) -> String {
@@ -432,6 +494,83 @@ struct ContentView: View {
         pasteboard.clearContents()
         pasteboard.setString(value, forType: .string)
         store.statusMessage = successMessage
+    }
+
+    private func installLocalKeyDownMonitor() {
+        guard localKeyDownMonitor == nil else { return }
+        localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard flags.contains(.command) else {
+                return event
+            }
+
+            let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+            guard key == "a" else {
+                return event
+            }
+
+            if let textResponder = NSApp.keyWindow?.firstResponder as? NSTextView,
+               textResponder.isEditable
+            {
+                return event
+            }
+
+            store.triggerSelectAllAccounts()
+            return nil
+        }
+    }
+
+    private func removeLocalKeyDownMonitor() {
+        if let monitor = localKeyDownMonitor {
+            NSEvent.removeMonitor(monitor)
+            localKeyDownMonitor = nil
+        }
+    }
+
+    private func handleAccountRowTap(_ accountId: UUID, orderedAccountIds: [UUID]) {
+        let flags = (
+            NSApp.currentEvent?.modifierFlags
+            ?? NSEvent.modifierFlags
+        ).intersection(.deviceIndependentFlagsMask)
+
+        if flags.contains(.shift) {
+            if let anchor = selectionAnchorAccountId,
+               let anchorIndex = orderedAccountIds.firstIndex(of: anchor),
+               let targetIndex = orderedAccountIds.firstIndex(of: accountId)
+            {
+                let lower = min(anchorIndex, targetIndex)
+                let upper = max(anchorIndex, targetIndex)
+                selectedAccountIds = Set(orderedAccountIds[lower...upper])
+            } else {
+                selectedAccountIds = [accountId]
+            }
+            selectionAnchorAccountId = accountId
+            return
+        }
+
+        if flags.contains(.command) {
+            if selectedAccountIds.contains(accountId) {
+                selectedAccountIds.remove(accountId)
+            } else {
+                selectedAccountIds.insert(accountId)
+            }
+            selectionAnchorAccountId = accountId
+            return
+        }
+
+        selectedAccountIds = [accountId]
+        selectionAnchorAccountId = accountId
+    }
+
+    private func selectOnlyAccountIfNoMultiModifier(_ accountId: UUID) {
+        let flags = NSApp.currentEvent?.modifierFlags.intersection(.deviceIndependentFlagsMask) ?? []
+        if flags.contains(.shift) || flags.contains(.command) {
+            return
+        }
+        if selectedAccountIds != [accountId] {
+            selectedAccountIds = [accountId]
+            selectionAnchorAccountId = accountId
+        }
     }
 
     @ViewBuilder
@@ -459,6 +598,42 @@ struct ContentView: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(Color.secondary.opacity(0.35), lineWidth: prominent ? 0 : 1)
             )
+    }
+}
+
+private struct TotpRowView: View {
+    @ObservedObject var store: AccountStore
+    let account: PasswordAccount
+    let onSelect: () -> Void
+    let onCopy: (String) -> Void
+
+    var body: some View {
+        TimelineView(.periodic(from: Date(), by: 1)) { context in
+            if let code = store.currentTotpCode(for: account, at: context.date) {
+                Button {
+                    onSelect()
+                    onCopy(code)
+                } label: {
+                    Text("验证码: \(formatted(code)) (剩余 \(store.totpRemainingSeconds(at: context.date))s)")
+                        .font(store.textFont(size: store.scaledTextSize(15)).monospacedDigit())
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .help("点击复制验证码")
+            } else {
+                Text("验证码: TOTP 密钥无效")
+                    .font(store.textFont(size: store.scaledTextSize(12)))
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    private func formatted(_ code: String) -> String {
+        guard code.count == 6 else { return code }
+        let prefix = code.prefix(3)
+        let suffix = code.suffix(3)
+        return "\(prefix) \(suffix)"
     }
 }
 
@@ -597,21 +772,27 @@ private struct AccountEditPopup: View {
                             .frame(width: 80, alignment: .leading)
                         TextField("用户名", text: $store.editUsername)
                             .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: .infinity)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     HStack {
                         Text("密码")
                             .frame(width: 80, alignment: .leading)
                         TextField("密码", text: $store.editPassword)
                             .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: .infinity)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     HStack {
                         Text("TOTP")
                             .frame(width: 80, alignment: .leading)
                         TextField("TOTP 种子密钥", text: $store.editTotpSecret)
                             .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: .infinity)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     VStack(alignment: .leading, spacing: 6) {
                         Text("恢复码")
@@ -661,6 +842,7 @@ private struct AccountEditPopup: View {
                     }
                     .textSelection(.enabled)
                 }
+                .padding(.trailing, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }

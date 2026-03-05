@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 @main
@@ -13,6 +14,7 @@ struct PassMacApp: App {
         }
         .commands {
             PassMacSettingsCommands()
+            PassMacShortcutCommands(store: store)
             PassMacAccountCommands(store: store)
         }
 
@@ -31,6 +33,26 @@ struct PassMacApp: App {
         }
         .defaultSize(width: 760, height: 760)
         .windowResizability(.automatic)
+    }
+}
+
+private struct PassMacShortcutCommands: Commands {
+    @ObservedObject var store: AccountStore
+
+    var body: some Commands {
+        CommandGroup(before: .undoRedo) {
+            Button("撤销移动") {
+                store.handleUndoShortcut()
+            }
+            .keyboardShortcut("z", modifiers: .command)
+        }
+
+        CommandGroup(replacing: .textEditing) {
+            Button("全选账号") {
+                store.handleSelectAllShortcut()
+            }
+            .keyboardShortcut("a", modifiers: .command)
+        }
     }
 }
 
@@ -55,12 +77,10 @@ private struct PassMacAccountCommands: Commands {
             Button("全选账号") {
                 store.triggerSelectAllAccounts()
             }
-            .keyboardShortcut("a", modifiers: .command)
 
             Button("撤销移动") {
                 store.undoLastMoveOperation()
             }
-            .keyboardShortcut("z", modifiers: .command)
         }
     }
 }

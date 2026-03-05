@@ -8,6 +8,9 @@ final class AccountStore: ObservableObject {
     @Published var statusMessage: String = "" {
         didSet {
             let message = statusMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+            let allowsUndoMove = nextStatusAllowsUndoMove
+            nextStatusAllowsUndoMove = false
+            isTopToastUndoAvailable = allowsUndoMove
             guard !message.isEmpty else { return }
             showToast(message)
         }
@@ -73,6 +76,7 @@ final class AccountStore: ObservableObject {
     }
     @Published private(set) var toastMessage: String = ""
     @Published private(set) var isToastVisible: Bool = false
+    @Published private(set) var isTopToastUndoAvailable: Bool = false
     @Published private(set) var folders: [AccountFolder] = []
     @Published private(set) var undoMoveToastMessage: String = ""
     @Published private(set) var isUndoMoveToastVisible: Bool = false
@@ -81,6 +85,8 @@ final class AccountStore: ObservableObject {
     @Published private(set) var accounts: [PasswordAccount] = []
 
     static let systemDefaultFontFamily = "系统默认"
+    static let fixedNewAccountFolderName = "新账号"
+    static let fixedNewAccountFolderId = UUID(uuidString: "F16A2C4E-4A2A-43D5-A670-3F1767D41001")!
     private static let installedFontFamilies: Set<String> = Set(NSFontManager.shared.availableFontFamilies)
 
     private let decoder = JSONDecoder()
@@ -97,6 +103,7 @@ final class AccountStore: ObservableObject {
     }()
     private var toastDismissWorkItem: DispatchWorkItem?
     private var undoMoveDismissWorkItem: DispatchWorkItem?
+    private var nextStatusAllowsUndoMove: Bool = false
     private var lastMoveOperation: FolderMoveOperation?
     private var cloudObserver: NSObjectProtocol?
     private var suppressCloudPush: Bool = false
@@ -128,6 +135,20 @@ final class AccountStore: ObservableObject {
         selectAllAccountsSignal &+= 1
     }
 
+    func handleSelectAllShortcut() {
+        triggerSelectAllAccounts()
+    }
+
+    func handleUndoShortcut() {
+        if let textResponder = NSApp.keyWindow?.firstResponder as? NSTextView,
+           textResponder.isEditable
+        {
+            textResponder.undoManager?.undo()
+            return
+        }
+        undoLastMoveOperation()
+    }
+
     func createFolder(named rawName: String) {
         let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else {
@@ -145,13 +166,114 @@ final class AccountStore: ObservableObject {
             createdAtMs: nowMs()
         )
         folders.append(folder)
-        folders.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        _ = normalizeFoldersEnsuringFixedNewAccountFolder()
         saveFoldersToDefaults()
         statusMessage = "已创建文件夹: \(name)"
     }
 
+    func deleteFolder(id: UUID) {
+        guard let folder = folders.first(where: { $0.id == id }) else {
+            statusMessage = "目标文件夹不存在"
+            return
+        }
+        if folder.id == Self.fixedNewAccountFolderId {
+            statusMessage = "固定文件夹不可删除"
+            return
+        }
+
+        folders.removeAll(where: { $0.id == id })
+        _ = normalizeFoldersEnsuringFixedNewAccountFolder()
+        saveFoldersToDefaults()
+
+        let now = nowMs()
+        let device = currentDeviceName()
+        var removedFromAccountCount = 0
+
+        for index in accounts.indices {
+            let currentFolderIds = accounts[index].resolvedFolderIds
+            guard currentFolderIds.contains(id) else { continue }
+            let nextFolderIds = currentFolderIds.filter { $0 != id }
+            accounts[index].setResolvedFolderIds(nextFolderIds)
+            accounts[index].touchUpdatedAt(now, deviceName: device)
+            removedFromAccountCount += 1
+        }
+
+        if removedFromAccountCount > 0 {
+            saveAccounts()
+            statusMessage = "已删除文件夹: \(folder.name)，并从 \(removedFromAccountCount) 个账号中移除"
+        } else {
+            statusMessage = "已删除文件夹: \(folder.name)"
+        }
+    }
+
     func folderName(for id: UUID) -> String {
         folders.first(where: { $0.id == id })?.name ?? "未命名文件夹"
+    }
+
+    func checkedFolderIdsForAccounts(accountIds: [UUID]) -> [UUID] {
+        let idSet = Set(accountIds)
+        let selected = accounts.filter { idSet.contains($0.id) && !$0.isDeleted }
+        guard let first = selected.first else {
+            return []
+        }
+
+        var intersection = Set(first.resolvedFolderIds)
+        for account in selected.dropFirst() {
+            intersection.formIntersection(account.resolvedFolderIds)
+        }
+
+        let existingFolderIds = Set(folders.map(\.id))
+        let filtered = intersection.filter { existingFolderIds.contains($0) }
+        return normalizeFolderIds(Array(filtered))
+    }
+
+    func applyFolderSelection(accountIds: [UUID], checkedFolderIds: [UUID]) {
+        let idSet = Set(accountIds)
+        guard !idSet.isEmpty else {
+            statusMessage = "未选择账号"
+            return
+        }
+
+        let selectedIndexes = accounts.indices.filter { idSet.contains(accounts[$0].id) && !accounts[$0].isDeleted }
+        guard !selectedIndexes.isEmpty else {
+            statusMessage = "未选择账号"
+            return
+        }
+
+        let existingFolderIds = Set(folders.map(\.id))
+        let targetFolderIds = normalizeFolderIds(
+            checkedFolderIds.filter { existingFolderIds.contains($0) }
+        )
+
+        var previousFolderIdsByAccountId: [UUID: [UUID]] = [:]
+        var changedCount = 0
+        let now = nowMs()
+        let device = currentDeviceName()
+
+        for index in selectedIndexes {
+            let currentFolderIds = accounts[index].resolvedFolderIds
+            previousFolderIdsByAccountId[accounts[index].id] = currentFolderIds
+
+            if currentFolderIds != targetFolderIds {
+                accounts[index].setResolvedFolderIds(targetFolderIds)
+                accounts[index].touchUpdatedAt(now, deviceName: device)
+                changedCount += 1
+            }
+        }
+
+        guard changedCount > 0 else {
+            statusMessage = "文件夹勾选无变更"
+            return
+        }
+
+        let actionSummary = "已按勾选更新 \(changedCount) 个账号的文件夹"
+        lastMoveOperation = FolderMoveOperation(
+            accountIds: Array(previousFolderIdsByAccountId.keys),
+            previousFolderIdsByAccountId: previousFolderIdsByAccountId,
+            actionSummary: actionSummary
+        )
+        saveAccounts()
+        setStatusMessage("已按勾选更新文件夹（\(changedCount) 个账号），点击撤销", allowsUndoMove: true)
     }
 
     func areAllAccountsInFolder(accountIds: [UUID], folderId: UUID) -> Bool {
@@ -224,8 +346,7 @@ final class AccountStore: ObservableObject {
             actionSummary: actionSummary
         )
         saveAccounts()
-        showUndoMoveToast(message: "\(actionSummary)，点此撤销")
-        statusMessage = actionSummary
+        setStatusMessage("\(actionSummary)（\(changedCount) 个账号），点击撤销", allowsUndoMove: true)
     }
 
     func undoLastMoveOperation() {
@@ -349,6 +470,7 @@ final class AccountStore: ObservableObject {
         created.totpSecret = totpSecret
         created.recoveryCodes = recoveryCodes
         created.note = note
+        created.setResolvedFolderIds([Self.fixedNewAccountFolderId])
         accounts.append(created)
         syncAliasGroups()
         saveAccounts()
@@ -584,7 +706,6 @@ final class AccountStore: ObservableObject {
         editTotpSecret = account.totpSecret
         editRecoveryCodes = account.recoveryCodes
         editNote = account.note
-        statusMessage = "已进入编辑模式"
     }
 
     func cancelEditing() {
@@ -709,10 +830,11 @@ final class AccountStore: ObservableObject {
         if let foldersData = defaults.data(forKey: Keys.foldersData),
            let decodedFolders = try? decoder.decode([AccountFolder].self, from: foldersData)
         {
-            folders = decodedFolders.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            folders = decodedFolders
         } else {
             folders = []
         }
+        let folderNormalization = normalizeFoldersEnsuringFixedNewAccountFolder()
 
         let savedFontFamily = defaults.string(forKey: Keys.uiFontFamily) ?? Self.systemDefaultFontFamily
         if savedFontFamily == Self.systemDefaultFontFamily || Self.installedFontFamilies.contains(savedFontFamily) {
@@ -733,21 +855,42 @@ final class AccountStore: ObservableObject {
         let fileURL = dataFileURL()
         guard let data = try? Data(contentsOf: fileURL) else {
             accounts = []
+            if folderNormalization.foldersChanged {
+                saveFoldersToDefaults()
+            }
             return
         }
 
         if let decoded = try? decoder.decode([PasswordAccount].self, from: data) {
             accounts = normalizeDecodedAccounts(decoded)
+            let accountsChanged = migrateAccountFolderIdsFromLegacyNewAccountFolder(
+                legacyFolderIds: folderNormalization.legacyNewAccountFolderIds
+            )
+            if accountsChanged {
+                saveAccountsToLocalDisk()
+            }
+            if folderNormalization.foldersChanged {
+                saveFoldersToDefaults()
+            }
             return
         }
 
         if let legacy = try? decoder.decode([LegacyPasswordAccount].self, from: data) {
             accounts = legacy.map { $0.toCurrent(deviceName: currentDeviceName()) }
+            _ = migrateAccountFolderIdsFromLegacyNewAccountFolder(
+                legacyFolderIds: folderNormalization.legacyNewAccountFolderIds
+            )
+            if folderNormalization.foldersChanged {
+                saveFoldersToDefaults()
+            }
             saveAccounts()
             return
         }
 
         accounts = []
+        if folderNormalization.foldersChanged {
+            saveFoldersToDefaults()
+        }
     }
 
     private func saveAccounts() {
@@ -1085,6 +1228,89 @@ final class AccountStore: ObservableObject {
         }
     }
 
+    private func normalizeFoldersEnsuringFixedNewAccountFolder() -> (
+        foldersChanged: Bool,
+        legacyNewAccountFolderIds: Set<UUID>
+    ) {
+        let fixedName = Self.fixedNewAccountFolderName
+        let fixedId = Self.fixedNewAccountFolderId
+
+        let legacyNewAccountFolderIds: Set<UUID> = Set(
+            folders.compactMap { folder in
+                guard folder.id != fixedId else { return nil }
+                return folder.name.caseInsensitiveCompare(fixedName) == .orderedSame ? folder.id : nil
+            }
+        )
+
+        let fixedCreatedAt = folders.first(where: { $0.id == fixedId })?.createdAtMs
+            ?? folders.filter { legacyNewAccountFolderIds.contains($0.id) }.map(\.createdAtMs).min()
+            ?? nowMs()
+
+        let retainedFolders = folders.filter { folder in
+            folder.id != fixedId && !legacyNewAccountFolderIds.contains(folder.id)
+        }
+
+        let fixedFolder = AccountFolder(
+            id: fixedId,
+            name: fixedName,
+            createdAtMs: fixedCreatedAt
+        )
+
+        var deduplicated: [AccountFolder] = [fixedFolder]
+        var seenIds: Set<UUID> = [fixedId]
+        for folder in retainedFolders {
+            if seenIds.insert(folder.id).inserted {
+                deduplicated.append(folder)
+            }
+        }
+
+        let sorted = sortFoldersWithFixedNewAccountFirst(deduplicated)
+        let changed = sorted != folders
+        folders = sorted
+        return (changed, legacyNewAccountFolderIds)
+    }
+
+    private func sortFoldersWithFixedNewAccountFirst(_ source: [AccountFolder]) -> [AccountFolder] {
+        source.sorted { lhs, rhs in
+            if lhs.id == Self.fixedNewAccountFolderId {
+                return rhs.id != Self.fixedNewAccountFolderId
+            }
+            if rhs.id == Self.fixedNewAccountFolderId {
+                return false
+            }
+            if lhs.createdAtMs != rhs.createdAtMs {
+                return lhs.createdAtMs < rhs.createdAtMs
+            }
+            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+        }
+    }
+
+    private func migrateAccountFolderIdsFromLegacyNewAccountFolder(legacyFolderIds: Set<UUID>) -> Bool {
+        let validFolderIds = Set(folders.map(\.id))
+        let shouldMigrateLegacyIds = !legacyFolderIds.isEmpty
+        var changed = false
+
+        for index in accounts.indices {
+            let original = accounts[index].resolvedFolderIds
+            var next = original
+
+            if shouldMigrateLegacyIds && !Set(next).isDisjoint(with: legacyFolderIds) {
+                next.removeAll(where: { legacyFolderIds.contains($0) })
+                if !next.contains(Self.fixedNewAccountFolderId) {
+                    next.append(Self.fixedNewAccountFolderId)
+                }
+            }
+
+            next = normalizeFolderIds(next.filter { validFolderIds.contains($0) })
+            if next != original {
+                accounts[index].setResolvedFolderIds(next)
+                changed = true
+            }
+        }
+
+        return changed
+    }
+
     private func normalizeFolderIds(_ source: [UUID]) -> [UUID] {
         Array(Set(source)).sorted { $0.uuidString < $1.uuidString }
     }
@@ -1230,6 +1456,11 @@ final class AccountStore: ObservableObject {
             deadline: .now() + uiToastDurationSeconds,
             execute: dismissWorkItem
         )
+    }
+
+    private func setStatusMessage(_ message: String, allowsUndoMove: Bool = false) {
+        nextStatusAllowsUndoMove = allowsUndoMove
+        statusMessage = message
     }
 
     private func showUndoMoveToast(message: String) {
