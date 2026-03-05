@@ -1,0 +1,57 @@
+body {
+  margin: 0;
+  font-family: "SF Pro Text", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  background: #f6f9ff;
+  color: #22344d;
+}
+
+.page {
+  max-width: 920px;
+  margin: 24px auto;
+  padding: 0 16px;
+}
+
+h1 {
+  margin: 0 0 8px;
+}
+
+.card {
+  border: 1px solid #d4e3ff;
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px;
+}
+
+textarea {
+  width: 100%;
+  min-height: 420px;
+  box-sizing: border-box;
+  border: 1px solid #c8dbff;
+  border-radius: 10px;
+  padding: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+button {
+  border: 1px solid #8ab4ff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: linear-gradient(180deg, #f5faff 0%, #deecff 100%);
+  cursor: pointer;
+}
+
+.status {
+  min-height: 18px;
+  margin-top: 8px;
+  color: #2f4c7a;
+}
+

@@ -1,0 +1,352 @@
+const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
+const STORAGE_KEY_ACCOUNTS = "pass.accounts";
+
+const ETLD2_SUFFIXES = new Set([
+  "com.cn",
+  "net.cn",
+  "org.cn",
+  "gov.cn",
+  "edu.cn",
+  "co.uk",
+  "org.uk",
+]);
+
+chrome.runtime.onInstalled.addListener(async () => {
+  const stored = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME, STORAGE_KEY_ACCOUNTS]);
+
+  if (!stored[STORAGE_KEY_DEVICE_NAME]) {
+    await chrome.storage.local.set({ [STORAGE_KEY_DEVICE_NAME]: "ChromeMac" });
+  }
+
+  if (!Array.isArray(stored[STORAGE_KEY_ACCOUNTS])) {
+    await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: [] });
+  }
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  (async () => {
+    switch (message?.type) {
+      case "PASS_FILL_ACTIVE_TAB":
+        sendResponse(await handleFillActiveTab(message.payload));
+        return;
+      case "PASS_LOGIN_DETECTED":
+        sendResponse(await handleLoginDetected(message.payload));
+        return;
+      case "PASS_SAVE_FROM_LOGIN":
+        sendResponse(await handleSaveFromLogin(message.payload));
+        return;
+      default:
+        return;
+    }
+  })().catch((error) => {
+    sendResponse({ ok: false, error: String(error) });
+  });
+
+  return true;
+});
+
+async function handleFillActiveTab(payload) {
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!activeTab?.id) {
+    return { ok: false, error: "找不到活动标签页" };
+  }
+
+  await chrome.scripting.executeScript({
+    target: { tabId: activeTab.id },
+    func: fillCredentialInPage,
+    args: [payload?.username || "", payload?.password || ""],
+  });
+
+  return { ok: true };
+}
+
+async function handleLoginDetected(payload) {
+  const domain = normalizeDomain(payload?.domain || "");
+  const username = (payload?.username || "").trim();
+  const password = payload?.password || "";
+
+  if (!domain || !username || !password) {
+    return { shouldPrompt: false };
+  }
+
+  const accounts = await getAccounts();
+  const active = accounts.filter((item) => !item.isDeleted);
+
+  const exact = active.some((account) => {
+    return accountMatchesDomain(account, domain) && account.username === username && account.password === password;
+  });
+  if (exact) {
+    return { shouldPrompt: false };
+  }
+
+  const updateCandidate = active.some((account) => {
+    return accountMatchesDomain(account, domain) && account.username === username && account.password !== password;
+  });
+
+  return { shouldPrompt: true, mode: updateCandidate ? "update" : "create" };
+}
+
+async function handleSaveFromLogin(payload) {
+  const domain = normalizeDomain(payload?.domain || "");
+  const username = (payload?.username || "").trim();
+  const password = payload?.password || "";
+
+  if (!domain || !username || !password) {
+    return { ok: false, error: "缺少保存所需参数" };
+  }
+
+  const now = Date.now();
+  const { [STORAGE_KEY_DEVICE_NAME]: deviceNameStored } = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
+  const deviceName = (deviceNameStored || "ChromeMac").trim() || "ChromeMac";
+
+  const next = await getAccounts();
+  const existing = next.find((account) => {
+    return !account.isDeleted && accountMatchesDomain(account, domain) && account.username === username;
+  });
+
+  if (existing) {
+    let changed = false;
+
+    if (existing.password !== password) {
+      existing.password = password;
+      existing.passwordUpdatedAtMs = now;
+      changed = true;
+    }
+
+    if (!existing.sites.includes(domain)) {
+      existing.sites.push(domain);
+      existing.sites = normalizeSites(existing.sites);
+      changed = true;
+    }
+
+    if (existing.isDeleted) {
+      existing.isDeleted = false;
+      existing.deletedAtMs = null;
+      changed = true;
+    }
+
+    if (changed) {
+      existing.updatedAtMs = now;
+      existing.lastOperatedDeviceName = deviceName;
+      const synced = syncAliasGroups(next);
+      await setAccounts(synced);
+      return { ok: true, mode: "updated" };
+    }
+
+    return { ok: true, mode: "noop" };
+  }
+
+  next.push(
+    createAccount({
+      site: domain,
+      username,
+      password,
+      createdAtMs: now,
+      deviceName,
+    })
+  );
+  const synced = syncAliasGroups(next);
+  await setAccounts(synced);
+  return { ok: true, mode: "created" };
+}
+
+async function getAccounts() {
+  const stored = await chrome.storage.local.get([STORAGE_KEY_ACCOUNTS]);
+  return Array.isArray(stored[STORAGE_KEY_ACCOUNTS]) ? stored[STORAGE_KEY_ACCOUNTS] : [];
+}
+
+async function setAccounts(accounts) {
+  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: accounts });
+}
+
+function fillCredentialInPage(username, password) {
+  const visible = (element) => {
+    if (!(element instanceof HTMLElement)) return false;
+    const style = window.getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+    if (element.hasAttribute("disabled") || element.hasAttribute("readonly")) return false;
+    return true;
+  };
+
+  const forms = Array.from(document.forms);
+  const allInputs = Array.from(document.querySelectorAll("input"));
+  const passwordInputs = allInputs.filter((input) => input.type === "password" && visible(input));
+  if (passwordInputs.length === 0) return;
+
+  const usernameCandidates = allInputs.filter((input) => {
+    const type = (input.type || "").toLowerCase();
+    const name = (input.name || "").toLowerCase();
+    const id = (input.id || "").toLowerCase();
+    const autocomplete = (input.autocomplete || "").toLowerCase();
+    const typeMatch = type === "text" || type === "email" || type === "tel";
+    const semanticMatch =
+      name.includes("user") ||
+      name.includes("email") ||
+      id.includes("user") ||
+      id.includes("email") ||
+      autocomplete.includes("username");
+    return visible(input) && (typeMatch || semanticMatch);
+  });
+
+  const passwordInput = passwordInputs[0];
+  let usernameInput = usernameCandidates[0] || null;
+
+  if (!usernameInput) {
+    const form = forms.find((formItem) => formItem.contains(passwordInput));
+    if (form) {
+      const localCandidates = Array.from(form.querySelectorAll("input")).filter((input) => {
+        const type = (input.type || "").toLowerCase();
+        return visible(input) && (type === "text" || type === "email");
+      });
+      usernameInput = localCandidates[0] || null;
+    }
+  }
+
+  const setInputValue = (input, value) => {
+    if (!input) return;
+    input.focus();
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+
+  setInputValue(usernameInput, username);
+  setInputValue(passwordInput, password);
+}
+
+function createAccount({ site, username, password, createdAtMs, deviceName }) {
+  const normalizedSite = normalizeDomain(site);
+  const canonical = etldPlusOne(normalizedSite);
+  const accountId = `${canonical}${formatYYMMDDHHmmss(createdAtMs)}${username}`;
+
+  return {
+    accountId,
+    canonicalSite: canonical,
+    usernameAtCreate: username,
+    sites: normalizeSites([normalizedSite]),
+    username,
+    password,
+    totpSecret: "",
+    recoveryCodes: "",
+    note: "",
+    usernameUpdatedAtMs: createdAtMs,
+    passwordUpdatedAtMs: createdAtMs,
+    totpUpdatedAtMs: createdAtMs,
+    recoveryCodesUpdatedAtMs: createdAtMs,
+    noteUpdatedAtMs: createdAtMs,
+    isDeleted: false,
+    deletedAtMs: null,
+    lastOperatedDeviceName: deviceName,
+    createdAtMs,
+    updatedAtMs: createdAtMs,
+  };
+}
+
+function accountMatchesDomain(account, domain) {
+  const normalized = normalizeDomain(domain);
+  const etld1 = etldPlusOne(normalized);
+  const sites = normalizeSites(account.sites || []);
+  return sites.some((site) => site === normalized || etldPlusOne(site) === etld1);
+}
+
+function normalizeDomain(input) {
+  if (!input) return "";
+  let value = input.trim().toLowerCase();
+  try {
+    if (value.startsWith("http://") || value.startsWith("https://")) {
+      value = new URL(value).hostname;
+    }
+  } catch {
+    return "";
+  }
+  while (value.endsWith(".")) {
+    value = value.slice(0, -1);
+  }
+  return value;
+}
+
+function etldPlusOne(domain) {
+  const normalized = normalizeDomain(domain);
+  if (!normalized) return "";
+
+  const labels = normalized.split(".");
+  if (labels.length < 2) return normalized;
+  const tail2 = labels.slice(-2).join(".");
+  if (ETLD2_SUFFIXES.has(tail2) && labels.length >= 3) {
+    return labels.slice(-3).join(".");
+  }
+  return tail2;
+}
+
+function normalizeSites(sites) {
+  return [...new Set((sites || []).map(normalizeDomain).filter(Boolean))].sort();
+}
+
+function syncAliasGroups(inputAccounts) {
+  const nextAccounts = inputAccounts.map((account) => ({
+    ...account,
+    sites: normalizeSites(account.sites || []),
+  }));
+
+  const adjacency = new Map(nextAccounts.map((account) => [account.accountId, new Set()]));
+  for (let i = 0; i < nextAccounts.length; i += 1) {
+    for (let j = i + 1; j < nextAccounts.length; j += 1) {
+      const a = nextAccounts[i];
+      const b = nextAccounts[j];
+      const hasSiteOverlap = a.sites.some((site) => b.sites.includes(site));
+      const sameEtld1 = a.sites.some((siteA) => b.sites.some((siteB) => etldPlusOne(siteA) === etldPlusOne(siteB)));
+      if (hasSiteOverlap || sameEtld1) {
+        adjacency.get(a.accountId).add(b.accountId);
+        adjacency.get(b.accountId).add(a.accountId);
+      }
+    }
+  }
+
+  const visited = new Set();
+  for (const account of nextAccounts) {
+    if (visited.has(account.accountId)) continue;
+
+    const queue = [account.accountId];
+    const component = [];
+    visited.add(account.accountId);
+
+    while (queue.length > 0) {
+      const id = queue.shift();
+      component.push(id);
+      for (const neighbor of adjacency.get(id) || []) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor);
+          queue.push(neighbor);
+        }
+      }
+    }
+
+    if (component.length <= 1) continue;
+
+    const mergedSites = normalizeSites(
+      component.flatMap((id) => nextAccounts.find((item) => item.accountId === id)?.sites || [])
+    );
+    for (const id of component) {
+      const target = nextAccounts.find((item) => item.accountId === id);
+      if (!target) continue;
+      if (JSON.stringify(target.sites) !== JSON.stringify(mergedSites)) {
+        target.sites = mergedSites;
+        target.updatedAtMs = Date.now();
+      }
+    }
+  }
+
+  return nextAccounts;
+}
+
+function formatYYMMDDHHmmss(ms) {
+  const date = new Date(ms);
+  const yy = String(date.getUTCFullYear() % 100).padStart(2, "0");
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const hour = String(date.getUTCHours()).padStart(2, "0");
+  const minute = String(date.getUTCMinutes()).padStart(2, "0");
+  const second = String(date.getUTCSeconds()).padStart(2, "0");
+  return `${yy}${month}${day}${hour}${minute}${second}`;
+}
+

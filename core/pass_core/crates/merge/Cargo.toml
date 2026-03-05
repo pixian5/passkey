@@ -1,0 +1,9 @@
+[package]
+name = "pass-merge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pass-domain = { path = "../domain" }
+

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pass Extension 设置</title>
+    <link rel="stylesheet" href="./options.css" />
+  </head>
+  <body>
+    <main class="page">
+      <h1>Pass Extension 设置</h1>
+      <p>这里用于查看、导出、导入本地账号 JSON（开发期）。</p>
+
+      <section class="card">
+        <h2>账号数据</h2>
+        <textarea id="payload" spellcheck="false"></textarea>
+        <div class="actions">
+          <button id="refreshBtn">刷新</button>
+          <button id="exportBtn">导出 JSON</button>
+          <button id="importBtn">导入 JSON</button>
+          <button id="clearBtn">清空账号</button>
+        </div>
+        <p id="status" class="status"></p>
+      </section>
+    </main>
+    <script src="./options.js" type="module"></script>
+  </body>
+  </html>
+

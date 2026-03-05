@@ -1,0 +1,15 @@
+[workspace]
+members = [
+  "crates/domain",
+  "crates/merge",
+  "crates/storage",
+  "crates/transport",
+  "crates/csvio",
+  "crates/ffi",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"

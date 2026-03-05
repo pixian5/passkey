@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pass</title>
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="card">
+        <h1>Pass</h1>
+        <div class="row">
+          <label for="deviceName">设备名称</label>
+          <input id="deviceName" type="text" placeholder="例如 ChromeMac" />
+          <button id="saveDeviceName">保存</button>
+        </div>
+        <p class="tip" id="deviceStatus"></p>
+      </section>
+
+      <section class="card">
+        <h2>当前站点</h2>
+        <p class="line"><span>域名:</span> <strong id="currentDomain">-</strong></p>
+        <p class="line"><span>eTLD+1:</span> <strong id="currentEtld1">-</strong></p>
+        <button id="addDemoData">生成演示账号</button>
+      </section>
+
+      <section class="card">
+        <h2>可用账号</h2>
+        <div class="mode-switch">
+          <button id="modeActive" class="mode-btn mode-btn-active" type="button">账号列表</button>
+          <button id="modeRecycle" class="mode-btn" type="button">回收站</button>
+        </div>
+        <div class="create">
+          <input id="createSite" type="text" placeholder="站点，例如 icloud.com" />
+          <input id="createUsername" type="text" placeholder="用户名" />
+          <input id="createPassword" type="text" placeholder="密码" />
+          <button id="createAccount">新建账号</button>
+        </div>
+        <div id="accountList" class="list"></div>
+      </section>
+    </main>
+    <script src="./popup.js" type="module"></script>
+  </body>
+  </html>
