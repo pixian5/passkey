@@ -103,8 +103,8 @@ final class AccountStore: ObservableObject {
 
     private struct FolderMoveOperation {
         let accountIds: [UUID]
-        let previousFolderByAccountId: [UUID: UUID?]
-        let targetFolderId: UUID
+        let previousFolderIdsByAccountId: [UUID: [UUID]]
+        let actionSummary: String
     }
 
     init() {
@@ -122,6 +122,144 @@ final class AccountStore: ObservableObject {
         deviceName = normalized
         UserDefaults.standard.set(normalized, forKey: Keys.deviceName)
         statusMessage = "设备名称已保存"
+    }
+
+    func triggerSelectAllAccounts() {
+        selectAllAccountsSignal &+= 1
+    }
+
+    func createFolder(named rawName: String) {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            statusMessage = "文件夹名称不能为空"
+            return
+        }
+        if folders.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+            statusMessage = "文件夹已存在: \(name)"
+            return
+        }
+
+        let folder = AccountFolder(
+            id: UUID(),
+            name: name,
+            createdAtMs: nowMs()
+        )
+        folders.append(folder)
+        folders.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        saveFoldersToDefaults()
+        statusMessage = "已创建文件夹: \(name)"
+    }
+
+    func folderName(for id: UUID) -> String {
+        folders.first(where: { $0.id == id })?.name ?? "未命名文件夹"
+    }
+
+    func areAllAccountsInFolder(accountIds: [UUID], folderId: UUID) -> Bool {
+        let idSet = Set(accountIds)
+        let selected = accounts.filter { idSet.contains($0.id) && !$0.isDeleted }
+        guard !selected.isEmpty else {
+            return false
+        }
+        return selected.allSatisfy { $0.isInFolder(folderId) }
+    }
+
+    func toggleAccountsFolderMembership(accountIds: [UUID], folderId: UUID) {
+        let idSet = Set(accountIds)
+        guard !idSet.isEmpty else {
+            statusMessage = "未选择账号"
+            return
+        }
+        guard folders.contains(where: { $0.id == folderId }) else {
+            statusMessage = "目标文件夹不存在"
+            return
+        }
+
+        let selectedIndexes = accounts.indices.filter { idSet.contains(accounts[$0].id) && !accounts[$0].isDeleted }
+        guard !selectedIndexes.isEmpty else {
+            statusMessage = "未选择账号"
+            return
+        }
+
+        let allAlreadyInFolder = selectedIndexes.allSatisfy { accounts[$0].isInFolder(folderId) }
+        let shouldAddToFolder = !allAlreadyInFolder
+
+        var previousFolderIdsByAccountId: [UUID: [UUID]] = [:]
+        var changedCount = 0
+        let now = nowMs()
+        let device = currentDeviceName()
+
+        for index in selectedIndexes {
+            let currentFolderIds = accounts[index].resolvedFolderIds
+            previousFolderIdsByAccountId[accounts[index].id] = currentFolderIds
+
+            var nextFolderIds = currentFolderIds
+            if shouldAddToFolder {
+                if !nextFolderIds.contains(folderId) {
+                    nextFolderIds.append(folderId)
+                }
+            } else {
+                nextFolderIds.removeAll(where: { $0 == folderId })
+            }
+
+            let normalizedNext = normalizeFolderIds(nextFolderIds)
+            if normalizedNext != currentFolderIds {
+                accounts[index].setResolvedFolderIds(normalizedNext)
+                accounts[index].touchUpdatedAt(now, deviceName: device)
+                changedCount += 1
+            }
+        }
+
+        guard changedCount > 0 else {
+            statusMessage = shouldAddToFolder
+                ? "所选账号已在文件夹：\(folderName(for: folderId))"
+                : "所选账号不在文件夹：\(folderName(for: folderId))"
+            return
+        }
+
+        let actionPrefix = shouldAddToFolder ? "已放入" : "已移出"
+        let actionSummary = "\(actionPrefix) \(changedCount) 个账号 \(shouldAddToFolder ? "到" : "从")文件夹：\(folderName(for: folderId))"
+        lastMoveOperation = FolderMoveOperation(
+            accountIds: Array(previousFolderIdsByAccountId.keys),
+            previousFolderIdsByAccountId: previousFolderIdsByAccountId,
+            actionSummary: actionSummary
+        )
+        saveAccounts()
+        showUndoMoveToast(message: "\(actionSummary)，点此撤销")
+        statusMessage = actionSummary
+    }
+
+    func undoLastMoveOperation() {
+        guard let operation = lastMoveOperation else {
+            statusMessage = "没有可撤销的移动操作"
+            return
+        }
+
+        let idSet = Set(operation.accountIds)
+        let now = nowMs()
+        let device = currentDeviceName()
+        var revertedCount = 0
+
+        for index in accounts.indices where idSet.contains(accounts[index].id) {
+            if let previousFolderIds = operation.previousFolderIdsByAccountId[accounts[index].id] {
+                let normalizedPrevious = normalizeFolderIds(previousFolderIds)
+                if accounts[index].resolvedFolderIds != normalizedPrevious {
+                    revertedCount += 1
+                }
+                accounts[index].setResolvedFolderIds(normalizedPrevious)
+                accounts[index].touchUpdatedAt(now, deviceName: device)
+            }
+        }
+
+        guard revertedCount > 0 else {
+            statusMessage = "没有需要撤销的变更"
+            return
+        }
+
+        saveAccounts()
+        isUndoMoveToastVisible = false
+        undoMoveDismissWorkItem?.cancel()
+        lastMoveOperation = nil
+        statusMessage = "已撤销: \(operation.actionSummary)"
     }
 
     func addDemoAccountsIfNeeded() {
@@ -568,6 +706,13 @@ final class AccountStore: ObservableObject {
         let defaults = UserDefaults.standard
         deviceName = defaults.string(forKey: Keys.deviceName) ?? ""
         exportDirectoryPath = defaults.string(forKey: Keys.exportDirectoryPath) ?? ""
+        if let foldersData = defaults.data(forKey: Keys.foldersData),
+           let decodedFolders = try? decoder.decode([AccountFolder].self, from: foldersData)
+        {
+            folders = decodedFolders.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        } else {
+            folders = []
+        }
 
         let savedFontFamily = defaults.string(forKey: Keys.uiFontFamily) ?? Self.systemDefaultFontFamily
         if savedFontFamily == Self.systemDefaultFontFamily || Self.installedFontFamilies.contains(savedFontFamily) {
@@ -592,7 +737,7 @@ final class AccountStore: ObservableObject {
         }
 
         if let decoded = try? decoder.decode([PasswordAccount].self, from: data) {
-            accounts = decoded
+            accounts = normalizeDecodedAccounts(decoded)
             return
         }
 
@@ -658,7 +803,7 @@ final class AccountStore: ObservableObject {
 
         let remoteAccounts: [PasswordAccount]
         if let decoded = try? decoder.decode([PasswordAccount].self, from: data) {
-            remoteAccounts = decoded
+            remoteAccounts = normalizeDecodedAccounts(decoded)
         } else if let legacy = try? decoder.decode([LegacyPasswordAccount].self, from: data) {
             remoteAccounts = legacy.map { $0.toCurrent(deviceName: currentDeviceName()) }
         } else {
@@ -759,6 +904,7 @@ final class AccountStore: ObservableObject {
         ).sorted()
         let canonicalBySites = DomainUtils.etldPlusOne(for: mergedSites.first ?? "")
         let canonicalSite = canonicalBySites.isEmpty ? primary.canonicalSite : canonicalBySites
+        let mergedFolderIds = normalizeFolderIds(lhs.resolvedFolderIds + rhs.resolvedFolderIds)
 
         let usernameField = newerField(
             lhs.username,
@@ -834,6 +980,8 @@ final class AccountStore: ObservableObject {
             accountId: primary.accountId,
             canonicalSite: canonicalSite,
             usernameAtCreate: usernameAtCreate,
+            folderId: mergedFolderIds.first ?? newerAccount.folderId,
+            folderIds: mergedFolderIds,
             sites: mergedSites.isEmpty ? primary.sites : mergedSites,
             username: usernameField.value,
             password: passwordField.value,
@@ -927,6 +1075,18 @@ final class AccountStore: ObservableObject {
                 }
             }
         }
+    }
+
+    private func normalizeDecodedAccounts(_ source: [PasswordAccount]) -> [PasswordAccount] {
+        source.map { account in
+            var mutable = account
+            mutable.setResolvedFolderIds(mutable.resolvedFolderIds)
+            return mutable
+        }
+    }
+
+    private func normalizeFolderIds(_ source: [UUID]) -> [UUID] {
+        Array(Set(source)).sorted { $0.uuidString < $1.uuidString }
     }
 
     private func csvEscaped(_ value: String) -> String {
@@ -1072,6 +1232,31 @@ final class AccountStore: ObservableObject {
         )
     }
 
+    private func showUndoMoveToast(message: String) {
+        undoMoveDismissWorkItem?.cancel()
+        undoMoveToastMessage = message
+        isUndoMoveToastVisible = true
+
+        let dismissWorkItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                self.isUndoMoveToastVisible = false
+            }
+        }
+        undoMoveDismissWorkItem = dismissWorkItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + 3.0,
+            execute: dismissWorkItem
+        )
+    }
+
+    private func saveFoldersToDefaults() {
+        guard let data = try? encoder.encode(folders) else {
+            return
+        }
+        UserDefaults.standard.set(data, forKey: Keys.foldersData)
+    }
+
     var uiFontFamilyOptions: [String] {
         [Self.systemDefaultFontFamily] + NSFontManager.shared.availableFontFamilies.sorted()
     }
@@ -1099,6 +1284,7 @@ final class AccountStore: ObservableObject {
 private enum Keys {
     static let deviceName = "pass.deviceName"
     static let exportDirectoryPath = "pass.export.directoryPath"
+    static let foldersData = "pass.folders.data"
     static let uiFontFamily = "pass.ui.font.family"
     static let uiTextFontSize = "pass.ui.font.textSize"
     static let uiButtonFontSize = "pass.ui.font.buttonSize"
@@ -1129,6 +1315,8 @@ private extension LegacyPasswordAccount {
             accountId: accountId,
             canonicalSite: canonical,
             usernameAtCreate: username,
+            folderId: nil,
+            folderIds: [],
             sites: normalizedSites,
             username: username,
             password: password,

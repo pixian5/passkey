@@ -6,6 +6,7 @@ struct PasswordAccount: Codable, Identifiable, Hashable {
     let canonicalSite: String
     let usernameAtCreate: String
     var folderId: UUID?
+    var folderIds: [UUID]?
     var sites: [String]
     var username: String
     var password: String
@@ -26,6 +27,28 @@ struct PasswordAccount: Codable, Identifiable, Hashable {
     mutating func touchUpdatedAt(_ nowMs: Int64, deviceName: String) {
         updatedAtMs = nowMs
         lastOperatedDeviceName = deviceName
+    }
+
+    var resolvedFolderIds: [UUID] {
+        let source: [UUID]
+        if let folderIds, !folderIds.isEmpty {
+            source = folderIds
+        } else if let folderId {
+            source = [folderId]
+        } else {
+            source = []
+        }
+        return Array(Set(source)).sorted { $0.uuidString < $1.uuidString }
+    }
+
+    mutating func setResolvedFolderIds(_ ids: [UUID]) {
+        let normalized = Array(Set(ids)).sorted { $0.uuidString < $1.uuidString }
+        folderIds = normalized
+        folderId = normalized.first
+    }
+
+    func isInFolder(_ id: UUID) -> Bool {
+        resolvedFolderIds.contains(id)
     }
 }
 
@@ -50,6 +73,7 @@ enum AccountFactory {
             canonicalSite: canonicalSite,
             usernameAtCreate: username,
             folderId: nil,
+            folderIds: [],
             sites: [normalizedSite].sorted(),
             username: username,
             password: password,

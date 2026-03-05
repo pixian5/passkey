@@ -28,7 +28,35 @@ struct AppToastOverlay: ViewModifier {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
+            .overlay(alignment: .bottom) {
+                if store.isUndoMoveToastVisible {
+                    Button {
+                        store.undoLastMoveOperation()
+                    } label: {
+                        Text(store.undoMoveToastMessage)
+                            .font(store.textFont(size: store.scaledTextSize(14), weight: .semibold))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 9)
+                            .foregroundStyle(.white)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color.green.opacity(0.9))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(Color.green.opacity(0.95), lineWidth: 1)
+                            )
+                            .shadow(radius: 8)
+                            .frame(maxWidth: 760)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 96)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
             .animation(.easeInOut(duration: 0.18), value: store.isToastVisible)
+            .animation(.easeInOut(duration: 0.18), value: store.isUndoMoveToastVisible)
     }
 }
 

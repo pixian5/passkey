@@ -13,6 +13,7 @@ struct PassMacApp: App {
         }
         .commands {
             PassMacSettingsCommands()
+            PassMacAccountCommands(store: store)
         }
 
         Window("设置", id: "settings") {
@@ -42,6 +43,24 @@ private struct PassMacSettingsCommands: Commands {
                 openWindow(id: "settings")
             }
             .keyboardShortcut(",", modifiers: .command)
+        }
+    }
+}
+
+private struct PassMacAccountCommands: Commands {
+    @ObservedObject var store: AccountStore
+
+    var body: some Commands {
+        CommandMenu("账号") {
+            Button("全选账号") {
+                store.triggerSelectAllAccounts()
+            }
+            .keyboardShortcut("a", modifiers: .command)
+
+            Button("撤销移动") {
+                store.undoLastMoveOperation()
+            }
+            .keyboardShortcut("z", modifiers: .command)
         }
     }
 }

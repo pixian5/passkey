@@ -1,159 +1,129 @@
 import AppKit
 import SwiftUI
 
+private enum AccountSidebarFilter: Hashable {
+    case all
+    case passkeys
+    case totp
+    case folder(UUID)
+}
+
 struct ContentView: View {
     @ObservedObject var store: AccountStore
     @Environment(\.openWindow) private var openWindow
+    @State private var selectedSidebarFilter: AccountSidebarFilter = .all
+    @State private var selectedAccountIds: Set<UUID> = []
+    @State private var showCreateFolderSheet: Bool = false
+    @State private var newFolderName: String = ""
+    @State private var showMoveToFolderSheet: Bool = false
+    @State private var pendingMoveAccountIds: [UUID] = []
     @State private var showRecycleBinPopup: Bool = false
     @State private var totpDisplayDate: Date = Date()
     private let totpTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        let accounts = store.activeAccounts()
+        let activeAccounts = store.activeAccounts()
+        let accounts = filteredAccounts(from: activeAccounts)
         let deletedAccounts = store.accounts.filter(\.isDeleted)
         let editingAccount = store.accountForEditing()
 
         return ZStack {
-            VStack(alignment: .leading, spacing: 8) {
-                GroupBox {
-                    HStack(spacing: 8) {
-                        Button {
-                            openWindow(id: "create-account")
-                        } label: {
-                            topActionButtonLabel(
-                                "新建账号",
-                                prominent: true
-                            )
-                        }
-                        .buttonStyle(.plain)
+            HStack(spacing: 0) {
+                sidebar
+                Divider()
 
-                        Button {
-                            store.addDemoAccountsIfNeeded()
-                        } label: {
-                            topActionButtonLabel(
-                                "生成演示账号",
-                                prominent: false
-                            )
-                        }
-                        .buttonStyle(.plain)
+                VStack(alignment: .leading, spacing: 8) {
+                    GroupBox {
+                        HStack(spacing: 8) {
+                            Button {
+                                openWindow(id: "create-account")
+                            } label: {
+                                topActionButtonLabel(
+                                    "新建账号",
+                                    prominent: true
+                                )
+                            }
+                            .buttonStyle(.plain)
 
-                        Button {
-                            store.deleteAllAccounts()
-                        } label: {
-                            topActionButtonLabel(
-                                "删除全部账号",
-                                prominent: true,
-                                tint: .red
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(accounts.isEmpty)
-                        .opacity(accounts.isEmpty ? 0.45 : 1)
+                            Button {
+                                store.addDemoAccountsIfNeeded()
+                            } label: {
+                                topActionButtonLabel(
+                                    "生成演示账号",
+                                    prominent: false
+                                )
+                            }
+                            .buttonStyle(.plain)
 
-                        Button {
-                            store.cancelEditing()
-                            showRecycleBinPopup = true
-                        } label: {
-                            topActionButtonLabel(
-                                "回收站 (\(deletedAccounts.count))",
-                                prominent: false
-                            )
-                        }
-                        .buttonStyle(.plain)
+                            Button {
+                                store.deleteAllAccounts()
+                            } label: {
+                                topActionButtonLabel(
+                                    "删除全部账号",
+                                    prominent: true,
+                                    tint: .red
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(activeAccounts.isEmpty)
+                            .opacity(activeAccounts.isEmpty ? 0.45 : 1)
 
-                        Spacer()
+                            Button {
+                                store.cancelEditing()
+                                showRecycleBinPopup = true
+                            } label: {
+                                topActionButtonLabel(
+                                    "回收站 (\(deletedAccounts.count))",
+                                    prominent: false
+                                )
+                            }
+                            .buttonStyle(.plain)
+
+                            Spacer()
+                        }
                     }
-                }
 
-                if accounts.isEmpty {
-                    Text("暂无账号")
-                        .foregroundStyle(.secondary)
-                } else {
-                    List(accounts) { account in
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(account.accountId)
-                                    .font(store.textFont(size: store.scaledTextSize(17), weight: .semibold))
-                                    .textSelection(.enabled)
-                                if account.isDeleted {
-                                    Text("已删除")
-                                        .font(store.textFont(size: store.scaledTextSize(11)))
-                                        .foregroundStyle(.red)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(Color.red.opacity(0.12))
-                                        .clipShape(Capsule())
-                                }
-                            }
-
-                            Button {
-                                copyToPasteboard(account.username, successMessage: "用户名已复制")
-                            } label: {
-                                Text("用户名: \(account.username)")
-                                    .font(store.textFont(size: store.scaledTextSize(15)))
-                                    .foregroundStyle(.primary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .buttonStyle(.plain)
-                            .help("点击复制用户名")
-
-                            Button {
-                                copyToPasteboard(account.sites.joined(separator: "\n"), successMessage: "站点别名已复制")
-                            } label: {
-                                Text("站点别名: \(account.sites.joined(separator: "  "))")
-                                    .font(store.textFont(size: store.scaledTextSize(12)))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .buttonStyle(.plain)
-                            .help("点击复制站点别名")
-
-                            let secret = account.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !secret.isEmpty {
-                                if let code = store.currentTotpCode(for: account, at: totpDisplayDate) {
-                                    Button {
-                                        copyTotpCode(code)
-                                    } label: {
-                                        Text("验证码: \(formattedTotpCode(code)) (剩余 \(store.totpRemainingSeconds(at: totpDisplayDate))s)")
-                                            .font(store.textFont(size: store.scaledTextSize(15)).monospacedDigit())
-                                            .foregroundStyle(.primary)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
+                    if accounts.isEmpty {
+                        Text("暂无账号")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        List(selection: $selectedAccountIds) {
+                            ForEach(accounts) { account in
+                                accountRow(account)
+                                    .tag(account.id)
+                                    .contextMenu {
+                                        Button("放入文件夹") {
+                                            prepareMoveToFolder(from: account.id)
+                                        }
+                                        .disabled(store.folders.isEmpty)
                                     }
-                                    .buttonStyle(.plain)
-                                    .help("点击复制验证码")
-                                } else {
-                                    Text("验证码: TOTP 密钥无效")
-                                        .font(store.textFont(size: store.scaledTextSize(12)))
-                                        .foregroundStyle(.red)
-                                }
-                            }
-
-                            HStack(spacing: 8) {
-                                Button("编辑") {
-                                    store.beginEditing(account)
-                                }
-                                .font(store.buttonFont())
-                                .buttonStyle(.bordered)
-
-                                Button("删除账号") {
-                                    store.moveToRecycleBin(for: account)
-                                }
-                                .font(store.buttonFont())
-                                .buttonStyle(.bordered)
                             }
                         }
-                        .padding(.vertical, 4)
+                        .listStyle(.inset(alternatesRowBackgrounds: true))
                     }
-                    .listStyle(.inset(alternatesRowBackgrounds: true))
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(16)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(16)
-            .frame(minWidth: 1000, minHeight: 700, alignment: .topLeading)
+            .frame(minWidth: 1180, minHeight: 700, alignment: .topLeading)
             .onReceive(totpTimer) { value in
                 totpDisplayDate = value
+            }
+            .onChange(of: selectedSidebarFilter) { _ in
+                selectedAccountIds.removeAll()
+            }
+            .onChange(of: store.selectAllAccountsSignal) { _ in
+                selectedAccountIds = Set(accounts.map(\.id))
+            }
+            .onChange(of: accounts.map(\.id)) { ids in
+                selectedAccountIds = selectedAccountIds.intersection(Set(ids))
+            }
+            .sheet(isPresented: $showCreateFolderSheet) {
+                createFolderSheet
+            }
+            .sheet(isPresented: $showMoveToFolderSheet) {
+                moveToFolderSheet
             }
 
             if let editingAccount, !showRecycleBinPopup {
@@ -182,6 +152,268 @@ struct ContentView: View {
                 .padding(26)
             }
         }
+    }
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sidebarItem(title: "全部", selected: selectedSidebarFilter == .all) {
+                selectedSidebarFilter = .all
+            }
+            sidebarItem(title: "通行秘钥", selected: selectedSidebarFilter == .passkeys) {
+                selectedSidebarFilter = .passkeys
+            }
+            sidebarItem(title: "验证码", selected: selectedSidebarFilter == .totp) {
+                selectedSidebarFilter = .totp
+            }
+
+            Divider()
+
+            HStack {
+                Text("文件夹")
+                    .font(store.textFont(size: store.scaledTextSize(13), weight: .semibold))
+                Spacer()
+                Button("新建") {
+                    newFolderName = ""
+                    showCreateFolderSheet = true
+                }
+                .font(store.buttonFont(size: max(12, CGFloat(store.uiButtonFontSize - 4))))
+                .buttonStyle(.bordered)
+            }
+
+            if store.folders.isEmpty {
+                Text("暂无文件夹")
+                    .font(store.textFont(size: store.scaledTextSize(12)))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(store.folders) { folder in
+                            sidebarItem(
+                                title: folder.name,
+                                selected: selectedSidebarFilter == .folder(folder.id)
+                            ) {
+                                selectedSidebarFilter = .folder(folder.id)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer()
+        }
+        .padding(12)
+        .frame(width: 220, alignment: .topLeading)
+    }
+
+    private func sidebarItem(title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(store.textFont(size: store.scaledTextSize(14), weight: selected ? .semibold : .regular))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(selected ? Color.accentColor.opacity(0.18) : Color.clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+    }
+
+    private func accountRow(_ account: PasswordAccount) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(account.accountId)
+                    .font(store.textFont(size: store.scaledTextSize(17), weight: .semibold))
+                    .textSelection(.enabled)
+                if account.isDeleted {
+                    Text("已删除")
+                        .font(store.textFont(size: store.scaledTextSize(11)))
+                        .foregroundStyle(.red)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.red.opacity(0.12))
+                        .clipShape(Capsule())
+                }
+            }
+
+            Button {
+                copyToPasteboard(account.username, successMessage: "用户名已复制")
+            } label: {
+                Text("用户名: \(account.username)")
+                    .font(store.textFont(size: store.scaledTextSize(15)))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .help("点击复制用户名")
+
+            Button {
+                copyToPasteboard(account.sites.joined(separator: "\n"), successMessage: "站点别名已复制")
+            } label: {
+                Text("站点别名: \(account.sites.joined(separator: "  "))")
+                    .font(store.textFont(size: store.scaledTextSize(12)))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .help("点击复制站点别名")
+
+            let secret = account.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !secret.isEmpty {
+                if let code = store.currentTotpCode(for: account, at: totpDisplayDate) {
+                    Button {
+                        copyTotpCode(code)
+                    } label: {
+                        Text("验证码: \(formattedTotpCode(code)) (剩余 \(store.totpRemainingSeconds(at: totpDisplayDate))s)")
+                            .font(store.textFont(size: store.scaledTextSize(15)).monospacedDigit())
+                            .foregroundStyle(.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                    .help("点击复制验证码")
+                } else {
+                    Text("验证码: TOTP 密钥无效")
+                        .font(store.textFont(size: store.scaledTextSize(12)))
+                        .foregroundStyle(.red)
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button("编辑") {
+                    store.beginEditing(account)
+                }
+                .font(store.buttonFont())
+                .buttonStyle(.bordered)
+
+                Button("删除账号") {
+                    store.moveToRecycleBin(for: account)
+                }
+                .font(store.buttonFont())
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func filteredAccounts(from allAccounts: [PasswordAccount]) -> [PasswordAccount] {
+        switch selectedSidebarFilter {
+        case .all:
+            return allAccounts
+        case .passkeys:
+            return allAccounts.filter { $0.password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        case .totp:
+            return allAccounts.filter { !$0.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        case .folder(let folderId):
+            return allAccounts.filter { $0.isInFolder(folderId) }
+        }
+    }
+
+    private func prepareMoveToFolder(from contextAccountId: UUID) {
+        if store.folders.isEmpty {
+            store.statusMessage = "请先创建文件夹"
+            return
+        }
+
+        var ids = selectedAccountIds
+        if !ids.contains(contextAccountId) {
+            ids = [contextAccountId]
+            selectedAccountIds = ids
+        }
+        guard !ids.isEmpty else {
+            store.statusMessage = "未选择账号"
+            return
+        }
+
+        pendingMoveAccountIds = Array(ids)
+        showMoveToFolderSheet = true
+    }
+
+    private var createFolderSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("新建文件夹")
+                .font(store.textFont(size: store.scaledTextSize(17), weight: .semibold))
+            TextField("文件夹名称", text: $newFolderName)
+                .textFieldStyle(.roundedBorder)
+
+            HStack {
+                Spacer()
+                Button("取消") {
+                    showCreateFolderSheet = false
+                }
+                .font(store.buttonFont())
+                .buttonStyle(.bordered)
+
+                Button("创建") {
+                    store.createFolder(named: newFolderName)
+                    showCreateFolderSheet = false
+                }
+                .font(store.buttonFont())
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(18)
+        .frame(width: 420)
+    }
+
+    private var moveToFolderSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("放入文件夹")
+                .font(store.textFont(size: store.scaledTextSize(17), weight: .semibold))
+            Text("已选账号: \(pendingMoveAccountIds.count) 个")
+                .font(store.textFont(size: store.scaledTextSize(12)))
+                .foregroundStyle(.secondary)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(store.folders) { folder in
+                        let checked = store.areAllAccountsInFolder(
+                            accountIds: pendingMoveAccountIds,
+                            folderId: folder.id
+                        )
+                        Button {
+                            store.toggleAccountsFolderMembership(
+                                accountIds: pendingMoveAccountIds,
+                                folderId: folder.id
+                            )
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: checked ? "checkmark.square.fill" : "square")
+                                    .foregroundStyle(checked ? Color.accentColor : Color.secondary)
+                                Text(folder.name)
+                                    .font(store.textFont(size: store.scaledTextSize(15)))
+                                Spacer()
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.secondary.opacity(0.08))
+                        )
+                    }
+                }
+            }
+            .frame(minHeight: 220)
+
+            HStack {
+                Spacer()
+                Button("关闭") {
+                    showMoveToFolderSheet = false
+                }
+                .font(store.buttonFont())
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(18)
+        .frame(width: 500)
     }
 
     private func formattedTotpCode(_ code: String) -> String {
