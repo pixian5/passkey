@@ -7,6 +7,7 @@ struct SettingsView: View {
     @State private var newMasterPassword: String = ""
     @State private var confirmMasterPassword: String = ""
     @State private var disableUnlockPassword: String = ""
+    @State private var didConfigureWindow: Bool = false
     private let idleMinuteChoices: [Int] = [1, 3, 5, 10, 15, 30, 60]
 
     var body: some View {
@@ -25,6 +26,41 @@ struct SettingsView: View {
             Text("说明：设备名称会写入账号最后操作设备字段。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            GroupBox("界面字体") {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text("字体")
+                            .frame(width: 80, alignment: .leading)
+                        Picker("字体", selection: $store.uiFontFamily) {
+                            ForEach(store.uiFontFamilyOptions, id: \.self) { family in
+                                Text(family).tag(family)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                    }
+
+                    HStack(spacing: 8) {
+                        Text("文本字号")
+                            .frame(width: 80, alignment: .leading)
+                        Slider(value: $store.uiTextFontSize, in: 12 ... 40, step: 1)
+                        Text("\(Int(store.uiTextFontSize))")
+                            .frame(width: 40, alignment: .trailing)
+                            .monospacedDigit()
+                    }
+
+                    HStack(spacing: 8) {
+                        Text("按钮字号")
+                            .frame(width: 80, alignment: .leading)
+                        Slider(value: $store.uiButtonFontSize, in: 12 ... 52, step: 1)
+                        Text("\(Int(store.uiButtonFontSize))")
+                            .frame(width: 40, alignment: .trailing)
+                            .monospacedDigit()
+                    }
+                }
+                .padding(.top, 2)
+            }
 
             GroupBox("数据同步") {
                 VStack(alignment: .leading, spacing: 8) {
@@ -51,7 +87,7 @@ struct SettingsView: View {
                             .onChange(of: store.exportDirectoryPath) { _ in
                                 store.saveExportDirectoryPath()
                             }
-                        Button("导出 CSV") {
+                        Button("导出全部账号 CSV") {
                             exportCsvWithDirectoryRule()
                         }
                         .buttonStyle(.bordered)
@@ -152,6 +188,25 @@ struct SettingsView: View {
             maxHeight: .infinity,
             alignment: .topLeading
         )
+        .background(WindowAccessor { window in
+            configureWindowIfNeeded(window)
+        })
+    }
+
+    private func configureWindowIfNeeded(_ window: NSWindow) {
+        guard !didConfigureWindow else { return }
+        didConfigureWindow = true
+
+        window.styleMask.insert(.resizable)
+        window.minSize = NSSize(width: 760, height: 520)
+
+        var frame = window.frame
+        let targetWidth = max(frame.width, 760)
+        let targetHeight = max(frame.height, 520)
+        if frame.width != targetWidth || frame.height != targetHeight {
+            frame.size = NSSize(width: targetWidth, height: targetHeight)
+            window.setFrame(frame, display: true)
+        }
     }
 
     private func exportCsvWithDirectoryRule() {
@@ -168,7 +223,7 @@ struct SettingsView: View {
 
         let panel = NSOpenPanel()
         panel.title = "选择导出目录"
-        panel.message = "请选择 CSV 导出目录"
+        panel.message = "请选择全部账号 CSV 导出目录"
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
@@ -186,5 +241,27 @@ struct SettingsView: View {
         store.saveExportDirectoryPath()
         let fileURL = selectedDirectory.appendingPathComponent(store.suggestedCsvFileName(), isDirectory: false)
         store.exportCsv(to: fileURL)
+    }
+}
+
+private struct WindowAccessor: NSViewRepresentable {
+    let onResolve: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            if let window = view.window {
+                onResolve(window)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            if let window = nsView.window {
+                onResolve(window)
+            }
+        }
     }
 }

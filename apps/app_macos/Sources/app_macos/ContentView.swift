@@ -3,7 +3,7 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var store: AccountStore
-    @State private var isCreateSectionExpanded: Bool = false
+    @Environment(\.openWindow) private var openWindow
     @State private var showRecycleBinPopup: Bool = false
     @State private var totpDisplayDate: Date = Date()
     private let totpTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -14,113 +14,63 @@ struct ContentView: View {
         let editingAccount = store.accountForEditing()
 
         return ZStack {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 8) {
                 GroupBox {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            isCreateSectionExpanded.toggle()
+                    HStack(spacing: 8) {
+                        Button {
+                            openWindow(id: "create-account")
+                        } label: {
+                            topActionButtonLabel(
+                                "新建账号",
+                                prominent: true
+                            )
                         }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: isCreateSectionExpanded ? "chevron.down" : "chevron.right")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(width: 14)
-                            Text("新建账号")
-                                .font(.headline)
-                            Spacer()
+                        .buttonStyle(.plain)
+
+                        Button {
+                            store.addDemoAccountsIfNeeded()
+                        } label: {
+                            topActionButtonLabel(
+                                "生成演示账号",
+                                prominent: false
+                            )
                         }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
+                        .buttonStyle(.plain)
 
-                    if isCreateSectionExpanded {
-                        VStack(spacing: 8) {
-                            HStack {
-                                Text("站点")
-                                    .frame(width: 80, alignment: .leading)
-                                TextField("例如 icloud.com", text: $store.createSite)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                            HStack {
-                                Text("用户名")
-                                    .frame(width: 80, alignment: .leading)
-                                TextField("例如 alice@icloud.com", text: $store.createUsername)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                            HStack {
-                                Text("密码")
-                                    .frame(width: 80, alignment: .leading)
-                                TextField("请输入密码", text: $store.createPassword)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                            HStack {
-                                Text("TOTP")
-                                    .frame(width: 80, alignment: .leading)
-                                TextField("TOTP 种子密钥", text: $store.createTotpSecret)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("恢复码")
-                                    .frame(width: 80, alignment: .leading)
-                                TextEditor(text: $store.createRecoveryCodes)
-                                    .font(.body)
-                                    .frame(minHeight: 74, maxHeight: 110)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .stroke(Color.secondary.opacity(0.22), lineWidth: 1)
-                                    )
-                            }
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("备注")
-                                    .frame(width: 80, alignment: .leading)
-                                TextEditor(text: $store.createNote)
-                                    .font(.body)
-                                    .frame(minHeight: 84, maxHeight: 120)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .stroke(Color.secondary.opacity(0.22), lineWidth: 1)
-                                    )
-                            }
-                            HStack(spacing: 8) {
-                                Button("创建账号") {
-                                    store.createAccountFromDraft()
-                                }
-                                .buttonStyle(.borderedProminent)
-
-                                Button("生成演示账号") {
-                                    store.addDemoAccountsIfNeeded()
-                                }
-                                .buttonStyle(.bordered)
-                            }
-                        }
-                        .padding(.top, 4)
-                    }
-
-                    HStack {
-                        Button("删除全部账号") {
+                        Button {
                             store.deleteAllAccounts()
+                        } label: {
+                            topActionButtonLabel(
+                                "删除全部账号",
+                                prominent: true,
+                                tint: .red
+                            )
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red)
+                        .buttonStyle(.plain)
                         .disabled(accounts.isEmpty)
+                        .opacity(accounts.isEmpty ? 0.45 : 1)
 
-                        Button("回收站 (\(deletedAccounts.count))") {
+                        Button {
                             store.cancelEditing()
                             showRecycleBinPopup = true
+                        } label: {
+                            topActionButtonLabel(
+                                "回收站 (\(deletedAccounts.count))",
+                                prominent: false
+                            )
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.plain)
 
                         Spacer()
                     }
                 }
 
-                Text(store.statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                Divider()
+                if !store.statusMessage.isEmpty {
+                    Text(store.statusMessage)
+                        .font(store.textFont(size: store.scaledTextSize(12)))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
 
                 if accounts.isEmpty {
                     Text("暂无账号")
@@ -130,11 +80,11 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Text(account.accountId)
-                                    .font(.headline)
+                                    .font(store.textFont(size: store.scaledTextSize(17), weight: .semibold))
                                     .textSelection(.enabled)
                                 if account.isDeleted {
                                     Text("已删除")
-                                        .font(.caption2)
+                                        .font(store.textFont(size: store.scaledTextSize(11)))
                                         .foregroundStyle(.red)
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 2)
@@ -147,7 +97,7 @@ struct ContentView: View {
                                 copyToPasteboard(account.username, successMessage: "用户名已复制")
                             } label: {
                                 Text("用户名: \(account.username)")
-                                    .font(.subheadline)
+                                    .font(store.textFont(size: store.scaledTextSize(15)))
                                     .foregroundStyle(.primary)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
@@ -155,10 +105,10 @@ struct ContentView: View {
                             .help("点击复制用户名")
 
                             Button {
-                                copyToPasteboard(account.sites.joined(separator: "  "), successMessage: "站点别名已复制")
+                                copyToPasteboard(account.sites.joined(separator: "\n"), successMessage: "站点别名已复制")
                             } label: {
                                 Text("站点别名: \(account.sites.joined(separator: "  "))")
-                                    .font(.caption)
+                                    .font(store.textFont(size: store.scaledTextSize(12)))
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
@@ -174,7 +124,7 @@ struct ContentView: View {
                                         copyTotpCode(code)
                                     } label: {
                                         Text("验证码: \(formattedTotpCode(code)) (剩余 \(store.totpRemainingSeconds(at: totpDisplayDate))s)")
-                                            .font(.subheadline.monospacedDigit())
+                                            .font(store.textFont(size: store.scaledTextSize(15)).monospacedDigit())
                                             .foregroundStyle(.primary)
                                             .frame(maxWidth: .infinity, alignment: .leading)
                                     }
@@ -182,7 +132,7 @@ struct ContentView: View {
                                     .help("点击复制验证码")
                                 } else {
                                     Text("验证码: TOTP 密钥无效")
-                                        .font(.caption)
+                                        .font(store.textFont(size: store.scaledTextSize(12)))
                                         .foregroundStyle(.red)
                                 }
                             }
@@ -205,7 +155,7 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(20)
+            .padding(16)
             .frame(minWidth: 1000, minHeight: 700, alignment: .topLeading)
             .onReceive(totpTimer) { value in
                 totpDisplayDate = value
@@ -256,6 +206,33 @@ struct ContentView: View {
         pasteboard.setString(value, forType: .string)
         store.statusMessage = successMessage
     }
+
+    @ViewBuilder
+    private func topActionButtonLabel(
+        _ title: String,
+        prominent: Bool,
+        tint: Color = .accentColor
+    ) -> some View {
+        let buttonSize = CGFloat(store.uiButtonFontSize)
+        let verticalPadding = max(6, buttonSize * 0.22)
+        let minHeight = max(44, buttonSize + 24)
+
+        Text(title)
+            .font(store.buttonFont(weight: .semibold))
+            .lineLimit(1)
+            .padding(.horizontal, 18)
+            .padding(.vertical, verticalPadding)
+            .frame(minHeight: minHeight)
+            .foregroundStyle(prominent ? Color.white : Color.primary)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(prominent ? tint : Color.secondary.opacity(0.14))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.secondary.opacity(0.35), lineWidth: prominent ? 0 : 1)
+            )
+    }
 }
 
 private struct RecycleBinPopup: View {
@@ -267,7 +244,7 @@ private struct RecycleBinPopup: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("回收站")
-                    .font(.headline)
+                    .font(store.textFont(size: store.scaledTextSize(17), weight: .semibold))
                 Spacer()
                 Button("关闭") {
                     onClose()
@@ -294,18 +271,19 @@ private struct RecycleBinPopup: View {
 
             if deletedAccounts.isEmpty {
                 Text("回收站为空")
+                    .font(store.textFont(size: store.scaledTextSize(17)))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 220, alignment: .center)
             } else {
                 List(deletedAccounts) { account in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(account.accountId)
-                            .font(.subheadline.weight(.semibold))
+                            .font(store.textFont(size: store.scaledTextSize(15), weight: .semibold))
                             .textSelection(.enabled)
                         Text("用户名: \(account.username)")
-                            .font(.caption)
+                            .font(store.textFont(size: store.scaledTextSize(12)))
                         Text("站点别名: \(account.sites.joined(separator: "  "))")
-                            .font(.caption2)
+                            .font(store.textFont(size: store.scaledTextSize(11)))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -350,7 +328,7 @@ private struct AccountEditPopup: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Text("网站: \(editingAccount.canonicalSite) | 用户名: \(editingAccount.username)")
-                    .font(.headline)
+                    .font(store.textFont(size: store.scaledTextSize(17), weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
@@ -372,12 +350,12 @@ private struct AccountEditPopup: View {
                             Text("站点别名")
                                 .frame(width: 80, alignment: .leading)
                             Text("（每行一个站点，共用同一套账号密码）")
-                                .font(.caption2)
+                                .font(store.textFont(size: store.scaledTextSize(11)))
                                 .foregroundStyle(.secondary)
                             Spacer()
                         }
                         TextEditor(text: $store.editSitesText)
-                            .font(.body)
+                            .font(store.textFont(size: store.scaledTextSize(17)))
                             .frame(minHeight: 84, maxHeight: 130)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 6)
@@ -410,7 +388,7 @@ private struct AccountEditPopup: View {
                         Text("恢复码")
                             .frame(width: 80, alignment: .leading)
                         TextEditor(text: $store.editRecoveryCodes)
-                            .font(.body)
+                            .font(store.textFont(size: store.scaledTextSize(17)))
                             .frame(minHeight: 84, maxHeight: 120)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 6)
@@ -422,7 +400,7 @@ private struct AccountEditPopup: View {
                         Text("备注")
                             .frame(width: 80, alignment: .leading)
                         TextEditor(text: $store.editNote)
-                            .font(.body)
+                            .font(store.textFont(size: store.scaledTextSize(17)))
                             .frame(minHeight: 100, maxHeight: 150)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 6)
@@ -434,21 +412,21 @@ private struct AccountEditPopup: View {
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("正在编辑: 网站 \(editingAccount.canonicalSite) | 用户名 \(editingAccount.username)")
-                            .font(.caption)
+                            .font(store.textFont(size: store.scaledTextSize(12)))
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         Text("创建时间: \(store.displayTime(editingAccount.createdAtMs)) | 最后更新时间: \(store.displayTime(editingAccount.updatedAtMs)) | 删除时间: \(store.displayTime(editingAccount.deletedAtMs))")
-                            .font(.caption2)
+                            .font(store.textFont(size: store.scaledTextSize(11)))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         Text("用户名更新时间: \(store.displayTime(editingAccount.usernameUpdatedAtMs)) | 密码更新时间: \(store.displayTime(editingAccount.passwordUpdatedAtMs))")
-                            .font(.caption2)
+                            .font(store.textFont(size: store.scaledTextSize(11)))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         Text("TOTP 更新时间: \(store.displayTime(editingAccount.totpUpdatedAtMs)) | 恢复码更新时间: \(store.displayTime(editingAccount.recoveryCodesUpdatedAtMs)) | 备注更新时间: \(store.displayTime(editingAccount.noteUpdatedAtMs))")
-                            .font(.caption2)
+                            .font(store.textFont(size: store.scaledTextSize(11)))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }

@@ -31,6 +31,7 @@ struct PasswordAccount: Codable, Identifiable, Hashable {
 enum AccountFactory {
     static func create(
         site: String,
+        accountIdSite: String? = nil,
         username: String,
         password: String,
         deviceName: String,
@@ -38,7 +39,9 @@ enum AccountFactory {
     ) -> PasswordAccount {
         let normalizedSite = DomainUtils.normalize(site)
         let canonicalSite = DomainUtils.etldPlusOne(for: normalizedSite)
-        let accountId = "\(canonicalSite)-\(username)-\(timestamp(createdAt))"
+        let normalizedIdSite = DomainUtils.normalize(accountIdSite ?? "")
+        let idSite = normalizedIdSite.isEmpty ? canonicalSite : normalizedIdSite
+        let accountId = "\(idSite)-\(username)-\(timestamp(createdAt))"
         let nowMs = Int64(createdAt.timeIntervalSince1970 * 1000)
         return PasswordAccount(
             id: UUID(),

@@ -1,10 +1,12 @@
+import AppKit
 import Foundation
+import SwiftUI
 
 @MainActor
 final class AccountStore: ObservableObject {
     @Published var deviceName: String = ""
     @Published var statusMessage: String = ""
-    @Published var createSite: String = ""
+    @Published var createSitesText: String = ""
     @Published var createUsername: String = ""
     @Published var createPassword: String = ""
     @Published var createTotpSecret: String = ""
@@ -19,8 +21,45 @@ final class AccountStore: ObservableObject {
     @Published var editRecoveryCodes: String = ""
     @Published var editNote: String = ""
     @Published var exportDirectoryPath: String = ""
+    @Published var uiFontFamily: String = AccountStore.systemDefaultFontFamily {
+        didSet {
+            let fallback = AccountStore.systemDefaultFontFamily
+            let normalized = uiFontFamily.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolved = (normalized == fallback || AccountStore.installedFontFamilies.contains(normalized))
+                ? normalized
+                : fallback
+            if resolved != uiFontFamily {
+                uiFontFamily = resolved
+                return
+            }
+            UserDefaults.standard.set(resolved, forKey: Keys.uiFontFamily)
+        }
+    }
+    @Published var uiTextFontSize: Double = 17 {
+        didSet {
+            let clamped = min(max(uiTextFontSize, 12), 40)
+            if clamped != uiTextFontSize {
+                uiTextFontSize = clamped
+                return
+            }
+            UserDefaults.standard.set(clamped, forKey: Keys.uiTextFontSize)
+        }
+    }
+    @Published var uiButtonFontSize: Double = 20 {
+        didSet {
+            let clamped = min(max(uiButtonFontSize, 12), 52)
+            if clamped != uiButtonFontSize {
+                uiButtonFontSize = clamped
+                return
+            }
+            UserDefaults.standard.set(clamped, forKey: Keys.uiButtonFontSize)
+        }
+    }
     @Published private(set) var cloudSyncStatus: String = "iCloud 未连接，使用本机数据"
     @Published private(set) var accounts: [PasswordAccount] = []
+
+    static let systemDefaultFontFamily = "系统默认"
+    private static let installedFontFamilies: Set<String> = Set(NSFontManager.shared.availableFontFamilies)
 
     private let decoder = JSONDecoder()
     private let encoder: JSONEncoder = {
@@ -108,15 +147,16 @@ final class AccountStore: ObservableObject {
     }
 
     func createAccountFromDraft() {
-        let site = DomainUtils.normalize(createSite)
+        let sites = parseSites(createSitesText)
+        let firstAlias = firstSiteAlias(from: createSitesText)
         let username = createUsername.trimmingCharacters(in: .whitespacesAndNewlines)
         let password = createPassword
         let totpSecret = createTotpSecret.trimmingCharacters(in: .whitespacesAndNewlines)
         let recoveryCodes = createRecoveryCodes
         let note = createNote
 
-        guard !site.isEmpty else {
-            statusMessage = "站点不能为空"
+        guard !sites.isEmpty else {
+            statusMessage = "站点别名不能为空"
             return
         }
         guard !username.isEmpty else {
@@ -128,12 +168,15 @@ final class AccountStore: ObservableObject {
             return
         }
 
+        let idSite = firstAlias.isEmpty ? sites[0] : firstAlias
         var created = AccountFactory.create(
-            site: site,
+            site: idSite,
+            accountIdSite: idSite,
             username: username,
             password: password,
             deviceName: currentDeviceName()
         )
+        created.sites = sites
         created.totpSecret = totpSecret
         created.recoveryCodes = recoveryCodes
         created.note = note
@@ -141,7 +184,7 @@ final class AccountStore: ObservableObject {
         syncAliasGroups()
         saveAccounts()
 
-        createSite = ""
+        createSitesText = ""
         createUsername = ""
         createPassword = ""
         createTotpSecret = ""
@@ -270,7 +313,7 @@ final class AccountStore: ObservableObject {
     }
 
     func suggestedCsvFileName() -> String {
-        "pass-export-\(timestampForFile()).csv"
+        "pass-all-accounts-\(timestampForFile()).csv"
     }
 
     func saveExportDirectoryPath() {
@@ -308,9 +351,9 @@ final class AccountStore: ObservableObject {
                 withIntermediateDirectories: true
             )
             try csv.write(to: fileURL, atomically: true, encoding: String.Encoding.utf8)
-            statusMessage = "CSV 导出成功: \(fileURL.path)"
+            statusMessage = "全部账号 CSV 导出成功: \(fileURL.path)"
         } catch {
-            statusMessage = "CSV 导出失败: \(error.localizedDescription)"
+            statusMessage = "全部账号 CSV 导出失败: \(error.localizedDescription)"
         }
     }
 
@@ -491,8 +534,22 @@ final class AccountStore: ObservableObject {
     }
 
     private func load() {
-        deviceName = UserDefaults.standard.string(forKey: Keys.deviceName) ?? ""
-        exportDirectoryPath = UserDefaults.standard.string(forKey: Keys.exportDirectoryPath) ?? ""
+        let defaults = UserDefaults.standard
+        deviceName = defaults.string(forKey: Keys.deviceName) ?? ""
+        exportDirectoryPath = defaults.string(forKey: Keys.exportDirectoryPath) ?? ""
+
+        let savedFontFamily = defaults.string(forKey: Keys.uiFontFamily) ?? Self.systemDefaultFontFamily
+        if savedFontFamily == Self.systemDefaultFontFamily || Self.installedFontFamilies.contains(savedFontFamily) {
+            uiFontFamily = savedFontFamily
+        } else {
+            uiFontFamily = Self.systemDefaultFontFamily
+        }
+
+        let savedTextFontSize = defaults.double(forKey: Keys.uiTextFontSize)
+        uiTextFontSize = savedTextFontSize > 0 ? savedTextFontSize : 17
+
+        let savedButtonFontSize = defaults.double(forKey: Keys.uiButtonFontSize)
+        uiButtonFontSize = savedButtonFontSize > 0 ? savedButtonFontSize : 20
 
         let fileURL = dataFileURL()
         guard let data = try? Data(contentsOf: fileURL) else {
@@ -853,6 +910,19 @@ final class AccountStore: ObservableObject {
         return Array(Set(values)).sorted()
     }
 
+    private func firstSiteAlias(from raw: String) -> String {
+        let normalizedRaw = raw.replacingOccurrences(of: ";", with: "\n")
+            .replacingOccurrences(of: ",", with: "\n")
+        let lines = normalizedRaw.components(separatedBy: .newlines)
+        for line in lines {
+            let value = DomainUtils.normalize(line)
+            if !value.isEmpty {
+                return value
+            }
+        }
+        return ""
+    }
+
     private func demoAliasSites(for site: String) -> [String] {
         let normalized = DomainUtils.normalize(site)
         let aliases: [String]
@@ -949,11 +1019,37 @@ final class AccountStore: ObservableObject {
         let trimmed = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "MacDevice" : trimmed
     }
+
+    var uiFontFamilyOptions: [String] {
+        [Self.systemDefaultFontFamily] + NSFontManager.shared.availableFontFamilies.sorted()
+    }
+
+    func textFont(size: CGFloat? = nil, weight: Font.Weight = .regular) -> Font {
+        appFont(size: size ?? CGFloat(uiTextFontSize), weight: weight)
+    }
+
+    func buttonFont(size: CGFloat? = nil, weight: Font.Weight = .semibold) -> Font {
+        appFont(size: size ?? CGFloat(uiButtonFontSize), weight: weight)
+    }
+
+    func scaledTextSize(_ base: CGFloat) -> CGFloat {
+        max(8, base + CGFloat(uiTextFontSize - 17))
+    }
+
+    private func appFont(size: CGFloat, weight: Font.Weight) -> Font {
+        if uiFontFamily == Self.systemDefaultFontFamily {
+            return .system(size: size, weight: weight)
+        }
+        return .custom(uiFontFamily, size: size).weight(weight)
+    }
 }
 
 private enum Keys {
     static let deviceName = "pass.deviceName"
     static let exportDirectoryPath = "pass.export.directoryPath"
+    static let uiFontFamily = "pass.ui.font.family"
+    static let uiTextFontSize = "pass.ui.font.textSize"
+    static let uiButtonFontSize = "pass.ui.font.buttonSize"
 }
 
 private enum ICloudKeys {

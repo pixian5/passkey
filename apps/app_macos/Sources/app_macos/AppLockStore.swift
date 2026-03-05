@@ -13,7 +13,7 @@ enum AppLockPolicy: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .onceUntilQuit:
-            return "解锁一次到关闭前"
+            return "退出前不锁定"
         case .idleTimeout:
             return "几分钟无操作后锁定"
         case .onBackground:
