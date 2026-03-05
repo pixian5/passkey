@@ -65,13 +65,6 @@ struct ContentView: View {
                     }
                 }
 
-                if !store.statusMessage.isEmpty {
-                    Text(store.statusMessage)
-                        .font(store.textFont(size: store.scaledTextSize(12)))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
                 if accounts.isEmpty {
                     Text("暂无账号")
                         .foregroundStyle(.secondary)
@@ -141,11 +134,13 @@ struct ContentView: View {
                                 Button("编辑") {
                                     store.beginEditing(account)
                                 }
+                                .font(store.buttonFont())
                                 .buttonStyle(.bordered)
 
                                 Button("删除账号") {
                                     store.moveToRecycleBin(for: account)
                                 }
+                                .font(store.buttonFont())
                                 .buttonStyle(.bordered)
                             }
                         }
@@ -249,6 +244,7 @@ private struct RecycleBinPopup: View {
                 Button("关闭") {
                     onClose()
                 }
+                .font(store.buttonFont())
                 .buttonStyle(.bordered)
             }
 
@@ -256,12 +252,14 @@ private struct RecycleBinPopup: View {
                 Button("全部恢复") {
                     store.restoreAllFromRecycleBin()
                 }
+                .font(store.buttonFont())
                 .buttonStyle(.bordered)
                 .disabled(deletedAccounts.isEmpty)
 
                 Button("全部永久删除") {
                     store.permanentlyDeleteAllFromRecycleBin()
                 }
+                .font(store.buttonFont())
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
                 .disabled(deletedAccounts.isEmpty)
@@ -292,11 +290,13 @@ private struct RecycleBinPopup: View {
                             Button("恢复账号") {
                                 store.restoreFromRecycleBin(for: account)
                             }
+                            .font(store.buttonFont())
                             .buttonStyle(.bordered)
 
                             Button("永久删除") {
                                 store.permanentlyDeleteFromRecycleBin(account)
                             }
+                            .font(store.buttonFont())
                             .buttonStyle(.borderedProminent)
                             .tint(.red)
                         }
@@ -335,25 +335,22 @@ private struct AccountEditPopup: View {
                 Button("保存编辑") {
                     store.saveEditing()
                 }
+                .font(store.buttonFont())
                 .buttonStyle(.borderedProminent)
 
                 Button("取消编辑") {
                     store.cancelEditing()
                 }
+                .font(store.buttonFont())
                 .buttonStyle(.bordered)
             }
 
             ScrollView {
                 VStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 6) {
-                            Text("站点别名")
-                                .frame(width: 80, alignment: .leading)
-                            Text("（每行一个站点，共用同一套账号密码）")
-                                .font(store.textFont(size: store.scaledTextSize(11)))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                        }
+                        Text("站点别名（每行一个站点，共用同一套账号密码）")
+                            .font(store.textFont(size: store.scaledTextSize(11)))
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         TextEditor(text: $store.editSitesText)
                             .font(store.textFont(size: store.scaledTextSize(17)))
                             .frame(minHeight: 84, maxHeight: 130)

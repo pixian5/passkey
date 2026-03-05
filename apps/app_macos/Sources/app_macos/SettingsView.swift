@@ -20,6 +20,7 @@ struct SettingsView: View {
                 Button("保存") {
                     store.saveDeviceName()
                 }
+                .font(store.buttonFont())
                 .buttonStyle(.borderedProminent)
             }
 
@@ -58,6 +59,15 @@ struct SettingsView: View {
                             .frame(width: 40, alignment: .trailing)
                             .monospacedDigit()
                     }
+
+                    HStack(spacing: 8) {
+                        Text("提示时长")
+                            .frame(width: 80, alignment: .leading)
+                        Slider(value: $store.uiToastDurationSeconds, in: 1 ... 10, step: 0.5)
+                        Text("\(store.uiToastDurationSeconds, specifier: "%.1f")s")
+                            .frame(width: 58, alignment: .trailing)
+                            .monospacedDigit()
+                    }
                 }
                 .padding(.top, 2)
             }
@@ -72,6 +82,7 @@ struct SettingsView: View {
                     Button("立即同步 iCloud") {
                         store.syncWithICloudNow()
                     }
+                    .font(store.buttonFont())
                     .buttonStyle(.bordered)
                 }
                 .padding(.top, 2)
@@ -90,6 +101,7 @@ struct SettingsView: View {
                         Button("导出全部账号 CSV") {
                             exportCsvWithDirectoryRule()
                         }
+                        .font(store.buttonFont())
                         .buttonStyle(.bordered)
                     }
                 }
@@ -137,6 +149,7 @@ struct SettingsView: View {
                                     disableUnlockPassword = ""
                                 }
                             }
+                            .font(store.buttonFont())
                             .buttonStyle(.bordered)
                         }
                     } else {
@@ -164,6 +177,7 @@ struct SettingsView: View {
                                 confirmMasterPassword = ""
                             }
                         }
+                        .font(store.buttonFont())
                         .buttonStyle(.borderedProminent)
                     }
 
@@ -175,10 +189,6 @@ struct SettingsView: View {
                 }
                 .padding(.top, 2)
             }
-
-            Text(store.statusMessage)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
         }
         .padding(16)
         .frame(

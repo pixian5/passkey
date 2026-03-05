@@ -9,6 +9,7 @@ struct PassMacApp: App {
         WindowGroup {
             AppLockGateView(store: store, appLock: appLock)
                 .font(store.textFont())
+                .appToast(store)
         }
         .commands {
             PassMacSettingsCommands()
@@ -17,6 +18,7 @@ struct PassMacApp: App {
         Window("设置", id: "settings") {
             SettingsView(store: store, appLock: appLock)
                 .font(store.textFont())
+                .appToast(store)
         }
         .defaultSize(width: 860, height: 620)
         .windowResizability(.automatic)
@@ -24,6 +26,7 @@ struct PassMacApp: App {
         Window("新建账号", id: "create-account") {
             CreateAccountWindowView(store: store)
                 .font(store.textFont())
+                .appToast(store)
         }
         .defaultSize(width: 760, height: 760)
         .windowResizability(.automatic)

@@ -5,7 +5,13 @@ import SwiftUI
 @MainActor
 final class AccountStore: ObservableObject {
     @Published var deviceName: String = ""
-    @Published var statusMessage: String = ""
+    @Published var statusMessage: String = "" {
+        didSet {
+            let message = statusMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !message.isEmpty else { return }
+            showToast(message)
+        }
+    }
     @Published var createSitesText: String = ""
     @Published var createUsername: String = ""
     @Published var createPassword: String = ""
@@ -35,7 +41,7 @@ final class AccountStore: ObservableObject {
             UserDefaults.standard.set(resolved, forKey: Keys.uiFontFamily)
         }
     }
-    @Published var uiTextFontSize: Double = 17 {
+    @Published var uiTextFontSize: Double = 20 {
         didSet {
             let clamped = min(max(uiTextFontSize, 12), 40)
             if clamped != uiTextFontSize {
@@ -55,6 +61,22 @@ final class AccountStore: ObservableObject {
             UserDefaults.standard.set(clamped, forKey: Keys.uiButtonFontSize)
         }
     }
+    @Published var uiToastDurationSeconds: Double = 3 {
+        didSet {
+            let clamped = min(max(uiToastDurationSeconds, 1), 10)
+            if clamped != uiToastDurationSeconds {
+                uiToastDurationSeconds = clamped
+                return
+            }
+            UserDefaults.standard.set(clamped, forKey: Keys.uiToastDurationSeconds)
+        }
+    }
+    @Published private(set) var toastMessage: String = ""
+    @Published private(set) var isToastVisible: Bool = false
+    @Published private(set) var folders: [AccountFolder] = []
+    @Published private(set) var undoMoveToastMessage: String = ""
+    @Published private(set) var isUndoMoveToastVisible: Bool = false
+    @Published private(set) var selectAllAccountsSignal: Int = 0
     @Published private(set) var cloudSyncStatus: String = "iCloud 未连接，使用本机数据"
     @Published private(set) var accounts: [PasswordAccount] = []
 
@@ -73,8 +95,17 @@ final class AccountStore: ObservableObject {
         formatter.dateFormat = "yy-M-d H:m:s"
         return formatter
     }()
+    private var toastDismissWorkItem: DispatchWorkItem?
+    private var undoMoveDismissWorkItem: DispatchWorkItem?
+    private var lastMoveOperation: FolderMoveOperation?
     private var cloudObserver: NSObjectProtocol?
     private var suppressCloudPush: Bool = false
+
+    private struct FolderMoveOperation {
+        let accountIds: [UUID]
+        let previousFolderByAccountId: [UUID: UUID?]
+        let targetFolderId: UUID
+    }
 
     init() {
         load()
@@ -546,10 +577,13 @@ final class AccountStore: ObservableObject {
         }
 
         let savedTextFontSize = defaults.double(forKey: Keys.uiTextFontSize)
-        uiTextFontSize = savedTextFontSize > 0 ? savedTextFontSize : 17
+        uiTextFontSize = savedTextFontSize > 0 ? savedTextFontSize : 20
 
         let savedButtonFontSize = defaults.double(forKey: Keys.uiButtonFontSize)
         uiButtonFontSize = savedButtonFontSize > 0 ? savedButtonFontSize : 20
+
+        let savedToastDuration = defaults.double(forKey: Keys.uiToastDurationSeconds)
+        uiToastDurationSeconds = savedToastDuration > 0 ? savedToastDuration : 3
 
         let fileURL = dataFileURL()
         guard let data = try? Data(contentsOf: fileURL) else {
@@ -1020,6 +1054,24 @@ final class AccountStore: ObservableObject {
         return trimmed.isEmpty ? "MacDevice" : trimmed
     }
 
+    private func showToast(_ message: String) {
+        toastDismissWorkItem?.cancel()
+        toastMessage = message
+        isToastVisible = true
+
+        let dismissWorkItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                self.isToastVisible = false
+            }
+        }
+        toastDismissWorkItem = dismissWorkItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + uiToastDurationSeconds,
+            execute: dismissWorkItem
+        )
+    }
+
     var uiFontFamilyOptions: [String] {
         [Self.systemDefaultFontFamily] + NSFontManager.shared.availableFontFamilies.sorted()
     }
@@ -1050,6 +1102,7 @@ private enum Keys {
     static let uiFontFamily = "pass.ui.font.family"
     static let uiTextFontSize = "pass.ui.font.textSize"
     static let uiButtonFontSize = "pass.ui.font.buttonSize"
+    static let uiToastDurationSeconds = "pass.ui.toast.duration"
 }
 
 private enum ICloudKeys {

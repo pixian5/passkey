@@ -12,14 +12,8 @@ struct CreateAccountWindowView: View {
             ScrollView {
                 VStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 6) {
-                            Text("站点别名")
-                                .frame(width: 80, alignment: .leading)
-                            Text("（每行一个）")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                        }
+                        Text("站点别名（每行一个）")
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         TextEditor(text: $store.createSitesText)
                             .font(.body)
                             .frame(minHeight: 88, maxHeight: 130)
@@ -115,10 +109,6 @@ struct CreateAccountWindowView: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
 
-            Text(store.statusMessage)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
         }
         .padding(16)
         .frame(minWidth: 700, minHeight: 700, alignment: .topLeading)

@@ -5,6 +5,7 @@ struct PasswordAccount: Codable, Identifiable, Hashable {
     let accountId: String
     let canonicalSite: String
     let usernameAtCreate: String
+    var folderId: UUID?
     var sites: [String]
     var username: String
     var password: String
@@ -48,6 +49,7 @@ enum AccountFactory {
             accountId: accountId,
             canonicalSite: canonicalSite,
             usernameAtCreate: username,
+            folderId: nil,
             sites: [normalizedSite].sorted(),
             username: username,
             password: password,
@@ -73,4 +75,10 @@ enum AccountFactory {
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         return formatter.string(from: date)
     }
+}
+
+struct AccountFolder: Codable, Identifiable, Hashable {
+    let id: UUID
+    var name: String
+    let createdAtMs: Int64
 }

@@ -58,12 +58,14 @@ struct AppLockGateView: View {
                 Button("解锁") {
                     appLock.unlockWithPassword()
                 }
+                .font(store.buttonFont())
                 .buttonStyle(.borderedProminent)
 
                 if appLock.preferBiometrics {
                     Button("使用指纹解锁") {
                         appLock.tryBiometricUnlock()
                     }
+                    .font(store.buttonFont())
                     .buttonStyle(.bordered)
                 }
             }
