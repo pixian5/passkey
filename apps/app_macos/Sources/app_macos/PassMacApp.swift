@@ -12,5 +12,6 @@ struct PassMacApp: App {
         Settings {
             SettingsView(store: store, appLock: appLock)
         }
+        .windowResizability(.automatic)
     }
 }

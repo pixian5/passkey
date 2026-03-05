@@ -38,7 +38,7 @@ enum AccountFactory {
     ) -> PasswordAccount {
         let normalizedSite = DomainUtils.normalize(site)
         let canonicalSite = DomainUtils.etldPlusOne(for: normalizedSite)
-        let accountId = "\(canonicalSite)\(timestamp(createdAt))\(username)"
+        let accountId = "\(canonicalSite)-\(username)-\(timestamp(createdAt))"
         let nowMs = Int64(createdAt.timeIntervalSince1970 * 1000)
         return PasswordAccount(
             id: UUID(),

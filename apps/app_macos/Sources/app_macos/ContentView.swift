@@ -4,11 +4,13 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var store: AccountStore
     @State private var isCreateSectionExpanded: Bool = false
+    @State private var showRecycleBinPopup: Bool = false
     @State private var totpDisplayDate: Date = Date()
     private let totpTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        let accounts = store.filteredAccounts()
+        let accounts = store.activeAccounts()
+        let deletedAccounts = store.accounts.filter(\.isDeleted)
         let editingAccount = store.accountForEditing()
 
         return ZStack {
@@ -58,11 +60,16 @@ struct ContentView: View {
                                 TextField("TOTP 种子密钥", text: $store.createTotpSecret)
                                     .textFieldStyle(.roundedBorder)
                             }
-                            HStack {
+                            VStack(alignment: .leading, spacing: 6) {
                                 Text("恢复码")
                                     .frame(width: 80, alignment: .leading)
-                                TextField("恢复代码", text: $store.createRecoveryCodes)
-                                    .textFieldStyle(.roundedBorder)
+                                TextEditor(text: $store.createRecoveryCodes)
+                                    .font(.body)
+                                    .frame(minHeight: 74, maxHeight: 110)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(Color.secondary.opacity(0.22), lineWidth: 1)
+                                    )
                             }
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("备注")
@@ -85,20 +92,26 @@ struct ContentView: View {
                                     store.addDemoAccountsIfNeeded()
                                 }
                                 .buttonStyle(.bordered)
-
-                                Button("导出 CSV") {
-                                    store.exportCsv()
-                                }
-                                .buttonStyle(.bordered)
                             }
                         }
                         .padding(.top, 4)
                     }
 
                     HStack {
+                        Button("删除全部账号") {
+                            store.deleteAllAccounts()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
+                        .disabled(accounts.isEmpty)
+
+                        Button("回收站 (\(deletedAccounts.count))") {
+                            store.cancelEditing()
+                            showRecycleBinPopup = true
+                        }
+                        .buttonStyle(.bordered)
+
                         Spacer()
-                        Toggle("回收站视图", isOn: $store.showDeletedAccounts)
-                            .toggleStyle(.switch)
                     }
                 }
 
@@ -110,7 +123,7 @@ struct ContentView: View {
                 Divider()
 
                 if accounts.isEmpty {
-                    Text(store.showDeletedAccounts ? "回收站为空" : "暂无账号")
+                    Text("暂无账号")
                         .foregroundStyle(.secondary)
                 } else {
                     List(accounts) { account in
@@ -142,11 +155,13 @@ struct ContentView: View {
                             .help("点击复制用户名")
 
                             Button {
-                                copyToPasteboard(account.sites.joined(separator: "\n"), successMessage: "站点别名已复制")
+                                copyToPasteboard(account.sites.joined(separator: "  "), successMessage: "站点别名已复制")
                             } label: {
-                                Text("站点别名:\n\(account.sites.joined(separator: "\n"))")
+                                Text("站点别名: \(account.sites.joined(separator: "  "))")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .buttonStyle(.plain)
@@ -173,28 +188,15 @@ struct ContentView: View {
                             }
 
                             HStack(spacing: 8) {
-                                if store.showDeletedAccounts {
-                                    Button("恢复账号") {
-                                        store.restoreFromRecycleBin(for: account)
-                                    }
-                                    .buttonStyle(.bordered)
-
-                                    Button("永久删除") {
-                                        store.permanentlyDeleteFromRecycleBin(account)
-                                    }
-                                    .buttonStyle(.borderedProminent)
-                                    .tint(.red)
-                                } else {
-                                    Button("编辑") {
-                                        store.beginEditing(account)
-                                    }
-                                    .buttonStyle(.bordered)
-
-                                    Button("删除账号") {
-                                        store.moveToRecycleBin(for: account)
-                                    }
-                                    .buttonStyle(.bordered)
+                                Button("编辑") {
+                                    store.beginEditing(account)
                                 }
+                                .buttonStyle(.bordered)
+
+                                Button("删除账号") {
+                                    store.moveToRecycleBin(for: account)
+                                }
+                                .buttonStyle(.bordered)
                             }
                         }
                         .padding(.vertical, 4)
@@ -205,16 +207,11 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(20)
             .frame(minWidth: 1000, minHeight: 700, alignment: .topLeading)
-            .onChange(of: store.showDeletedAccounts) { newValue in
-                if newValue {
-                    store.cancelEditing()
-                }
-            }
             .onReceive(totpTimer) { value in
                 totpDisplayDate = value
             }
 
-            if let editingAccount, !store.showDeletedAccounts {
+            if let editingAccount, !showRecycleBinPopup {
                 Color.black.opacity(0.16)
                     .ignoresSafeArea()
                     .onTapGesture {
@@ -222,8 +219,22 @@ struct ContentView: View {
                     }
 
                 AccountEditPopup(store: store, editingAccount: editingAccount)
-                    .onTapGesture { }
                     .padding(26)
+            }
+
+            if showRecycleBinPopup {
+                Color.black.opacity(0.16)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        showRecycleBinPopup = false
+                    }
+
+                RecycleBinPopup(
+                    store: store,
+                    deletedAccounts: deletedAccounts,
+                    onClose: { showRecycleBinPopup = false }
+                )
+                .padding(26)
             }
         }
     }
@@ -244,6 +255,90 @@ struct ContentView: View {
         pasteboard.clearContents()
         pasteboard.setString(value, forType: .string)
         store.statusMessage = successMessage
+    }
+}
+
+private struct RecycleBinPopup: View {
+    @ObservedObject var store: AccountStore
+    let deletedAccounts: [PasswordAccount]
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("回收站")
+                    .font(.headline)
+                Spacer()
+                Button("关闭") {
+                    onClose()
+                }
+                .buttonStyle(.bordered)
+            }
+
+            HStack(spacing: 8) {
+                Button("全部恢复") {
+                    store.restoreAllFromRecycleBin()
+                }
+                .buttonStyle(.bordered)
+                .disabled(deletedAccounts.isEmpty)
+
+                Button("全部永久删除") {
+                    store.permanentlyDeleteAllFromRecycleBin()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .disabled(deletedAccounts.isEmpty)
+
+                Spacer()
+            }
+
+            if deletedAccounts.isEmpty {
+                Text("回收站为空")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 220, alignment: .center)
+            } else {
+                List(deletedAccounts) { account in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(account.accountId)
+                            .font(.subheadline.weight(.semibold))
+                            .textSelection(.enabled)
+                        Text("用户名: \(account.username)")
+                            .font(.caption)
+                        Text("站点别名: \(account.sites.joined(separator: "  "))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
+                        HStack(spacing: 8) {
+                            Button("恢复账号") {
+                                store.restoreFromRecycleBin(for: account)
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("永久删除") {
+                                store.permanentlyDeleteFromRecycleBin(account)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .listStyle(.inset(alternatesRowBackgrounds: true))
+                .frame(minHeight: 300)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: 860)
+        .frame(minWidth: 760, minHeight: 460, alignment: .topLeading)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+        }
+        .shadow(radius: 18)
     }
 }
 
@@ -311,11 +406,16 @@ private struct AccountEditPopup: View {
                             .textFieldStyle(.roundedBorder)
                     }
 
-                    HStack {
+                    VStack(alignment: .leading, spacing: 6) {
                         Text("恢复码")
                             .frame(width: 80, alignment: .leading)
-                        TextField("恢复代码", text: $store.editRecoveryCodes)
-                            .textFieldStyle(.roundedBorder)
+                        TextEditor(text: $store.editRecoveryCodes)
+                            .font(.body)
+                            .frame(minHeight: 84, maxHeight: 120)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.secondary.opacity(0.22), lineWidth: 1)
+                            )
                     }
 
                     VStack(alignment: .leading, spacing: 6) {
@@ -335,7 +435,6 @@ private struct AccountEditPopup: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("正在编辑: 网站 \(editingAccount.canonicalSite) | 用户名 \(editingAccount.username)")
                             .font(.caption)
-                            .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         Text("创建时间: \(store.displayTime(editingAccount.createdAtMs)) | 最后更新时间: \(store.displayTime(editingAccount.updatedAtMs)) | 删除时间: \(store.displayTime(editingAccount.deletedAtMs))")
@@ -352,12 +451,8 @@ private struct AccountEditPopup: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
-
-                        Text("不可编辑: accountId/canonicalSite/usernameAtCreate/createdAt")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .textSelection(.enabled)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }

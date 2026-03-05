@@ -76,8 +76,8 @@ final class AppLockStore: ObservableObject {
         let password = newPassword.trimmingCharacters(in: .whitespacesAndNewlines)
         let confirm = confirmPassword.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard password.count >= 4 else {
-            settingsMessage = "主密码至少需要 4 位"
+        guard !password.isEmpty else {
+            settingsMessage = "主密码不能为空"
             return
         }
         guard password == confirm else {

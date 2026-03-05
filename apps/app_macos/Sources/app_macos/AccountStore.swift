@@ -18,11 +18,16 @@ final class AccountStore: ObservableObject {
     @Published var editTotpSecret: String = ""
     @Published var editRecoveryCodes: String = ""
     @Published var editNote: String = ""
+    @Published var exportDirectoryPath: String = ""
     @Published private(set) var cloudSyncStatus: String = "iCloud 未连接，使用本机数据"
     @Published private(set) var accounts: [PasswordAccount] = []
 
     private let decoder = JSONDecoder()
-    private let encoder = JSONEncoder()
+    private let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return encoder
+    }()
     private let cloudStore = NSUbiquitousKeyValueStore.default
     private let displayFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -56,23 +61,50 @@ final class AccountStore: ObservableObject {
         }
 
         let safeDeviceName = currentDeviceName()
-        let samples = [
-            AccountFactory.create(
-                site: "icloud.com",
-                username: "alice@icloud.com",
-                password: "demo-icloud-pass",
-                deviceName: safeDeviceName
-            ),
-            AccountFactory.create(
-                site: "qq.com",
-                username: "demo@qq.com",
-                password: "demo-qq-pass",
-                deviceName: safeDeviceName
-            ),
+        let seeds: [(site: String, username: String, password: String)] = [
+            ("icloud.com", "alice@icloud.com", "demo-pass-001"),
+            ("apple.com", "bob@apple.com", "demo-pass-002"),
+            ("qq.com", "demo@qq.com", "demo-pass-003"),
+            ("wx.qq.com", "wechat@qq.com", "demo-pass-004"),
+            ("baidu.com", "user01@baidu.com", "demo-pass-005"),
+            ("sina.com", "user02@sina.com", "demo-pass-006"),
+            ("github.com", "dev01@github.com", "demo-pass-007"),
+            ("gitlab.com", "dev02@gitlab.com", "demo-pass-008"),
+            ("google.com", "user03@gmail.com", "demo-pass-009"),
+            ("youtube.com", "user04@gmail.com", "demo-pass-010"),
+            ("x.com", "user05@x.com", "demo-pass-011"),
+            ("facebook.com", "user06@fb.com", "demo-pass-012"),
+            ("amazon.com", "user07@amazon.com", "demo-pass-013"),
+            ("paypal.com", "user08@paypal.com", "demo-pass-014"),
+            ("microsoft.com", "user09@outlook.com", "demo-pass-015"),
+            ("office.com", "user10@outlook.com", "demo-pass-016"),
+            ("netflix.com", "user11@netflix.com", "demo-pass-017"),
+            ("spotify.com", "user12@spotify.com", "demo-pass-018"),
+            ("linkedin.com", "user13@linkedin.com", "demo-pass-019"),
+            ("dropbox.com", "user14@dropbox.com", "demo-pass-020"),
         ]
+
+        let samples = seeds.enumerated().map { index, seed in
+            var account = AccountFactory.create(
+                site: seed.site,
+                username: seed.username,
+                password: seed.password,
+                deviceName: safeDeviceName
+            )
+            account.sites = demoAliasSites(for: seed.site)
+            account.totpSecret = demoTotpSecret(for: index)
+            account.recoveryCodes = demoRecoveryCodes(for: index + 1)
+            account.note = """
+            示例账号 #\(index + 1)
+            设备: \(safeDeviceName)
+            用于演示同步、编辑与回收站功能
+            """
+            return account
+        }
         accounts.append(contentsOf: samples)
+        syncAliasGroups()
         saveAccounts()
-        statusMessage = "已生成演示账号 2 条"
+        statusMessage = "已生成演示账号 20 条（含 TOTP/恢复码/备注/站点别名）"
     }
 
     func createAccountFromDraft() {
@@ -184,10 +216,106 @@ final class AccountStore: ObservableObject {
         }
     }
 
-    func exportCsv() {
-        let fileName = "pass-export-\(timestampForFile()).csv"
-        let fileURL = dataDirectoryURL().appendingPathComponent(fileName, isDirectory: false)
+    func restoreAllFromRecycleBin() {
+        let deletedIndexes = accounts.indices.filter { accounts[$0].isDeleted }
+        guard !deletedIndexes.isEmpty else {
+            statusMessage = "回收站为空"
+            return
+        }
 
+        let now = nowMs()
+        let device = currentDeviceName()
+        for index in deletedIndexes {
+            accounts[index].isDeleted = false
+            accounts[index].deletedAtMs = nil
+            accounts[index].touchUpdatedAt(now, deviceName: device)
+        }
+        saveAccounts()
+        statusMessage = "已恢复 \(deletedIndexes.count) 个账号"
+    }
+
+    func permanentlyDeleteAllFromRecycleBin() {
+        let deletedCount = accounts.filter(\.isDeleted).count
+        guard deletedCount > 0 else {
+            statusMessage = "回收站为空"
+            return
+        }
+
+        let deletedIds = Set(accounts.filter(\.isDeleted).map(\.id))
+        accounts.removeAll(where: \.isDeleted)
+        if let editingAccountId, deletedIds.contains(editingAccountId) {
+            cancelEditing()
+        }
+        saveAccounts()
+        statusMessage = "已永久删除 \(deletedCount) 个账号"
+    }
+
+    func deleteAllAccounts() {
+        let activeIndexes = accounts.indices.filter { !accounts[$0].isDeleted }
+        guard !activeIndexes.isEmpty else {
+            statusMessage = "暂无可删除账号"
+            return
+        }
+
+        let now = nowMs()
+        let device = currentDeviceName()
+        for index in activeIndexes {
+            accounts[index].isDeleted = true
+            accounts[index].deletedAtMs = now
+            accounts[index].touchUpdatedAt(now, deviceName: device)
+        }
+        cancelEditing()
+        saveAccounts()
+        statusMessage = "已将全部账号移入回收站 \(activeIndexes.count) 条"
+    }
+
+    func suggestedCsvFileName() -> String {
+        "pass-export-\(timestampForFile()).csv"
+    }
+
+    func saveExportDirectoryPath() {
+        let normalized = exportDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        exportDirectoryPath = normalized
+        UserDefaults.standard.set(normalized, forKey: Keys.exportDirectoryPath)
+    }
+
+    func configuredExportDirectoryURL() -> URL? {
+        let raw = exportDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+
+        let expandedPath = (raw as NSString).expandingTildeInPath
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: expandedPath, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else {
+            return nil
+        }
+        return URL(fileURLWithPath: expandedPath, isDirectory: true)
+    }
+
+    func exportCsv() {
+        let fileURL = dataDirectoryURL().appendingPathComponent(suggestedCsvFileName(), isDirectory: false)
+        exportCsv(to: fileURL)
+    }
+
+    func exportCsv(to fileURL: URL) {
+        let csv = buildCsvContent()
+        let parentDirectory = fileURL.deletingLastPathComponent()
+
+        do {
+            try FileManager.default.createDirectory(
+                at: parentDirectory,
+                withIntermediateDirectories: true
+            )
+            try csv.write(to: fileURL, atomically: true, encoding: String.Encoding.utf8)
+            statusMessage = "CSV 导出成功: \(fileURL.path)"
+        } catch {
+            statusMessage = "CSV 导出失败: \(error.localizedDescription)"
+        }
+    }
+
+    private func buildCsvContent() -> String {
+        
         let header = [
             "account_id",
             "sites",
@@ -233,23 +361,12 @@ final class AccountStore: ObservableObject {
             return escaped.joined(separator: ",")
         }
 
-        let csv = ([header] + rows).joined(separator: "\n")
-
-        do {
-            try FileManager.default.createDirectory(
-                at: dataDirectoryURL(),
-                withIntermediateDirectories: true
-            )
-            try csv.write(to: fileURL, atomically: true, encoding: String.Encoding.utf8)
-            statusMessage = "CSV 导出成功: \(fileURL.path)"
-        } catch {
-            statusMessage = "CSV 导出失败: \(error.localizedDescription)"
-        }
+        return ([header] + rows).joined(separator: "\n")
     }
 
     func beginEditing(_ account: PasswordAccount) {
         editingAccountId = account.id
-        editSitesText = account.sites.joined(separator: ";")
+        editSitesText = account.sites.joined(separator: "\n")
         editUsername = account.username
         editPassword = account.password
         editTotpSecret = account.totpSecret
@@ -375,6 +492,7 @@ final class AccountStore: ObservableObject {
 
     private func load() {
         deviceName = UserDefaults.standard.string(forKey: Keys.deviceName) ?? ""
+        exportDirectoryPath = UserDefaults.standard.string(forKey: Keys.exportDirectoryPath) ?? ""
 
         let fileURL = dataFileURL()
         guard let data = try? Data(contentsOf: fileURL) else {
@@ -735,6 +853,79 @@ final class AccountStore: ObservableObject {
         return Array(Set(values)).sorted()
     }
 
+    private func demoAliasSites(for site: String) -> [String] {
+        let normalized = DomainUtils.normalize(site)
+        let aliases: [String]
+        switch normalized {
+        case "icloud.com", "apple.com":
+            aliases = ["apple.com", "apple.com.cn", "icloud.com", "icloud.com.cn"]
+        case "qq.com", "wx.qq.com":
+            aliases = ["qq.com", "wx.qq.com"]
+        case "baidu.com":
+            aliases = ["baidu.com", "passport.baidu.com", "pan.baidu.com"]
+        case "sina.com":
+            aliases = ["sina.com", "mail.sina.com", "weibo.com"]
+        case "github.com":
+            aliases = ["github.com", "gist.github.com"]
+        case "gitlab.com":
+            aliases = ["gitlab.com", "about.gitlab.com"]
+        case "google.com":
+            aliases = ["google.com", "accounts.google.com"]
+        case "youtube.com":
+            aliases = ["youtube.com", "studio.youtube.com"]
+        case "x.com":
+            aliases = ["x.com", "twitter.com"]
+        case "facebook.com":
+            aliases = ["facebook.com", "messenger.com"]
+        case "amazon.com":
+            aliases = ["amazon.com", "smile.amazon.com"]
+        case "paypal.com":
+            aliases = ["paypal.com", "www.paypal.com"]
+        case "microsoft.com":
+            aliases = ["microsoft.com", "live.com", "login.microsoftonline.com"]
+        case "office.com":
+            aliases = ["office.com", "outlook.office.com"]
+        case "netflix.com":
+            aliases = ["netflix.com", "help.netflix.com"]
+        case "spotify.com":
+            aliases = ["spotify.com", "open.spotify.com"]
+        case "linkedin.com":
+            aliases = ["linkedin.com", "www.linkedin.com"]
+        case "dropbox.com":
+            aliases = ["dropbox.com", "www.dropbox.com"]
+        default:
+            aliases = [normalized]
+        }
+        return Array(Set(aliases.map(DomainUtils.normalize).filter { !$0.isEmpty })).sorted()
+    }
+
+    private func demoTotpSecret(for index: Int) -> String {
+        let seeds = [
+            "JBSWY3DPEHPK3PXP",
+            "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+            "KRUGS4ZANFZSAYJA",
+            "MFRGGZDFMZTWQ2LK",
+            "ONSWG4TFOQ======",
+            "NBSWY3DPEB3W64TMMQ======",
+            "J5XW4Z3FOI======",
+            "KRSXG5DSNFXGOIDB",
+            "MZXW6YTBOI======",
+            "NB2W45DFOIZA====",
+        ]
+        return seeds[index % seeds.count]
+    }
+
+    private func demoRecoveryCodes(for index: Int) -> String {
+        let prefix = String(format: "%02d", index)
+        return """
+        RC\(prefix)-A1B2-C3D4
+        RC\(prefix)-E5F6-G7H8
+        RC\(prefix)-J9K0-L1M2
+        RC\(prefix)-N3P4-Q5R6
+        RC\(prefix)-S7T8-U9V0
+        """
+    }
+
     private func timestampForFile() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
@@ -762,6 +953,7 @@ final class AccountStore: ObservableObject {
 
 private enum Keys {
     static let deviceName = "pass.deviceName"
+    static let exportDirectoryPath = "pass.export.directoryPath"
 }
 
 private enum ICloudKeys {

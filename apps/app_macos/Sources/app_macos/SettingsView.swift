@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -36,6 +37,25 @@ struct SettingsView: View {
                         store.syncWithICloudNow()
                     }
                     .buttonStyle(.bordered)
+                }
+                .padding(.top, 2)
+            }
+
+            GroupBox("数据导出") {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text("导出账号目录")
+                            .frame(width: 80, alignment: .leading)
+                        TextField("为空时点击导出后选择目录", text: $store.exportDirectoryPath)
+                            .textFieldStyle(.roundedBorder)
+                            .onChange(of: store.exportDirectoryPath) { _ in
+                                store.saveExportDirectoryPath()
+                            }
+                        Button("导出 CSV") {
+                            exportCsvWithDirectoryRule()
+                        }
+                        .buttonStyle(.bordered)
+                    }
                 }
                 .padding(.top, 2)
             }
@@ -125,6 +145,46 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(16)
-        .frame(minWidth: 640, minHeight: 340, alignment: .topLeading)
+        .frame(
+            minWidth: 760,
+            maxWidth: .infinity,
+            minHeight: 520,
+            maxHeight: .infinity,
+            alignment: .topLeading
+        )
+    }
+
+    private func exportCsvWithDirectoryRule() {
+        if let directoryURL = store.configuredExportDirectoryURL() {
+            store.saveExportDirectoryPath()
+            let fileURL = directoryURL.appendingPathComponent(store.suggestedCsvFileName(), isDirectory: false)
+            store.exportCsv(to: fileURL)
+            return
+        }
+
+        if !store.exportDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            store.statusMessage = "导出目录不存在，改为手动选择目录"
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = "选择导出目录"
+        panel.message = "请选择 CSV 导出目录"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "选择"
+
+        guard panel.runModal() == .OK, let selectedDirectory = panel.url else {
+            if store.statusMessage.isEmpty {
+                store.statusMessage = "已取消导出"
+            }
+            return
+        }
+
+        store.exportDirectoryPath = selectedDirectory.path
+        store.saveExportDirectoryPath()
+        let fileURL = selectedDirectory.appendingPathComponent(store.suggestedCsvFileName(), isDirectory: false)
+        store.exportCsv(to: fileURL)
     }
 }
