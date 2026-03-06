@@ -290,7 +290,9 @@ async function handleWebAuthnBridgeRequest(requestId, payload) {
       if (payload?.operation === "create") {
         const createMode = String(response?.result?.createMode || "").toLowerCase();
         const compatLabel = formatPasskeyCreateCompatToastLabel(response?.result?.createCompatMethod);
-        if (createMode === "existing") {
+        if (createMode === "replaced") {
+          showPassPageToast(`Pass 已更新通行密钥${compatLabel ? `（${compatLabel}）` : ""}`);
+        } else if (createMode === "existing") {
           showPassPageToast(`Pass 已存在同账号通行密钥，已复用${compatLabel ? `（${compatLabel}）` : ""}`);
         } else {
           showPassPageToast(`Pass 已保存通行密钥${compatLabel ? `（${compatLabel}）` : ""}`);

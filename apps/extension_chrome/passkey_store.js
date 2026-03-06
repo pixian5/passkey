@@ -69,11 +69,12 @@ async function createManagedCredential({ origin, host, publicKey }) {
   let userName = rawUserName;
   const displayNameRaw = String(publicKey?.user?.displayName || "").trim();
   const usedUserNameFallback = !rawUserName;
+  const userHandleB64u = bytesToBase64url(userId);
   if (userId.length === 0) {
     throw new PasskeyError("TypeError", "create 缺少 user.id", "PASSKEY_USER_MISSING");
   }
   if (!userName) {
-    userName = displayNameRaw || `user_${bytesToBase64url(userId).slice(0, 16)}`;
+    userName = displayNameRaw || `user_${userHandleB64u.slice(0, 16)}`;
   }
   const displayName = displayNameRaw || userName;
 
@@ -88,41 +89,14 @@ async function createManagedCredential({ origin, host, publicKey }) {
   });
 
   const passkeys = await loadPasskeys();
-  const existing = pickLatestPasskeyForAccount(passkeys, rpId, userName);
-  if (existing) {
-    const deduped = dedupePasskeysForAccount(passkeys, existing, rpId, userName);
-    const now = Date.now();
-    const existingCompatMethod = normalizeCreateCompatMethod(
-      existing?.createCompatMethod || createCompatMethod
-    );
-    const existingIndex = deduped.findIndex((item) => item?.credentialIdB64u === existing.credentialIdB64u);
-    if (existingIndex >= 0) {
-      deduped[existingIndex] = {
-        ...deduped[existingIndex],
-        updatedAtMs: now,
-        createCompatMethod: existingCompatMethod,
-      };
-    }
-    await savePasskeys(deduped);
-    const reused = await buildCreateResultFromStoredPasskey({
-      existing: deduped[Math.max(existingIndex, 0)] || existing,
-      challenge,
-      origin,
-      rpId,
-      userName,
-      displayName,
-    });
-    return {
-      ...reused,
-      createMode: "existing",
-      createCompatMethod: existingCompatMethod,
-    };
-  }
-
   const excludeIds = normalizeCredentialIdList(publicKey?.excludeCredentials || []);
   if (excludeIds.some((id) => passkeys.some((item) => item.rpId === rpId && item.credentialIdB64u === id))) {
     throw new PasskeyError("InvalidStateError", "凭据已存在（excludeCredentials 命中）", "PASSKEY_CREDENTIAL_EXISTS");
   }
+  const existing = pickLatestPasskeyForAccount(passkeys, rpId, userName, userHandleB64u);
+  const nextPasskeys = existing
+    ? passkeys.filter((item) => !isSamePasskeyAccount(item, rpId, userName, userHandleB64u))
+    : [...passkeys];
 
   const keyPair = await generateManagedKeyPair(selectedAlg);
   const privateJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
@@ -158,10 +132,10 @@ async function createManagedCredential({ origin, host, publicKey }) {
   );
 
   const now = Date.now();
-  passkeys.push({
+  nextPasskeys.push({
     credentialIdB64u,
     rpId,
-    userHandleB64u: bytesToBase64url(userId),
+    userHandleB64u,
     userName,
     displayName,
     alg: selectedAlg,
@@ -173,7 +147,7 @@ async function createManagedCredential({ origin, host, publicKey }) {
     updatedAtMs: now,
     lastUsedAtMs: null,
   });
-  await savePasskeys(passkeys);
+  await savePasskeys(nextPasskeys);
 
   return {
     credential: {
@@ -194,14 +168,14 @@ async function createManagedCredential({ origin, host, publicKey }) {
       credentialIdB64u,
       displayName,
     },
-    createMode: "created",
+    createMode: existing ? "replaced" : "created",
     createCompatMethod,
   };
 }
 
-function pickLatestPasskeyForAccount(passkeys, rpId, userName) {
+function pickLatestPasskeyForAccount(passkeys, rpId, userName, userHandleB64u = "") {
   const matched = (Array.isArray(passkeys) ? passkeys : []).filter((item) => {
-    return item?.rpId === rpId && String(item?.userName || "").trim() === userName;
+    return isSamePasskeyAccount(item, rpId, userName, userHandleB64u);
   });
   if (matched.length === 0) return null;
   matched.sort((a, b) => {
@@ -211,6 +185,16 @@ function pickLatestPasskeyForAccount(passkeys, rpId, userName) {
     return String(a?.credentialIdB64u || "").localeCompare(String(b?.credentialIdB64u || ""));
   });
   return matched[0];
+}
+
+function isSamePasskeyAccount(item, rpId, userName, userHandleB64u = "") {
+  if (item?.rpId !== rpId) return false;
+  const lhsHandle = String(item?.userHandleB64u || "").trim();
+  const rhsHandle = String(userHandleB64u || "").trim();
+  if (lhsHandle && rhsHandle) {
+    return lhsHandle === rhsHandle;
+  }
+  return String(item?.userName || "").trim() === String(userName || "").trim();
 }
 
 function dedupePasskeysForAccount(passkeys, keep, rpId, userName) {
