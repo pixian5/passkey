@@ -15,6 +15,16 @@ Chrome extension scaffold (Manifest V3).
 - Fill username/password into current webpage login form.
 - Detect login form submission and prompt to save/update credentials
   (if same site + username + password already exists, no prompt).
+- Managed passkey bridge (WebAuthn):
+  - intercept `navigator.credentials.create/get` in page context;
+  - store managed passkey records in extension local storage;
+  - perform assertion signing with managed private key for supported RP;
+  - auto upsert account record (`rpId + username`, empty password) after passkey registration and link passkey credential ID to that account;
+  - auto merge duplicate account rows for same username + same site/alias group.
+- Popup passkey panel:
+  - view/search/filter managed passkeys;
+  - filter by current site;
+  - copy credential id and delete passkey.
 - Options page with JSON import/export for local storage data.
 
 ## Load extension

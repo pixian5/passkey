@@ -1,5 +1,8 @@
 const STORAGE_KEY_ACCOUNTS = "pass.accounts";
 const PASS_LOGIN_COOLDOWN_MS = 5000;
+const WEB_AUTHN_BRIDGE_SOURCE = "pass-webauthn-bridge";
+const WEB_AUTHN_REQUEST_TYPE = "PASSKEY_REQUEST";
+const WEB_AUTHN_RESPONSE_TYPE = "PASSKEY_RESPONSE";
 
 const ETLD2_SUFFIXES = new Set([
   "com.cn",
@@ -18,6 +21,8 @@ let accountsCache = [];
 initAccountCache().catch(() => {
   // Ignore cache bootstrap errors; detection continues with empty cache.
 });
+installWebAuthnBridge();
+window.addEventListener("message", onWebAuthnBridgeMessage, false);
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local") return;
@@ -224,3 +229,292 @@ function isVisible(input) {
   return style.display !== "none" && style.visibility !== "hidden";
 }
 
+function installWebAuthnBridge() {
+  const scriptId = "pass-webauthn-bridge-injected";
+  if (document.getElementById(scriptId)) return;
+  const parent = document.head || document.documentElement;
+  if (!parent) return;
+
+  const script = document.createElement("script");
+  script.id = scriptId;
+  script.src = chrome.runtime.getURL("webauthn_injected.js");
+  script.async = false;
+  parent.appendChild(script);
+  script.remove();
+}
+
+function onWebAuthnBridgeMessage(event) {
+  if (event.source !== window) return;
+  const data = event.data;
+  if (!data || data.source !== WEB_AUTHN_BRIDGE_SOURCE || data.type !== WEB_AUTHN_REQUEST_TYPE) return;
+
+  const requestId = String(data.requestId || "");
+  if (!requestId) return;
+
+  const payload = {
+    operation: data.operation,
+    publicKey: data.publicKey,
+    origin: window.location.origin,
+    host: window.location.hostname,
+  };
+
+  void handleWebAuthnBridgeRequest(requestId, payload);
+}
+
+async function handleWebAuthnBridgeRequest(requestId, payload) {
+  try {
+    const response = payload?.operation === "get"
+      ? await handlePasskeyGetWithChooser(payload)
+      : await sendPasskeyBridgeOperation(payload);
+    postWebAuthnBridgeResponse(requestId, response);
+  } catch (error) {
+    postWebAuthnBridgeResponse(requestId, {
+      ok: false,
+      error: {
+        name: "OperationError",
+        message: error?.message || String(error || "通行秘钥处理失败"),
+        code: "PASSKEY_HANDLE_FAILED",
+      },
+    });
+  }
+}
+
+async function handlePasskeyGetWithChooser(payload) {
+  const candidateResponse = await sendPasskeyBridgeOperation({
+    ...payload,
+    operation: "getCandidates",
+  });
+
+  if (!candidateResponse?.ok) {
+    return await sendPasskeyBridgeOperation(payload);
+  }
+
+  const candidates = Array.isArray(candidateResponse?.result?.candidates)
+    ? candidateResponse.result.candidates
+    : [];
+  if (candidates.length <= 1) {
+    return await sendPasskeyBridgeOperation(payload);
+  }
+
+  const selectedId = await selectPasskeyCandidate(candidates);
+  if (!selectedId) {
+    return {
+      ok: false,
+      error: {
+        name: "NotAllowedError",
+        message: "用户取消通行秘钥选择",
+        code: "PASSKEY_USER_CANCEL",
+      },
+    };
+  }
+
+  const nextPayload = {
+    ...payload,
+    publicKey: {
+      ...(payload.publicKey || {}),
+      allowCredentials: [
+        {
+          idB64u: selectedId,
+          type: "public-key",
+          transports: ["internal"],
+        },
+      ],
+    },
+  };
+  return await sendPasskeyBridgeOperation(nextPayload);
+}
+
+function sendPasskeyBridgeOperation(payload) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      {
+        type: "PASS_PASSKEY_OPERATION",
+        payload,
+      },
+      (response) => {
+        const runtimeError = chrome.runtime.lastError;
+        if (runtimeError) {
+          resolve({
+            ok: false,
+            error: {
+              name: "OperationError",
+              message: runtimeError.message || "扩展消息发送失败",
+              code: "PASSKEY_RUNTIME_ERROR",
+            },
+          });
+          return;
+        }
+
+        if (!response) {
+          resolve({
+            ok: false,
+            error: {
+              name: "OperationError",
+              message: "扩展未返回通行秘钥响应",
+              code: "PASSKEY_EMPTY_RESPONSE",
+            },
+          });
+          return;
+        }
+
+        resolve(response);
+      }
+    );
+  });
+}
+
+function selectPasskeyCandidate(candidates) {
+  return new Promise((resolve) => {
+    const existing = document.getElementById("pass-passkey-chooser");
+    if (existing) {
+      existing.remove();
+    }
+
+    const root = document.createElement("div");
+    root.id = "pass-passkey-chooser";
+    root.style.position = "fixed";
+    root.style.left = "12px";
+    root.style.top = "12px";
+    root.style.zIndex = "2147483647";
+    root.style.maxWidth = "340px";
+    root.style.width = "calc(100vw - 24px)";
+    root.style.background = "#ffffff";
+    root.style.border = "1px solid #c7dafb";
+    root.style.borderRadius = "10px";
+    root.style.boxShadow = "0 10px 26px rgba(36, 67, 109, 0.22)";
+    root.style.padding = "10px";
+    root.style.fontSize = "12px";
+    root.style.fontFamily = "\"SF Pro Text\", \"PingFang SC\", sans-serif";
+    root.style.color = "#1d314d";
+
+    const title = document.createElement("div");
+    title.textContent = "选择要使用的通行秘钥";
+    title.style.fontSize = "13px";
+    title.style.fontWeight = "600";
+    title.style.marginBottom = "8px";
+    root.appendChild(title);
+
+    const list = document.createElement("div");
+    list.style.display = "grid";
+    list.style.gap = "6px";
+    let timerId = null;
+
+    const cleanup = (value) => {
+      root.remove();
+      document.removeEventListener("keydown", onKeydown, true);
+      if (timerId) {
+        clearTimeout(timerId);
+      }
+      resolve(value);
+    };
+
+    const onKeydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cleanup(null);
+      }
+    };
+    document.addEventListener("keydown", onKeydown, true);
+
+    for (const item of candidates) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.style.display = "grid";
+      button.style.gap = "3px";
+      button.style.width = "100%";
+      button.style.textAlign = "left";
+      button.style.border = "1px solid #d1e3ff";
+      button.style.borderRadius = "8px";
+      button.style.padding = "7px 8px";
+      button.style.background = "#f7fbff";
+      button.style.cursor = "pointer";
+
+      const nameLine = document.createElement("div");
+      const userName = String(item?.userName || "").trim();
+      const displayName = String(item?.displayName || "").trim();
+      nameLine.textContent = userName || displayName || "未命名凭据";
+      nameLine.style.fontWeight = "600";
+      button.appendChild(nameLine);
+
+      const detailLine = document.createElement("div");
+      detailLine.textContent = `最近使用: ${formatChooserTime(item?.lastUsedAtMs)} | 更新: ${formatChooserTime(item?.updatedAtMs)}`;
+      detailLine.style.fontSize = "11px";
+      detailLine.style.color = "#4b6485";
+      button.appendChild(detailLine);
+
+      const idLine = document.createElement("div");
+      idLine.textContent = `ID: ${shortenMiddle(String(item?.credentialIdB64u || ""), 18)}`;
+      idLine.style.fontSize = "11px";
+      idLine.style.color = "#4b6485";
+      button.appendChild(idLine);
+
+      button.addEventListener("click", () => {
+        cleanup(String(item?.credentialIdB64u || ""));
+      });
+
+      list.appendChild(button);
+    }
+
+    root.appendChild(list);
+
+    const footer = document.createElement("div");
+    footer.style.marginTop = "8px";
+    footer.style.display = "flex";
+    footer.style.justifyContent = "flex-end";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.textContent = "取消";
+    cancelBtn.style.border = "1px solid #9ab9eb";
+    cancelBtn.style.borderRadius = "8px";
+    cancelBtn.style.padding = "5px 8px";
+    cancelBtn.style.background = "#ffffff";
+    cancelBtn.style.cursor = "pointer";
+    cancelBtn.addEventListener("click", () => {
+      cleanup(null);
+    });
+    footer.appendChild(cancelBtn);
+
+    root.appendChild(footer);
+    document.documentElement.appendChild(root);
+
+    timerId = setTimeout(() => {
+      cleanup(null);
+    }, 120000);
+  });
+}
+
+function formatChooserTime(ms) {
+  if (ms == null) return "-";
+  const date = new Date(Number(ms));
+  if (Number.isNaN(date.getTime())) return "-";
+  const yy = String(date.getFullYear() % 100);
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const hour = date.getHours();
+  const minute = date.getMinutes();
+  const second = date.getSeconds();
+  return `${yy}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+function shortenMiddle(value, keep = 16) {
+  const text = String(value || "");
+  if (text.length <= keep) return text;
+  const head = Math.max(4, Math.floor(keep / 2));
+  const tail = Math.max(4, keep - head);
+  return `${text.slice(0, head)}...${text.slice(-tail)}`;
+}
+
+function postWebAuthnBridgeResponse(requestId, response) {
+  window.postMessage(
+    {
+      source: WEB_AUTHN_BRIDGE_SOURCE,
+      type: WEB_AUTHN_RESPONSE_TYPE,
+      requestId,
+      ok: Boolean(response?.ok),
+      result: response?.result || null,
+      error: response?.error || null,
+    },
+    "*"
+  );
+}

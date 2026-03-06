@@ -8,22 +8,71 @@
   </head>
   <body>
     <main class="page">
-      <h1>Pass Extension 设置</h1>
-      <p>这里用于查看、导出、导入本地账号 JSON（开发期）。</p>
+      <section class="card">
+        <h2>设备设置</h2>
+        <div class="row">
+          <label for="deviceName">设备名称</label>
+          <input id="deviceName" type="text" placeholder="例如 ChromeMac" />
+          <button id="saveDeviceName">保存</button>
+        </div>
+        <p id="deviceStatus" class="status"></p>
+      </section>
 
       <section class="card">
-        <h2>账号数据</h2>
-        <textarea id="payload" spellcheck="false"></textarea>
-        <div class="actions">
-          <button id="refreshBtn">刷新</button>
-          <button id="exportBtn">导出 JSON</button>
-          <button id="importBtn">导入 JSON</button>
-          <button id="clearBtn">清空账号</button>
+        <div class="accounts-layout">
+          <aside class="accounts-sidebar">
+            <button id="accountsTabAll" type="button" class="account-view-tab is-active">
+              全部 <span id="allAccountsCount">(0)</span>
+            </button>
+            <button id="accountsTabPasskey" type="button" class="account-view-tab">
+              通行秘钥 <span id="passkeyAccountsCount">(0)</span>
+            </button>
+            <button id="accountsTabTotp" type="button" class="account-view-tab">
+              验证码 <span id="totpAccountsCount">(0)</span>
+            </button>
+            <button id="accountsTabRecycle" type="button" class="account-view-tab">
+              回收站 <span id="recycleAccountsCount">(0)</span>
+            </button>
+            <div class="sidebar-folder-head">文件夹</div>
+            <div id="accountsFolderList" class="accounts-folder-list"></div>
+          </aside>
+          <div class="accounts-main">
+            <div class="section-head">
+              <div class="actions head-actions">
+                <div id="allAccountsSearchWrap" class="search-filter-wrap">
+                  <button id="allAccountsSearchFieldsBtn" class="search-fields-btn" type="button">筛选</button>
+                  <input id="allAccountsSearch" type="text" placeholder="搜索当前列表（用户名 / 站点别名 / 备注 / 密码）" />
+                  <div id="allAccountsSearchFieldsPanel" class="search-fields-panel hidden">
+                    <label><input id="allAccountsSearchFieldAll" type="checkbox" checked />全部</label>
+                    <label><input id="allAccountsSearchFieldUsername" type="checkbox" />用户名</label>
+                    <label><input id="allAccountsSearchFieldSites" type="checkbox" />站点别名</label>
+                    <label><input id="allAccountsSearchFieldNote" type="checkbox" />备注</label>
+                    <label><input id="allAccountsSearchFieldPassword" type="checkbox" />密码</label>
+                  </div>
+                </div>
+                <button id="clearActiveAccounts" class="button-danger">删除账号列表</button>
+                <button id="clearRecycleBin" class="button-danger">清空回收站</button>
+              </div>
+            </div>
+            <div id="allAccountsList" class="all-account-list"></div>
+          </div>
         </div>
-        <p id="status" class="status"></p>
+      </section>
+
+      <section class="card">
+        <details id="rawDataDetails">
+          <summary>账号数据</summary>
+          <textarea id="payload" spellcheck="false"></textarea>
+          <div class="actions">
+            <button id="refreshBtn">刷新</button>
+            <button id="exportBtn">导出 JSON</button>
+            <button id="importBtn">导入 JSON</button>
+            <button id="clearBtn">清空账号</button>
+          </div>
+          <p id="status" class="status"></p>
+        </details>
       </section>
     </main>
     <script src="./options.js" type="module"></script>
   </body>
   </html>
-

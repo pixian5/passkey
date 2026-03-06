@@ -8,7 +8,8 @@
     "tabs",
     "activeTab",
     "clipboardWrite",
-    "scripting"
+    "scripting",
+    "contextMenus"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -28,5 +29,11 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "options_page": "options.html"
+  "options_page": "options.html",
+  "web_accessible_resources": [
+    {
+      "resources": ["webauthn_injected.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

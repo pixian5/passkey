@@ -67,7 +67,7 @@
 ## 5. 关键业务规则（不可改动）
 
 ### 5.1 主键规则
-- `account_id = canonical_site + created_at_yyyyMMddHHmmss + username_at_create`
+- `account_id = canonical_site + "-" + created_at_yyMMddHHmmss + "-" + username_at_create`
 - 首次创建后不可修改。
 
 ### 5.2 域名规则

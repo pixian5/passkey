@@ -5,6 +5,9 @@ struct PasswordAccount: Codable, Identifiable, Hashable {
     let accountId: String
     let canonicalSite: String
     let usernameAtCreate: String
+    var isPinned: Bool?
+    var pinnedSortOrder: Int64?
+    var regularSortOrder: Int64?
     var folderId: UUID?
     var folderIds: [UUID]?
     var sites: [String]
@@ -65,13 +68,16 @@ enum AccountFactory {
         let canonicalSite = DomainUtils.etldPlusOne(for: normalizedSite)
         let normalizedIdSite = DomainUtils.normalize(accountIdSite ?? "")
         let idSite = normalizedIdSite.isEmpty ? canonicalSite : normalizedIdSite
-        let accountId = "\(idSite)-\(username)-\(timestamp(createdAt))"
+        let accountId = "\(idSite)-\(timestamp(createdAt))-\(username)"
         let nowMs = Int64(createdAt.timeIntervalSince1970 * 1000)
         return PasswordAccount(
             id: UUID(),
             accountId: accountId,
             canonicalSite: canonicalSite,
             usernameAtCreate: username,
+            isPinned: false,
+            pinnedSortOrder: nil,
+            regularSortOrder: nil,
             folderId: nil,
             folderIds: [],
             sites: [normalizedSite].sorted(),

@@ -349,6 +349,59 @@ final class AccountStore: ObservableObject {
         setStatusMessage("\(actionSummary)（\(changedCount) 个账号），点击撤销", allowsUndoMove: true)
     }
 
+    func addAccountsToFolder(accountIds: [UUID], folderId: UUID) {
+        let idSet = Set(accountIds)
+        guard !idSet.isEmpty else {
+            statusMessage = "未选择账号"
+            return
+        }
+        guard folders.contains(where: { $0.id == folderId }) else {
+            statusMessage = "目标文件夹不存在"
+            return
+        }
+
+        let selectedIndexes = accounts.indices.filter { idSet.contains(accounts[$0].id) && !accounts[$0].isDeleted }
+        guard !selectedIndexes.isEmpty else {
+            statusMessage = "未选择账号"
+            return
+        }
+
+        var previousFolderIdsByAccountId: [UUID: [UUID]] = [:]
+        var changedCount = 0
+        let now = nowMs()
+        let device = currentDeviceName()
+
+        for index in selectedIndexes {
+            let currentFolderIds = accounts[index].resolvedFolderIds
+            previousFolderIdsByAccountId[accounts[index].id] = currentFolderIds
+            if currentFolderIds.contains(folderId) {
+                continue
+            }
+            var nextFolderIds = currentFolderIds
+            nextFolderIds.append(folderId)
+            let normalizedNext = normalizeFolderIds(nextFolderIds)
+            if normalizedNext != currentFolderIds {
+                accounts[index].setResolvedFolderIds(normalizedNext)
+                accounts[index].touchUpdatedAt(now, deviceName: device)
+                changedCount += 1
+            }
+        }
+
+        guard changedCount > 0 else {
+            statusMessage = "所选账号已在文件夹：\(folderName(for: folderId))"
+            return
+        }
+
+        let actionSummary = "已放入 \(changedCount) 个账号 到文件夹：\(folderName(for: folderId))"
+        lastMoveOperation = FolderMoveOperation(
+            accountIds: Array(previousFolderIdsByAccountId.keys),
+            previousFolderIdsByAccountId: previousFolderIdsByAccountId,
+            actionSummary: actionSummary
+        )
+        saveAccounts()
+        setStatusMessage("\(actionSummary)（\(changedCount) 个账号），点击撤销", allowsUndoMove: true)
+    }
+
     func undoLastMoveOperation() {
         guard let operation = lastMoveOperation else {
             statusMessage = "没有可撤销的移动操作"
@@ -782,12 +835,142 @@ final class AccountStore: ObservableObject {
         cancelEditing()
     }
 
+    func accountIsPinned(_ account: PasswordAccount) -> Bool {
+        effectivePinned(account)
+    }
+
+    func togglePin(for account: PasswordAccount) {
+        guard let index = accounts.firstIndex(where: { $0.id == account.id }) else {
+            statusMessage = "未找到目标账号"
+            return
+        }
+        guard !accounts[index].isDeleted else {
+            statusMessage = "回收站账号不支持置顶"
+            return
+        }
+
+        let now = nowMs()
+        let device = currentDeviceName()
+        let nextPinned = !effectivePinned(accounts[index])
+        accounts[index].isPinned = nextPinned
+        if nextPinned {
+            accounts[index].pinnedSortOrder = nextPinnedSortOrder()
+        } else {
+            accounts[index].pinnedSortOrder = nil
+            accounts[index].regularSortOrder = nil
+        }
+        accounts[index].touchUpdatedAt(now, deviceName: device)
+        saveAccounts()
+        statusMessage = nextPinned ? "账号已置顶" : "已取消置顶"
+    }
+
+    func moveAccountBefore(sourceId: UUID, targetId: UUID) {
+        guard sourceId != targetId else { return }
+        guard let source = accounts.first(where: { $0.id == sourceId }),
+              let target = accounts.first(where: { $0.id == targetId })
+        else {
+            return
+        }
+        guard !source.isDeleted, !target.isDeleted else {
+            return
+        }
+
+        let pinned = effectivePinned(source)
+        guard effectivePinned(target) == pinned else {
+            statusMessage = "仅支持在同一分组内排序"
+            return
+        }
+
+        let group = sortedAccountsForDisplay(accounts.filter { !$0.isDeleted && effectivePinned($0) == pinned })
+        var orderedIds = group.map(\.id)
+        guard let fromIndex = orderedIds.firstIndex(of: sourceId),
+              let toIndex = orderedIds.firstIndex(of: targetId)
+        else {
+            return
+        }
+
+        orderedIds.remove(at: fromIndex)
+        orderedIds.insert(sourceId, at: toIndex)
+
+        let now = nowMs()
+        let device = currentDeviceName()
+        for (order, id) in orderedIds.enumerated() {
+            guard let index = accounts.firstIndex(where: { $0.id == id }) else { continue }
+            if pinned {
+                accounts[index].pinnedSortOrder = Int64(order)
+            } else {
+                accounts[index].regularSortOrder = Int64(order)
+            }
+            accounts[index].touchUpdatedAt(now, deviceName: device)
+        }
+
+        saveAccounts()
+    }
+
     func activeAccounts() -> [PasswordAccount] {
-        accounts.filter { !$0.isDeleted }
+        sortedAccountsForDisplay(accounts.filter { !$0.isDeleted })
     }
 
     func filteredAccounts() -> [PasswordAccount] {
         showDeletedAccounts ? accounts.filter(\.isDeleted) : accounts.filter { !$0.isDeleted }
+    }
+
+    func displaySortedAccounts(_ source: [PasswordAccount]) -> [PasswordAccount] {
+        sortedAccountsForDisplay(source)
+    }
+
+    private func effectivePinned(_ account: PasswordAccount) -> Bool {
+        account.isPinned ?? false
+    }
+
+    private func nextPinnedSortOrder() -> Int64 {
+        let pinnedOrders = accounts.compactMap { account -> Int64? in
+            guard effectivePinned(account) else { return nil }
+            return account.pinnedSortOrder
+        }
+        return (pinnedOrders.max() ?? -1) + 1
+    }
+
+    private func sortedAccountsForDisplay(_ source: [PasswordAccount]) -> [PasswordAccount] {
+        source.sorted { lhs, rhs in
+            let lhsPinned = effectivePinned(lhs)
+            let rhsPinned = effectivePinned(rhs)
+            if lhsPinned != rhsPinned {
+                return lhsPinned && !rhsPinned
+            }
+
+            if lhsPinned && rhsPinned {
+                switch (lhs.pinnedSortOrder, rhs.pinnedSortOrder) {
+                case let (.some(lo), .some(ro)) where lo != ro:
+                    return lo < ro
+                case (.some, .none):
+                    return true
+                case (.none, .some):
+                    return false
+                default:
+                    break
+                }
+            } else {
+                switch (lhs.regularSortOrder, rhs.regularSortOrder) {
+                case let (.some(lo), .some(ro)) where lo != ro:
+                    return lo < ro
+                case (.some, .none):
+                    return true
+                case (.none, .some):
+                    return false
+                default:
+                    break
+                }
+            }
+
+            if lhs.updatedAtMs != rhs.updatedAtMs {
+                return lhs.updatedAtMs > rhs.updatedAtMs
+            }
+            if lhs.createdAtMs != rhs.createdAtMs {
+                return lhs.createdAtMs > rhs.createdAtMs
+            }
+            return lhs.accountId.localizedStandardCompare(rhs.accountId) == .orderedAscending
+        }
     }
 
     func accountForEditing() -> PasswordAccount? {
@@ -1123,6 +1306,9 @@ final class AccountStore: ObservableObject {
             accountId: primary.accountId,
             canonicalSite: canonicalSite,
             usernameAtCreate: usernameAtCreate,
+            isPinned: newerAccount.isPinned ?? false,
+            pinnedSortOrder: newerAccount.pinnedSortOrder,
+            regularSortOrder: newerAccount.regularSortOrder,
             folderId: mergedFolderIds.first ?? newerAccount.folderId,
             folderIds: mergedFolderIds,
             sites: mergedSites.isEmpty ? primary.sites : mergedSites,
@@ -1546,6 +1732,9 @@ private extension LegacyPasswordAccount {
             accountId: accountId,
             canonicalSite: canonical,
             usernameAtCreate: username,
+            isPinned: false,
+            pinnedSortOrder: nil,
+            regularSortOrder: nil,
             folderId: nil,
             folderIds: [],
             sites: normalizedSites,

@@ -1,17 +1,43 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 private enum AccountSidebarFilter: Hashable {
     case all
     case passkeys
     case totp
+    case recycle
     case folder(UUID)
+}
+
+private enum AccountSearchField: CaseIterable, Hashable {
+    case username
+    case sites
+    case note
+    case password
+
+    var title: String {
+        switch self {
+        case .username:
+            return "用户名"
+        case .sites:
+            return "站点别名"
+        case .note:
+            return "备注"
+        case .password:
+            return "密码"
+        }
+    }
 }
 
 struct ContentView: View {
     @ObservedObject var store: AccountStore
     @Environment(\.openWindow) private var openWindow
     @State private var selectedSidebarFilter: AccountSidebarFilter = .all
+    @State private var accountSearchText: String = ""
+    @State private var useAllSearchFields: Bool = true
+    @State private var selectedSearchFields: Set<AccountSearchField> = []
+    @State private var showSearchFieldPopover: Bool = false
     @State private var selectedAccountIds: Set<UUID> = []
     @State private var selectionAnchorAccountId: UUID?
     @State private var showCreateFolderSheet: Bool = false
@@ -19,18 +45,26 @@ struct ContentView: View {
     @State private var showMoveToFolderSheet: Bool = false
     @State private var pendingMoveAccountIds: [UUID] = []
     @State private var moveFolderCheckedIds: Set<UUID> = []
-    @State private var showRecycleBinPopup: Bool = false
+    @State private var draggingAccountIds: [UUID] = []
     @State private var localKeyDownMonitor: Any?
 
     var body: some View {
-        let activeAccounts = store.activeAccounts()
-        let accounts = filteredAccounts(from: activeAccounts)
-        let deletedAccounts = store.accounts.filter(\.isDeleted)
+        let allAccounts = store.accounts
+        let activeAccounts = allAccounts.filter { !$0.isDeleted }
+        let deletedAccounts = allAccounts.filter(\.isDeleted)
+        let passkeyAccounts = activeAccounts.filter { $0.password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let totpAccounts = activeAccounts.filter { !$0.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let accounts = filteredAccounts(from: allAccounts)
         let editingAccount = store.accountForEditing()
 
         return ZStack {
             HStack(spacing: 0) {
-                sidebar
+                sidebar(
+                    activeCount: activeAccounts.count,
+                    passkeyCount: passkeyAccounts.count,
+                    totpCount: totpAccounts.count,
+                    recycleCount: deletedAccounts.count
+                )
                 Divider()
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -69,20 +103,42 @@ struct ContentView: View {
                             .disabled(activeAccounts.isEmpty)
                             .opacity(activeAccounts.isEmpty ? 0.45 : 1)
 
-                            Button {
-                                store.cancelEditing()
-                                showRecycleBinPopup = true
-                            } label: {
-                                topActionButtonLabel(
-                                    "回收站 (\(deletedAccounts.count))",
-                                    prominent: false
-                                )
-                            }
-                            .buttonStyle(.plain)
-
                             Spacer()
                         }
                     }
+
+                    HStack(spacing: 8) {
+                        Button {
+                            showSearchFieldPopover.toggle()
+                        } label: {
+                            Image(systemName: "line.3.horizontal.decrease.circle")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("设置搜索字段")
+                        .popover(isPresented: $showSearchFieldPopover, arrowEdge: .bottom) {
+                            searchFieldPopover
+                        }
+
+                        TextField(searchPlaceholder, text: $accountSearchText)
+                            .textFieldStyle(.plain)
+                            .font(store.textFont(size: store.scaledTextSize(15)))
+                        if !accountSearchText.isEmpty {
+                            Button {
+                                accountSearchText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.secondary.opacity(0.11))
+                    )
 
                     if accounts.isEmpty {
                         Text("暂无账号")
@@ -110,6 +166,13 @@ struct ContentView: View {
                                                 orderedAccountIds: accounts.map(\.id)
                                             )
                                         }
+                                        .onDrag {
+                                            beginDragging(account.id, orderedAccountIds: accounts.map(\.id))
+                                            return NSItemProvider(object: account.id.uuidString as NSString)
+                                        }
+                                        .onDrop(of: [UTType.text], isTargeted: nil) { _ in
+                                            handleAccountReorderDrop(targetAccountId: account.id)
+                                        }
                                         .contextMenu {
                                             Button("编辑") {
                                                 selectOnlyAccountIfNoMultiModifier(account.id)
@@ -118,16 +181,32 @@ struct ContentView: View {
 
                                             Divider()
 
-                                            Button("放入文件夹") {
-                                                prepareMoveToFolder(from: account.id)
-                                            }
-                                            .disabled(store.folders.isEmpty)
+                                            if !account.isDeleted {
+                                                Button(store.accountIsPinned(account) ? "取消置顶" : "置顶") {
+                                                    selectOnlyAccountIfNoMultiModifier(account.id)
+                                                    store.togglePin(for: account)
+                                                }
 
-                                            Divider()
+                                                Button("放入文件夹") {
+                                                    prepareMoveToFolder(from: account.id)
+                                                }
+                                                .disabled(store.folders.isEmpty)
 
-                                            Button("删除", role: .destructive) {
-                                                selectOnlyAccountIfNoMultiModifier(account.id)
-                                                store.moveToRecycleBin(for: account)
+                                                Divider()
+
+                                                Button("删除", role: .destructive) {
+                                                    selectOnlyAccountIfNoMultiModifier(account.id)
+                                                    store.moveToRecycleBin(for: account)
+                                                }
+                                            } else {
+                                                Button("恢复账号") {
+                                                    selectOnlyAccountIfNoMultiModifier(account.id)
+                                                    store.restoreFromRecycleBin(for: account)
+                                                }
+                                                Button("永久删除", role: .destructive) {
+                                                    selectOnlyAccountIfNoMultiModifier(account.id)
+                                                    store.permanentlyDeleteFromRecycleBin(account)
+                                                }
                                             }
                                         }
                                 }
@@ -175,7 +254,7 @@ struct ContentView: View {
                     .padding(26)
             }
 
-            if let editingAccount, !showRecycleBinPopup {
+            if let editingAccount {
                 Color.black.opacity(0.16)
                     .ignoresSafeArea()
                     .onTapGesture {
@@ -186,39 +265,33 @@ struct ContentView: View {
                     .padding(26)
             }
 
-            if showRecycleBinPopup {
-                Color.black.opacity(0.16)
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        showRecycleBinPopup = false
-                    }
-
-                RecycleBinPopup(
-                    store: store,
-                    deletedAccounts: deletedAccounts,
-                    onClose: { showRecycleBinPopup = false }
-                )
-                .padding(26)
-            }
         }
     }
 
-    private var sidebar: some View {
+    private func sidebar(
+        activeCount: Int,
+        passkeyCount: Int,
+        totpCount: Int,
+        recycleCount: Int
+    ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            sidebarItem(title: "全部", selected: selectedSidebarFilter == .all) {
+            sidebarItem(title: "全部 (\(activeCount))", selected: selectedSidebarFilter == .all) {
                 selectedSidebarFilter = .all
             }
-            sidebarItem(title: "通行秘钥", selected: selectedSidebarFilter == .passkeys) {
+            sidebarItem(title: "通行秘钥 (\(passkeyCount))", selected: selectedSidebarFilter == .passkeys) {
                 selectedSidebarFilter = .passkeys
             }
-            sidebarItem(title: "验证码", selected: selectedSidebarFilter == .totp) {
+            sidebarItem(title: "验证码 (\(totpCount))", selected: selectedSidebarFilter == .totp) {
                 selectedSidebarFilter = .totp
+            }
+            sidebarItem(title: "回收站 (\(recycleCount))", selected: selectedSidebarFilter == .recycle) {
+                selectedSidebarFilter = .recycle
             }
 
             Divider()
 
             HStack {
-                Text("文件夹")
+                Text("文件夹 (\(store.folders.count))")
                     .font(store.textFont(size: store.scaledTextSize(13), weight: .semibold))
                 Spacer()
                 Button("新建") {
@@ -239,10 +312,13 @@ struct ContentView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         ForEach(store.folders) { folder in
                             sidebarItem(
-                                title: folder.name,
+                                title: "\(folder.name) (\(activeFolderAccountCount(folder.id)))",
                                 selected: selectedSidebarFilter == .folder(folder.id)
                             ) {
                                 selectedSidebarFilter = .folder(folder.id)
+                            }
+                            .onDrop(of: [UTType.text], isTargeted: nil) { _ in
+                                handleDropToFolder(folder.id)
                             }
                             .contextMenu {
                                 if folder.id == AccountStore.fixedNewAccountFolderId {
@@ -299,6 +375,11 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .help("点击打开编辑")
+                if store.accountIsPinned(account) {
+                    Image(systemName: "pin.fill")
+                        .font(store.textFont(size: store.scaledTextSize(12)))
+                        .foregroundStyle(.orange)
+                }
                 if account.isDeleted {
                     Text("已删除")
                         .font(store.textFont(size: store.scaledTextSize(11)))
@@ -352,16 +433,122 @@ struct ContentView: View {
     }
 
     private func filteredAccounts(from allAccounts: [PasswordAccount]) -> [PasswordAccount] {
+        let scopedAccounts: [PasswordAccount]
         switch selectedSidebarFilter {
         case .all:
-            return allAccounts
+            scopedAccounts = allAccounts.filter { !$0.isDeleted }
         case .passkeys:
-            return allAccounts.filter { $0.password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            scopedAccounts = allAccounts.filter {
+                !$0.isDeleted && $0.password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
         case .totp:
-            return allAccounts.filter { !$0.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            scopedAccounts = allAccounts.filter {
+                !$0.isDeleted && !$0.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+        case .recycle:
+            scopedAccounts = allAccounts.filter(\.isDeleted)
         case .folder(let folderId):
-            return allAccounts.filter { $0.isInFolder(folderId) }
+            scopedAccounts = allAccounts.filter { !$0.isDeleted && $0.isInFolder(folderId) }
         }
+        let sortedScoped = store.displaySortedAccounts(scopedAccounts)
+
+        let query = accountSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.isEmpty {
+            return sortedScoped
+        }
+
+        return sortedScoped.filter { account in
+            accountMatchesSearch(account, query: query)
+        }
+    }
+
+    private var searchPlaceholder: String {
+        switch selectedSidebarFilter {
+        case .all:
+            return "搜索全部账号（输入即搜）"
+        case .passkeys:
+            return "搜索通行秘钥账号（输入即搜）"
+        case .totp:
+            return "搜索验证码账号（输入即搜）"
+        case .recycle:
+            return "搜索回收站账号（输入即搜）"
+        case .folder:
+            return "搜索当前文件夹账号（输入即搜）"
+        }
+    }
+
+    private func accountMatchesSearch(_ account: PasswordAccount, query: String) -> Bool {
+        let needle = query.lowercased()
+        if needle.isEmpty {
+            return true
+        }
+
+        var haystacks: [String] = []
+        if useAllSearchFields || selectedSearchFields.contains(.username) {
+            haystacks.append(account.username)
+            haystacks.append(account.usernameAtCreate)
+        }
+        if useAllSearchFields || selectedSearchFields.contains(.sites) {
+            haystacks.append(account.sites.joined(separator: " "))
+            haystacks.append(account.canonicalSite)
+        }
+        if useAllSearchFields || selectedSearchFields.contains(.note) {
+            haystacks.append(account.note)
+        }
+        if useAllSearchFields || selectedSearchFields.contains(.password) {
+            haystacks.append(account.password)
+        }
+        if haystacks.isEmpty {
+            return false
+        }
+
+        return haystacks.contains { value in
+            value.lowercased().contains(needle)
+        }
+    }
+
+    private var searchFieldPopover: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(
+                "全部",
+                isOn: Binding(
+                    get: { useAllSearchFields },
+                    set: { enabled in
+                        if enabled {
+                            useAllSearchFields = true
+                            selectedSearchFields = []
+                        } else {
+                            useAllSearchFields = false
+                        }
+                    }
+                )
+            )
+            .toggleStyle(.checkbox)
+            .font(store.textFont(size: store.scaledTextSize(13), weight: .semibold))
+
+            Divider()
+
+            ForEach(AccountSearchField.allCases, id: \.self) { field in
+                Toggle(
+                    field.title,
+                    isOn: Binding(
+                        get: { selectedSearchFields.contains(field) },
+                        set: { enabled in
+                            if enabled {
+                                useAllSearchFields = false
+                                selectedSearchFields.insert(field)
+                            } else {
+                                selectedSearchFields.remove(field)
+                            }
+                        }
+                    )
+                )
+                .toggleStyle(.checkbox)
+                .font(store.textFont(size: store.scaledTextSize(13)))
+            }
+        }
+        .padding(14)
+        .frame(width: 220, alignment: .leading)
     }
 
     private func prepareMoveToFolder(from contextAccountId: UUID) {
@@ -476,6 +663,43 @@ struct ContentView: View {
                 .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
         }
         .shadow(radius: 18)
+    }
+
+    private func activeFolderAccountCount(_ folderId: UUID) -> Int {
+        store.accounts.filter { !$0.isDeleted && $0.isInFolder(folderId) }.count
+    }
+
+    private func beginDragging(_ accountId: UUID, orderedAccountIds _: [UUID]) {
+        if !selectedAccountIds.contains(accountId) {
+            selectedAccountIds = [accountId]
+            selectionAnchorAccountId = accountId
+        }
+        draggingAccountIds = Array(selectedAccountIds)
+        if draggingAccountIds.isEmpty {
+            draggingAccountIds = [accountId]
+        }
+    }
+
+    private func handleAccountReorderDrop(targetAccountId: UUID) -> Bool {
+        guard let sourceAccountId = draggingAccountIds.first else {
+            return false
+        }
+        draggingAccountIds = []
+        guard sourceAccountId != targetAccountId else {
+            return false
+        }
+        store.moveAccountBefore(sourceId: sourceAccountId, targetId: targetAccountId)
+        return true
+    }
+
+    private func handleDropToFolder(_ folderId: UUID) -> Bool {
+        guard !draggingAccountIds.isEmpty else {
+            return false
+        }
+        let ids = draggingAccountIds
+        draggingAccountIds = []
+        store.addAccountsToFolder(accountIds: ids, folderId: folderId)
+        return true
     }
 
     private func formattedTotpCode(_ code: String) -> String {

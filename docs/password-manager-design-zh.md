@@ -17,8 +17,8 @@
 ## 3. 数据模型
 
 ### 3.1 主键（不可变）
-- `account_id = canonical_site + created_at_yyyyMMddHHmmss + username_at_create`
-- 示例：`baidu.com250101190159xjp`
+- `account_id = canonical_site + "-" + created_at_yyMMddHHmmss + "-" + username_at_create`
+- 示例：`baidu.com-250101190159-xjp`
 - 说明：
   - `canonical_site`：创建时的主站点（建议为 eTLD+1）。
   - `created_at`：首次创建时间（UTC，精确到秒）。

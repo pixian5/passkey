@@ -9,37 +9,65 @@
   <body>
     <main class="page">
       <section class="card">
-        <h1>Pass</h1>
-        <div class="row">
-          <label for="deviceName">设备名称</label>
-          <input id="deviceName" type="text" placeholder="例如 ChromeMac" />
-          <button id="saveDeviceName">保存</button>
-        </div>
-        <p class="tip" id="deviceStatus"></p>
-      </section>
-
-      <section class="card">
-        <h2>当前站点</h2>
-        <p class="line"><span>域名:</span> <strong id="currentDomain">-</strong></p>
-        <p class="line"><span>eTLD+1:</span> <strong id="currentEtld1">-</strong></p>
-        <button id="addDemoData">生成演示账号</button>
-      </section>
-
-      <section class="card">
-        <h2>可用账号</h2>
         <div class="mode-switch">
-          <button id="modeActive" class="mode-btn mode-btn-active" type="button">账号列表</button>
+          <button id="modeActive" class="mode-btn mode-btn-active" type="button">当前网站</button>
+          <button id="modeAll" class="mode-btn" type="button">全部</button>
+          <button id="modePasskey" class="mode-btn" type="button">通行秘钥</button>
           <button id="modeRecycle" class="mode-btn" type="button">回收站</button>
         </div>
-        <div class="create">
-          <input id="createSite" type="text" placeholder="站点，例如 icloud.com" />
-          <input id="createUsername" type="text" placeholder="用户名" />
-          <input id="createPassword" type="text" placeholder="密码" />
-          <button id="createAccount">新建账号</button>
+        <div id="accountSearchSection" class="search-toolbar">
+          <button id="accountSearchFieldsBtn" class="search-fields-btn" type="button">筛选</button>
+          <input id="accountSearch" type="text" placeholder="搜索当前列表账号（用户名 / 站点别名 / 备注 / 密码）" />
+          <div id="accountSearchFieldsPanel" class="search-fields-panel hidden">
+            <label><input id="accountSearchFieldAll" type="checkbox" checked />全部</label>
+            <label><input id="accountSearchFieldUsername" type="checkbox" />用户名</label>
+            <label><input id="accountSearchFieldSites" type="checkbox" />站点别名</label>
+            <label><input id="accountSearchFieldNote" type="checkbox" />备注</label>
+            <label><input id="accountSearchFieldPassword" type="checkbox" />密码</label>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="openCreateModal" class="button-primary" type="button">新建账号</button>
+        </div>
+        <div id="passkeySection" class="passkey passkey-hidden">
+          <div class="passkey-toolbar">
+            <label class="passkey-filter-check">
+              <input id="passkeyCurrentSiteOnly" type="checkbox" />
+              <span>仅当前站点</span>
+            </label>
+            <input id="passkeySearch" type="text" placeholder="搜索 rpId / 用户名 / credentialId" />
+          </div>
+          <div id="passkeyList" class="list"></div>
         </div>
         <div id="accountList" class="list"></div>
+        <p class="tip">右击扩展图标并点击“全部账号”可进入完整管理页。</p>
+        <p class="tip" id="popupStatus"></p>
       </section>
     </main>
+
+    <div id="createModal" class="modal-backdrop modal-hidden" aria-hidden="true">
+      <section class="modal-card" role="dialog" aria-modal="true" aria-label="新建账号">
+        <h3>新建账号</h3>
+        <div class="modal-form">
+          <div class="form-row form-row-multiline">
+            <label for="createSite">站点别名（每行一个）</label>
+            <textarea id="createSite" placeholder="例如&#10;icloud.com&#10;apple.com"></textarea>
+          </div>
+          <div class="form-row">
+            <label for="createUsername">用户名</label>
+            <input id="createUsername" type="text" placeholder="用户名" />
+          </div>
+          <div class="form-row">
+            <label for="createPassword">密码</label>
+            <input id="createPassword" type="text" placeholder="密码" />
+          </div>
+        </div>
+        <div class="actions">
+          <button id="createAccount" class="button-primary" type="button">创建账号</button>
+          <button id="closeCreateModal" type="button">关闭</button>
+        </div>
+      </section>
+    </div>
     <script src="./popup.js" type="module"></script>
   </body>
   </html>
