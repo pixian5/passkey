@@ -34,6 +34,7 @@ const dom = {
   accountsTabTotp: document.getElementById("accountsTabTotp"),
   accountsTabRecycle: document.getElementById("accountsTabRecycle"),
   accountsFolderList: document.getElementById("accountsFolderList"),
+  createFolderBtn: document.getElementById("createFolderBtn"),
   allAccountsSearchWrap: document.getElementById("allAccountsSearchWrap"),
   allAccountsSearchFieldsBtn: document.getElementById("allAccountsSearchFieldsBtn"),
   allAccountsSearchFieldsPanel: document.getElementById("allAccountsSearchFieldsPanel"),
@@ -64,6 +65,9 @@ let accountSearchUseAll = true;
 let accountSearchFields = new Set();
 let activeAccountView = "all";
 let draggingAccountId = "";
+let contextMenuElement = null;
+let contextMenuOutsideHandler = null;
+let contextMenuEscapeHandler = null;
 
 init().catch((error) => {
   setStatus(`初始化失败: ${error.message}`);
@@ -75,6 +79,17 @@ async function init() {
   startTotpRefreshTicker();
 
   dom.saveDeviceNameBtn.addEventListener("click", saveDeviceName);
+  dom.createFolderBtn.addEventListener("click", createFolderFromPrompt);
+  dom.accountsFolderList.addEventListener("contextmenu", (event) => {
+    if (event.target.closest(".account-view-tab")) return;
+    event.preventDefault();
+    closeContextMenu();
+  });
+  dom.allAccountsList.addEventListener("contextmenu", (event) => {
+    if (event.target.closest(".account")) return;
+    event.preventDefault();
+    closeContextMenu();
+  });
   dom.accountsTabAll.addEventListener("click", () => setAccountView("all"));
   dom.accountsTabPasskey.addEventListener("click", () => setAccountView("passkeys"));
   dom.accountsTabTotp.addEventListener("click", () => setAccountView("totp"));
@@ -94,16 +109,23 @@ async function init() {
     event.stopPropagation();
   });
   document.addEventListener("click", (event) => {
+    closeContextMenuIfNeeded(event);
     if (dom.allAccountsSearchFieldsPanel.classList.contains("hidden")) return;
     const wrap = dom.allAccountsSearchFieldsPanel.closest(".search-filter-wrap");
     if (wrap && wrap.contains(event.target)) return;
     closeAllAccountsSearchFieldsPanel();
   });
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeContextMenu();
+    }
     if (event.key === "Escape" && !dom.allAccountsSearchFieldsPanel.classList.contains("hidden")) {
       closeAllAccountsSearchFieldsPanel();
     }
   });
+  document.addEventListener("scroll", () => {
+    closeContextMenu();
+  }, true);
   dom.clearActiveAccountsBtn.addEventListener("click", clearActiveAccounts);
   dom.clearRecycleBinBtn.addEventListener("click", clearRecycleBin);
   dom.refreshBtn.addEventListener("click", () => refresh());
@@ -141,7 +163,8 @@ async function refresh({ silent = false } = {}) {
 
   accountsRaw = cloneAccounts(accounts);
   passkeysRaw = passkeys.map(normalizePasskeyShape);
-  foldersRaw = folders.map(normalizeFolderShape);
+  foldersRaw = sortFoldersForDisplay(withFixedFolder(folders.map(normalizeFolderShape)));
+  closeContextMenu();
 
   dom.payload.value = JSON.stringify(
     { accounts: accountsRaw, passkeys: passkeysRaw, folders: foldersRaw },
@@ -362,14 +385,21 @@ function formatFileTimestamp(ms) {
 }
 
 async function clearActiveAccounts() {
-  const activeCount = accountsRaw.filter((item) => !item.isDeleted).length;
+  if (activeAccountView === "recycle") {
+    setStatus("当前是回收站视图，请使用“清空回收站”");
+    return;
+  }
+
+  const visibleAccounts = currentVisibleAccounts(accountsRaw).filter((item) => !item.isDeleted);
+  const targetAccountIds = new Set(visibleAccounts.map((item) => String(item.accountId || "")));
+  const activeCount = targetAccountIds.size;
   if (activeCount === 0) {
-    setStatus("账号列表为空，无需删除");
+    setStatus("当前页面没有可移入回收站的账号");
     return;
   }
 
   const confirmed = window.confirm(
-    `将把账号列表中的 ${activeCount} 条记录移入回收站，是否继续？`
+    `将把当前页面中的 ${activeCount} 条记录移入回收站，是否继续？`
   );
   if (!confirmed) {
     return;
@@ -378,7 +408,8 @@ async function clearActiveAccounts() {
   const now = Date.now();
   const deviceName = await getDeviceName();
   const next = cloneAccounts(accountsRaw).map((account) => {
-    if (account.isDeleted) return account;
+    const accountId = String(account?.accountId || "");
+    if (account.isDeleted || !targetAccountIds.has(accountId)) return account;
     return {
       ...account,
       isDeleted: true,
@@ -391,7 +422,7 @@ async function clearActiveAccounts() {
   editingAccountId = null;
   await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: next });
   await refresh({ silent: true });
-  setStatus(`已将 ${activeCount} 条账号移入回收站`);
+  setStatus(`已将当前页面 ${activeCount} 条账号移入回收站`);
 }
 
 async function clearRecycleBin() {
@@ -413,6 +444,140 @@ async function clearRecycleBin() {
   await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: next });
   await refresh({ silent: true });
   setStatus(`已清空回收站，永久删除 ${deletedCount} 条记录`);
+}
+
+async function createFolderFromPrompt() {
+  const raw = window.prompt("新建文件夹\n请输入文件夹名称：", "");
+  if (raw == null) {
+    setStatus("已取消新建文件夹");
+    return;
+  }
+  const name = String(raw || "").trim();
+  if (!name) {
+    setStatus("文件夹名称不能为空");
+    return;
+  }
+
+  const existed = foldersRaw.some(
+    (item) => String(item?.name || "").trim().toLowerCase() === name.toLowerCase()
+  );
+  if (existed) {
+    setStatus(`文件夹已存在: ${name}`);
+    return;
+  }
+
+  const nextFolders = sortFoldersForDisplay([
+    ...foldersRaw.map(normalizeFolderShape),
+    normalizeFolderShape({
+      id: globalThis.crypto?.randomUUID?.() || `folder-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      name,
+      createdAtMs: Date.now(),
+    }),
+  ]);
+  await chrome.storage.local.set({ [STORAGE_KEY_FOLDERS]: nextFolders });
+  await refresh({ silent: true });
+  setStatus(`已创建文件夹: ${name}`);
+}
+
+async function deleteFolder(folderId) {
+  const normalizedFolderId = normalizeFolderId(folderId);
+  if (!normalizedFolderId) {
+    setStatus("目标文件夹不存在");
+    return;
+  }
+  if (normalizedFolderId === FIXED_NEW_ACCOUNT_FOLDER_ID) {
+    setStatus("固定文件夹不可删除");
+    return;
+  }
+
+  const folder = foldersRaw.find((item) => normalizeFolderId(item?.id) === normalizedFolderId);
+  if (!folder) {
+    setStatus("目标文件夹不存在");
+    return;
+  }
+
+  const confirmed = window.confirm(`将删除文件夹：${folder.name}\n并从相关账号中移除该文件夹。是否继续？`);
+  if (!confirmed) return;
+
+  const now = Date.now();
+  const deviceName = await getDeviceName();
+  let removedFromAccountCount = 0;
+
+  const nextAccounts = cloneAccounts(accountsRaw).map((account) => {
+    const currentFolderIds = normalizeFolderIdList(extractAccountFolderIds(account));
+    if (!currentFolderIds.includes(normalizedFolderId)) {
+      return account;
+    }
+
+    const nextFolderIds = currentFolderIds.filter((id) => id !== normalizedFolderId);
+    const nextAccount = {
+      ...account,
+      folderId: nextFolderIds[0] || null,
+      folderIds: nextFolderIds,
+      updatedAtMs: now,
+      lastOperatedDeviceName: deviceName,
+    };
+    removedFromAccountCount += 1;
+    return nextAccount;
+  });
+  const nextFolders = sortFoldersForDisplay(
+    foldersRaw
+      .map(normalizeFolderShape)
+      .filter((item) => normalizeFolderId(item?.id) !== normalizedFolderId)
+  );
+
+  await chrome.storage.local.set({
+    [STORAGE_KEY_ACCOUNTS]: nextAccounts,
+    [STORAGE_KEY_FOLDERS]: nextFolders,
+  });
+
+  if (activeAccountView === `folder:${normalizedFolderId}`) {
+    activeAccountView = "all";
+  }
+  await refresh({ silent: true });
+  if (removedFromAccountCount > 0) {
+    setStatus(`已删除文件夹: ${folder.name}，并从 ${removedFromAccountCount} 个账号中移除`);
+  } else {
+    setStatus(`已删除文件夹: ${folder.name}`);
+  }
+}
+
+async function toggleAccountFolderMembership(accountId, folderId) {
+  const normalizedFolderId = normalizeFolderId(folderId);
+  if (!normalizedFolderId) return;
+  if (!foldersRaw.some((item) => normalizeFolderId(item?.id) === normalizedFolderId)) {
+    setStatus("目标文件夹不存在");
+    return;
+  }
+
+  const next = cloneAccounts(accountsRaw);
+  const target = next.find((item) => String(item?.accountId || "") === String(accountId));
+  if (!target) {
+    setStatus("目标账号不存在");
+    return;
+  }
+  if (target.isDeleted) {
+    setStatus("回收站账号不支持放入文件夹");
+    return;
+  }
+
+  const now = Date.now();
+  const deviceName = await getDeviceName();
+  const current = normalizeFolderIdList(extractAccountFolderIds(target));
+  const exists = current.includes(normalizedFolderId);
+  const nextFolderIds = exists
+    ? current.filter((id) => id !== normalizedFolderId)
+    : normalizeFolderIdList([...current, normalizedFolderId]);
+
+  target.folderId = nextFolderIds[0] || null;
+  target.folderIds = nextFolderIds;
+  target.updatedAtMs = now;
+  target.lastOperatedDeviceName = deviceName;
+
+  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: next });
+  await refresh({ silent: true });
+  const folderName = folderDisplayNameById(normalizedFolderId);
+  setStatus(exists ? `已从文件夹移除: ${folderName}` : `已放入文件夹: ${folderName}`);
 }
 
 function renderAllAccounts(inputAccounts) {
@@ -451,7 +616,9 @@ function renderAllAccounts(inputAccounts) {
     const pinBtn = document.createElement("button");
     pinBtn.type = "button";
     pinBtn.className = "pin-btn";
-    pinBtn.textContent = isPinnedAccount(account) ? "取消置顶" : "置顶";
+    const pinned = isPinnedAccount(account);
+    pinBtn.textContent = pinned ? "取消置顶" : "置顶";
+    pinBtn.classList.toggle("is-unpin", pinned);
     pinBtn.addEventListener("click", async (event) => {
       event.stopPropagation();
       await togglePin(account.accountId);
@@ -677,8 +844,18 @@ function renderSidebar(inputAccounts) {
     button.type = "button";
     button.className = "account-view-tab";
     button.dataset.view = `folder:${folder.id}`;
+    button.dataset.folderId = folder.id;
     button.textContent = `${folder.name} (${folder.count})`;
     button.addEventListener("click", () => setAccountView(`folder:${folder.id}`));
+    button.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openFolderContextMenu({
+        folderId: folder.id,
+        x: event.clientX,
+        y: event.clientY,
+      });
+    });
     dom.accountsFolderList.appendChild(button);
   }
 }
@@ -707,12 +884,17 @@ function currentViewAccounts(inputAccounts) {
   return active;
 }
 
-function renderCurrentView(inputAccounts) {
-  let accounts = sortAccountsForDisplay(currentViewAccounts(inputAccounts));
+function currentVisibleAccounts(inputAccounts) {
+  let accounts = currentViewAccounts(inputAccounts);
   const query = String(dom.allAccountsSearch.value || "").trim().toLowerCase();
   if (query) {
     accounts = accounts.filter((account) => isAccountMatchSearch(account, query));
   }
+  return accounts;
+}
+
+function renderCurrentView(inputAccounts) {
+  let accounts = sortAccountsForDisplay(currentVisibleAccounts(inputAccounts));
 
   dom.allAccountsList.innerHTML = "";
   if (accounts.length === 0) {
@@ -728,6 +910,15 @@ function renderCurrentView(inputAccounts) {
     const card = document.createElement("article");
     card.className = "account";
     card.draggable = !isRecycle;
+    card.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openAccountContextMenu({
+        account,
+        x: event.clientX,
+        y: event.clientY,
+      });
+    });
 
     const titleRow = document.createElement("div");
     titleRow.className = "account-title-row";
@@ -738,7 +929,9 @@ function renderCurrentView(inputAccounts) {
       const pinBtn = document.createElement("button");
       pinBtn.type = "button";
       pinBtn.className = "pin-btn";
-      pinBtn.textContent = isPinnedAccount(account) ? "取消置顶" : "置顶";
+      const pinned = isPinnedAccount(account);
+      pinBtn.textContent = pinned ? "取消置顶" : "置顶";
+      pinBtn.classList.toggle("is-unpin", pinned);
       pinBtn.addEventListener("click", async (event) => {
         event.stopPropagation();
         await togglePin(account.accountId);
@@ -845,6 +1038,7 @@ function renderCurrentView(inputAccounts) {
 }
 
 function setAccountView(nextView) {
+  closeContextMenu();
   activeAccountView = String(nextView || "all");
   const isRecycle = activeAccountView === "recycle";
 
@@ -866,6 +1060,195 @@ function setAccountView(nextView) {
   }
 
   renderCurrentView(accountsRaw);
+}
+
+function closeContextMenuIfNeeded(event) {
+  if (!contextMenuElement) return;
+  if (contextMenuElement.contains(event.target)) return;
+  closeContextMenu();
+}
+
+function closeContextMenu() {
+  if (contextMenuElement) {
+    contextMenuElement.remove();
+    contextMenuElement = null;
+  }
+  if (contextMenuOutsideHandler) {
+    window.removeEventListener("mousedown", contextMenuOutsideHandler, true);
+    contextMenuOutsideHandler = null;
+  }
+  if (contextMenuEscapeHandler) {
+    window.removeEventListener("keydown", contextMenuEscapeHandler, true);
+    contextMenuEscapeHandler = null;
+  }
+}
+
+function openContextMenu({ x, y, items }) {
+  closeContextMenu();
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+
+  for (const item of items) {
+    if (item.type === "separator") {
+      const separator = document.createElement("div");
+      separator.className = "context-menu-separator";
+      menu.appendChild(separator);
+      continue;
+    }
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "context-menu-item";
+    if (item.danger) {
+      button.classList.add("context-danger");
+    }
+    button.textContent = item.label;
+    button.disabled = Boolean(item.disabled);
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      if (button.disabled) return;
+      closeContextMenu();
+      await item.onSelect?.();
+    });
+    menu.appendChild(button);
+  }
+
+  document.body.appendChild(menu);
+  contextMenuElement = menu;
+
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  const rect = menu.getBoundingClientRect();
+  const maxLeft = Math.max(8, viewportWidth - rect.width - 8);
+  const maxTop = Math.max(8, viewportHeight - rect.height - 8);
+  menu.style.left = `${Math.min(Math.max(8, x), maxLeft)}px`;
+  menu.style.top = `${Math.min(Math.max(8, y), maxTop)}px`;
+
+  contextMenuOutsideHandler = (event) => {
+    if (!menu.contains(event.target)) {
+      closeContextMenu();
+    }
+  };
+  contextMenuEscapeHandler = (event) => {
+    if (event.key === "Escape") {
+      closeContextMenu();
+    }
+  };
+  window.addEventListener("mousedown", contextMenuOutsideHandler, true);
+  window.addEventListener("keydown", contextMenuEscapeHandler, true);
+}
+
+function openAccountContextMenu({ account, x, y }) {
+  if (!account) return;
+
+  if (account.isDeleted) {
+    openContextMenu({
+      x,
+      y,
+      items: [
+        {
+          label: "恢复账号",
+          onSelect: async () => restoreDeletedAccount(account.accountId),
+        },
+        {
+          label: "永久删除",
+          danger: true,
+          onSelect: async () => permanentlyDeleteAccount(account.accountId),
+        },
+      ],
+    });
+    return;
+  }
+
+  openContextMenu({
+    x,
+    y,
+    items: [
+      {
+        label: "编辑",
+        onSelect: async () => {
+          editingAccountId = editingAccountId === account.accountId ? null : account.accountId;
+          renderCurrentView(accountsRaw);
+        },
+      },
+      { type: "separator" },
+      {
+        label: isPinnedAccount(account) ? "取消置顶" : "置顶",
+        onSelect: async () => togglePin(account.accountId),
+      },
+      {
+        label: "放入文件夹",
+        disabled: foldersRaw.length === 0,
+        onSelect: async () => openAccountFolderContextMenu(account, { x: x + 16, y: y + 12 }),
+      },
+      { type: "separator" },
+      {
+        label: "删除",
+        danger: true,
+        onSelect: async () => deleteAccountFromAll(account.accountId),
+      },
+    ],
+  });
+}
+
+function openFolderContextMenu({ folderId, x, y }) {
+  const normalizedFolderId = normalizeFolderId(folderId);
+  const folder = foldersRaw.find((item) => normalizeFolderId(item?.id) === normalizedFolderId);
+  if (!folder) return;
+
+  if (normalizedFolderId === FIXED_NEW_ACCOUNT_FOLDER_ID) {
+    openContextMenu({
+      x,
+      y,
+      items: [
+        {
+          label: "固定文件夹不可删除",
+          disabled: true,
+          onSelect: async () => {},
+        },
+      ],
+    });
+    return;
+  }
+
+  openContextMenu({
+    x,
+    y,
+    items: [
+      {
+        label: "删除文件夹",
+        danger: true,
+        onSelect: async () => deleteFolder(normalizedFolderId),
+      },
+    ],
+  });
+}
+
+function openAccountFolderContextMenu(account, position) {
+  const normalizedAccount = normalizeAccountShape(account);
+  const checked = new Set(
+    normalizeFolderIdList(extractAccountFolderIds(normalizedAccount))
+  );
+  const folders = sortFoldersForDisplay(foldersRaw.map(normalizeFolderShape));
+  if (folders.length === 0) {
+    setStatus("请先创建文件夹");
+    return;
+  }
+
+  openContextMenu({
+    x: position?.x ?? 100,
+    y: position?.y ?? 100,
+    items: folders.map((folder) => {
+      const id = normalizeFolderId(folder.id);
+      const isChecked = checked.has(id);
+      return {
+        label: `${isChecked ? "☑" : "☐"} ${folder.name}`,
+        onSelect: async () => {
+          await toggleAccountFolderMembership(normalizedAccount.accountId, id);
+        },
+      };
+    }),
+  });
 }
 
 function isPinnedAccount(account) {
@@ -1216,7 +1599,7 @@ async function reorderAccount(sourceId, targetId) {
 
   const pinned = isPinnedAccount(source);
   if (isPinnedAccount(target) !== pinned) {
-    setStatus("仅支持在同一分组内排序");
+    setStatus("仅支持 置顶、非置顶 项目内部排序");
     return;
   }
 
@@ -1436,6 +1819,37 @@ function normalizeFolderId(value) {
 function normalizeFolderIdList(values) {
   const source = Array.isArray(values) ? values : [];
   return [...new Set(source.map(normalizeFolderId).filter(Boolean))].sort();
+}
+
+function withFixedFolder(inputFolders) {
+  const folders = Array.isArray(inputFolders) ? [...inputFolders] : [];
+  const exists = folders.some((item) => normalizeFolderId(item?.id) === FIXED_NEW_ACCOUNT_FOLDER_ID);
+  if (!exists) {
+    folders.push(
+      normalizeFolderShape({
+        id: FIXED_NEW_ACCOUNT_FOLDER_ID,
+        name: FIXED_NEW_ACCOUNT_FOLDER_NAME,
+        createdAtMs: 0,
+      })
+    );
+  }
+  return folders.map((folder) => {
+    if (normalizeFolderId(folder?.id) !== FIXED_NEW_ACCOUNT_FOLDER_ID) return folder;
+    return {
+      ...folder,
+      id: FIXED_NEW_ACCOUNT_FOLDER_ID,
+      name: FIXED_NEW_ACCOUNT_FOLDER_NAME,
+    };
+  });
+}
+
+function folderDisplayNameById(folderId) {
+  const normalizedFolderId = normalizeFolderId(folderId);
+  const matched = foldersRaw.find((item) => normalizeFolderId(item?.id) === normalizedFolderId);
+  if (!matched) {
+    return `未命名文件夹 ${normalizedFolderId.slice(0, 8)}`;
+  }
+  return String(matched?.name || `未命名文件夹 ${normalizedFolderId.slice(0, 8)}`);
 }
 
 function extractAccountFolderIds(account) {

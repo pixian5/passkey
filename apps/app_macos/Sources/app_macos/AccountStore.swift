@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import SwiftUI
+import Vision
 
 @MainActor
 final class AccountStore: ObservableObject {
@@ -538,6 +539,30 @@ final class AccountStore: ObservableObject {
         statusMessage = "账号已创建: \(created.accountId)"
     }
 
+    func pasteCreateTotpRawSecretFromClipboard() {
+        pasteRawTotpSecretFromClipboard(to: .create)
+    }
+
+    func pasteCreateTotpURIFromClipboard() {
+        pasteOtpAuthURIFromClipboard(to: .create)
+    }
+
+    func pasteCreateTotpQRCodeFromClipboard() {
+        pasteQRCodeFromClipboard(to: .create)
+    }
+
+    func pasteEditTotpRawSecretFromClipboard() {
+        pasteRawTotpSecretFromClipboard(to: .edit)
+    }
+
+    func pasteEditTotpURIFromClipboard() {
+        pasteOtpAuthURIFromClipboard(to: .edit)
+    }
+
+    func pasteEditTotpQRCodeFromClipboard() {
+        pasteQRCodeFromClipboard(to: .edit)
+    }
+
     func moveToRecycleBin(for account: PasswordAccount) {
         guard let index = accounts.firstIndex(where: { $0.id == account.id }) else {
             statusMessage = "未找到目标账号"
@@ -945,7 +970,7 @@ final class AccountStore: ObservableObject {
 
         let pinned = effectivePinned(source)
         guard effectivePinned(target) == pinned else {
-            statusMessage = "仅支持在同一分组内排序"
+            statusMessage = "仅支持 置顶、非置顶 项目内部排序"
             return
         }
 
@@ -1667,6 +1692,202 @@ final class AccountStore: ObservableObject {
 
     private func csvEscaped(_ value: String) -> String {
         "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+    }
+
+    private enum TotpDraftTarget {
+        case create
+        case edit
+    }
+
+    private struct ParsedOtpAuthPayload {
+        let secret: String
+        let siteAlias: String?
+        let username: String?
+    }
+
+    private func pasteRawTotpSecretFromClipboard(to target: TotpDraftTarget) {
+        guard let rawText = NSPasteboard.general.string(forType: .string) else {
+            statusMessage = "剪贴板没有文本内容"
+            return
+        }
+
+        let secret = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !secret.isEmpty else {
+            statusMessage = "剪贴板文本为空"
+            return
+        }
+        guard isValidTotpSecret(secret) else {
+            statusMessage = "粘贴失败：原始密钥不是有效 TOTP"
+            return
+        }
+
+        applyTotpPayload(
+            ParsedOtpAuthPayload(secret: secret, siteAlias: nil, username: nil),
+            to: target,
+            includeSiteAndUsername: false
+        )
+        statusMessage = "已填充 TOTP 原始密钥"
+    }
+
+    private func pasteOtpAuthURIFromClipboard(to target: TotpDraftTarget) {
+        guard let rawText = NSPasteboard.general.string(forType: .string) else {
+            statusMessage = "剪贴板没有文本内容"
+            return
+        }
+        guard let payload = parseOtpAuthURI(rawText) else {
+            statusMessage = "粘贴失败：不是有效的 otpauth://totp URI"
+            return
+        }
+
+        applyTotpPayload(payload, to: target, includeSiteAndUsername: true)
+        statusMessage = "已解析 otpauth URI，并填充 TOTP/站点别名/用户名"
+    }
+
+    private func pasteQRCodeFromClipboard(to target: TotpDraftTarget) {
+        guard let qrPayload = parseQRCodePayloadFromPasteboard() else {
+            statusMessage = "粘贴失败：剪贴板没有可识别的二维码图片"
+            return
+        }
+        guard let payload = parseOtpAuthURI(qrPayload) else {
+            statusMessage = "粘贴失败：二维码内容不是有效的 otpauth://totp URI"
+            return
+        }
+
+        applyTotpPayload(payload, to: target, includeSiteAndUsername: true)
+        statusMessage = "已解析二维码，并填充 TOTP/站点别名/用户名"
+    }
+
+    private func applyTotpPayload(
+        _ payload: ParsedOtpAuthPayload,
+        to target: TotpDraftTarget,
+        includeSiteAndUsername: Bool
+    ) {
+        switch target {
+        case .create:
+            createTotpSecret = payload.secret
+            if includeSiteAndUsername {
+                if let siteAlias = payload.siteAlias, !siteAlias.isEmpty {
+                    createSitesText = siteAlias
+                }
+                if let username = payload.username, !username.isEmpty {
+                    createUsername = username
+                }
+            }
+        case .edit:
+            editTotpSecret = payload.secret
+            if includeSiteAndUsername {
+                if let siteAlias = payload.siteAlias, !siteAlias.isEmpty {
+                    editSitesText = siteAlias
+                }
+                if let username = payload.username, !username.isEmpty {
+                    editUsername = username
+                }
+            }
+        }
+    }
+
+    private func parseOtpAuthURI(_ raw: String) -> ParsedOtpAuthPayload? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard let components = URLComponents(string: trimmed) else { return nil }
+        guard components.scheme?.lowercased() == "otpauth" else { return nil }
+        guard components.host?.lowercased() == "totp" else { return nil }
+
+        let queryItems = components.queryItems ?? []
+        let secret = queryItems
+            .first(where: { $0.name.caseInsensitiveCompare("secret") == .orderedSame })?
+            .value?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !secret.isEmpty, isValidTotpSecret(secret) else { return nil }
+
+        let issuerFromQuery = queryItems
+            .first(where: { $0.name.caseInsensitiveCompare("issuer") == .orderedSame })?
+            .value?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        let decodedPath = components.path.removingPercentEncoding ?? components.path
+        let label = decodedPath
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var labelIssuer = ""
+        var labelUsername: String?
+        if let colon = label.firstIndex(of: ":") {
+            labelIssuer = String(label[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let username = String(label[label.index(after: colon)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            labelUsername = username.isEmpty ? nil : username
+        } else {
+            labelUsername = label.isEmpty ? nil : label
+        }
+
+        let issuer = issuerFromQuery.isEmpty ? labelIssuer : issuerFromQuery
+        let siteAlias = siteAliasFromIssuer(issuer)
+
+        return ParsedOtpAuthPayload(
+            secret: secret,
+            siteAlias: siteAlias,
+            username: labelUsername
+        )
+    }
+
+    private func siteAliasFromIssuer(_ issuer: String) -> String? {
+        let compactIssuer = issuer
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: " ", with: "")
+        guard !compactIssuer.isEmpty else { return nil }
+        let normalized = DomainUtils.normalize(compactIssuer)
+        guard !normalized.isEmpty else { return nil }
+        if normalized.contains(".") {
+            return normalized
+        }
+        return "\(normalized).com"
+    }
+
+    private func isValidTotpSecret(_ secret: String) -> Bool {
+        TotpGenerator.currentCode(secret: secret, at: Date(timeIntervalSince1970: 0)) != nil
+    }
+
+    private func parseQRCodePayloadFromPasteboard() -> String? {
+        let pasteboard = NSPasteboard.general
+        guard let images = pasteboard.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage] else {
+            return nil
+        }
+        for image in images {
+            guard let cgImage = cgImage(from: image) else { continue }
+            guard let payload = parseQRCodePayload(from: cgImage) else { continue }
+            return payload
+        }
+        return nil
+    }
+
+    private func cgImage(from image: NSImage) -> CGImage? {
+        var rect = CGRect(origin: .zero, size: image.size)
+        if let cgImage = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) {
+            return cgImage
+        }
+        guard let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff)
+        else {
+            return nil
+        }
+        return rep.cgImage
+    }
+
+    private func parseQRCodePayload(from cgImage: CGImage) -> String? {
+        let request = VNDetectBarcodesRequest()
+        request.symbologies = [.qr]
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        guard (try? handler.perform([request])) != nil else {
+            return nil
+        }
+        let observations = request.results ?? []
+        for observation in observations {
+            let payload = observation.payloadStringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !payload.isEmpty {
+                return payload
+            }
+        }
+        return nil
     }
 
     private func parseSites(_ raw: String) -> [String] {

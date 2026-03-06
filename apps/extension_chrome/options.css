@@ -205,11 +205,24 @@ button {
 }
 
 .sidebar-folder-head {
-  margin-top: 6px;
-  padding: 6px 8px 4px;
   font-size: 12px;
   font-weight: 700;
   color: #4a678f;
+}
+
+.sidebar-folder-head-row {
+  margin-top: 6px;
+  padding: 4px 2px 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sidebar-folder-create-btn {
+  margin-left: auto;
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: 8px;
 }
 
 .accounts-folder-list {
@@ -321,6 +334,16 @@ button {
   border-radius: 8px;
 }
 
+.pin-btn.is-unpin {
+  border-color: #e58f8f;
+  background: linear-gradient(180deg, #fff2f2 0%, #ffdede 100%);
+  color: #8e2a2a;
+}
+
+.pin-btn.is-unpin:hover {
+  background: linear-gradient(180deg, #ffe8e8 0%, #ffcfcf 100%);
+}
+
 .account .meta {
   font-size: 11px;
   color: #4f6687;
@@ -426,4 +449,50 @@ button {
   min-height: 18px;
   margin-top: 8px;
   color: #2f4c7a;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 180px;
+  max-width: 300px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid #c8daf6;
+  border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(40, 76, 128, 0.25);
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.context-menu-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2f4d75;
+  background: transparent;
+}
+
+.context-menu-item:hover:not(:disabled) {
+  background: linear-gradient(180deg, #f3f8ff 0%, #e9f2ff 100%);
+  border-color: #d2e2fb;
+}
+
+.context-menu-item.context-danger {
+  color: #8e2a2a;
+}
+
+.context-menu-item:disabled {
+  color: #8b99ad;
+  cursor: default;
+}
+
+.context-menu-separator {
+  height: 1px;
+  background: #d9e6fb;
+  margin: 2px 4px;
 }

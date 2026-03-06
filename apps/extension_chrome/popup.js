@@ -333,7 +333,9 @@ function renderAccounts() {
       const pinBtn = document.createElement("button");
       pinBtn.type = "button";
       pinBtn.className = "pin-btn";
-      pinBtn.textContent = isPinnedAccount(account) ? "取消置顶" : "置顶";
+      const pinned = isPinnedAccount(account);
+      pinBtn.textContent = pinned ? "取消置顶" : "置顶";
+      pinBtn.classList.toggle("is-unpin", pinned);
       pinBtn.addEventListener("click", async (event) => {
         event.stopPropagation();
         await togglePin(account.accountId);
@@ -1076,7 +1078,7 @@ async function reorderAccount(sourceId, targetId) {
 
   const pinned = isPinnedAccount(source);
   if (isPinnedAccount(target) !== pinned) {
-    setStatus("仅支持在同一分组内排序");
+    setStatus("仅支持 置顶、非置顶 项目内部排序");
     return;
   }
 

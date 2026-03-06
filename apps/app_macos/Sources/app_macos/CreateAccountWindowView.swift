@@ -42,12 +42,39 @@ struct CreateAccountWindowView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    HStack {
-                        Text("TOTP")
-                            .frame(width: 80, alignment: .leading)
-                        TextField("TOTP 种子密钥", text: $store.createTotpSecret)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: .infinity)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("TOTP")
+                                .frame(width: 80, alignment: .leading)
+                            TextField("TOTP 种子密钥", text: $store.createTotpSecret)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: .infinity)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        HStack {
+                            Text("")
+                                .frame(width: 80, alignment: .leading)
+                            HStack(spacing: 8) {
+                                Button("粘贴原始密钥") {
+                                    store.pasteCreateTotpRawSecretFromClipboard()
+                                }
+                                .buttonStyle(.bordered)
+
+                                Button("粘贴完整otpauth URI") {
+                                    store.pasteCreateTotpURIFromClipboard()
+                                }
+                                .buttonStyle(.bordered)
+
+                                Button("粘贴二维码") {
+                                    store.pasteCreateTotpQRCodeFromClipboard()
+                                }
+                                .buttonStyle(.bordered)
+
+                                Spacer()
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 

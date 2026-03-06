@@ -307,6 +307,16 @@ button:active {
   border-radius: 8px;
 }
 
+.pin-btn.is-unpin {
+  border-color: #e58f8f;
+  background: linear-gradient(180deg, #fff2f2 0%, #ffdede 100%);
+  color: #8e2a2a;
+}
+
+.pin-btn.is-unpin:hover {
+  background: linear-gradient(180deg, #ffe8e8 0%, #ffcfcf 100%);
+}
+
 .account .meta {
   font-size: 11px;
   color: #4f6687;

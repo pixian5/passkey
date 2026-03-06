@@ -50,7 +50,7 @@ function ensureActionContextMenu() {
     }
     chrome.contextMenus.create({
       id: CONTEXT_MENU_ID_ALL_ACCOUNTS,
-      title: "全部账号",
+      title: "pass设置",
       contexts: ["action"],
     });
   });

@@ -9,13 +9,15 @@
   <body>
     <main class="page">
       <section class="card">
-        <h2>设备设置</h2>
-        <div class="row">
-          <label for="deviceName">设备名称</label>
-          <input id="deviceName" type="text" placeholder="例如 ChromeMac" />
-          <button id="saveDeviceName">保存</button>
-        </div>
-        <p id="deviceStatus" class="status"></p>
+        <details id="deviceSettingsDetails">
+          <summary>设备设置</summary>
+          <div class="row">
+            <label for="deviceName">设备名称</label>
+            <input id="deviceName" type="text" placeholder="例如 ChromeMac" />
+            <button id="saveDeviceName">保存</button>
+          </div>
+          <p id="deviceStatus" class="status"></p>
+        </details>
       </section>
 
       <section class="card">
@@ -33,7 +35,10 @@
             <button id="accountsTabRecycle" type="button" class="account-view-tab">
               回收站 <span id="recycleAccountsCount">(0)</span>
             </button>
-            <div class="sidebar-folder-head">文件夹</div>
+            <div class="sidebar-folder-head-row">
+              <div class="sidebar-folder-head">文件夹</div>
+              <button id="createFolderBtn" type="button" class="sidebar-folder-create-btn">新建</button>
+            </div>
             <div id="accountsFolderList" class="accounts-folder-list"></div>
           </aside>
           <div class="accounts-main">
@@ -50,7 +55,7 @@
                     <label><input id="allAccountsSearchFieldPassword" type="checkbox" />密码</label>
                   </div>
                 </div>
-                <button id="clearActiveAccounts" class="button-danger">删除账号列表</button>
+                <button id="clearActiveAccounts" class="button-danger">全部移入回收站</button>
                 <button id="clearRecycleBin" class="button-danger">清空回收站</button>
               </div>
             </div>
