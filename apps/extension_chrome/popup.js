@@ -210,8 +210,11 @@ function normalizeAccountShape(account) {
   const canonical = account.canonicalSite || etldPlusOne(sites[0] || "");
   const createdAtMs = Number(account.createdAtMs || account.updatedAtMs || now);
   const username = account.username || "";
+  const accountId = account.accountId || buildAccountId(canonical, username, createdAtMs);
+  const recordId = normalizeRecordId(account, accountId, createdAtMs);
   return {
-    accountId: account.accountId || buildAccountId(canonical, username, createdAtMs),
+    recordId,
+    accountId,
     canonicalSite: canonical,
     usernameAtCreate: account.usernameAtCreate || username,
     isPinned: Boolean(account.isPinned),
@@ -258,6 +261,7 @@ function normalizePasskeyShape(item) {
     updatedAtMs: Number(item?.updatedAtMs || item?.createdAtMs || now),
     lastUsedAtMs: item?.lastUsedAtMs == null ? null : Number(item.lastUsedAtMs),
     mode: String(item?.mode || "managed"),
+    createCompatMethod: normalizePasskeyCreateCompatMethod(item?.createCompatMethod, item?.alg),
   };
 }
 
@@ -482,8 +486,8 @@ function renderPasskeyList() {
     const empty = document.createElement("p");
     empty.className = "empty";
     empty.textContent = allPasskeys.length === 0
-      ? "暂无通行秘钥（访问支持 passkey 的站点并注册后会出现在这里）"
-      : "没有匹配的通行秘钥";
+      ? "暂无通行密钥（访问支持 passkey 的站点并注册后会出现在这里）"
+      : "没有匹配的通行密钥";
     dom.passkeyList.appendChild(empty);
     return;
   }
@@ -496,40 +500,26 @@ function renderPasskeyList() {
 
     const title = document.createElement("strong");
     const name = item.userName || item.displayName || "-";
-    title.textContent = `${item.rpId} | ${name}`;
+    const compatLabel = formatPasskeyCompatLabel(item);
+    title.textContent = `${item.rpId} | ${name}${compatLabel ? ` | ${compatLabel}` : ""}`;
     card.appendChild(title);
 
     const meta = document.createElement("div");
     meta.className = "meta";
-    const currentBadge = matchRpIdWithDomain(item.rpId, currentDomain)
-      ? '<span class="badge">当前站点可用</span>'
-      : "";
     const linkedCount = Number(item.linkedAccountCount || 0);
     meta.innerHTML =
       `credentialId: ${escapeHtml(shortenMiddle(item.credentialIdB64u, 20))}<br/>` +
       `签名计数: ${item.signCount} | 算法: ${item.alg} | 模式: ${escapeHtml(item.mode)}<br/>` +
       `创建: ${formatTime(item.createdAtMs)} | 最近使用: ${formatTime(item.lastUsedAtMs)}<br/>` +
-      `关联账号数: ${linkedCount}<br/>` +
-      `${currentBadge}`;
+      `关联账号数: ${linkedCount}<br/>`;
     card.appendChild(meta);
 
     const actions = document.createElement("div");
     actions.className = "actions";
 
-    const copyIdBtn = document.createElement("button");
-    copyIdBtn.textContent = "复制ID";
-    copyIdBtn.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(item.credentialIdB64u);
-        setStatus(`已复制通行秘钥ID: ${shortenMiddle(item.credentialIdB64u, 16)}`);
-      } catch (error) {
-        setStatus(`复制失败: ${error.message}`);
-      }
-    });
-    actions.appendChild(copyIdBtn);
-
     const deleteBtn = document.createElement("button");
-    deleteBtn.textContent = "删除通行秘钥";
+    deleteBtn.className = "button-danger";
+    deleteBtn.textContent = "删除通行密钥";
     deleteBtn.addEventListener("click", async () => {
       await deletePasskey(item.credentialIdB64u);
     });
@@ -556,6 +546,7 @@ function collectUnifiedPasskeys() {
       linkedAccountIds: [],
       linkedAccountCount: 0,
       mode: String(item?.mode || "managed"),
+      createCompatMethod: normalizePasskeyCreateCompatMethod(item?.createCompatMethod, item?.alg),
       createdAtMs: Number(item?.createdAtMs || now),
       updatedAtMs: Number(item?.updatedAtMs || item?.createdAtMs || now),
       lastUsedAtMs: item?.lastUsedAtMs == null ? null : Number(item.lastUsedAtMs),
@@ -589,6 +580,7 @@ function collectUnifiedPasskeys() {
           updatedAtMs: accountUpdatedAt,
           lastUsedAtMs: null,
           mode: "linked-account",
+          createCompatMethod: "unknown_linked",
           linkedAccountIds: [],
           linkedAccountCount: 0,
         });
@@ -633,15 +625,12 @@ function buildEditor(account) {
 
   const details = document.createElement("div");
   details.className = "meta editor-meta";
-  const matched = isAccountMatchCurrentDomain(account, currentDomain);
-  const statusBadge = matched ? '<span class="badge">当前站点可用</span>' : "";
   details.innerHTML =
-    `通行秘钥: ${(account.passkeyCredentialIds || []).length} 个 | 通行秘钥更新时间：${formatTime(account.passkeyUpdatedAtMs)}<br/>` +
+    `通行密钥: ${(account.passkeyCredentialIds || []).length} 个 | 通行密钥更新时间：${formatTime(account.passkeyUpdatedAtMs)}<br/>` +
     `创建: ${formatTime(account.createdAtMs)} | 更新: ${formatTime(account.updatedAtMs)}<br/>` +
     `删除: ${formatTime(account.deletedAtMs)}<br/>` +
     `用户名更新时间：${formatTime(account.usernameUpdatedAtMs)} | 密码更新时间：${formatTime(account.passwordUpdatedAtMs)}<br/>` +
-    `TOTP更新时间：${formatTime(account.totpUpdatedAtMs)} | 恢复码更新时间：${formatTime(account.recoveryCodesUpdatedAtMs)} | 备注更新时间：${formatTime(account.noteUpdatedAtMs)}<br/>` +
-    `${statusBadge}`;
+    `TOTP更新时间：${formatTime(account.totpUpdatedAtMs)} | 恢复码更新时间：${formatTime(account.recoveryCodesUpdatedAtMs)} | 备注更新时间：${formatTime(account.noteUpdatedAtMs)}<br/>`;
   editor.appendChild(details);
 
   const buttons = document.createElement("div");
@@ -911,7 +900,7 @@ async function permanentlyDelete(accountId) {
 async function deletePasskey(credentialIdB64u) {
   const targetId = normalizePasskeyId(credentialIdB64u);
   if (!targetId) {
-    setStatus("通行秘钥 ID 非法");
+    setStatus("通行密钥 ID 非法");
     return;
   }
 
@@ -933,7 +922,7 @@ async function deletePasskey(credentialIdB64u) {
   });
 
   if (next.length === passkeys.length && !accountsChanged) {
-    setStatus("未找到目标通行秘钥");
+    setStatus("未找到目标通行密钥");
     return;
   }
 
@@ -943,7 +932,7 @@ async function deletePasskey(credentialIdB64u) {
   if (accountsChanged) {
     await persistAccounts(nextAccounts);
   }
-  setStatus(`通行秘钥已移除: ${shortenMiddle(targetId, 16)}`);
+  setStatus(`通行密钥已移除: ${shortenMiddle(targetId, 16)}`);
   renderAccounts();
 }
 
@@ -966,6 +955,7 @@ function createAccount({ site, sites = [], username, password, createdAtMs, devi
   const accountId = buildAccountId(canonical, username, createdAtMs);
 
   return {
+    recordId: stableUuidFromText(`${accountId}|${createdAtMs}|${username}`),
     accountId,
     canonicalSite: canonical,
     usernameAtCreate: username,
@@ -1156,6 +1146,65 @@ function normalizeSites(sites) {
 
 function normalizePasskeyId(value) {
   return String(value || "").trim();
+}
+
+function normalizePasskeyCreateCompatMethod(input, alg) {
+  const value = String(input || "").trim().toLowerCase();
+  if (
+    value === "standard" ||
+    value === "user_name_fallback" ||
+    value === "rs256" ||
+    value === "user_name_fallback+rs256" ||
+    value === "unknown_linked"
+  ) {
+    return value;
+  }
+  return Number(alg) === -257 ? "rs256" : "standard";
+}
+
+function formatPasskeyCompatLabel(item) {
+  const mode = String(item?.mode || "");
+  const method = normalizePasskeyCreateCompatMethod(item?.createCompatMethod, item?.alg);
+  if (mode === "linked-account") {
+    return "命中：未知(仅账号关联)";
+  }
+  if (method === "user_name_fallback+rs256") {
+    return "命中：兼容2+3";
+  }
+  if (method === "user_name_fallback") {
+    return "命中：兼容2(user.name兜底)";
+  }
+  if (method === "rs256") {
+    return "命中：兼容3(RS256)";
+  }
+  return "命中：标准托管";
+}
+
+function isUuidLower(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(String(value || ""));
+}
+
+function stableUuidFromText(input) {
+  const raw = String(input || "");
+  const seedParts = [0x9e3779b9, 0x85ebca6b, 0xc2b2ae35, 0x27d4eb2f];
+  for (let i = 0; i < raw.length; i += 1) {
+    const code = raw.charCodeAt(i);
+    const idx = i % 4;
+    seedParts[idx] = Math.imul(seedParts[idx] ^ code, 0x45d9f3b) >>> 0;
+    seedParts[idx] = (seedParts[idx] ^ (seedParts[idx] >>> 16)) >>> 0;
+  }
+  const hex = seedParts
+    .map((value) => value.toString(16).padStart(8, "0"))
+    .join("")
+    .slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+function normalizeRecordId(account, accountId, createdAtMs) {
+  const direct = String(account?.recordId || account?.id || "").trim().toLowerCase();
+  if (isUuidLower(direct)) return direct;
+  const usernameSeed = String(account?.usernameAtCreate || account?.username || "").trim();
+  return stableUuidFromText(`${String(accountId || "").trim()}|${Number(createdAtMs || 0)}|${usernameSeed}`);
 }
 
 function normalizePasskeyCredentialIds(input) {

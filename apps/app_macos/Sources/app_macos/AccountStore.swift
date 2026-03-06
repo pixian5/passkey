@@ -84,11 +84,13 @@ final class AccountStore: ObservableObject {
     @Published private(set) var selectAllAccountsSignal: Int = 0
     @Published private(set) var cloudSyncStatus: String = "iCloud 未连接，使用本机数据"
     @Published private(set) var accounts: [PasswordAccount] = []
+    @Published private(set) var passkeys: [PasskeyRecord] = []
 
     static let systemDefaultFontFamily = "系统默认"
     static let fixedNewAccountFolderName = "新账号"
     static let fixedNewAccountFolderId = UUID(uuidString: "F16A2C4E-4A2A-43D5-A670-3F1767D41001")!
-    static let syncBundleSchema = "pass.sync.bundle.v1"
+    static let syncBundleSchemaV2 = "pass.sync.bundle.v2"
+    static let syncBundleSchemaV1 = "pass.sync.bundle.v1"
     private static let installedFontFamilies: Set<String> = Set(NSFontManager.shared.availableFontFamilies)
 
     private let decoder = JSONDecoder()
@@ -165,7 +167,8 @@ final class AccountStore: ObservableObject {
         let folder = AccountFolder(
             id: UUID(),
             name: name,
-            createdAtMs: nowMs()
+            createdAtMs: nowMs(),
+            updatedAtMs: nowMs()
         )
         folders.append(folder)
         _ = normalizeFoldersEnsuringFixedNewAccountFolder()
@@ -732,18 +735,19 @@ final class AccountStore: ObservableObject {
     }
 
     func exportSyncBundle(to fileURL: URL) {
-        let bundle = SyncBundleV1(
-            schema: Self.syncBundleSchema,
+        let bundle = SyncBundleV2(
+            schema: Self.syncBundleSchemaV2,
             exportedAtMs: nowMs(),
             source: SyncBundleSource(
                 app: "pass-mac",
                 platform: "macos-app",
                 deviceName: currentDeviceName(),
-                formatVersion: 1
+                formatVersion: 2
             ),
             payload: SyncBundlePayload(
                 accounts: accounts,
-                folders: folders
+                folders: folders,
+                passkeys: passkeys
             )
         )
 
@@ -767,20 +771,25 @@ final class AccountStore: ObservableObject {
             let parsed = try decodeSyncBundle(data)
             let remoteAccounts = normalizeDecodedAccounts(parsed.accounts)
             let remoteFolders = parsed.folders
+            let remotePasskeys = parsed.passkeys
 
             let localAccountCount = accounts.count
             let localFolderCount = folders.count
+            let localPasskeyCount = passkeys.count
 
             let mergedFolders = mergeFolderCollections(local: folders, remote: remoteFolders)
             let validFolderIds = Set(mergedFolders.map(\.id))
             var mergedAccounts = mergeAccountCollections(local: accounts, remote: remoteAccounts)
             mergedAccounts = reconcileAccountsWithValidFolderIds(mergedAccounts, validFolderIds: validFolderIds)
+            let mergedPasskeys = mergePasskeyCollections(local: passkeys, remote: remotePasskeys)
 
             folders = mergedFolders
             accounts = mergedAccounts
+            passkeys = mergedPasskeys
             syncAliasGroups()
             saveFoldersToDefaults()
             saveAccounts()
+            savePasskeysToLocalDisk()
 
             if let editingAccountId, !accounts.contains(where: { $0.id == editingAccountId }) {
                 cancelEditing()
@@ -788,7 +797,8 @@ final class AccountStore: ObservableObject {
 
             statusMessage =
                 "同步包导入并合并完成（\(parsed.kind)）：账号 \(localAccountCount)+\(remoteAccounts.count)->\(accounts.count)，" +
-                "文件夹 \(localFolderCount)+\(remoteFolders.count)->\(folders.count)"
+                "文件夹 \(localFolderCount)+\(remoteFolders.count)->\(folders.count)，" +
+                "通行密钥 \(localPasskeyCount)+\(remotePasskeys.count)->\(passkeys.count)"
         } catch {
             statusMessage = "同步包导入失败: \(error.localizedDescription)"
         }
@@ -1128,6 +1138,8 @@ final class AccountStore: ObservableObject {
         let savedToastDuration = defaults.double(forKey: Keys.uiToastDurationSeconds)
         uiToastDurationSeconds = savedToastDuration > 0 ? savedToastDuration : 3
 
+        passkeys = loadPasskeysFromLocalDisk()
+
         let fileURL = dataFileURL()
         guard let data = try? Data(contentsOf: fileURL) else {
             accounts = []
@@ -1186,6 +1198,30 @@ final class AccountStore: ObservableObject {
             try data.write(to: dataFileURL(), options: .atomic)
         } catch {
             statusMessage = "保存失败: \(error.localizedDescription)"
+        }
+    }
+
+    private func loadPasskeysFromLocalDisk() -> [PasskeyRecord] {
+        let fileURL = passkeysFileURL()
+        guard let data = try? Data(contentsOf: fileURL) else {
+            return []
+        }
+        guard let decoded = try? decoder.decode([PasskeyRecord].self, from: data) else {
+            return []
+        }
+        return decoded.map(normalizePasskeyRecord)
+    }
+
+    private func savePasskeysToLocalDisk() {
+        do {
+            let data = try encoder.encode(passkeys.map(normalizePasskeyRecord))
+            try FileManager.default.createDirectory(
+                at: dataDirectoryURL(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: passkeysFileURL(), options: .atomic)
+        } catch {
+            statusMessage = "保存通行密钥失败: \(error.localizedDescription)"
         }
     }
 
@@ -1365,13 +1401,20 @@ final class AccountStore: ObservableObject {
             rhs.noteUpdatedAtMs,
             rhs.updatedAtMs
         )
+        let mergedPasskeyCredentialIds = Array(
+            Set((lhs.passkeyCredentialIds + rhs.passkeyCredentialIds)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty })
+        ).sorted()
+        let passkeyUpdatedAtMs = max(lhs.passkeyUpdatedAtMs, rhs.passkeyUpdatedAtMs)
 
         let latestContentUpdatedAt = max(
             usernameField.updatedAtMs,
             passwordField.updatedAtMs,
             totpField.updatedAtMs,
             recoveryField.updatedAtMs,
-            noteField.updatedAtMs
+            noteField.updatedAtMs,
+            passkeyUpdatedAtMs
         )
 
         let lhsDeletedAt = lhs.isDeleted ? (lhs.deletedAtMs ?? 0) : 0
@@ -1410,11 +1453,13 @@ final class AccountStore: ObservableObject {
             totpSecret: totpField.value,
             recoveryCodes: recoveryField.value,
             note: noteField.value,
+            passkeyCredentialIds: mergedPasskeyCredentialIds,
             usernameUpdatedAtMs: usernameField.updatedAtMs,
             passwordUpdatedAtMs: passwordField.updatedAtMs,
             totpUpdatedAtMs: totpField.updatedAtMs,
             recoveryCodesUpdatedAtMs: recoveryField.updatedAtMs,
             noteUpdatedAtMs: noteField.updatedAtMs,
+            passkeyUpdatedAtMs: passkeyUpdatedAtMs,
             updatedAtMs: latestUpdatedAt,
             isDeleted: keepDeleted,
             deletedAtMs: keepDeleted ? latestDeletedAt : nil,
@@ -1446,13 +1491,15 @@ final class AccountStore: ObservableObject {
             mergedById[fixedId] = AccountFolder(
                 id: fixedId,
                 name: Self.fixedNewAccountFolderName,
-                createdAtMs: existing.createdAtMs
+                createdAtMs: existing.createdAtMs,
+                updatedAtMs: existing.updatedAtMs
             )
         } else {
             mergedById[fixedId] = AccountFolder(
                 id: fixedId,
                 name: Self.fixedNewAccountFolderName,
-                createdAtMs: nowMs()
+                createdAtMs: nowMs(),
+                updatedAtMs: nowMs()
             )
         }
 
@@ -1460,22 +1507,110 @@ final class AccountStore: ObservableObject {
     }
 
     private func mergeSameFolder(_ lhs: AccountFolder, _ rhs: AccountFolder) -> AccountFolder {
+        let leftUpdatedAt = lhs.updatedAtMs
+        let rightUpdatedAt = rhs.updatedAtMs
         if lhs.id == Self.fixedNewAccountFolderId {
             return AccountFolder(
                 id: lhs.id,
                 name: Self.fixedNewAccountFolderName,
-                createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs)
+                createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs),
+                updatedAtMs: max(leftUpdatedAt, rightUpdatedAt)
             )
         }
 
         let leftName = lhs.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let rightName = rhs.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let mergedName = leftName.isEmpty ? rightName : leftName
+        let mergedName: String
+        if rightUpdatedAt > leftUpdatedAt {
+            mergedName = rightName.isEmpty ? leftName : rightName
+        } else if leftUpdatedAt > rightUpdatedAt {
+            mergedName = leftName.isEmpty ? rightName : leftName
+        } else {
+            mergedName = leftName.isEmpty ? rightName : leftName
+        }
 
         return AccountFolder(
             id: lhs.id,
             name: mergedName.isEmpty ? lhs.name : mergedName,
-            createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs)
+            createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs),
+            updatedAtMs: max(leftUpdatedAt, rightUpdatedAt)
+        )
+    }
+
+    private func normalizePasskeyRecord(_ source: PasskeyRecord) -> PasskeyRecord {
+        let normalizedCredentialId = source.credentialIdB64u.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedRpId = DomainUtils.normalize(source.rpId)
+        let normalizedUserName = source.userName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedDisplayName = source.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedMode = source.mode.trimmingCharacters(in: .whitespacesAndNewlines)
+        let createdAt = max(source.createdAtMs, 0)
+        let updatedAt = max(source.updatedAtMs, createdAt)
+        let lastUsedAt = source.lastUsedAtMs.map { max($0, 0) }
+
+        return PasskeyRecord(
+            credentialIdB64u: normalizedCredentialId,
+            rpId: normalizedRpId,
+            userName: normalizedUserName,
+            displayName: normalizedDisplayName,
+            userHandleB64u: source.userHandleB64u,
+            alg: source.alg,
+            signCount: max(source.signCount, 0),
+            privateJwk: source.privateJwk,
+            publicJwk: source.publicJwk,
+            createdAtMs: createdAt,
+            updatedAtMs: updatedAt,
+            lastUsedAtMs: lastUsedAt,
+            mode: normalizedMode.isEmpty ? "managed" : normalizedMode
+        )
+    }
+
+    private func mergePasskeyCollections(
+        local: [PasskeyRecord],
+        remote: [PasskeyRecord]
+    ) -> [PasskeyRecord] {
+        var mergedById: [String: PasskeyRecord] = [:]
+        var order: [String] = []
+        for item in (local + remote) {
+            let normalized = normalizePasskeyRecord(item)
+            let id = normalized.credentialIdB64u
+            guard !id.isEmpty else { continue }
+            if let existing = mergedById[id] {
+                mergedById[id] = mergeSamePasskey(existing, normalized)
+            } else {
+                mergedById[id] = normalized
+                order.append(id)
+            }
+        }
+        return order.compactMap { mergedById[$0] }.sorted { lhs, rhs in
+            if lhs.updatedAtMs != rhs.updatedAtMs {
+                return lhs.updatedAtMs > rhs.updatedAtMs
+            }
+            return lhs.credentialIdB64u < rhs.credentialIdB64u
+        }
+    }
+
+    private func mergeSamePasskey(_ lhs: PasskeyRecord, _ rhs: PasskeyRecord) -> PasskeyRecord {
+        let left = normalizePasskeyRecord(lhs)
+        let right = normalizePasskeyRecord(rhs)
+        let newer = left.updatedAtMs >= right.updatedAtMs ? left : right
+        let older = left.updatedAtMs >= right.updatedAtMs ? right : left
+
+        return PasskeyRecord(
+            credentialIdB64u: newer.credentialIdB64u.isEmpty ? older.credentialIdB64u : newer.credentialIdB64u,
+            rpId: newer.rpId.isEmpty ? older.rpId : newer.rpId,
+            userName: newer.userName.isEmpty ? older.userName : newer.userName,
+            displayName: newer.displayName.isEmpty ? older.displayName : newer.displayName,
+            userHandleB64u: newer.userHandleB64u.isEmpty ? older.userHandleB64u : newer.userHandleB64u,
+            alg: newer.alg == 0 ? older.alg : newer.alg,
+            signCount: max(left.signCount, right.signCount),
+            privateJwk: newer.privateJwk ?? older.privateJwk,
+            publicJwk: newer.publicJwk ?? older.publicJwk,
+            createdAtMs: min(left.createdAtMs, right.createdAtMs),
+            updatedAtMs: max(left.updatedAtMs, right.updatedAtMs),
+            lastUsedAtMs: max(left.lastUsedAtMs ?? 0, right.lastUsedAtMs ?? 0) > 0
+                ? max(left.lastUsedAtMs ?? 0, right.lastUsedAtMs ?? 0)
+                : nil,
+            mode: newer.mode.isEmpty ? older.mode : newer.mode
         )
     }
 
@@ -1496,20 +1631,27 @@ final class AccountStore: ObservableObject {
     private func decodeSyncBundle(_ data: Data) throws -> (
         accounts: [PasswordAccount],
         folders: [AccountFolder],
+        passkeys: [PasskeyRecord],
         kind: String
     ) {
-        if let v1 = try? decoder.decode(SyncBundleV1.self, from: data),
-           v1.schema == Self.syncBundleSchema
+        if let v2 = try? decoder.decode(SyncBundleV2.self, from: data),
+           v2.schema == Self.syncBundleSchemaV2
         {
-            return (v1.payload.accounts, v1.payload.folders, "v1")
+            return (v2.payload.accounts, v2.payload.folders, v2.payload.passkeys ?? [], "v2")
+        }
+
+        if let v1 = try? decoder.decode(SyncBundleV1.self, from: data),
+           v1.schema == Self.syncBundleSchemaV1
+        {
+            return (v1.payload.accounts, v1.payload.folders, v1.payload.passkeys ?? [], "v1")
         }
 
         if let payload = try? decoder.decode(SyncBundlePayload.self, from: data) {
-            return (payload.accounts, payload.folders, "legacy_payload")
+            return (payload.accounts, payload.folders, payload.passkeys ?? [], "legacy_payload")
         }
 
         if let legacy = try? decoder.decode(LegacySyncBundlePayload.self, from: data) {
-            return (legacy.accounts ?? [], legacy.folders ?? [], "legacy_root")
+            return (legacy.accounts ?? [], legacy.folders ?? [], legacy.passkeys ?? [], "legacy_root")
         }
 
         throw NSError(
@@ -1571,7 +1713,13 @@ final class AccountStore: ObservableObject {
 
                 for j in accounts.indices where !visited.contains(j) {
                     let targetSites = Set(accounts[j].sites.map(DomainUtils.normalize))
-                    if !currentSites.isDisjoint(with: targetSites) {
+                    let hasSiteOverlap = !currentSites.isDisjoint(with: targetSites)
+                    let sameEtld1 = currentSites.contains { currentSite in
+                        targetSites.contains { targetSite in
+                            DomainUtils.etldPlusOne(for: currentSite) == DomainUtils.etldPlusOne(for: targetSite)
+                        }
+                    }
+                    if hasSiteOverlap || sameEtld1 {
                         visited.insert(j)
                         queue.append(j)
                     }
@@ -1599,6 +1747,14 @@ final class AccountStore: ObservableObject {
         source.map { account in
             var mutable = account
             mutable.setResolvedFolderIds(mutable.resolvedFolderIds)
+            mutable.passkeyCredentialIds = Array(
+                Set(mutable.passkeyCredentialIds
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty })
+            ).sorted()
+            if mutable.passkeyUpdatedAtMs <= 0 {
+                mutable.passkeyUpdatedAtMs = mutable.createdAtMs
+            }
             return mutable
         }
     }
@@ -1620,6 +1776,9 @@ final class AccountStore: ObservableObject {
         let fixedCreatedAt = folders.first(where: { $0.id == fixedId })?.createdAtMs
             ?? folders.filter { legacyNewAccountFolderIds.contains($0.id) }.map(\.createdAtMs).min()
             ?? nowMs()
+        let fixedUpdatedAt = folders.first(where: { $0.id == fixedId })?.updatedAtMs
+            ?? folders.filter { legacyNewAccountFolderIds.contains($0.id) }.map(\.updatedAtMs).max()
+            ?? fixedCreatedAt
 
         let retainedFolders = folders.filter { folder in
             folder.id != fixedId && !legacyNewAccountFolderIds.contains(folder.id)
@@ -1628,7 +1787,8 @@ final class AccountStore: ObservableObject {
         let fixedFolder = AccountFolder(
             id: fixedId,
             name: fixedName,
-            createdAtMs: fixedCreatedAt
+            createdAtMs: fixedCreatedAt,
+            updatedAtMs: fixedUpdatedAt
         )
 
         var deduplicated: [AccountFolder] = [fixedFolder]
@@ -2002,6 +2162,10 @@ final class AccountStore: ObservableObject {
         dataDirectoryURL().appendingPathComponent("accounts.json", isDirectory: false)
     }
 
+    private func passkeysFileURL() -> URL {
+        dataDirectoryURL().appendingPathComponent("passkeys.json", isDirectory: false)
+    }
+
     private func nowMs() -> Int64 {
         Int64(Date().timeIntervalSince1970 * 1000)
     }
@@ -2083,6 +2247,13 @@ final class AccountStore: ObservableObject {
     }
 }
 
+private struct SyncBundleV2: Codable {
+    let schema: String
+    let exportedAtMs: Int64
+    let source: SyncBundleSource
+    let payload: SyncBundlePayload
+}
+
 private struct SyncBundleV1: Codable {
     let schema: String
     let exportedAtMs: Int64
@@ -2100,11 +2271,13 @@ private struct SyncBundleSource: Codable {
 private struct SyncBundlePayload: Codable {
     let accounts: [PasswordAccount]
     let folders: [AccountFolder]
+    let passkeys: [PasskeyRecord]?
 }
 
 private struct LegacySyncBundlePayload: Codable {
     let accounts: [PasswordAccount]?
     let folders: [AccountFolder]?
+    let passkeys: [PasskeyRecord]?
 }
 
 private enum Keys {
@@ -2152,11 +2325,13 @@ private extension LegacyPasswordAccount {
             totpSecret: "",
             recoveryCodes: "",
             note: "",
+            passkeyCredentialIds: [],
             usernameUpdatedAtMs: updatedAtMs,
             passwordUpdatedAtMs: updatedAtMs,
             totpUpdatedAtMs: updatedAtMs,
             recoveryCodesUpdatedAtMs: updatedAtMs,
             noteUpdatedAtMs: updatedAtMs,
+            passkeyUpdatedAtMs: updatedAtMs,
             updatedAtMs: updatedAtMs,
             isDeleted: isDeleted,
             deletedAtMs: isDeleted ? updatedAtMs : nil,

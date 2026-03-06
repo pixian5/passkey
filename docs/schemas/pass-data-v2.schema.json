@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pass.local/schemas/pass-data-v2.schema.json",
+  "title": "pass.data.v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "meta",
+    "accounts",
+    "folders",
+    "passkeys"
+  ],
+  "properties": {
+    "schema": {
+      "const": "pass.data.v2"
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generatedAtMs",
+        "source"
+      ],
+      "properties": {
+        "generatedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        }
+      }
+    },
+    "accounts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/account"
+      }
+    },
+    "folders": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/folder"
+      }
+    },
+    "passkeys": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/passkey"
+      }
+    }
+  },
+  "$defs": {
+    "uuidLower": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app",
+        "platform",
+        "deviceName",
+        "formatVersion"
+      ],
+      "properties": {
+        "app": {
+          "type": "string",
+          "minLength": 1
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deviceName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "formatVersion": {
+          "type": "integer",
+          "const": 2
+        }
+      }
+    },
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recordId",
+        "accountId",
+        "canonicalSite",
+        "usernameAtCreate",
+        "isPinned",
+        "sites",
+        "username",
+        "password",
+        "totpSecret",
+        "recoveryCodes",
+        "note",
+        "passkeyCredentialIds",
+        "usernameUpdatedAtMs",
+        "passwordUpdatedAtMs",
+        "totpUpdatedAtMs",
+        "recoveryCodesUpdatedAtMs",
+        "noteUpdatedAtMs",
+        "passkeyUpdatedAtMs",
+        "isDeleted",
+        "lastOperatedDeviceName",
+        "createdAtMs",
+        "updatedAtMs"
+      ],
+      "properties": {
+        "recordId": {
+          "$ref": "#/$defs/uuidLower"
+        },
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "canonicalSite": {
+          "type": "string"
+        },
+        "usernameAtCreate": {
+          "type": "string"
+        },
+        "isPinned": {
+          "type": "boolean"
+        },
+        "pinnedSortOrder": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "regularSortOrder": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "folderId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/uuidLower"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "folderIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/uuidLower"
+          },
+          "uniqueItems": true
+        },
+        "sites": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "username": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "totpSecret": {
+          "type": "string"
+        },
+        "recoveryCodes": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "passkeyCredentialIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "usernameUpdatedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passwordUpdatedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totpUpdatedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recoveryCodesUpdatedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "noteUpdatedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passkeyUpdatedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "isDeleted": {
+          "type": "boolean"
+        },
+        "deletedAtMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "lastOperatedDeviceName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "createdAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updatedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "folder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "createdAtMs",
+        "updatedAtMs"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuidLower"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "createdAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updatedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "passkey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "credentialIdB64u",
+        "rpId",
+        "userName",
+        "displayName",
+        "userHandleB64u",
+        "alg",
+        "signCount",
+        "createdAtMs",
+        "updatedAtMs",
+        "mode"
+      ],
+      "properties": {
+        "credentialIdB64u": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rpId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "userName": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "userHandleB64u": {
+          "type": "string"
+        },
+        "alg": {
+          "type": "integer"
+        },
+        "signCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "privateJwk": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "publicJwk": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "createdAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updatedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lastUsedAtMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "mode": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

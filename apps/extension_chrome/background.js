@@ -200,11 +200,13 @@ async function handleSaveFromLogin(payload) {
 
 async function getAccounts() {
   const stored = await chrome.storage.local.get([STORAGE_KEY_ACCOUNTS]);
-  return Array.isArray(stored[STORAGE_KEY_ACCOUNTS]) ? stored[STORAGE_KEY_ACCOUNTS] : [];
+  const raw = Array.isArray(stored[STORAGE_KEY_ACCOUNTS]) ? stored[STORAGE_KEY_ACCOUNTS] : [];
+  return raw.map(normalizeAccountShape);
 }
 
 async function setAccounts(accounts) {
-  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: accounts });
+  const normalized = (Array.isArray(accounts) ? accounts : []).map(normalizeAccountShape);
+  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: normalized });
 }
 
 async function upsertAccountForPasskey(accountHint) {
@@ -309,11 +311,14 @@ function mergeMatchedAccountsForPasskey({
   const existingPasskeyIds = normalizePasskeyCredentialIds(
     matchedAccounts.flatMap((account) => account?.passkeyCredentialIds || [])
   );
-  const mergedPasskeyIds = normalizePasskeyCredentialIds([...existingPasskeyIds, credentialIdB64u]);
+  const normalizedNewCredentialId = normalizePasskeyId(credentialIdB64u);
+  const latestExistingCredentialId = pickLatestPasskeyCredentialId(matchedAccounts);
+  const finalCredentialId = normalizedNewCredentialId || latestExistingCredentialId;
+  const mergedPasskeyIds = finalCredentialId ? [finalCredentialId] : [];
   const passkeyUpdatedAtFromData = matchedAccounts.reduce((maxValue, account) => {
     return Math.max(maxValue, asTimestamp(account?.passkeyUpdatedAtMs, account?.createdAtMs));
   }, 0);
-  const passkeyChanged = mergedPasskeyIds.length !== existingPasskeyIds.length;
+  const passkeyChanged = JSON.stringify(mergedPasskeyIds) !== JSON.stringify(existingPasskeyIds);
 
   const canonicalSite = primary?.canonicalSite || etldPlusOne(mergedSites[0] || domain);
   const hasExactUsernameMatch = matchedAccounts.some(
@@ -326,6 +331,7 @@ function mergeMatchedAccountsForPasskey({
 
   return {
     ...primary,
+    recordId: normalizeRecordId(primary, accountId, safeCreatedAtMs),
     accountId,
     canonicalSite,
     usernameAtCreate: primary?.usernameAtCreate || normalizeUsername(primary?.username || "") || mergedUsername,
@@ -422,6 +428,23 @@ function pickLatestTextField(accounts, valueKey, updatedAtKey, fallbackTs) {
   };
 }
 
+function pickLatestPasskeyCredentialId(accounts) {
+  let best = "";
+  let bestUpdatedAt = 0;
+  const values = Array.isArray(accounts) ? accounts : [];
+  for (const account of values) {
+    const updatedAt = asTimestamp(account?.passkeyUpdatedAtMs, account?.updatedAtMs || account?.createdAtMs);
+    const ids = normalizePasskeyCredentialIds(account?.passkeyCredentialIds || []);
+    const candidate = ids[0] || "";
+    if (!candidate) continue;
+    if (!best || updatedAt > bestUpdatedAt) {
+      best = candidate;
+      bestUpdatedAt = updatedAt;
+    }
+  }
+  return best;
+}
+
 function asTimestamp(value, fallbackTs = 0) {
   const number = Number(value);
   if (Number.isFinite(number) && number > 0) {
@@ -442,6 +465,75 @@ function normalizePasskeyId(value) {
 function normalizePasskeyCredentialIds(input) {
   const values = Array.isArray(input) ? input : [];
   return [...new Set(values.map(normalizePasskeyId).filter(Boolean))].sort();
+}
+
+function isUuidLower(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(String(value || ""));
+}
+
+function stableUuidFromText(input) {
+  const raw = String(input || "");
+  const seedParts = [0x9e3779b9, 0x85ebca6b, 0xc2b2ae35, 0x27d4eb2f];
+  for (let i = 0; i < raw.length; i += 1) {
+    const code = raw.charCodeAt(i);
+    const idx = i % 4;
+    seedParts[idx] = Math.imul(seedParts[idx] ^ code, 0x45d9f3b) >>> 0;
+    seedParts[idx] = (seedParts[idx] ^ (seedParts[idx] >>> 16)) >>> 0;
+  }
+  const hex = seedParts
+    .map((value) => value.toString(16).padStart(8, "0"))
+    .join("")
+    .slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+function normalizeRecordId(account, accountId, createdAtMs) {
+  const direct = String(account?.recordId || account?.id || "").trim().toLowerCase();
+  if (isUuidLower(direct)) return direct;
+  const usernameSeed = String(account?.usernameAtCreate || account?.username || "").trim();
+  return stableUuidFromText(`${String(accountId || "").trim()}|${Number(createdAtMs || 0)}|${usernameSeed}`);
+}
+
+function normalizeAccountShape(account) {
+  const now = Date.now();
+  const sites = normalizeSites(account?.sites || []);
+  const canonicalSite = String(account?.canonicalSite || etldPlusOne(sites[0] || ""));
+  const createdAtMs = asTimestamp(account?.createdAtMs, account?.updatedAtMs || now);
+  const username = normalizeUsername(account?.username || "");
+  const accountId = String(account?.accountId || buildAccountId(canonicalSite, username, createdAtMs));
+  const passkeyCredentialIds = normalizePasskeyCredentialIds(account?.passkeyCredentialIds || []);
+  return {
+    ...account,
+    recordId: normalizeRecordId(account, accountId, createdAtMs),
+    accountId,
+    canonicalSite,
+    usernameAtCreate: normalizeUsername(account?.usernameAtCreate || username),
+    isPinned: Boolean(account?.isPinned),
+    pinnedSortOrder: account?.pinnedSortOrder == null ? null : Number(account.pinnedSortOrder),
+    regularSortOrder: account?.regularSortOrder == null ? null : Number(account.regularSortOrder),
+    folderId: account?.folderId == null ? null : String(account.folderId).trim().toLowerCase(),
+    folderIds: Array.isArray(account?.folderIds)
+      ? account.folderIds.map((id) => String(id || "").trim().toLowerCase()).filter(Boolean)
+      : (account?.folderId == null ? [] : [String(account.folderId).trim().toLowerCase()]),
+    sites,
+    username,
+    password: String(account?.password || ""),
+    totpSecret: String(account?.totpSecret || ""),
+    recoveryCodes: String(account?.recoveryCodes || ""),
+    note: String(account?.note || ""),
+    passkeyCredentialIds,
+    usernameUpdatedAtMs: asTimestamp(account?.usernameUpdatedAtMs, createdAtMs),
+    passwordUpdatedAtMs: asTimestamp(account?.passwordUpdatedAtMs, createdAtMs),
+    totpUpdatedAtMs: asTimestamp(account?.totpUpdatedAtMs, createdAtMs),
+    recoveryCodesUpdatedAtMs: asTimestamp(account?.recoveryCodesUpdatedAtMs, createdAtMs),
+    noteUpdatedAtMs: asTimestamp(account?.noteUpdatedAtMs, createdAtMs),
+    passkeyUpdatedAtMs: asTimestamp(account?.passkeyUpdatedAtMs, createdAtMs),
+    isDeleted: Boolean(account?.isDeleted),
+    deletedAtMs: account?.deletedAtMs == null ? null : asTimestamp(account.deletedAtMs, 0),
+    lastOperatedDeviceName: normalizeUsername(account?.lastOperatedDeviceName || "") || "ChromeMac",
+    createdAtMs,
+    updatedAtMs: asTimestamp(account?.updatedAtMs, createdAtMs),
+  };
 }
 
 function fillCredentialInPage(username, password) {
@@ -505,6 +597,7 @@ function createAccount({ site, username, password, createdAtMs, deviceName }) {
   const accountId = buildAccountId(canonical, username, createdAtMs);
 
   return {
+    recordId: stableUuidFromText(`${accountId}|${createdAtMs}|${username}`),
     accountId,
     canonicalSite: canonical,
     usernameAtCreate: username,

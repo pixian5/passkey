@@ -25,6 +25,9 @@
     if (!options?.publicKey) {
       return originalCreate(options);
     }
+    if (!canPassManageCreate(options.publicKey)) {
+      return originalCreate(options);
+    }
 
     const serialized = serializeCreateOptions(options.publicKey);
     if (!serialized) {
@@ -44,6 +47,9 @@
 
   const patchedGet = async function patchedGet(options) {
     if (!options?.publicKey) {
+      return originalGet(options);
+    }
+    if (!canPassManageGet(options.publicKey)) {
       return originalGet(options);
     }
 
@@ -101,13 +107,13 @@
           resolve(data.result || {});
           return;
         }
-        reject(data.error || { name: "OperationError", message: "通行秘钥操作失败" });
+        reject(data.error || { name: "OperationError", message: "通行密钥操作失败" });
       };
 
       window.addEventListener("message", onMessage);
       timeoutId = setTimeout(() => {
         cleanup();
-        reject({ name: "TimeoutError", message: "通行秘钥请求超时" });
+        reject({ name: "TimeoutError", message: "通行密钥请求超时" });
       }, REQUEST_TIMEOUT_MS);
 
       window.postMessage(request, "*");
@@ -171,7 +177,7 @@
 
   function buildCreateCredential(credential) {
     if (!credential) {
-      throw new Error("创建通行秘钥返回为空");
+      throw new Error("创建通行密钥返回为空");
     }
 
     const rawId = fromBase64url(credential.rawIdB64u || credential.id);
@@ -223,7 +229,7 @@
 
   function buildAssertionCredential(credential) {
     if (!credential) {
-      throw new Error("获取通行秘钥断言返回为空");
+      throw new Error("获取通行密钥断言返回为空");
     }
 
     const rawId = fromBase64url(credential.rawIdB64u || credential.id);
@@ -274,11 +280,58 @@
   function shouldFallbackToBrowser(error) {
     const code = String(error?.code || "");
     const name = String(error?.name || "");
-    return code === "PASSKEY_NOT_FOUND" || name === "NotSupportedError";
+    return code === "PASSKEY_NOT_FOUND" ||
+      code === "PASSKEY_CONTEXT_INVALIDATED" ||
+      code === "PASSKEY_RUNTIME_ERROR" ||
+      code === "PASSKEY_EMPTY_RESPONSE" ||
+      code === "PASSKEY_ALG_UNSUPPORTED" ||
+      code === "PASSKEY_OP_UNSUPPORTED" ||
+      name === "NotSupportedError" ||
+      name === "TimeoutError";
+  }
+
+  function canPassManageCreate(publicKey) {
+    const challenge = toBase64url(publicKey?.challenge);
+    const userId = toBase64url(publicKey?.user?.id);
+    if (!challenge || !userId) {
+      return false;
+    }
+
+    const attachment = String(publicKey?.authenticatorSelection?.authenticatorAttachment || "").toLowerCase();
+    if (attachment === "cross-platform") {
+      return false;
+    }
+
+    return true;
+  }
+
+  function canPassManageGet(publicKey) {
+    const challenge = toBase64url(publicKey?.challenge);
+    if (!challenge) {
+      return false;
+    }
+
+    const allow = Array.isArray(publicKey?.allowCredentials) ? publicKey.allowCredentials : [];
+    if (allow.length === 0) {
+      return true;
+    }
+
+    // If RP explicitly provides allowCredentials, Pass can only satisfy entries
+    // that are internal-capable (or unspecified transports).
+    const hasInternalCapable = allow.some((item) => {
+      const transports = Array.isArray(item?.transports)
+        ? item.transports.map((t) => String(t || "").toLowerCase())
+        : [];
+      if (transports.length === 0) {
+        return true;
+      }
+      return transports.includes("internal");
+    });
+    return hasInternalCapable;
   }
 
   function toDomLikeError(error, fallbackName) {
-    const err = new Error(error?.message || "通行秘钥操作失败");
+    const err = new Error(error?.message || "通行密钥操作失败");
     err.name = error?.name || fallbackName;
     err.code = error?.code || "";
     return err;

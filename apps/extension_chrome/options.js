@@ -4,7 +4,8 @@ const STORAGE_KEY_PASSKEYS = "pass.passkeys";
 const STORAGE_KEY_FOLDERS = "pass.folders";
 const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
 const FIXED_NEW_ACCOUNT_FOLDER_NAME = "新账号";
-const SYNC_BUNDLE_SCHEMA = "pass.sync.bundle.v1";
+const SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
+const SYNC_BUNDLE_SCHEMA_V1 = "pass.sync.bundle.v1";
 
 const ETLD2_SUFFIXES = new Set([
   "com.cn",
@@ -176,7 +177,7 @@ async function refresh({ silent = false } = {}) {
   setAccountView(activeAccountView);
 
   if (!silent) {
-    setStatus(`已加载 ${accountsRaw.length} 条账号，${passkeysRaw.length} 条通行秘钥，${foldersRaw.length} 个文件夹`);
+    setStatus(`已加载 ${accountsRaw.length} 条账号，${passkeysRaw.length} 条通行密钥，${foldersRaw.length} 个文件夹`);
   }
 }
 
@@ -201,12 +202,14 @@ async function importJson() {
     return;
   }
 
-  const payload = parsed?.schema === SYNC_BUNDLE_SCHEMA && parsed?.payload && typeof parsed.payload === "object"
-    ? parsed.payload
-    : parsed;
-  const accounts = Array.isArray(payload?.accounts) ? payload.accounts : [];
-  const passkeys = Array.isArray(payload?.passkeys) ? payload.passkeys : [];
-  const folders = Array.isArray(payload?.folders) ? payload.folders : [];
+  const payload = parseSyncBundlePayload(parsed);
+  if (!payload) {
+    setStatus("JSON 格式错误：缺少 accounts/folders/payload");
+    return;
+  }
+  const accounts = payload.accounts.map(normalizeAccountShape);
+  const passkeys = payload.passkeys.map(normalizePasskeyShape);
+  const folders = payload.folders.map(normalizeFolderShape);
   await chrome.storage.local.set({
     [STORAGE_KEY_ACCOUNTS]: accounts,
     [STORAGE_KEY_PASSKEYS]: passkeys,
@@ -215,7 +218,7 @@ async function importJson() {
 
   editingAccountId = null;
   await refresh({ silent: true });
-  setStatus(`导入完成，共 ${accounts.length} 条账号，${passkeys.length} 条通行秘钥，${folders.length} 个文件夹`);
+  setStatus(`导入完成，共 ${accounts.length} 条账号，${passkeys.length} 条通行密钥，${folders.length} 个文件夹`);
 }
 
 async function clearAll() {
@@ -226,7 +229,7 @@ async function clearAll() {
   });
   editingAccountId = null;
   await refresh({ silent: true });
-  setStatus("账号、通行秘钥与文件夹已清空");
+  setStatus("账号、通行密钥与文件夹已清空");
 }
 
 async function exportSyncBundle() {
@@ -236,7 +239,7 @@ async function exportSyncBundle() {
   downloadTextFile(fileName, text, "application/json");
   setStatus(
     `同步包已导出：${bundle.payload.accounts.length} 条账号，` +
-      `${bundle.payload.passkeys.length} 条通行秘钥，${bundle.payload.folders.length} 个文件夹`
+      `${bundle.payload.passkeys.length} 条通行密钥，${bundle.payload.folders.length} 个文件夹`
   );
 }
 
@@ -296,7 +299,7 @@ async function importSyncBundleAndMerge() {
   await refresh({ silent: true });
   setStatus(
     `同步包合并完成：账号 ${localAccounts.length}+${remoteAccounts.length}->${mergedAccounts.length}，` +
-      `通行秘钥 ${localPasskeys.length}+${remotePasskeys.length}->${mergedPasskeys.length}，` +
+      `通行密钥 ${localPasskeys.length}+${remotePasskeys.length}->${mergedPasskeys.length}，` +
       `文件夹 ${localFolders.length}+${remoteFolders.length}->${mergedFolders.length}`
   );
 }
@@ -318,13 +321,13 @@ async function buildSyncBundle() {
     : [];
 
   return {
-    schema: SYNC_BUNDLE_SCHEMA,
+    schema: SYNC_BUNDLE_SCHEMA_V2,
     exportedAtMs: Date.now(),
     source: {
       app: "pass-extension",
       platform: "chrome-extension",
       deviceName,
-      formatVersion: 1,
+      formatVersion: 2,
     },
     payload: {
       accounts,
@@ -336,7 +339,8 @@ async function buildSyncBundle() {
 
 function parseSyncBundlePayload(input) {
   if (!input || typeof input !== "object") return null;
-  const rawPayload = input.schema === SYNC_BUNDLE_SCHEMA
+  const schema = String(input?.schema || "");
+  const rawPayload = (schema === SYNC_BUNDLE_SCHEMA_V2 || schema === SYNC_BUNDLE_SCHEMA_V1)
     ? input.payload
     : input;
   if (!rawPayload || typeof rawPayload !== "object") return null;
@@ -466,12 +470,15 @@ async function createFolderFromPrompt() {
     return;
   }
 
+  const now = Date.now();
+  const nextFolderId = (globalThis.crypto?.randomUUID?.() || stableUuidFromText(`folder|${name}|${now}`)).toLowerCase();
   const nextFolders = sortFoldersForDisplay([
     ...foldersRaw.map(normalizeFolderShape),
     normalizeFolderShape({
-      id: globalThis.crypto?.randomUUID?.() || `folder-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      id: nextFolderId,
       name,
-      createdAtMs: Date.now(),
+      createdAtMs: now,
+      updatedAtMs: now,
     }),
   ]);
   await chrome.storage.local.set({ [STORAGE_KEY_FOLDERS]: nextFolders });
@@ -661,7 +668,7 @@ function renderAllAccounts(inputAccounts) {
       `用户名: ${escapeHtml(account.username || "-")}<br/>` +
       `站点别名:<div class="meta-multiline">${sitesMultilineHtml}</div>` +
       `恢复码:<div class="meta-multiline">${recoveryMultilineHtml}</div>` +
-      `通行秘钥: ${account.passkeyCredentialIds.length} 个<br/>` +
+      `通行密钥: ${account.passkeyCredentialIds.length} 个<br/>` +
       `创建: ${formatTime(account.createdAtMs)} | 更新: ${formatTime(account.updatedAtMs)}<br/>` +
       `删除: ${formatTime(account.deletedAtMs)}<br/>`;
     card.appendChild(meta);
@@ -745,7 +752,7 @@ function renderRecycleAccounts(inputAccounts) {
       `用户名: ${escapeHtml(account.username || "-")}<br/>` +
       `站点别名:<div class="meta-multiline">${sitesMultilineHtml}</div>` +
       `恢复码:<div class="meta-multiline">${recoveryMultilineHtml}</div>` +
-      `通行秘钥: ${account.passkeyCredentialIds.length} 个<br/>` +
+      `通行密钥: ${account.passkeyCredentialIds.length} 个<br/>` +
       `创建: ${formatTime(account.createdAtMs)} | 更新: ${formatTime(account.updatedAtMs)}<br/>` +
       `删除: ${formatTime(account.deletedAtMs)}<br/>`;
     card.appendChild(meta);
@@ -975,7 +982,7 @@ function renderCurrentView(inputAccounts) {
       `用户名: ${escapeHtml(account.username || "-")}<br/>` +
       `站点别名:<div class="meta-multiline">${sitesMultilineHtml}</div>` +
       `恢复码:<div class="meta-multiline">${recoveryMultilineHtml}</div>` +
-      `通行秘钥: ${account.passkeyCredentialIds.length} 个<br/>` +
+      `通行密钥: ${account.passkeyCredentialIds.length} 个<br/>` +
       `创建: ${formatTime(account.createdAtMs)} | 更新: ${formatTime(account.updatedAtMs)}<br/>` +
       `删除: ${formatTime(account.deletedAtMs)}<br/>`;
     card.appendChild(meta);
@@ -1692,10 +1699,13 @@ function normalizeAccountShape(account) {
   const canonical = account?.canonicalSite || etldPlusOne(sites[0] || "");
   const createdAtMs = Number(account?.createdAtMs || account?.updatedAtMs || now);
   const username = String(account?.username || "");
+  const accountId = String(account?.accountId || buildAccountId(canonical, username, createdAtMs));
+  const recordId = normalizeRecordId(account, accountId, createdAtMs);
   const passkeyCredentialIds = normalizePasskeyCredentialIds(account?.passkeyCredentialIds || []);
 
   return {
-    accountId: String(account?.accountId || buildAccountId(canonical, username, createdAtMs)),
+    recordId,
+    accountId,
     canonicalSite: canonical,
     usernameAtCreate: String(account?.usernameAtCreate || username),
     isPinned: Boolean(account?.isPinned),
@@ -1728,6 +1738,16 @@ function normalizeAccountShape(account) {
 
 function normalizePasskeyShape(item) {
   const now = Date.now();
+  const rawCompat = String(item?.createCompatMethod || "").trim().toLowerCase();
+  const normalizedCompat = (
+    rawCompat === "standard" ||
+    rawCompat === "user_name_fallback" ||
+    rawCompat === "rs256" ||
+    rawCompat === "user_name_fallback+rs256" ||
+    rawCompat === "unknown_linked"
+  )
+    ? rawCompat
+    : (Number(item?.alg || -7) === -257 ? "rs256" : "standard");
   return {
     credentialIdB64u: String(item?.credentialIdB64u || item?.id || "").trim(),
     rpId: normalizeDomain(item?.rpId || ""),
@@ -1742,6 +1762,7 @@ function normalizePasskeyShape(item) {
     updatedAtMs: Number(item?.updatedAtMs || item?.createdAtMs || now),
     lastUsedAtMs: item?.lastUsedAtMs == null ? null : Number(item.lastUsedAtMs),
     mode: String(item?.mode || "managed"),
+    createCompatMethod: normalizedCompat,
   };
 }
 
@@ -1749,15 +1770,17 @@ function normalizeFolderShape(item) {
   const now = Date.now();
   const id = normalizeFolderId(item?.id || "");
   const fixedId = FIXED_NEW_ACCOUNT_FOLDER_ID;
-  const safeId = id || (globalThis.crypto?.randomUUID?.() || `folder-${now}-${Math.random().toString(16).slice(2)}`);
   const rawName = String(item?.name || "").trim();
+  const safeId = id || (globalThis.crypto?.randomUUID?.() || stableUuidFromText(`folder|${rawName}|${now}`)).toLowerCase();
+  const createdAtMs = Number(item?.createdAtMs || now);
   const safeName = safeId === fixedId
     ? FIXED_NEW_ACCOUNT_FOLDER_NAME
     : (rawName || `未命名文件夹 ${safeId.slice(0, 8)}`);
   return {
     id: safeId,
     name: safeName,
-    createdAtMs: Number(item?.createdAtMs || now),
+    createdAtMs,
+    updatedAtMs: Number(item?.updatedAtMs || createdAtMs),
   };
 }
 
@@ -1814,6 +1837,34 @@ function normalizeUsername(value) {
 
 function normalizeFolderId(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function isUuidLower(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(String(value || ""));
+}
+
+function stableUuidFromText(input) {
+  const raw = String(input || "");
+  const seedParts = [0x9e3779b9, 0x85ebca6b, 0xc2b2ae35, 0x27d4eb2f];
+  for (let i = 0; i < raw.length; i += 1) {
+    const code = raw.charCodeAt(i);
+    const idx = i % 4;
+    seedParts[idx] = Math.imul(seedParts[idx] ^ code, 0x45d9f3b) >>> 0;
+    seedParts[idx] = (seedParts[idx] ^ (seedParts[idx] >>> 16)) >>> 0;
+  }
+  const hex = seedParts
+    .map((value) => value.toString(16).padStart(8, "0"))
+    .join("")
+    .slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+function normalizeRecordId(account, accountId, createdAtMs) {
+  const direct = normalizeFolderId(account?.recordId || account?.id || "");
+  if (isUuidLower(direct)) return direct;
+  const usernameSeed = String(account?.usernameAtCreate || account?.username || "").trim();
+  const stableSeed = `${String(accountId || "").trim()}|${Number(createdAtMs || 0)}|${usernameSeed}`;
+  return stableUuidFromText(stableSeed);
 }
 
 function normalizeFolderIdList(values) {
@@ -1995,6 +2046,7 @@ function mergeSameAccount(lhs, rhs) {
     || "ChromeMac";
 
   return {
+    recordId: primary.recordId || left.recordId || right.recordId || stableUuidFromText(`${primary.accountId}|${createdAtMs}`),
     accountId: primary.accountId,
     canonicalSite,
     usernameAtCreate,
@@ -2149,22 +2201,31 @@ function mergeSameFolder(lhs, rhs) {
   const left = normalizeFolderShape(lhs);
   const right = normalizeFolderShape(rhs);
   const id = normalizeFolderId(left.id || right.id);
+  const leftUpdatedAt = Number(left.updatedAtMs || left.createdAtMs || 0);
+  const rightUpdatedAt = Number(right.updatedAtMs || right.createdAtMs || 0);
   if (id === FIXED_NEW_ACCOUNT_FOLDER_ID) {
     return {
       id,
       name: FIXED_NEW_ACCOUNT_FOLDER_NAME,
       createdAtMs: Math.min(Number(left.createdAtMs || 0), Number(right.createdAtMs || 0)),
+      updatedAtMs: Math.max(leftUpdatedAt, rightUpdatedAt),
     };
   }
 
   const leftName = String(left.name || "").trim();
   const rightName = String(right.name || "").trim();
-  const name = leftName || rightName || `未命名文件夹 ${id.slice(0, 8)}`;
+  let name = leftName || rightName || `未命名文件夹 ${id.slice(0, 8)}`;
+  if (rightUpdatedAt > leftUpdatedAt && rightName) {
+    name = rightName;
+  } else if (leftUpdatedAt > rightUpdatedAt && leftName) {
+    name = leftName;
+  }
 
   return {
     id,
     name,
     createdAtMs: Math.min(Number(left.createdAtMs || 0), Number(right.createdAtMs || 0)),
+    updatedAtMs: Math.max(leftUpdatedAt, rightUpdatedAt),
   };
 }
 

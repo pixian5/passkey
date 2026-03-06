@@ -16,11 +16,13 @@ struct PasswordAccount: Codable, Identifiable, Hashable {
     var totpSecret: String
     var recoveryCodes: String
     var note: String
+    var passkeyCredentialIds: [String]
     var usernameUpdatedAtMs: Int64
     var passwordUpdatedAtMs: Int64
     var totpUpdatedAtMs: Int64
     var recoveryCodesUpdatedAtMs: Int64
     var noteUpdatedAtMs: Int64
+    var passkeyUpdatedAtMs: Int64
     var updatedAtMs: Int64
     var isDeleted: Bool
     var deletedAtMs: Int64?
@@ -55,6 +57,133 @@ struct PasswordAccount: Codable, Identifiable, Hashable {
     }
 }
 
+extension PasswordAccount {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case recordId
+        case accountId
+        case canonicalSite
+        case usernameAtCreate
+        case isPinned
+        case pinnedSortOrder
+        case regularSortOrder
+        case folderId
+        case folderIds
+        case sites
+        case username
+        case password
+        case totpSecret
+        case recoveryCodes
+        case note
+        case passkeyCredentialIds
+        case usernameUpdatedAtMs
+        case passwordUpdatedAtMs
+        case totpUpdatedAtMs
+        case recoveryCodesUpdatedAtMs
+        case noteUpdatedAtMs
+        case passkeyUpdatedAtMs
+        case updatedAtMs
+        case isDeleted
+        case deletedAtMs
+        case lastOperatedDeviceName
+        case createdAtMs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+
+        let explicitId = try container.decodeIfPresent(UUID.self, forKey: .id)
+        let recordIdRaw = try container.decodeIfPresent(String.self, forKey: .recordId)
+        let parsedRecordId = recordIdRaw
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .flatMap(UUID.init(uuidString:))
+
+        id = explicitId ?? parsedRecordId ?? UUID()
+
+        let decodedSites = try container.decodeIfPresent([String].self, forKey: .sites)
+            ?? []
+        let normalizedSites = Array(
+            Set(decodedSites.map(DomainUtils.normalize).filter { !$0.isEmpty })
+        ).sorted()
+
+        let decodedUpdatedAt = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMs)
+        let decodedCreatedAt = try container.decodeIfPresent(Int64.self, forKey: .createdAtMs)
+        let createdAt = decodedCreatedAt ?? decodedUpdatedAt ?? nowMs
+        let updatedAt = decodedUpdatedAt ?? createdAt
+
+        let decodedUsername = try container.decodeIfPresent(String.self, forKey: .username)
+            ?? ""
+        let canonical = try container.decodeIfPresent(String.self, forKey: .canonicalSite)
+            ?? DomainUtils.etldPlusOne(for: normalizedSites.first ?? "")
+
+        accountId = try container.decode(String.self, forKey: .accountId)
+        canonicalSite = canonical
+        usernameAtCreate = try container.decodeIfPresent(String.self, forKey: .usernameAtCreate)
+            ?? decodedUsername
+        isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned)
+        pinnedSortOrder = try container.decodeIfPresent(Int64.self, forKey: .pinnedSortOrder)
+        regularSortOrder = try container.decodeIfPresent(Int64.self, forKey: .regularSortOrder)
+        folderId = try container.decodeIfPresent(UUID.self, forKey: .folderId)
+        folderIds = try container.decodeIfPresent([UUID].self, forKey: .folderIds)
+        sites = normalizedSites
+        username = decodedUsername
+        password = try container.decodeIfPresent(String.self, forKey: .password) ?? ""
+        totpSecret = try container.decodeIfPresent(String.self, forKey: .totpSecret) ?? ""
+        recoveryCodes = try container.decodeIfPresent(String.self, forKey: .recoveryCodes) ?? ""
+        note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
+        passkeyCredentialIds = Array(
+            Set((try container.decodeIfPresent([String].self, forKey: .passkeyCredentialIds) ?? [])
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty })
+        ).sorted()
+        usernameUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .usernameUpdatedAtMs) ?? createdAt
+        passwordUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .passwordUpdatedAtMs) ?? createdAt
+        totpUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .totpUpdatedAtMs) ?? createdAt
+        recoveryCodesUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .recoveryCodesUpdatedAtMs) ?? createdAt
+        noteUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .noteUpdatedAtMs) ?? createdAt
+        passkeyUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .passkeyUpdatedAtMs) ?? createdAt
+        updatedAtMs = updatedAt
+        isDeleted = try container.decodeIfPresent(Bool.self, forKey: .isDeleted) ?? false
+        deletedAtMs = try container.decodeIfPresent(Int64.self, forKey: .deletedAtMs)
+        lastOperatedDeviceName = try container.decodeIfPresent(String.self, forKey: .lastOperatedDeviceName)
+            ?? "MacDevice"
+        createdAtMs = createdAt
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(id.uuidString.lowercased(), forKey: .recordId)
+        try container.encode(accountId, forKey: .accountId)
+        try container.encode(canonicalSite, forKey: .canonicalSite)
+        try container.encode(usernameAtCreate, forKey: .usernameAtCreate)
+        try container.encode(isPinned, forKey: .isPinned)
+        try container.encode(pinnedSortOrder, forKey: .pinnedSortOrder)
+        try container.encode(regularSortOrder, forKey: .regularSortOrder)
+        try container.encode(folderId, forKey: .folderId)
+        try container.encode(folderIds, forKey: .folderIds)
+        try container.encode(sites, forKey: .sites)
+        try container.encode(username, forKey: .username)
+        try container.encode(password, forKey: .password)
+        try container.encode(totpSecret, forKey: .totpSecret)
+        try container.encode(recoveryCodes, forKey: .recoveryCodes)
+        try container.encode(note, forKey: .note)
+        try container.encode(passkeyCredentialIds, forKey: .passkeyCredentialIds)
+        try container.encode(usernameUpdatedAtMs, forKey: .usernameUpdatedAtMs)
+        try container.encode(passwordUpdatedAtMs, forKey: .passwordUpdatedAtMs)
+        try container.encode(totpUpdatedAtMs, forKey: .totpUpdatedAtMs)
+        try container.encode(recoveryCodesUpdatedAtMs, forKey: .recoveryCodesUpdatedAtMs)
+        try container.encode(noteUpdatedAtMs, forKey: .noteUpdatedAtMs)
+        try container.encode(passkeyUpdatedAtMs, forKey: .passkeyUpdatedAtMs)
+        try container.encode(updatedAtMs, forKey: .updatedAtMs)
+        try container.encode(isDeleted, forKey: .isDeleted)
+        try container.encode(deletedAtMs, forKey: .deletedAtMs)
+        try container.encode(lastOperatedDeviceName, forKey: .lastOperatedDeviceName)
+        try container.encode(createdAtMs, forKey: .createdAtMs)
+    }
+}
+
 enum AccountFactory {
     static func create(
         site: String,
@@ -86,11 +215,13 @@ enum AccountFactory {
             totpSecret: "",
             recoveryCodes: "",
             note: "",
+            passkeyCredentialIds: [],
             usernameUpdatedAtMs: nowMs,
             passwordUpdatedAtMs: nowMs,
             totpUpdatedAtMs: nowMs,
             recoveryCodesUpdatedAtMs: nowMs,
             noteUpdatedAtMs: nowMs,
+            passkeyUpdatedAtMs: nowMs,
             updatedAtMs: nowMs,
             isDeleted: false,
             deletedAtMs: nil,
@@ -111,4 +242,126 @@ struct AccountFolder: Codable, Identifiable, Hashable {
     let id: UUID
     var name: String
     let createdAtMs: Int64
+    var updatedAtMs: Int64
+}
+
+extension AccountFolder {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case createdAtMs
+        case updatedAtMs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? "未命名文件夹"
+        createdAtMs = try container.decodeIfPresent(Int64.self, forKey: .createdAtMs)
+            ?? Int64(Date().timeIntervalSince1970 * 1000)
+        updatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMs)
+            ?? createdAtMs
+    }
+}
+
+struct PasskeyRecord: Codable, Hashable {
+    var credentialIdB64u: String
+    var rpId: String
+    var userName: String
+    var displayName: String
+    var userHandleB64u: String
+    var alg: Int
+    var signCount: Int
+    var privateJwk: JSONValue?
+    var publicJwk: JSONValue?
+    var createdAtMs: Int64
+    var updatedAtMs: Int64
+    var lastUsedAtMs: Int64?
+    var mode: String
+}
+
+enum JSONValue: Codable, Hashable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        if let container = try? decoder.singleValueContainer() {
+            if container.decodeNil() {
+                self = .null
+                return
+            }
+            if let value = try? container.decode(Bool.self) {
+                self = .bool(value)
+                return
+            }
+            if let value = try? container.decode(Double.self) {
+                self = .number(value)
+                return
+            }
+            if let value = try? container.decode(String.self) {
+                self = .string(value)
+                return
+            }
+        }
+
+        if let object = try? decoder.container(keyedBy: DynamicCodingKey.self) {
+            var value: [String: JSONValue] = [:]
+            for key in object.allKeys {
+                value[key.stringValue] = try object.decode(JSONValue.self, forKey: key)
+            }
+            self = .object(value)
+            return
+        }
+
+        var unkeyed = try decoder.unkeyedContainer()
+        var values: [JSONValue] = []
+        while !unkeyed.isAtEnd {
+            values.append(try unkeyed.decode(JSONValue.self))
+        }
+        self = .array(values)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        switch self {
+        case .string(let value):
+            var container = encoder.singleValueContainer()
+            try container.encode(value)
+        case .number(let value):
+            var container = encoder.singleValueContainer()
+            try container.encode(value)
+        case .bool(let value):
+            var container = encoder.singleValueContainer()
+            try container.encode(value)
+        case .null:
+            var container = encoder.singleValueContainer()
+            try container.encodeNil()
+        case .object(let value):
+            var container = encoder.container(keyedBy: DynamicCodingKey.self)
+            for (key, item) in value {
+                guard let codingKey = DynamicCodingKey(stringValue: key) else { continue }
+                try container.encode(item, forKey: codingKey)
+            }
+        case .array(let values):
+            var container = encoder.unkeyedContainer()
+            for value in values {
+                try container.encode(value)
+            }
+        }
+    }
+}
+
+private struct DynamicCodingKey: CodingKey {
+    let stringValue: String
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+    }
+
+    let intValue: Int? = nil
+    init?(intValue: Int) {
+        return nil
+    }
 }

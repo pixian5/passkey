@@ -3,6 +3,8 @@ const PASS_LOGIN_COOLDOWN_MS = 5000;
 const WEB_AUTHN_BRIDGE_SOURCE = "pass-webauthn-bridge";
 const WEB_AUTHN_REQUEST_TYPE = "PASSKEY_REQUEST";
 const WEB_AUTHN_RESPONSE_TYPE = "PASSKEY_RESPONSE";
+const PASS_PAGE_TOAST_ID = "pass-page-toast";
+const PASS_PAGE_TOAST_DURATION_MS = 3000;
 
 const ETLD2_SUFFIXES = new Set([
   "com.cn",
@@ -17,6 +19,7 @@ const ETLD2_SUFFIXES = new Set([
 let lastPromptKey = "";
 let lastPromptAt = 0;
 let accountsCache = [];
+let passPageToastTimer = null;
 
 initAccountCache().catch(() => {
   // Ignore cache bootstrap errors; detection continues with empty cache.
@@ -230,6 +233,7 @@ function isVisible(input) {
 }
 
 function installWebAuthnBridge() {
+  if (!isRuntimeAvailable()) return;
   const scriptId = "pass-webauthn-bridge-injected";
   if (document.getElementById(scriptId)) return;
   const parent = document.head || document.documentElement;
@@ -237,7 +241,11 @@ function installWebAuthnBridge() {
 
   const script = document.createElement("script");
   script.id = scriptId;
-  script.src = chrome.runtime.getURL("webauthn_injected.js");
+  try {
+    script.src = chrome.runtime.getURL("webauthn_injected.js");
+  } catch {
+    return;
+  }
   script.async = false;
   parent.appendChild(script);
   script.remove();
@@ -263,20 +271,94 @@ function onWebAuthnBridgeMessage(event) {
 
 async function handleWebAuthnBridgeRequest(requestId, payload) {
   try {
+    if (!isRuntimeAvailable()) {
+      postWebAuthnBridgeResponse(requestId, {
+        ok: false,
+        error: {
+          name: "NotSupportedError",
+          message: "扩展上下文已失效，请刷新页面后重试",
+          code: "PASSKEY_CONTEXT_INVALIDATED",
+        },
+      });
+      return;
+    }
+
     const response = payload?.operation === "get"
       ? await handlePasskeyGetWithChooser(payload)
       : await sendPasskeyBridgeOperation(payload);
+    if (response?.ok) {
+      if (payload?.operation === "create") {
+        const createMode = String(response?.result?.createMode || "").toLowerCase();
+        const compatLabel = formatPasskeyCreateCompatToastLabel(response?.result?.createCompatMethod);
+        if (createMode === "existing") {
+          showPassPageToast(`Pass 已存在同账号通行密钥，已复用${compatLabel ? `（${compatLabel}）` : ""}`);
+        } else {
+          showPassPageToast(`Pass 已保存通行密钥${compatLabel ? `（${compatLabel}）` : ""}`);
+        }
+      } else if (payload?.operation === "get") {
+        showPassPageToast("Pass 已读取通行密钥");
+      }
+    }
     postWebAuthnBridgeResponse(requestId, response);
   } catch (error) {
     postWebAuthnBridgeResponse(requestId, {
       ok: false,
       error: {
         name: "OperationError",
-        message: error?.message || String(error || "通行秘钥处理失败"),
+        message: error?.message || String(error || "通行密钥处理失败"),
         code: "PASSKEY_HANDLE_FAILED",
       },
     });
   }
+}
+
+function formatPasskeyCreateCompatToastLabel(method) {
+  const value = String(method || "").trim().toLowerCase();
+  if (value === "user_name_fallback+rs256") return "命中兼容2+3";
+  if (value === "user_name_fallback") return "命中兼容2";
+  if (value === "rs256") return "命中兼容3";
+  if (value === "standard") return "命中标准托管";
+  return "";
+}
+
+function showPassPageToast(message) {
+  const text = String(message || "").trim();
+  if (!text) return;
+
+  let toast = document.getElementById(PASS_PAGE_TOAST_ID);
+  if (!(toast instanceof HTMLDivElement)) {
+    toast = document.createElement("div");
+    toast.id = PASS_PAGE_TOAST_ID;
+    toast.style.position = "fixed";
+    toast.style.top = "14px";
+    toast.style.right = "14px";
+    toast.style.zIndex = "2147483647";
+    toast.style.maxWidth = "min(420px, calc(100vw - 28px))";
+    toast.style.padding = "10px 12px";
+    toast.style.borderRadius = "10px";
+    toast.style.border = "1px solid #63a56a";
+    toast.style.background = "linear-gradient(180deg, #e8f8ea 0%, #d5f2d9 100%)";
+    toast.style.color = "#1d5b2c";
+    toast.style.font = '600 24px/1.4 "SF Pro Text", "PingFang SC", sans-serif';
+    toast.style.boxShadow = "0 12px 28px rgba(24, 68, 33, 0.22)";
+    toast.style.pointerEvents = "none";
+    toast.style.opacity = "0";
+    toast.style.transition = "opacity 140ms ease-out";
+    (document.documentElement || document.body).appendChild(toast);
+  }
+
+  toast.textContent = text;
+  toast.style.opacity = "1";
+
+  if (passPageToastTimer != null) {
+    clearTimeout(passPageToastTimer);
+    passPageToastTimer = null;
+  }
+  passPageToastTimer = window.setTimeout(() => {
+    const current = document.getElementById(PASS_PAGE_TOAST_ID);
+    if (!(current instanceof HTMLDivElement)) return;
+    current.style.opacity = "0";
+  }, PASS_PAGE_TOAST_DURATION_MS);
 }
 
 async function handlePasskeyGetWithChooser(payload) {
@@ -302,7 +384,7 @@ async function handlePasskeyGetWithChooser(payload) {
       ok: false,
       error: {
         name: "NotAllowedError",
-        message: "用户取消通行秘钥选择",
+        message: "用户取消通行密钥选择",
         code: "PASSKEY_USER_CANCEL",
       },
     };
@@ -326,41 +408,70 @@ async function handlePasskeyGetWithChooser(payload) {
 
 function sendPasskeyBridgeOperation(payload) {
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage(
-      {
-        type: "PASS_PASSKEY_OPERATION",
-        payload,
-      },
-      (response) => {
+    if (!isRuntimeAvailable()) {
+      resolve({
+        ok: false,
+        error: {
+          name: "NotSupportedError",
+          message: "扩展上下文已失效，请刷新页面后重试",
+          code: "PASSKEY_CONTEXT_INVALIDATED",
+        },
+      });
+      return;
+    }
+
+    try {
+      chrome.runtime.sendMessage(
+        {
+          type: "PASS_PASSKEY_OPERATION",
+          payload,
+        },
+        (response) => {
         const runtimeError = chrome.runtime.lastError;
         if (runtimeError) {
+          const runtimeMessage = String(runtimeError.message || "");
+          const contextInvalidated = runtimeMessage.toLowerCase().includes("extension context invalidated");
           resolve({
             ok: false,
             error: {
-              name: "OperationError",
-              message: runtimeError.message || "扩展消息发送失败",
-              code: "PASSKEY_RUNTIME_ERROR",
+              name: contextInvalidated ? "NotSupportedError" : "OperationError",
+              message: runtimeMessage || "扩展消息发送失败",
+              code: contextInvalidated ? "PASSKEY_CONTEXT_INVALIDATED" : "PASSKEY_RUNTIME_ERROR",
             },
           });
           return;
         }
 
-        if (!response) {
-          resolve({
-            ok: false,
-            error: {
-              name: "OperationError",
-              message: "扩展未返回通行秘钥响应",
-              code: "PASSKEY_EMPTY_RESPONSE",
-            },
-          });
-          return;
-        }
+          if (!response) {
+            resolve({
+              ok: false,
+              error: {
+                name: "OperationError",
+                message: "扩展未返回通行密钥响应",
+                code: "PASSKEY_EMPTY_RESPONSE",
+              },
+            });
+            return;
+          }
 
-        resolve(response);
-      }
-    );
+          resolve(response);
+        }
+      );
+    } catch (error) {
+      resolve({
+        ok: false,
+        error: {
+          name: "NotSupportedError",
+          message: error?.message || "扩展上下文已失效，请刷新页面后重试",
+          code: "PASSKEY_CONTEXT_INVALIDATED",
+        },
+      });
+    }
   });
+}
+
+function isRuntimeAvailable() {
+  return typeof chrome !== "undefined" && !!chrome?.runtime?.id;
 }
 
 function selectPasskeyCandidate(candidates) {
@@ -388,7 +499,7 @@ function selectPasskeyCandidate(candidates) {
     root.style.color = "#1d314d";
 
     const title = document.createElement("div");
-    title.textContent = "选择要使用的通行秘钥";
+    title.textContent = "选择要使用的通行密钥";
     title.style.fontSize = "13px";
     title.style.fontWeight = "600";
     title.style.marginBottom = "8px";

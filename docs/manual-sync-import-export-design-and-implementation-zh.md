@@ -92,7 +92,7 @@
 - `isPinned / pinnedSortOrder / regularSortOrder` 取“较新账号快照”。
 - 组内拖拽顺序最终写回对应 sortOrder 字段。
 
-## 4.6 通行秘钥引用（账号内）
+## 4.6 通行密钥引用（账号内）
 - `passkeyCredentialIds` 使用并集合并，去重排序。
 - `passkeyUpdatedAtMs` 取最大值。
 
@@ -106,7 +106,7 @@
   - `name = 新账号`
 - 合并后会清理账号 `folderIds`，移除不存在的 folder 引用。
 
-## 4.8 扩展通行秘钥集合合并
+## 4.8 扩展通行密钥集合合并
 - 主键：`credentialIdB64u`
 - 合并规则：
   - 主体元数据取较新 `updatedAtMs` 记录

@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pass.local/schemas/pass-sync-bundle-v2.schema.json",
+  "title": "pass.sync.bundle.v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "exportedAtMs",
+    "source",
+    "payload"
+  ],
+  "properties": {
+    "schema": {
+      "const": "pass.sync.bundle.v2"
+    },
+    "exportedAtMs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app",
+        "platform",
+        "deviceName",
+        "formatVersion"
+      ],
+      "properties": {
+        "app": {
+          "type": "string",
+          "minLength": 1
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deviceName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "formatVersion": {
+          "type": "integer",
+          "const": 2
+        }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accounts",
+        "folders",
+        "passkeys"
+      ],
+      "properties": {
+        "accounts": {
+          "type": "array",
+          "items": {
+            "$ref": "./pass-data-v2.schema.json#/$defs/account"
+          }
+        },
+        "folders": {
+          "type": "array",
+          "items": {
+            "$ref": "./pass-data-v2.schema.json#/$defs/folder"
+          }
+        },
+        "passkeys": {
+          "type": "array",
+          "items": {
+            "$ref": "./pass-data-v2.schema.json#/$defs/passkey"
+          }
+        }
+      }
+    }
+  }
+}

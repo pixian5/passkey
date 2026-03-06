@@ -1,6 +1,12 @@
 const STORAGE_KEY_PASSKEYS = "pass.passkeys";
 
-const SUPPORTED_COSE_ALG = -7; // ES256
+const COSE_ALG_ES256 = -7;
+const COSE_ALG_RS256 = -257;
+const SUPPORTED_COSE_ALG_SET = new Set([COSE_ALG_ES256, COSE_ALG_RS256]);
+const CREATE_COMPAT_STANDARD = "standard";
+const CREATE_COMPAT_USER_NAME_FALLBACK = "user_name_fallback";
+const CREATE_COMPAT_RS256 = "rs256";
+const CREATE_COMPAT_USER_NAME_FALLBACK_RS256 = "user_name_fallback+rs256";
 const AAGUID_ZERO = new Uint8Array(16);
 
 class PasskeyError extends Error {
@@ -26,7 +32,7 @@ export async function handlePasskeyBridgeOperation(payload) {
     const publicKey = payload?.publicKey || null;
 
     if (!operation || !origin || !host || !publicKey) {
-      throw new PasskeyError("TypeError", "缺少通行秘钥请求参数", "PASSKEY_BAD_REQUEST");
+      throw new PasskeyError("TypeError", "缺少通行密钥请求参数", "PASSKEY_BAD_REQUEST");
     }
 
     assertSecureOrigin(origin);
@@ -59,38 +65,69 @@ async function createManagedCredential({ origin, host, publicKey }) {
   assertRpIdAllowedForHost(rpId, host);
 
   const userId = base64urlToBytes(publicKey?.user?.idB64u || "");
-  const userName = String(publicKey?.user?.name || "").trim();
-  const displayName = String(publicKey?.user?.displayName || userName || "").trim();
-  if (userId.length === 0 || !userName) {
-    throw new PasskeyError("TypeError", "create 缺少 user.id 或 user.name", "PASSKEY_USER_MISSING");
+  const rawUserName = String(publicKey?.user?.name || "").trim();
+  let userName = rawUserName;
+  const displayNameRaw = String(publicKey?.user?.displayName || "").trim();
+  const usedUserNameFallback = !rawUserName;
+  if (userId.length === 0) {
+    throw new PasskeyError("TypeError", "create 缺少 user.id", "PASSKEY_USER_MISSING");
   }
+  if (!userName) {
+    userName = displayNameRaw || `user_${bytesToBase64url(userId).slice(0, 16)}`;
+  }
+  const displayName = displayNameRaw || userName;
 
-  const pubKeyCredParams = Array.isArray(publicKey?.pubKeyCredParams)
-    ? publicKey.pubKeyCredParams
-    : [];
-  const supportsEs256 = pubKeyCredParams.some((item) => Number(item?.alg) === SUPPORTED_COSE_ALG);
-  if (!supportsEs256) {
-    throw new PasskeyError("NotSupportedError", "仅支持 ES256(-7)", "PASSKEY_ALG_UNSUPPORTED");
+  const pubKeyCredParams = Array.isArray(publicKey?.pubKeyCredParams) ? publicKey.pubKeyCredParams : [];
+  const selectedAlg = pickSupportedAlgorithm(pubKeyCredParams);
+  if (!selectedAlg) {
+    throw new PasskeyError("NotSupportedError", "仅支持 ES256(-7) 或 RS256(-257)", "PASSKEY_ALG_UNSUPPORTED");
   }
+  const createCompatMethod = resolveCreateCompatMethod({
+    alg: selectedAlg,
+    usedUserNameFallback,
+  });
 
   const passkeys = await loadPasskeys();
+  const existing = pickLatestPasskeyForAccount(passkeys, rpId, userName);
+  if (existing) {
+    const deduped = dedupePasskeysForAccount(passkeys, existing, rpId, userName);
+    const now = Date.now();
+    const existingCompatMethod = normalizeCreateCompatMethod(
+      existing?.createCompatMethod || createCompatMethod
+    );
+    const existingIndex = deduped.findIndex((item) => item?.credentialIdB64u === existing.credentialIdB64u);
+    if (existingIndex >= 0) {
+      deduped[existingIndex] = {
+        ...deduped[existingIndex],
+        updatedAtMs: now,
+        createCompatMethod: existingCompatMethod,
+      };
+    }
+    await savePasskeys(deduped);
+    const reused = await buildCreateResultFromStoredPasskey({
+      existing: deduped[Math.max(existingIndex, 0)] || existing,
+      challenge,
+      origin,
+      rpId,
+      userName,
+      displayName,
+    });
+    return {
+      ...reused,
+      createMode: "existing",
+      createCompatMethod: existingCompatMethod,
+    };
+  }
+
   const excludeIds = normalizeCredentialIdList(publicKey?.excludeCredentials || []);
   if (excludeIds.some((id) => passkeys.some((item) => item.rpId === rpId && item.credentialIdB64u === id))) {
     throw new PasskeyError("InvalidStateError", "凭据已存在（excludeCredentials 命中）", "PASSKEY_CREDENTIAL_EXISTS");
   }
 
-  const keyPair = await crypto.subtle.generateKey(
-    { name: "ECDSA", namedCurve: "P-256" },
-    true,
-    ["sign", "verify"]
-  );
+  const keyPair = await generateManagedKeyPair(selectedAlg);
   const privateJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
   const publicJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
-  const x = base64urlToBytes(publicJwk.x || "");
-  const y = base64urlToBytes(publicJwk.y || "");
-  if (x.length !== 32 || y.length !== 32) {
-    throw new PasskeyError("OperationError", "公钥导出失败", "PASSKEY_PUBLIC_KEY_INVALID");
-  }
+  const cosePublicKey = buildCosePublicKeyFromJwk(selectedAlg, publicJwk);
 
   const credentialId = randomBytes(32);
   const credentialIdB64u = bytesToBase64url(credentialId);
@@ -102,7 +139,6 @@ async function createManagedCredential({ origin, host, publicKey }) {
   });
 
   const rpIdHash = await sha256(utf8(rpId));
-  const cosePublicKey = encodeCoseEc2PublicKey(x, y);
   const authData = concatBytes(
     rpIdHash,
     new Uint8Array([0x45]), // UP + UV + AT
@@ -128,10 +164,11 @@ async function createManagedCredential({ origin, host, publicKey }) {
     userHandleB64u: bytesToBase64url(userId),
     userName,
     displayName,
-    alg: SUPPORTED_COSE_ALG,
+    alg: selectedAlg,
     privateJwk,
     publicJwk,
     signCount: 0,
+    createCompatMethod,
     createdAtMs: now,
     updatedAtMs: now,
     lastUsedAtMs: null,
@@ -157,6 +194,107 @@ async function createManagedCredential({ origin, host, publicKey }) {
       credentialIdB64u,
       displayName,
     },
+    createMode: "created",
+    createCompatMethod,
+  };
+}
+
+function pickLatestPasskeyForAccount(passkeys, rpId, userName) {
+  const matched = (Array.isArray(passkeys) ? passkeys : []).filter((item) => {
+    return item?.rpId === rpId && String(item?.userName || "").trim() === userName;
+  });
+  if (matched.length === 0) return null;
+  matched.sort((a, b) => {
+    const aTs = Number(a?.updatedAtMs || a?.createdAtMs || 0);
+    const bTs = Number(b?.updatedAtMs || b?.createdAtMs || 0);
+    if (aTs !== bTs) return bTs - aTs;
+    return String(a?.credentialIdB64u || "").localeCompare(String(b?.credentialIdB64u || ""));
+  });
+  return matched[0];
+}
+
+function dedupePasskeysForAccount(passkeys, keep, rpId, userName) {
+  const keepId = String(keep?.credentialIdB64u || "");
+  return (Array.isArray(passkeys) ? passkeys : []).filter((item) => {
+    if (!(item?.rpId === rpId && String(item?.userName || "").trim() === userName)) {
+      return true;
+    }
+    return String(item?.credentialIdB64u || "") === keepId;
+  });
+}
+
+async function buildCreateResultFromStoredPasskey({
+  existing,
+  challenge,
+  origin,
+  rpId,
+  userName,
+  displayName,
+}) {
+  const credentialIdB64u = String(existing?.credentialIdB64u || "");
+  const credentialId = base64urlToBytes(credentialIdB64u);
+  if (!credentialIdB64u || credentialId.length === 0) {
+    throw new PasskeyError("OperationError", "已存在凭据数据无效", "PASSKEY_EXISTING_CREDENTIAL_INVALID");
+  }
+
+  const alg = normalizeManagedAlg(existing?.alg);
+  const createCompatMethod = normalizeCreateCompatMethod(
+    existing?.createCompatMethod || resolveCreateCompatMethod({ alg, usedUserNameFallback: false })
+  );
+  const publicJwk = existing?.publicJwk || null;
+  let cosePublicKey;
+  try {
+    cosePublicKey = buildCosePublicKeyFromJwk(alg, publicJwk);
+  } catch {
+    throw new PasskeyError("OperationError", "已存在凭据公钥无效", "PASSKEY_EXISTING_PUBLIC_KEY_INVALID");
+  }
+
+  const clientDataJSON = buildClientDataJSON({
+    type: "webauthn.create",
+    challengeB64u: bytesToBase64url(challenge),
+    origin,
+  });
+
+  const rpIdHash = await sha256(utf8(rpId));
+  const signCount = Number(existing?.signCount || 0);
+  const authData = concatBytes(
+    rpIdHash,
+    new Uint8Array([0x45]), // UP + UV + AT
+    uint32be(signCount),
+    AAGUID_ZERO,
+    uint16be(credentialId.length),
+    credentialId,
+    cosePublicKey
+  );
+
+  const attestationObject = cborEncode(
+    new Map([
+      ["fmt", "none"],
+      ["authData", authData],
+      ["attStmt", new Map()],
+    ])
+  );
+
+  return {
+    credential: {
+      id: credentialIdB64u,
+      rawIdB64u: credentialIdB64u,
+      type: "public-key",
+      authenticatorAttachment: "platform",
+      response: {
+        clientDataJSONB64u: bytesToBase64url(clientDataJSON),
+        attestationObjectB64u: bytesToBase64url(attestationObject),
+        transports: ["internal"],
+      },
+      clientExtensionResults: {},
+    },
+    accountHint: {
+      rpId,
+      username: userName,
+      credentialIdB64u,
+      displayName: displayName || String(existing?.displayName || userName || ""),
+    },
+    createCompatMethod,
   };
 }
 
@@ -168,17 +306,12 @@ async function getManagedAssertion({ origin, host, publicKey }) {
 
   const { rpId, passkeys, candidates } = await resolveGetCandidates({ host, publicKey });
   if (candidates.length === 0) {
-    throw new PasskeyError("NotAllowedError", "未找到可用通行秘钥", "PASSKEY_NOT_FOUND");
+    throw new PasskeyError("NotAllowedError", "未找到可用通行密钥", "PASSKEY_NOT_FOUND");
   }
   const selected = candidates[0];
 
-  const privateKey = await crypto.subtle.importKey(
-    "jwk",
-    selected.privateJwk,
-    { name: "ECDSA", namedCurve: "P-256" },
-    false,
-    ["sign"]
-  );
+  const alg = normalizeManagedAlg(selected?.alg);
+  const privateKey = await importManagedPrivateKey(alg, selected?.privateJwk);
 
   const clientDataJSON = buildClientDataJSON({
     type: "webauthn.get",
@@ -194,14 +327,7 @@ async function getManagedAssertion({ origin, host, publicKey }) {
     uint32be(nextSignCount)
   );
   const signedPayload = concatBytes(authenticatorData, clientDataHash);
-  const rawSignature = new Uint8Array(
-    await crypto.subtle.sign(
-      { name: "ECDSA", hash: "SHA-256" },
-      privateKey,
-      signedPayload
-    )
-  );
-  const signature = ecdsaRawSignatureToDer(rawSignature);
+  const signature = await signManagedAssertion(alg, privateKey, signedPayload);
 
   const now = Date.now();
   const updateIndex = passkeys.findIndex((item) => item.credentialIdB64u === selected.credentialIdB64u);
@@ -386,12 +512,146 @@ async function sha256(bytes) {
 function encodeCoseEc2PublicKey(x, y) {
   const cose = new Map([
     [1, 2], // kty: EC2
-    [3, SUPPORTED_COSE_ALG], // alg: ES256
+    [3, COSE_ALG_ES256], // alg: ES256
     [-1, 1], // crv: P-256
     [-2, x], // x
     [-3, y], // y
   ]);
   return cborEncode(cose);
+}
+
+function encodeCoseRsaPublicKey(n, e) {
+  const cose = new Map([
+    [1, 3], // kty: RSA
+    [3, COSE_ALG_RS256], // alg: RS256
+    [-1, n], // modulus
+    [-2, e], // exponent
+  ]);
+  return cborEncode(cose);
+}
+
+function pickSupportedAlgorithm(pubKeyCredParams) {
+  if (!Array.isArray(pubKeyCredParams)) return null;
+  for (const item of pubKeyCredParams) {
+    const type = String(item?.type || "public-key").toLowerCase();
+    const alg = Number(item?.alg);
+    if (type !== "public-key") continue;
+    if (SUPPORTED_COSE_ALG_SET.has(alg)) {
+      return alg;
+    }
+  }
+  return null;
+}
+
+function normalizeManagedAlg(alg) {
+  const parsed = Number(alg);
+  if (SUPPORTED_COSE_ALG_SET.has(parsed)) {
+    return parsed;
+  }
+  return COSE_ALG_ES256;
+}
+
+function resolveCreateCompatMethod({ alg, usedUserNameFallback }) {
+  const safeAlg = normalizeManagedAlg(alg);
+  if (safeAlg === COSE_ALG_RS256 && usedUserNameFallback) {
+    return CREATE_COMPAT_USER_NAME_FALLBACK_RS256;
+  }
+  if (safeAlg === COSE_ALG_RS256) {
+    return CREATE_COMPAT_RS256;
+  }
+  if (usedUserNameFallback) {
+    return CREATE_COMPAT_USER_NAME_FALLBACK;
+  }
+  return CREATE_COMPAT_STANDARD;
+}
+
+function normalizeCreateCompatMethod(input) {
+  const value = String(input || "").trim().toLowerCase();
+  if (
+    value === CREATE_COMPAT_STANDARD ||
+    value === CREATE_COMPAT_USER_NAME_FALLBACK ||
+    value === CREATE_COMPAT_RS256 ||
+    value === CREATE_COMPAT_USER_NAME_FALLBACK_RS256
+  ) {
+    return value;
+  }
+  return CREATE_COMPAT_STANDARD;
+}
+
+async function generateManagedKeyPair(alg) {
+  if (alg === COSE_ALG_RS256) {
+    return await crypto.subtle.generateKey(
+      {
+        name: "RSASSA-PKCS1-v1_5",
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
+        hash: "SHA-256",
+      },
+      true,
+      ["sign", "verify"]
+    );
+  }
+  return await crypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign", "verify"]
+  );
+}
+
+function buildCosePublicKeyFromJwk(alg, publicJwk) {
+  if (alg === COSE_ALG_RS256) {
+    const n = base64urlToBytes(publicJwk?.n || "");
+    const e = base64urlToBytes(publicJwk?.e || "");
+    if (n.length === 0 || e.length === 0) {
+      throw new Error("RSA JWK invalid");
+    }
+    return encodeCoseRsaPublicKey(n, e);
+  }
+  const x = base64urlToBytes(publicJwk?.x || "");
+  const y = base64urlToBytes(publicJwk?.y || "");
+  if (x.length !== 32 || y.length !== 32) {
+    throw new Error("EC JWK invalid");
+  }
+  return encodeCoseEc2PublicKey(x, y);
+}
+
+async function importManagedPrivateKey(alg, privateJwk) {
+  if (alg === COSE_ALG_RS256) {
+    return await crypto.subtle.importKey(
+      "jwk",
+      privateJwk,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+  }
+  return await crypto.subtle.importKey(
+    "jwk",
+    privateJwk,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["sign"]
+  );
+}
+
+async function signManagedAssertion(alg, privateKey, payload) {
+  if (alg === COSE_ALG_RS256) {
+    return new Uint8Array(
+      await crypto.subtle.sign(
+        { name: "RSASSA-PKCS1-v1_5" },
+        privateKey,
+        payload
+      )
+    );
+  }
+  const rawSignature = new Uint8Array(
+    await crypto.subtle.sign(
+      { name: "ECDSA", hash: "SHA-256" },
+      privateKey,
+      payload
+    )
+  );
+  return ecdsaRawSignatureToDer(rawSignature);
 }
 
 function cborEncode(value) {

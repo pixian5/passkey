@@ -278,7 +278,7 @@ struct ContentView: View {
             sidebarItem(title: "全部 (\(activeCount))", selected: selectedSidebarFilter == .all) {
                 selectedSidebarFilter = .all
             }
-            sidebarItem(title: "通行秘钥 (\(passkeyCount))", selected: selectedSidebarFilter == .passkeys) {
+            sidebarItem(title: "通行密钥 (\(passkeyCount))", selected: selectedSidebarFilter == .passkeys) {
                 selectedSidebarFilter = .passkeys
             }
             sidebarItem(title: "验证码 (\(totpCount))", selected: selectedSidebarFilter == .totp) {
@@ -467,7 +467,7 @@ struct ContentView: View {
         case .all:
             return "搜索全部账号（输入即搜）"
         case .passkeys:
-            return "搜索通行秘钥账号（输入即搜）"
+            return "搜索通行密钥账号（输入即搜）"
         case .totp:
             return "搜索验证码账号（输入即搜）"
         case .recycle:
