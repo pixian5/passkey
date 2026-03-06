@@ -1,6 +1,10 @@
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
 const STORAGE_KEY_ACCOUNTS = "pass.accounts";
 const STORAGE_KEY_PASSKEYS = "pass.passkeys";
+const STORAGE_KEY_FOLDERS = "pass.folders";
+const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
+const FIXED_NEW_ACCOUNT_FOLDER_NAME = "新账号";
+const SYNC_BUNDLE_SCHEMA = "pass.sync.bundle.v1";
 
 const ETLD2_SUFFIXES = new Set([
   "com.cn",
@@ -43,6 +47,8 @@ const dom = {
   clearRecycleBinBtn: document.getElementById("clearRecycleBin"),
   payload: document.getElementById("payload"),
   refreshBtn: document.getElementById("refreshBtn"),
+  exportSyncBundleBtn: document.getElementById("exportSyncBundleBtn"),
+  importSyncBundleBtn: document.getElementById("importSyncBundleBtn"),
   exportBtn: document.getElementById("exportBtn"),
   importBtn: document.getElementById("importBtn"),
   clearBtn: document.getElementById("clearBtn"),
@@ -51,6 +57,7 @@ const dom = {
 
 let accountsRaw = [];
 let passkeysRaw = [];
+let foldersRaw = [];
 let editingAccountId = null;
 let totpRefreshTimer = null;
 let accountSearchUseAll = true;
@@ -100,6 +107,8 @@ async function init() {
   dom.clearActiveAccountsBtn.addEventListener("click", clearActiveAccounts);
   dom.clearRecycleBinBtn.addEventListener("click", clearRecycleBin);
   dom.refreshBtn.addEventListener("click", () => refresh());
+  dom.exportSyncBundleBtn.addEventListener("click", exportSyncBundle);
+  dom.importSyncBundleBtn.addEventListener("click", importSyncBundleAndMerge);
   dom.exportBtn.addEventListener("click", exportJson);
   dom.importBtn.addEventListener("click", importJson);
   dom.clearBtn.addEventListener("click", clearAll);
@@ -121,20 +130,30 @@ async function saveDeviceName() {
 }
 
 async function refresh({ silent = false } = {}) {
-  const result = await chrome.storage.local.get([STORAGE_KEY_ACCOUNTS, STORAGE_KEY_PASSKEYS]);
+  const result = await chrome.storage.local.get([
+    STORAGE_KEY_ACCOUNTS,
+    STORAGE_KEY_PASSKEYS,
+    STORAGE_KEY_FOLDERS,
+  ]);
   const accounts = Array.isArray(result[STORAGE_KEY_ACCOUNTS]) ? result[STORAGE_KEY_ACCOUNTS] : [];
   const passkeys = Array.isArray(result[STORAGE_KEY_PASSKEYS]) ? result[STORAGE_KEY_PASSKEYS] : [];
+  const folders = Array.isArray(result[STORAGE_KEY_FOLDERS]) ? result[STORAGE_KEY_FOLDERS] : [];
 
   accountsRaw = cloneAccounts(accounts);
-  passkeysRaw = passkeys.map((item) => ({ ...item }));
+  passkeysRaw = passkeys.map(normalizePasskeyShape);
+  foldersRaw = folders.map(normalizeFolderShape);
 
-  dom.payload.value = JSON.stringify({ accounts: accountsRaw, passkeys: passkeysRaw }, null, 2);
+  dom.payload.value = JSON.stringify(
+    { accounts: accountsRaw, passkeys: passkeysRaw, folders: foldersRaw },
+    null,
+    2
+  );
   renderSidebar(accountsRaw);
   renderCurrentView(accountsRaw);
   setAccountView(activeAccountView);
 
   if (!silent) {
-    setStatus(`已加载 ${accountsRaw.length} 条账号，${passkeysRaw.length} 条通行秘钥`);
+    setStatus(`已加载 ${accountsRaw.length} 条账号，${passkeysRaw.length} 条通行秘钥，${foldersRaw.length} 个文件夹`);
   }
 }
 
@@ -159,26 +178,187 @@ async function importJson() {
     return;
   }
 
-  const accounts = Array.isArray(parsed.accounts) ? parsed.accounts : [];
-  const passkeys = Array.isArray(parsed.passkeys) ? parsed.passkeys : [];
+  const payload = parsed?.schema === SYNC_BUNDLE_SCHEMA && parsed?.payload && typeof parsed.payload === "object"
+    ? parsed.payload
+    : parsed;
+  const accounts = Array.isArray(payload?.accounts) ? payload.accounts : [];
+  const passkeys = Array.isArray(payload?.passkeys) ? payload.passkeys : [];
+  const folders = Array.isArray(payload?.folders) ? payload.folders : [];
   await chrome.storage.local.set({
     [STORAGE_KEY_ACCOUNTS]: accounts,
     [STORAGE_KEY_PASSKEYS]: passkeys,
+    [STORAGE_KEY_FOLDERS]: folders,
   });
 
   editingAccountId = null;
   await refresh({ silent: true });
-  setStatus(`导入完成，共 ${accounts.length} 条账号，${passkeys.length} 条通行秘钥`);
+  setStatus(`导入完成，共 ${accounts.length} 条账号，${passkeys.length} 条通行秘钥，${folders.length} 个文件夹`);
 }
 
 async function clearAll() {
   await chrome.storage.local.set({
     [STORAGE_KEY_ACCOUNTS]: [],
     [STORAGE_KEY_PASSKEYS]: [],
+    [STORAGE_KEY_FOLDERS]: [],
   });
   editingAccountId = null;
   await refresh({ silent: true });
-  setStatus("账号与通行秘钥已清空");
+  setStatus("账号、通行秘钥与文件夹已清空");
+}
+
+async function exportSyncBundle() {
+  const bundle = await buildSyncBundle();
+  const fileName = `pass-sync-bundle-${formatFileTimestamp(bundle.exportedAtMs)}.json`;
+  const text = JSON.stringify(bundle, null, 2);
+  downloadTextFile(fileName, text, "application/json");
+  setStatus(
+    `同步包已导出：${bundle.payload.accounts.length} 条账号，` +
+      `${bundle.payload.passkeys.length} 条通行秘钥，${bundle.payload.folders.length} 个文件夹`
+  );
+}
+
+async function importSyncBundleAndMerge() {
+  const file = await pickJsonFile();
+  if (!file) {
+    setStatus("已取消导入同步包");
+    return;
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(await file.text());
+  } catch (error) {
+    setStatus(`同步包 JSON 解析失败: ${error.message}`);
+    return;
+  }
+
+  const incomingPayload = parseSyncBundlePayload(parsed);
+  if (!incomingPayload) {
+    setStatus("同步包格式错误，缺少 payload/accounts 字段");
+    return;
+  }
+
+  const localStored = await chrome.storage.local.get([
+    STORAGE_KEY_ACCOUNTS,
+    STORAGE_KEY_PASSKEYS,
+    STORAGE_KEY_FOLDERS,
+  ]);
+  const localAccounts = Array.isArray(localStored[STORAGE_KEY_ACCOUNTS])
+    ? localStored[STORAGE_KEY_ACCOUNTS].map(normalizeAccountShape)
+    : [];
+  const localPasskeys = Array.isArray(localStored[STORAGE_KEY_PASSKEYS])
+    ? localStored[STORAGE_KEY_PASSKEYS].map(normalizePasskeyShape)
+    : [];
+  const localFolders = Array.isArray(localStored[STORAGE_KEY_FOLDERS])
+    ? localStored[STORAGE_KEY_FOLDERS].map(normalizeFolderShape)
+    : [];
+
+  const remoteAccounts = incomingPayload.accounts.map(normalizeAccountShape);
+  const remotePasskeys = incomingPayload.passkeys.map(normalizePasskeyShape);
+  const remoteFolders = incomingPayload.folders.map(normalizeFolderShape);
+
+  const mergedFolders = mergeFolderCollections(localFolders, remoteFolders);
+  let mergedAccounts = mergeAccountCollections(localAccounts, remoteAccounts);
+  mergedAccounts = syncAliasGroups(mergedAccounts);
+  mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
+  const mergedPasskeys = mergePasskeyCollections(localPasskeys, remotePasskeys);
+
+  await chrome.storage.local.set({
+    [STORAGE_KEY_ACCOUNTS]: mergedAccounts,
+    [STORAGE_KEY_PASSKEYS]: mergedPasskeys,
+    [STORAGE_KEY_FOLDERS]: mergedFolders,
+  });
+
+  editingAccountId = null;
+  await refresh({ silent: true });
+  setStatus(
+    `同步包合并完成：账号 ${localAccounts.length}+${remoteAccounts.length}->${mergedAccounts.length}，` +
+      `通行秘钥 ${localPasskeys.length}+${remotePasskeys.length}->${mergedPasskeys.length}，` +
+      `文件夹 ${localFolders.length}+${remoteFolders.length}->${mergedFolders.length}`
+  );
+}
+
+async function buildSyncBundle() {
+  const [deviceName, stored] = await Promise.all([
+    getDeviceName(),
+    chrome.storage.local.get([STORAGE_KEY_ACCOUNTS, STORAGE_KEY_PASSKEYS, STORAGE_KEY_FOLDERS]),
+  ]);
+
+  const accounts = Array.isArray(stored[STORAGE_KEY_ACCOUNTS])
+    ? stored[STORAGE_KEY_ACCOUNTS].map(normalizeAccountShape)
+    : [];
+  const passkeys = Array.isArray(stored[STORAGE_KEY_PASSKEYS])
+    ? stored[STORAGE_KEY_PASSKEYS].map(normalizePasskeyShape)
+    : [];
+  const folders = Array.isArray(stored[STORAGE_KEY_FOLDERS])
+    ? stored[STORAGE_KEY_FOLDERS].map(normalizeFolderShape)
+    : [];
+
+  return {
+    schema: SYNC_BUNDLE_SCHEMA,
+    exportedAtMs: Date.now(),
+    source: {
+      app: "pass-extension",
+      platform: "chrome-extension",
+      deviceName,
+      formatVersion: 1,
+    },
+    payload: {
+      accounts,
+      passkeys,
+      folders,
+    },
+  };
+}
+
+function parseSyncBundlePayload(input) {
+  if (!input || typeof input !== "object") return null;
+  const rawPayload = input.schema === SYNC_BUNDLE_SCHEMA
+    ? input.payload
+    : input;
+  if (!rawPayload || typeof rawPayload !== "object") return null;
+  return {
+    accounts: Array.isArray(rawPayload.accounts) ? rawPayload.accounts : [],
+    passkeys: Array.isArray(rawPayload.passkeys) ? rawPayload.passkeys : [],
+    folders: Array.isArray(rawPayload.folders) ? rawPayload.folders : [],
+  };
+}
+
+function downloadTextFile(fileName, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function pickJsonFile() {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json,application/json";
+    input.addEventListener(
+      "change",
+      () => {
+        resolve(input.files?.[0] || null);
+      },
+      { once: true }
+    );
+    input.click();
+  });
+}
+
+function formatFileTimestamp(ms) {
+  const date = new Date(Number(ms) || Date.now());
+  const yyyy = String(date.getFullYear()).padStart(4, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  const second = String(date.getSeconds()).padStart(2, "0");
+  return `${yyyy}${month}${day}-${hour}${minute}${second}`;
 }
 
 async function clearActiveAccounts() {
@@ -451,37 +631,53 @@ function renderSidebar(inputAccounts) {
   dom.totpAccountsCount.textContent = `(${totp.length})`;
   dom.recycleAccountsCount.textContent = `(${recycle.length})`;
 
-  const folderMap = new Map();
+  const folderCountMap = new Map();
   for (const account of active) {
-    const ids = Array.isArray(account.folderIds) && account.folderIds.length > 0
-      ? account.folderIds
-      : (account.folderId ? [account.folderId] : []);
-    for (const id of ids) {
-      const key = String(id || "").trim();
+    for (const id of extractAccountFolderIds(account)) {
+      const key = normalizeFolderId(id);
       if (!key) continue;
-      const prev = folderMap.get(key) || 0;
-      folderMap.set(key, prev + 1);
+      const prev = folderCountMap.get(key) || 0;
+      folderCountMap.set(key, prev + 1);
     }
   }
 
-  const folderEntries = Array.from(folderMap.entries())
-    .map(([id, count]) => ({ id, count }))
-    .sort((a, b) => a.id.localeCompare(b.id));
-  dom.accountsFolderList.innerHTML = "";
-  if (folderEntries.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "empty";
-    empty.textContent = "暂无文件夹";
-    dom.accountsFolderList.appendChild(empty);
-    return;
+  const folderById = new Map(foldersRaw.map((folder) => [normalizeFolderId(folder.id), folder]));
+  if (!folderById.has(FIXED_NEW_ACCOUNT_FOLDER_ID)) {
+    folderById.set(FIXED_NEW_ACCOUNT_FOLDER_ID, normalizeFolderShape({
+      id: FIXED_NEW_ACCOUNT_FOLDER_ID,
+      name: FIXED_NEW_ACCOUNT_FOLDER_NAME,
+      createdAtMs: 0,
+    }));
   }
 
+  const knownFolders = sortFoldersForDisplay(Array.from(folderById.values()));
+  const unknownFolderEntries = Array.from(folderCountMap.entries())
+    .filter(([id]) => !folderById.has(id))
+    .map(([id, count]) => ({
+      id,
+      name: `未命名文件夹 ${id.slice(0, 8)}`,
+      createdAtMs: 0,
+      count,
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  const folderEntries = [
+    ...knownFolders.map((folder) => ({
+      id: normalizeFolderId(folder.id),
+      name: String(folder.name || FIXED_NEW_ACCOUNT_FOLDER_NAME),
+      createdAtMs: Number(folder.createdAtMs || 0),
+      count: folderCountMap.get(normalizeFolderId(folder.id)) || 0,
+    })),
+    ...unknownFolderEntries,
+  ];
+
+  dom.accountsFolderList.innerHTML = "";
   for (const folder of folderEntries) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "account-view-tab";
     button.dataset.view = `folder:${folder.id}`;
-    button.textContent = `文件夹 ${folder.id.slice(0, 8)} (${folder.count})`;
+    button.textContent = `${folder.name} (${folder.count})`;
     button.addEventListener("click", () => setAccountView(`folder:${folder.id}`));
     dom.accountsFolderList.appendChild(button);
   }
@@ -502,11 +698,9 @@ function currentViewAccounts(inputAccounts) {
     return active.filter((item) => hasTotpSecret(item.totpSecret));
   }
   if (String(activeAccountView).startsWith("folder:")) {
-    const folderId = String(activeAccountView).slice("folder:".length);
+    const folderId = normalizeFolderId(String(activeAccountView).slice("folder:".length));
     return active.filter((item) => {
-      const ids = Array.isArray(item.folderIds) && item.folderIds.length > 0
-        ? item.folderIds.map((id) => String(id || ""))
-        : (item.folderId ? [String(item.folderId)] : []);
+      const ids = extractAccountFolderIds(item).map(normalizeFolderId);
       return ids.includes(folderId);
     });
   }
@@ -1095,6 +1289,7 @@ function cloneAccounts(inputAccounts) {
   const values = Array.isArray(inputAccounts) ? inputAccounts : [];
   return values.map((account) => ({
     ...account,
+    folderIds: Array.isArray(account?.folderIds) ? [...account.folderIds] : [],
     sites: Array.isArray(account?.sites) ? [...account.sites] : [],
     passkeyCredentialIds: Array.isArray(account?.passkeyCredentialIds)
       ? [...account.passkeyCredentialIds]
@@ -1139,10 +1334,47 @@ function normalizeAccountShape(account) {
     totpUpdatedAtMs: Number(account?.totpUpdatedAtMs || createdAtMs),
     recoveryCodesUpdatedAtMs: Number(account?.recoveryCodesUpdatedAtMs || createdAtMs),
     noteUpdatedAtMs: Number(account?.noteUpdatedAtMs || createdAtMs),
+    passkeyUpdatedAtMs: Number(account?.passkeyUpdatedAtMs || createdAtMs),
     isDeleted: Boolean(account?.isDeleted),
     deletedAtMs: account?.deletedAtMs == null ? null : Number(account.deletedAtMs),
+    lastOperatedDeviceName: String(account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
     createdAtMs,
     updatedAtMs: Number(account?.updatedAtMs || createdAtMs),
+  };
+}
+
+function normalizePasskeyShape(item) {
+  const now = Date.now();
+  return {
+    credentialIdB64u: String(item?.credentialIdB64u || item?.id || "").trim(),
+    rpId: normalizeDomain(item?.rpId || ""),
+    userName: normalizeUsername(item?.userName || item?.username || ""),
+    displayName: String(item?.displayName || "").trim(),
+    userHandleB64u: String(item?.userHandleB64u || ""),
+    alg: Number(item?.alg || -7),
+    signCount: Number(item?.signCount || 0),
+    privateJwk: item?.privateJwk || null,
+    publicJwk: item?.publicJwk || null,
+    createdAtMs: Number(item?.createdAtMs || now),
+    updatedAtMs: Number(item?.updatedAtMs || item?.createdAtMs || now),
+    lastUsedAtMs: item?.lastUsedAtMs == null ? null : Number(item.lastUsedAtMs),
+    mode: String(item?.mode || "managed"),
+  };
+}
+
+function normalizeFolderShape(item) {
+  const now = Date.now();
+  const id = normalizeFolderId(item?.id || "");
+  const fixedId = FIXED_NEW_ACCOUNT_FOLDER_ID;
+  const safeId = id || (globalThis.crypto?.randomUUID?.() || `folder-${now}-${Math.random().toString(16).slice(2)}`);
+  const rawName = String(item?.name || "").trim();
+  const safeName = safeId === fixedId
+    ? FIXED_NEW_ACCOUNT_FOLDER_NAME
+    : (rawName || `未命名文件夹 ${safeId.slice(0, 8)}`);
+  return {
+    id: safeId,
+    name: safeName,
+    createdAtMs: Number(item?.createdAtMs || now),
   };
 }
 
@@ -1195,6 +1427,347 @@ function normalizePasskeyCredentialIds(input) {
 
 function normalizeUsername(value) {
   return String(value || "").trim();
+}
+
+function normalizeFolderId(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeFolderIdList(values) {
+  const source = Array.isArray(values) ? values : [];
+  return [...new Set(source.map(normalizeFolderId).filter(Boolean))].sort();
+}
+
+function extractAccountFolderIds(account) {
+  if (Array.isArray(account?.folderIds) && account.folderIds.length > 0) {
+    return account.folderIds.map((id) => String(id || ""));
+  }
+  if (account?.folderId != null) {
+    return [String(account.folderId)];
+  }
+  return [];
+}
+
+function sortFoldersForDisplay(inputFolders) {
+  const folders = Array.isArray(inputFolders) ? inputFolders : [];
+  return [...folders].sort((lhs, rhs) => {
+    const lhsId = normalizeFolderId(lhs?.id);
+    const rhsId = normalizeFolderId(rhs?.id);
+    if (lhsId === FIXED_NEW_ACCOUNT_FOLDER_ID && rhsId !== FIXED_NEW_ACCOUNT_FOLDER_ID) return -1;
+    if (rhsId === FIXED_NEW_ACCOUNT_FOLDER_ID && lhsId !== FIXED_NEW_ACCOUNT_FOLDER_ID) return 1;
+    const lhsCreated = Number(lhs?.createdAtMs || 0);
+    const rhsCreated = Number(rhs?.createdAtMs || 0);
+    if (lhsCreated !== rhsCreated) return lhsCreated - rhsCreated;
+    return String(lhs?.name || "").localeCompare(String(rhs?.name || ""));
+  });
+}
+
+function mergeAccountCollections(local, remote) {
+  const mergedById = new Map();
+  const order = [];
+
+  for (const account of [...(Array.isArray(local) ? local : []), ...(Array.isArray(remote) ? remote : [])]) {
+    const normalized = normalizeAccountShape(account);
+    const id = String(normalized.accountId || "").trim();
+    if (!id) continue;
+    if (mergedById.has(id)) {
+      mergedById.set(id, mergeSameAccount(mergedById.get(id), normalized));
+    } else {
+      mergedById.set(id, normalized);
+      order.push(id);
+    }
+  }
+
+  return order.map((id) => mergedById.get(id)).filter(Boolean);
+}
+
+function mergeSameAccount(lhs, rhs) {
+  const left = normalizeAccountShape(lhs);
+  const right = normalizeAccountShape(rhs);
+  const primary = Number(left.createdAtMs || 0) <= Number(right.createdAtMs || 0) ? left : right;
+  const secondary = primary === left ? right : left;
+
+  const mergedSites = normalizeSites([...(left.sites || []), ...(right.sites || [])]);
+  const canonicalBySites = etldPlusOne(mergedSites[0] || "");
+  const canonicalSite = canonicalBySites || primary.canonicalSite || secondary.canonicalSite || "";
+  const mergedFolderIds = normalizeFolderIdList([
+    ...extractAccountFolderIds(left),
+    ...extractAccountFolderIds(right),
+  ]);
+
+  const usernameField = newerField(
+    left.username,
+    left.usernameUpdatedAtMs,
+    left.updatedAtMs,
+    right.username,
+    right.usernameUpdatedAtMs,
+    right.updatedAtMs
+  );
+  const passwordField = newerField(
+    left.password,
+    left.passwordUpdatedAtMs,
+    left.updatedAtMs,
+    right.password,
+    right.passwordUpdatedAtMs,
+    right.updatedAtMs
+  );
+  const totpField = newerField(
+    left.totpSecret,
+    left.totpUpdatedAtMs,
+    left.updatedAtMs,
+    right.totpSecret,
+    right.totpUpdatedAtMs,
+    right.updatedAtMs
+  );
+  const recoveryField = newerField(
+    left.recoveryCodes,
+    left.recoveryCodesUpdatedAtMs,
+    left.updatedAtMs,
+    right.recoveryCodes,
+    right.recoveryCodesUpdatedAtMs,
+    right.updatedAtMs
+  );
+  const noteField = newerField(
+    left.note,
+    left.noteUpdatedAtMs,
+    left.updatedAtMs,
+    right.note,
+    right.noteUpdatedAtMs,
+    right.updatedAtMs
+  );
+
+  const leftPasskeyIds = normalizePasskeyCredentialIds(left.passkeyCredentialIds || []);
+  const rightPasskeyIds = normalizePasskeyCredentialIds(right.passkeyCredentialIds || []);
+  const mergedPasskeyIds = normalizePasskeyCredentialIds([...leftPasskeyIds, ...rightPasskeyIds]);
+  const passkeyUpdatedAtMs = Math.max(
+    Number(left.passkeyUpdatedAtMs || left.updatedAtMs || left.createdAtMs || 0),
+    Number(right.passkeyUpdatedAtMs || right.updatedAtMs || right.createdAtMs || 0)
+  );
+
+  const latestContentUpdatedAt = Math.max(
+    usernameField.updatedAtMs,
+    passwordField.updatedAtMs,
+    totpField.updatedAtMs,
+    recoveryField.updatedAtMs,
+    noteField.updatedAtMs,
+    passkeyUpdatedAtMs
+  );
+
+  const leftDeletedAt = left.isDeleted ? Number(left.deletedAtMs || 0) : 0;
+  const rightDeletedAt = right.isDeleted ? Number(right.deletedAtMs || 0) : 0;
+  const latestDeletedAt = Math.max(leftDeletedAt, rightDeletedAt);
+  const keepDeleted = latestDeletedAt > 0 && latestDeletedAt >= latestContentUpdatedAt;
+
+  const leftUpdatedAt = Number(left.updatedAtMs || 0);
+  const rightUpdatedAt = Number(right.updatedAtMs || 0);
+  const newerAccount = leftUpdatedAt >= rightUpdatedAt ? left : right;
+  const olderAccount = newerAccount === left ? right : left;
+
+  const createdAtMs = Math.min(Number(left.createdAtMs || 0), Number(right.createdAtMs || 0));
+  const updatedAtMs = Math.max(
+    leftUpdatedAt,
+    rightUpdatedAt,
+    latestContentUpdatedAt,
+    latestDeletedAt,
+    createdAtMs
+  );
+
+  const usernameAtCreate = String(primary.usernameAtCreate || "").trim()
+    || String(secondary.usernameAtCreate || "").trim()
+    || String(primary.username || "").trim()
+    || String(secondary.username || "").trim();
+  const lastOperatedDeviceName = String(newerAccount.lastOperatedDeviceName || "").trim()
+    || String(olderAccount.lastOperatedDeviceName || "").trim()
+    || "ChromeMac";
+
+  return {
+    accountId: primary.accountId,
+    canonicalSite,
+    usernameAtCreate,
+    isPinned: Boolean(newerAccount.isPinned),
+    pinnedSortOrder: newerAccount.pinnedSortOrder == null ? null : Number(newerAccount.pinnedSortOrder),
+    regularSortOrder: newerAccount.regularSortOrder == null ? null : Number(newerAccount.regularSortOrder),
+    folderId: mergedFolderIds[0] || (newerAccount.folderId == null ? null : normalizeFolderId(newerAccount.folderId)),
+    folderIds: mergedFolderIds,
+    sites: mergedSites.length > 0 ? mergedSites : primary.sites,
+    username: usernameField.value,
+    password: passwordField.value,
+    totpSecret: totpField.value,
+    recoveryCodes: recoveryField.value,
+    note: noteField.value,
+    passkeyCredentialIds: mergedPasskeyIds,
+    usernameUpdatedAtMs: usernameField.updatedAtMs,
+    passwordUpdatedAtMs: passwordField.updatedAtMs,
+    totpUpdatedAtMs: totpField.updatedAtMs,
+    recoveryCodesUpdatedAtMs: recoveryField.updatedAtMs,
+    noteUpdatedAtMs: noteField.updatedAtMs,
+    passkeyUpdatedAtMs,
+    isDeleted: keepDeleted,
+    deletedAtMs: keepDeleted ? latestDeletedAt : null,
+    createdAtMs,
+    updatedAtMs,
+    lastOperatedDeviceName,
+  };
+}
+
+function newerField(
+  lhsValue,
+  lhsUpdatedAt,
+  lhsAccountUpdatedAt,
+  rhsValue,
+  rhsUpdatedAt,
+  rhsAccountUpdatedAt
+) {
+  const leftUpdated = Number(lhsUpdatedAt || 0);
+  const rightUpdated = Number(rhsUpdatedAt || 0);
+  if (leftUpdated > rightUpdated) return { value: String(lhsValue || ""), updatedAtMs: leftUpdated };
+  if (rightUpdated > leftUpdated) return { value: String(rhsValue || ""), updatedAtMs: rightUpdated };
+
+  const leftValue = String(lhsValue || "");
+  const rightValue = String(rhsValue || "");
+  if (leftValue === rightValue) {
+    return { value: leftValue, updatedAtMs: leftUpdated };
+  }
+
+  const leftAccountUpdated = Number(lhsAccountUpdatedAt || 0);
+  const rightAccountUpdated = Number(rhsAccountUpdatedAt || 0);
+  if (leftAccountUpdated > rightAccountUpdated) {
+    return { value: leftValue, updatedAtMs: leftUpdated };
+  }
+  if (rightAccountUpdated > leftAccountUpdated) {
+    return { value: rightValue, updatedAtMs: rightUpdated };
+  }
+
+  if (!leftValue && rightValue) {
+    return { value: rightValue, updatedAtMs: rightUpdated };
+  }
+  return { value: leftValue, updatedAtMs: leftUpdated };
+}
+
+function mergePasskeyCollections(local, remote) {
+  const mergedById = new Map();
+  const source = [...(Array.isArray(local) ? local : []), ...(Array.isArray(remote) ? remote : [])];
+
+  for (const passkey of source) {
+    const normalized = normalizePasskeyShape(passkey);
+    const id = String(normalized.credentialIdB64u || "").trim();
+    if (!id) continue;
+
+    if (mergedById.has(id)) {
+      mergedById.set(id, mergeSamePasskey(mergedById.get(id), normalized));
+    } else {
+      mergedById.set(id, normalized);
+    }
+  }
+
+  return Array.from(mergedById.values()).sort((a, b) => {
+    const left = Number(a?.updatedAtMs || a?.createdAtMs || 0);
+    const right = Number(b?.updatedAtMs || b?.createdAtMs || 0);
+    if (left !== right) return right - left;
+    return String(a?.credentialIdB64u || "").localeCompare(String(b?.credentialIdB64u || ""));
+  });
+}
+
+function mergeSamePasskey(lhs, rhs) {
+  const left = normalizePasskeyShape(lhs);
+  const right = normalizePasskeyShape(rhs);
+  const leftUpdated = Number(left.updatedAtMs || left.createdAtMs || 0);
+  const rightUpdated = Number(right.updatedAtMs || right.createdAtMs || 0);
+  const newer = leftUpdated >= rightUpdated ? left : right;
+  const older = newer === left ? right : left;
+
+  return {
+    credentialIdB64u: newer.credentialIdB64u || older.credentialIdB64u,
+    rpId: newer.rpId || older.rpId,
+    userName: newer.userName || older.userName,
+    displayName: newer.displayName || older.displayName,
+    userHandleB64u: newer.userHandleB64u || older.userHandleB64u,
+    alg: Number(newer.alg || older.alg || -7),
+    signCount: Math.max(Number(left.signCount || 0), Number(right.signCount || 0)),
+    privateJwk: newer.privateJwk || older.privateJwk || null,
+    publicJwk: newer.publicJwk || older.publicJwk || null,
+    createdAtMs: Math.min(Number(left.createdAtMs || 0), Number(right.createdAtMs || 0)),
+    updatedAtMs: Math.max(leftUpdated, rightUpdated),
+    lastUsedAtMs: Math.max(Number(left.lastUsedAtMs || 0), Number(right.lastUsedAtMs || 0)) || null,
+    mode: newer.mode || older.mode || "managed",
+  };
+}
+
+function mergeFolderCollections(local, remote) {
+  const merged = new Map();
+  const source = [...(Array.isArray(local) ? local : []), ...(Array.isArray(remote) ? remote : [])];
+  for (const folder of source) {
+    const normalized = normalizeFolderShape(folder);
+    const id = normalizeFolderId(normalized.id);
+    if (!id) continue;
+    if (merged.has(id)) {
+      merged.set(id, mergeSameFolder(merged.get(id), normalized));
+    } else {
+      merged.set(id, normalized);
+    }
+  }
+
+  const existingFixed = merged.get(FIXED_NEW_ACCOUNT_FOLDER_ID);
+  if (!existingFixed) {
+    merged.set(
+      FIXED_NEW_ACCOUNT_FOLDER_ID,
+      normalizeFolderShape({
+        id: FIXED_NEW_ACCOUNT_FOLDER_ID,
+        name: FIXED_NEW_ACCOUNT_FOLDER_NAME,
+        createdAtMs: 0,
+      })
+    );
+  } else {
+    merged.set(
+      FIXED_NEW_ACCOUNT_FOLDER_ID,
+      {
+        ...existingFixed,
+        id: FIXED_NEW_ACCOUNT_FOLDER_ID,
+        name: FIXED_NEW_ACCOUNT_FOLDER_NAME,
+      }
+    );
+  }
+
+  return sortFoldersForDisplay(Array.from(merged.values()));
+}
+
+function mergeSameFolder(lhs, rhs) {
+  const left = normalizeFolderShape(lhs);
+  const right = normalizeFolderShape(rhs);
+  const id = normalizeFolderId(left.id || right.id);
+  if (id === FIXED_NEW_ACCOUNT_FOLDER_ID) {
+    return {
+      id,
+      name: FIXED_NEW_ACCOUNT_FOLDER_NAME,
+      createdAtMs: Math.min(Number(left.createdAtMs || 0), Number(right.createdAtMs || 0)),
+    };
+  }
+
+  const leftName = String(left.name || "").trim();
+  const rightName = String(right.name || "").trim();
+  const name = leftName || rightName || `未命名文件夹 ${id.slice(0, 8)}`;
+
+  return {
+    id,
+    name,
+    createdAtMs: Math.min(Number(left.createdAtMs || 0), Number(right.createdAtMs || 0)),
+  };
+}
+
+function reconcileAccountFolders(accounts, folders) {
+  const validIds = new Set((Array.isArray(folders) ? folders : []).map((folder) => normalizeFolderId(folder?.id)));
+  const values = Array.isArray(accounts) ? accounts : [];
+  return values.map((account) => {
+    const normalized = normalizeAccountShape(account);
+    const resolved = normalizeFolderIdList(
+      extractAccountFolderIds(normalized).filter((id) => validIds.has(normalizeFolderId(id)))
+    );
+    return {
+      ...normalized,
+      folderId: resolved[0] || null,
+      folderIds: resolved,
+    };
+  });
 }
 
 function syncAliasGroups(inputAccounts) {

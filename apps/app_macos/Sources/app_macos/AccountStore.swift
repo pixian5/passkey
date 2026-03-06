@@ -87,6 +87,7 @@ final class AccountStore: ObservableObject {
     static let systemDefaultFontFamily = "系统默认"
     static let fixedNewAccountFolderName = "新账号"
     static let fixedNewAccountFolderId = UUID(uuidString: "F16A2C4E-4A2A-43D5-A670-3F1767D41001")!
+    static let syncBundleSchema = "pass.sync.bundle.v1"
     private static let installedFontFamilies: Set<String> = Set(NSFontManager.shared.availableFontFamilies)
 
     private let decoder = JSONDecoder()
@@ -660,6 +661,10 @@ final class AccountStore: ObservableObject {
         "pass-all-accounts-\(timestampForFile()).csv"
     }
 
+    func suggestedSyncBundleFileName() -> String {
+        "pass-sync-bundle-\(timestampForFile()).json"
+    }
+
     func saveExportDirectoryPath() {
         let normalized = exportDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
         exportDirectoryPath = normalized
@@ -698,6 +703,69 @@ final class AccountStore: ObservableObject {
             statusMessage = "全部账号 CSV 导出成功: \(fileURL.path)"
         } catch {
             statusMessage = "全部账号 CSV 导出失败: \(error.localizedDescription)"
+        }
+    }
+
+    func exportSyncBundle(to fileURL: URL) {
+        let bundle = SyncBundleV1(
+            schema: Self.syncBundleSchema,
+            exportedAtMs: nowMs(),
+            source: SyncBundleSource(
+                app: "pass-mac",
+                platform: "macos-app",
+                deviceName: currentDeviceName(),
+                formatVersion: 1
+            ),
+            payload: SyncBundlePayload(
+                accounts: accounts,
+                folders: folders
+            )
+        )
+
+        do {
+            let parentDirectory = fileURL.deletingLastPathComponent()
+            try FileManager.default.createDirectory(
+                at: parentDirectory,
+                withIntermediateDirectories: true
+            )
+            let data = try encoder.encode(bundle)
+            try data.write(to: fileURL, options: .atomic)
+            statusMessage = "同步包导出成功: \(fileURL.path)"
+        } catch {
+            statusMessage = "同步包导出失败: \(error.localizedDescription)"
+        }
+    }
+
+    func importSyncBundle(from fileURL: URL) {
+        do {
+            let data = try Data(contentsOf: fileURL)
+            let parsed = try decodeSyncBundle(data)
+            let remoteAccounts = normalizeDecodedAccounts(parsed.accounts)
+            let remoteFolders = parsed.folders
+
+            let localAccountCount = accounts.count
+            let localFolderCount = folders.count
+
+            let mergedFolders = mergeFolderCollections(local: folders, remote: remoteFolders)
+            let validFolderIds = Set(mergedFolders.map(\.id))
+            var mergedAccounts = mergeAccountCollections(local: accounts, remote: remoteAccounts)
+            mergedAccounts = reconcileAccountsWithValidFolderIds(mergedAccounts, validFolderIds: validFolderIds)
+
+            folders = mergedFolders
+            accounts = mergedAccounts
+            syncAliasGroups()
+            saveFoldersToDefaults()
+            saveAccounts()
+
+            if let editingAccountId, !accounts.contains(where: { $0.id == editingAccountId }) {
+                cancelEditing()
+            }
+
+            statusMessage =
+                "同步包导入并合并完成（\(parsed.kind)）：账号 \(localAccountCount)+\(remoteAccounts.count)->\(accounts.count)，" +
+                "文件夹 \(localFolderCount)+\(remoteFolders.count)->\(folders.count)"
+        } catch {
+            statusMessage = "同步包导入失败: \(error.localizedDescription)"
         }
     }
 
@@ -1330,6 +1398,102 @@ final class AccountStore: ObservableObject {
         )
     }
 
+    private func mergeFolderCollections(
+        local: [AccountFolder],
+        remote: [AccountFolder]
+    ) -> [AccountFolder] {
+        var mergedById: [UUID: AccountFolder] = [:]
+
+        for folder in local {
+            mergedById[folder.id] = folder
+        }
+
+        for folder in remote {
+            if let existing = mergedById[folder.id] {
+                mergedById[folder.id] = mergeSameFolder(existing, folder)
+            } else {
+                mergedById[folder.id] = folder
+            }
+        }
+
+        let fixedId = Self.fixedNewAccountFolderId
+        if let existing = mergedById[fixedId] {
+            mergedById[fixedId] = AccountFolder(
+                id: fixedId,
+                name: Self.fixedNewAccountFolderName,
+                createdAtMs: existing.createdAtMs
+            )
+        } else {
+            mergedById[fixedId] = AccountFolder(
+                id: fixedId,
+                name: Self.fixedNewAccountFolderName,
+                createdAtMs: nowMs()
+            )
+        }
+
+        return sortFoldersWithFixedNewAccountFirst(Array(mergedById.values))
+    }
+
+    private func mergeSameFolder(_ lhs: AccountFolder, _ rhs: AccountFolder) -> AccountFolder {
+        if lhs.id == Self.fixedNewAccountFolderId {
+            return AccountFolder(
+                id: lhs.id,
+                name: Self.fixedNewAccountFolderName,
+                createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs)
+            )
+        }
+
+        let leftName = lhs.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rightName = rhs.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mergedName = leftName.isEmpty ? rightName : leftName
+
+        return AccountFolder(
+            id: lhs.id,
+            name: mergedName.isEmpty ? lhs.name : mergedName,
+            createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs)
+        )
+    }
+
+    private func reconcileAccountsWithValidFolderIds(
+        _ source: [PasswordAccount],
+        validFolderIds: Set<UUID>
+    ) -> [PasswordAccount] {
+        source.map { account in
+            var mutable = account
+            let filtered = normalizeFolderIds(
+                mutable.resolvedFolderIds.filter { validFolderIds.contains($0) }
+            )
+            mutable.setResolvedFolderIds(filtered)
+            return mutable
+        }
+    }
+
+    private func decodeSyncBundle(_ data: Data) throws -> (
+        accounts: [PasswordAccount],
+        folders: [AccountFolder],
+        kind: String
+    ) {
+        if let v1 = try? decoder.decode(SyncBundleV1.self, from: data),
+           v1.schema == Self.syncBundleSchema
+        {
+            return (v1.payload.accounts, v1.payload.folders, "v1")
+        }
+
+        if let payload = try? decoder.decode(SyncBundlePayload.self, from: data) {
+            return (payload.accounts, payload.folders, "legacy_payload")
+        }
+
+        if let legacy = try? decoder.decode(LegacySyncBundlePayload.self, from: data) {
+            return (legacy.accounts ?? [], legacy.folders ?? [], "legacy_root")
+        }
+
+        throw NSError(
+            domain: "AccountStore.SyncBundle",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "不支持的同步包格式"]
+        )
+    }
+
     private func newerField(
         _ lhsValue: String,
         _ lhsUpdatedAt: Int64,
@@ -1696,6 +1860,30 @@ final class AccountStore: ObservableObject {
         }
         return .custom(uiFontFamily, size: size).weight(weight)
     }
+}
+
+private struct SyncBundleV1: Codable {
+    let schema: String
+    let exportedAtMs: Int64
+    let source: SyncBundleSource
+    let payload: SyncBundlePayload
+}
+
+private struct SyncBundleSource: Codable {
+    let app: String
+    let platform: String
+    let deviceName: String
+    let formatVersion: Int
+}
+
+private struct SyncBundlePayload: Codable {
+    let accounts: [PasswordAccount]
+    let folders: [AccountFolder]
+}
+
+private struct LegacySyncBundlePayload: Codable {
+    let accounts: [PasswordAccount]?
+    let folders: [AccountFolder]?
 }
 
 private enum Keys {

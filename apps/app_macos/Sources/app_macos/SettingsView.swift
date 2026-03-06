@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @ObservedObject var store: AccountStore
@@ -79,11 +80,25 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Button("立即同步 iCloud") {
-                        store.syncWithICloudNow()
+                    HStack(spacing: 8) {
+                        Button("立即同步 iCloud") {
+                            store.syncWithICloudNow()
+                        }
+                        .font(store.buttonFont())
+                        .buttonStyle(.bordered)
+
+                        Button("导出同步包") {
+                            exportSyncBundleWithPanel()
+                        }
+                        .font(store.buttonFont())
+                        .buttonStyle(.bordered)
+
+                        Button("导入并合并同步包") {
+                            importSyncBundleWithPanel()
+                        }
+                        .font(store.buttonFont())
+                        .buttonStyle(.bordered)
                     }
-                    .font(store.buttonFont())
-                    .buttonStyle(.bordered)
                 }
                 .padding(.top, 2)
             }
@@ -251,6 +266,41 @@ struct SettingsView: View {
         store.saveExportDirectoryPath()
         let fileURL = selectedDirectory.appendingPathComponent(store.suggestedCsvFileName(), isDirectory: false)
         store.exportCsv(to: fileURL)
+    }
+
+    private func exportSyncBundleWithPanel() {
+        let panel = NSSavePanel()
+        panel.title = "导出同步包"
+        panel.message = "请选择同步包保存位置"
+        panel.nameFieldStringValue = store.suggestedSyncBundleFileName()
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        panel.prompt = "导出"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            store.statusMessage = "已取消同步包导出"
+            return
+        }
+
+        store.exportSyncBundle(to: url)
+    }
+
+    private func importSyncBundleWithPanel() {
+        let panel = NSOpenPanel()
+        panel.title = "导入同步包"
+        panel.message = "请选择 JSON 同步包文件，导入后会和当前数据做合并"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.json]
+        panel.prompt = "导入并合并"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            store.statusMessage = "已取消同步包导入"
+            return
+        }
+
+        store.importSyncBundle(from: url)
     }
 }
 
