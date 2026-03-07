@@ -28,13 +28,33 @@ Chrome extension scaffold (Manifest V3).
 - Options page with JSON import/export for local storage data.
 
 ## Load extension
-1. Open `chrome://extensions`.
-2. Enable Developer mode.
-3. Click "Load unpacked".
-4. Choose `/Users/x/code/pass/apps/extension_chrome`.
+1. Install dependencies:
+   ```bash
+   cd /Users/x/code/pass/apps/extension_chrome
+   npm install
+   ```
+2. Build runtime bundles:
+   ```bash
+   npm run build
+   ```
+3. Open `chrome://extensions`.
+4. Enable Developer mode.
+5. Click "Load unpacked".
+6. Choose `/Users/x/code/pass/apps/extension_chrome`.
+
+## Development
+- `npm run build`: one-shot bundle to `dist/`.
+- `npm run build:watch`: watch mode bundle to `dist/`.
+
+## Notes
+- Runtime scripts are loaded from `dist/*.js` in `manifest.json` and HTML.
+- Source files (`popup.js`, `options.js`, `background.js`, `content.js`) are modular and shared via `account_core.js`.
 
 ## Files
 - `manifest.json`: MV3 entry.
-- `popup.*`: main UI and logic.
-- `background.js`: install-time initialization.
-- `options.*`: data inspection and JSON import/export.
+- `scripts/build.mjs`: esbuild entry (bundles to `dist/`).
+- `popup.*`: popup UI and source logic.
+- `background.js`: background source logic.
+- `options.*`: options UI and source logic.
+- `content.js`: content source logic.
+- `account_core.js`: shared account/domain/sort/merge core logic.

@@ -1,3 +1,5 @@
+import { etldPlusOne, normalizeDomain, normalizeSites } from "./account_core.js";
+
 const STORAGE_KEY_ACCOUNTS = "pass.accounts";
 const PASS_LOGIN_COOLDOWN_MS = 5000;
 const WEB_AUTHN_BRIDGE_SOURCE = "pass-webauthn-bridge";
@@ -5,16 +7,6 @@ const WEB_AUTHN_REQUEST_TYPE = "PASSKEY_REQUEST";
 const WEB_AUTHN_RESPONSE_TYPE = "PASSKEY_RESPONSE";
 const PASS_PAGE_TOAST_ID = "pass-page-toast";
 const PASS_PAGE_TOAST_DURATION_MS = 3000;
-
-const ETLD2_SUFFIXES = new Set([
-  "com.cn",
-  "net.cn",
-  "org.cn",
-  "gov.cn",
-  "edu.cn",
-  "co.uk",
-  "org.uk",
-]);
 
 let lastPromptKey = "";
 let lastPromptAt = 0;
@@ -196,32 +188,6 @@ function accountMatchesDomain(account, domain) {
   const normalized = normalizeDomain(domain);
   const etld1 = etldPlusOne(normalized);
   return account.sites.some((site) => site === normalized || etldPlusOne(site) === etld1);
-}
-
-function normalizeDomain(input) {
-  if (!input) return "";
-  let value = input.trim().toLowerCase();
-  while (value.endsWith(".")) {
-    value = value.slice(0, -1);
-  }
-  return value;
-}
-
-function etldPlusOne(domain) {
-  const normalized = normalizeDomain(domain);
-  if (!normalized) return "";
-  const labels = normalized.split(".");
-  if (labels.length < 2) return normalized;
-
-  const tail2 = labels.slice(-2).join(".");
-  if (ETLD2_SUFFIXES.has(tail2) && labels.length >= 3) {
-    return labels.slice(-3).join(".");
-  }
-  return tail2;
-}
-
-function normalizeSites(sites) {
-  return [...new Set((sites || []).map(normalizeDomain).filter(Boolean))].sort();
 }
 
 function isVisible(input) {

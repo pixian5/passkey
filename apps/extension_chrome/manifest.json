@@ -7,6 +7,7 @@
     "storage",
     "tabs",
     "activeTab",
+    "clipboardRead",
     "clipboardWrite",
     "scripting",
     "contextMenus"
@@ -21,13 +22,12 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "js": ["dist/content.js"],
       "run_at": "document_idle"
     }
   ],
   "background": {
-    "service_worker": "background.js",
-    "type": "module"
+    "service_worker": "dist/background.js"
   },
   "options_page": "options.html",
   "web_accessible_resources": [

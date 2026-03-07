@@ -1,3 +1,14 @@
+import {
+  buildAccountId,
+  compareAccountsForDisplay,
+  etldPlusOne,
+  normalizeDomain,
+  normalizeSites,
+  normalizeUsername,
+  sortAccountsForDisplay,
+  syncAliasGroups,
+} from "./account_core.js";
+
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
 const STORAGE_KEY_ACCOUNTS = "pass.accounts";
 const STORAGE_KEY_PASSKEYS = "pass.passkeys";
@@ -10,19 +21,20 @@ const STORAGE_KEY_SYNC_WEBDAV_USERNAME = "pass.sync.webdav.username.v2";
 const STORAGE_KEY_SYNC_WEBDAV_PASSWORD = "pass.sync.webdav.password.v2";
 const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
 const STORAGE_KEY_SYNC_SERVER_TOKEN = "pass.sync.server.token.v2";
+const STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
+const STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
+const STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
+const STORAGE_KEY_LOCK_MASTER_CREDENTIAL = "pass.lock.masterCredential.v1";
 const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
 const FIXED_NEW_ACCOUNT_FOLDER_NAME = "新账号";
 const SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
+const LOCK_POLICY_ONCE_UNTIL_QUIT = "onceUntilQuit";
+const LOCK_POLICY_IDLE_TIMEOUT = "idleTimeout";
+const LOCK_POLICY_ON_BACKGROUND = "onBackground";
+const LOCK_IDLE_MINUTES_MIN = 1;
+const LOCK_IDLE_MINUTES_MAX = 60;
+const LOCK_IDLE_MINUTES_DEFAULT = 5;
 
-const ETLD2_SUFFIXES = new Set([
-  "com.cn",
-  "net.cn",
-  "org.cn",
-  "gov.cn",
-  "edu.cn",
-  "co.uk",
-  "org.uk",
-]);
 const ACCOUNT_SEARCH_FIELD_KEYS = ["username", "sites", "note", "password"];
 const TOTP_PERIOD_SECONDS = 30;
 const TOTP_DIGITS = 6;
@@ -44,6 +56,17 @@ const dom = {
   saveSyncSettingsBtn: document.getElementById("saveSyncSettings"),
   syncNowBtn: document.getElementById("syncNowBtn"),
   deviceStatus: document.getElementById("deviceStatus"),
+  lockEnabled: document.getElementById("lockEnabled"),
+  lockAdvancedFields: document.getElementById("lockAdvancedFields"),
+  lockPolicyOnceRadio: document.getElementById("lockPolicyOnce"),
+  lockPolicyIdleRadio: document.getElementById("lockPolicyIdle"),
+  lockPolicyBackgroundRadio: document.getElementById("lockPolicyBackground"),
+  lockIdleMinutesRow: document.getElementById("lockIdleMinutesRow"),
+  lockIdleMinutes: document.getElementById("lockIdleMinutes"),
+  lockMasterPassword: document.getElementById("lockMasterPassword"),
+  lockMasterPasswordConfirm: document.getElementById("lockMasterPasswordConfirm"),
+  saveLockSettingsBtn: document.getElementById("saveLockSettings"),
+  lockCredentialHint: document.getElementById("lockCredentialHint"),
   allAccountsCount: document.getElementById("allAccountsCount"),
   passkeyAccountsCount: document.getElementById("passkeyAccountsCount"),
   totpAccountsCount: document.getElementById("totpAccountsCount"),
@@ -88,6 +111,7 @@ let draggingAccountId = "";
 let contextMenuElement = null;
 let contextMenuOutsideHandler = null;
 let contextMenuEscapeHandler = null;
+let lockCredentialExists = false;
 
 init().catch((error) => {
   setStatus(`初始化失败: ${error.message}`);
@@ -96,6 +120,7 @@ init().catch((error) => {
 async function init() {
   await loadDeviceName();
   await loadSyncSettings();
+  await loadLockSettings();
   await refresh();
   startTotpRefreshTicker();
 
@@ -108,6 +133,11 @@ async function init() {
   dom.syncEnableServer.addEventListener("change", () => {
     renderSyncBackendFields();
   });
+  dom.lockEnabled.addEventListener("change", renderLockSettingsFields);
+  dom.lockPolicyOnceRadio.addEventListener("change", renderLockSettingsFields);
+  dom.lockPolicyIdleRadio.addEventListener("change", renderLockSettingsFields);
+  dom.lockPolicyBackgroundRadio.addEventListener("change", renderLockSettingsFields);
+  dom.saveLockSettingsBtn.addEventListener("click", saveLockSettings);
   dom.createFolderBtn.addEventListener("click", createFolderFromPrompt);
   dom.accountsFolderList.addEventListener("contextmenu", (event) => {
     if (event.target.closest(".account-view-tab")) return;
@@ -214,6 +244,129 @@ async function loadSyncSettings() {
 function renderSyncBackendFields() {
   dom.syncWebdavFields.classList.toggle("hidden", !dom.syncEnableWebdav.checked);
   dom.syncServerFields.classList.toggle("hidden", !dom.syncEnableServer.checked);
+}
+
+async function loadLockSettings() {
+  const result = await chrome.storage.local.get([
+    STORAGE_KEY_LOCK_ENABLED,
+    STORAGE_KEY_LOCK_POLICY,
+    STORAGE_KEY_LOCK_IDLE_MINUTES,
+    STORAGE_KEY_LOCK_MASTER_CREDENTIAL,
+  ]);
+  const credential = normalizeLockMasterCredential(result[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
+  lockCredentialExists = Boolean(credential);
+  const enabled = Boolean(result[STORAGE_KEY_LOCK_ENABLED]) && lockCredentialExists;
+  const policy = normalizeLockPolicy(result[STORAGE_KEY_LOCK_POLICY]);
+  const idleMinutes = clampLockIdleMinutes(result[STORAGE_KEY_LOCK_IDLE_MINUTES]);
+
+  dom.lockEnabled.checked = enabled;
+  setLockPolicySelection(policy);
+  dom.lockIdleMinutes.value = String(idleMinutes);
+  dom.lockMasterPassword.value = "";
+  dom.lockMasterPasswordConfirm.value = "";
+  dom.lockCredentialHint.textContent = lockCredentialExists ? "已设置主密码" : "";
+  renderLockSettingsFields();
+
+  if (Boolean(result[STORAGE_KEY_LOCK_ENABLED]) && !lockCredentialExists) {
+    await chrome.storage.local.set({ [STORAGE_KEY_LOCK_ENABLED]: false });
+  }
+}
+
+function renderLockSettingsFields() {
+  const lockEnabled = Boolean(dom.lockEnabled.checked);
+  dom.lockAdvancedFields.classList.toggle("hidden", !lockEnabled);
+  const idleTimeout = getSelectedLockPolicy() === LOCK_POLICY_IDLE_TIMEOUT;
+  dom.lockIdleMinutesRow.classList.toggle("hidden", !lockEnabled || !idleTimeout);
+}
+
+function getSelectedLockPolicy() {
+  if (dom.lockPolicyIdleRadio.checked) return LOCK_POLICY_IDLE_TIMEOUT;
+  if (dom.lockPolicyBackgroundRadio.checked) return LOCK_POLICY_ON_BACKGROUND;
+  return LOCK_POLICY_ONCE_UNTIL_QUIT;
+}
+
+function setLockPolicySelection(policy) {
+  const normalized = normalizeLockPolicy(policy);
+  dom.lockPolicyOnceRadio.checked = normalized === LOCK_POLICY_ONCE_UNTIL_QUIT;
+  dom.lockPolicyIdleRadio.checked = normalized === LOCK_POLICY_IDLE_TIMEOUT;
+  dom.lockPolicyBackgroundRadio.checked = normalized === LOCK_POLICY_ON_BACKGROUND;
+}
+
+async function saveLockSettings() {
+  const lockEnabled = Boolean(dom.lockEnabled.checked);
+  const policy = getSelectedLockPolicy();
+  const idleMinutes = clampLockIdleMinutes(dom.lockIdleMinutes.value);
+  const password = String(dom.lockMasterPassword.value || "").trim();
+  const confirm = String(dom.lockMasterPasswordConfirm.value || "").trim();
+
+  const result = await chrome.storage.local.get([STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
+  const existingCredential = normalizeLockMasterCredential(result[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
+  let nextCredential = existingCredential;
+
+  if (lockEnabled) {
+    const shouldSetOrUpdatePassword = !existingCredential || password || confirm;
+    if (shouldSetOrUpdatePassword) {
+      if (!password) {
+        setDeviceStatus("主密码不能为空");
+        return;
+      }
+      if (password !== confirm) {
+        setDeviceStatus("两次输入的主密码不一致");
+        return;
+      }
+      nextCredential = await createLockMasterCredential(password);
+    }
+    if (!nextCredential) {
+      setDeviceStatus("缺少主密码，无法启用解锁");
+      return;
+    }
+  } else if (existingCredential) {
+    let disablePassword = password;
+    if (!disablePassword) {
+      const promptResult = window.prompt("请输入当前主密码以关闭主密码锁", "");
+      disablePassword = String(promptResult || "").trim();
+    }
+    if (!disablePassword) {
+      dom.lockEnabled.checked = true;
+      renderLockSettingsFields();
+      setDeviceStatus("未输入当前主密码，已取消关闭");
+      return;
+    }
+    const verified = await verifyLockMasterPassword(existingCredential, disablePassword);
+    if (!verified) {
+      dom.lockEnabled.checked = true;
+      renderLockSettingsFields();
+      setDeviceStatus("当前主密码错误，无法关闭解锁");
+      return;
+    }
+  }
+
+  const updates = {
+    [STORAGE_KEY_LOCK_ENABLED]: lockEnabled && Boolean(nextCredential),
+    [STORAGE_KEY_LOCK_POLICY]: policy,
+    [STORAGE_KEY_LOCK_IDLE_MINUTES]: idleMinutes,
+    [STORAGE_KEY_LOCK_MASTER_CREDENTIAL]: nextCredential,
+  };
+  await chrome.storage.local.set(updates);
+  lockCredentialExists = Boolean(nextCredential);
+  dom.lockMasterPassword.value = "";
+  dom.lockMasterPasswordConfirm.value = "";
+  dom.lockCredentialHint.textContent = lockCredentialExists ? "已设置主密码" : "";
+  renderLockSettingsFields();
+
+  if (!lockEnabled) {
+    setDeviceStatus("主密码锁已关闭");
+    return;
+  }
+  if (!existingCredential) {
+    setDeviceStatus("主密码锁已启用");
+    return;
+  }
+  if (password || confirm) {
+    setDeviceStatus("主密码已更新，解锁策略已保存");
+    return;
+  }
+  setDeviceStatus("解锁策略已保存");
 }
 
 async function saveSyncSettings() {
@@ -1581,40 +1734,6 @@ function isPinnedAccount(account) {
   return Boolean(account?.isPinned);
 }
 
-function compareAccountsForDisplay(lhs, rhs) {
-  const lhsPinned = isPinnedAccount(lhs);
-  const rhsPinned = isPinnedAccount(rhs);
-  if (lhsPinned !== rhsPinned) {
-    return lhsPinned ? -1 : 1;
-  }
-
-  if (lhsPinned && rhsPinned) {
-    const lo = lhs?.pinnedSortOrder;
-    const ro = rhs?.pinnedSortOrder;
-    if (lo != null && ro != null && lo !== ro) return lo - ro;
-    if (lo != null && ro == null) return -1;
-    if (lo == null && ro != null) return 1;
-  } else {
-    const lo = lhs?.regularSortOrder;
-    const ro = rhs?.regularSortOrder;
-    if (lo != null && ro != null && lo !== ro) return lo - ro;
-    if (lo != null && ro == null) return -1;
-    if (lo == null && ro != null) return 1;
-  }
-
-  const lhsUpdatedAt = Number(lhs?.updatedAtMs || 0);
-  const rhsUpdatedAt = Number(rhs?.updatedAtMs || 0);
-  if (lhsUpdatedAt !== rhsUpdatedAt) return rhsUpdatedAt - lhsUpdatedAt;
-  const lhsCreatedAt = Number(lhs?.createdAtMs || 0);
-  const rhsCreatedAt = Number(rhs?.createdAtMs || 0);
-  if (lhsCreatedAt !== rhsCreatedAt) return rhsCreatedAt - lhsCreatedAt;
-  return String(lhs?.accountId || "").localeCompare(String(rhs?.accountId || ""));
-}
-
-function sortAccountsForDisplay(inputAccounts) {
-  return [...(Array.isArray(inputAccounts) ? inputAccounts : [])].sort(compareAccountsForDisplay);
-}
-
 function isAccountMatchSearch(account, query) {
   const needle = String(query || "").trim().toLowerCase();
   if (!needle) return true;
@@ -1683,6 +1802,11 @@ function buildAccountEditor(account) {
   const usernameInput = createEditorField(editor, "用户名", account.username);
   const passwordInput = createEditorField(editor, "密码", account.password);
   const totpInput = createEditorField(editor, "TOTP", account.totpSecret || "");
+  appendTotpImportActions(editor, {
+    totpInput,
+    sitesInput,
+    usernameInput,
+  });
   const recoveryInput = createEditorTextarea(editor, "恢复码（每行一个）", account.recoveryCodes || "", {
     className: "editor-textarea editor-textarea-recovery",
   });
@@ -1751,8 +1875,14 @@ async function saveAccountEdit(accountId, draft) {
     changed = true;
   }
 
-  if (String(draft.totpSecret || "") !== String(target.totpSecret || "")) {
-    target.totpSecret = String(draft.totpSecret || "");
+  const nextTotpSecret = normalizeTotpSecret(String(draft.totpSecret || ""));
+  if (nextTotpSecret && !isValidTotpSecret(nextTotpSecret)) {
+    setStatus("TOTP 密钥无效，请检查后再保存");
+    return;
+  }
+
+  if (nextTotpSecret !== normalizeTotpSecret(String(target.totpSecret || ""))) {
+    target.totpSecret = nextTotpSecret;
     target.totpUpdatedAtMs = now;
     changed = true;
   }
@@ -1958,6 +2088,55 @@ async function reorderAccount(sourceId, targetId) {
   await refresh({ silent: true });
 }
 
+function appendTotpImportActions(parent, { totpInput, sitesInput, usernameInput }) {
+  const wrap = document.createElement("div");
+  wrap.className = "editor-row editor-row-multiline totp-import-row";
+
+  const label = document.createElement("span");
+  label.textContent = "TOTP导入";
+  wrap.appendChild(label);
+
+  const actions = document.createElement("div");
+  actions.className = "totp-import-actions";
+  wrap.appendChild(actions);
+
+  const rawBtn = document.createElement("button");
+  rawBtn.type = "button";
+  rawBtn.textContent = "粘贴原始密钥";
+  rawBtn.addEventListener("click", () => {
+    void pasteRawTotpSecretFromClipboard({
+      totpInput,
+    });
+  });
+  actions.appendChild(rawBtn);
+
+  const uriBtn = document.createElement("button");
+  uriBtn.type = "button";
+  uriBtn.textContent = "粘贴 otpauth URI";
+  uriBtn.addEventListener("click", () => {
+    void pasteOtpAuthUriFromClipboard({
+      totpInput,
+      sitesInput,
+      usernameInput,
+    });
+  });
+  actions.appendChild(uriBtn);
+
+  const qrBtn = document.createElement("button");
+  qrBtn.type = "button";
+  qrBtn.textContent = "识别剪贴板二维码";
+  qrBtn.addEventListener("click", () => {
+    void pasteOtpAuthQrFromClipboard({
+      totpInput,
+      sitesInput,
+      usernameInput,
+    });
+  });
+  actions.appendChild(qrBtn);
+
+  parent.appendChild(wrap);
+}
+
 function createEditorField(parent, labelText, value) {
   const wrap = document.createElement("label");
   wrap.className = "editor-row editor-row-inline";
@@ -2117,39 +2296,6 @@ function parseSites(raw) {
   );
 }
 
-function normalizeDomain(input) {
-  if (!input) return "";
-  let value = String(input).trim().toLowerCase();
-  try {
-    if (value.startsWith("http://") || value.startsWith("https://")) {
-      value = new URL(value).hostname;
-    }
-  } catch {
-    return "";
-  }
-  while (value.endsWith(".")) {
-    value = value.slice(0, -1);
-  }
-  return value;
-}
-
-function etldPlusOne(domain) {
-  const normalized = normalizeDomain(domain);
-  if (!normalized) return "";
-  const labels = normalized.split(".");
-  if (labels.length < 2) return normalized;
-  const tail2 = labels.slice(-2).join(".");
-  if (ETLD2_SUFFIXES.has(tail2) && labels.length >= 3) {
-    return labels.slice(-3).join(".");
-  }
-  return tail2;
-}
-
-function normalizeSites(sites) {
-  const values = Array.isArray(sites) ? sites : [];
-  return [...new Set(values.map(normalizeDomain).filter(Boolean))].sort();
-}
-
 function normalizePasskeyCredentialIds(input) {
   const values = Array.isArray(input) ? input : [];
   return [...new Set(values.map((item) => String(item || "").trim()).filter(Boolean))].sort();
@@ -2202,10 +2348,6 @@ function buildUnifiedPasskeys(accountsInput, passkeysInput) {
 
   const linkedPasskeys = Array.from(linkedById.values()).filter((item) => String(item.rpId || "").trim().length > 0);
   return mergePasskeyCollections(storedPasskeys, linkedPasskeys);
-}
-
-function normalizeUsername(value) {
-  return String(value || "").trim();
 }
 
 function normalizeFolderId(value) {
@@ -2623,78 +2765,6 @@ function reconcileAccountFolders(accounts, folders) {
   });
 }
 
-function syncAliasGroups(inputAccounts) {
-  const nextAccounts = inputAccounts.map((account) => ({
-    ...account,
-    sites: normalizeSites(account.sites || []),
-  }));
-
-  const adjacency = new Map(nextAccounts.map((account) => [account.accountId, new Set()]));
-  for (let i = 0; i < nextAccounts.length; i += 1) {
-    for (let j = i + 1; j < nextAccounts.length; j += 1) {
-      const a = nextAccounts[i];
-      const b = nextAccounts[j];
-      const hasSiteOverlap = a.sites.some((site) => b.sites.includes(site));
-      const sameEtld1 = a.sites.some((siteA) => b.sites.some((siteB) => etldPlusOne(siteA) === etldPlusOne(siteB)));
-      if (hasSiteOverlap || sameEtld1) {
-        adjacency.get(a.accountId).add(b.accountId);
-        adjacency.get(b.accountId).add(a.accountId);
-      }
-    }
-  }
-
-  const visited = new Set();
-  for (const account of nextAccounts) {
-    if (visited.has(account.accountId)) continue;
-
-    const queue = [account.accountId];
-    const component = [];
-    visited.add(account.accountId);
-
-    while (queue.length > 0) {
-      const id = queue.shift();
-      component.push(id);
-      for (const neighbor of adjacency.get(id) || []) {
-        if (!visited.has(neighbor)) {
-          visited.add(neighbor);
-          queue.push(neighbor);
-        }
-      }
-    }
-
-    if (component.length <= 1) continue;
-
-    const mergedSites = normalizeSites(
-      component.flatMap((id) => nextAccounts.find((item) => item.accountId === id)?.sites || [])
-    );
-    for (const id of component) {
-      const target = nextAccounts.find((item) => item.accountId === id);
-      if (!target) continue;
-      if (JSON.stringify(target.sites) !== JSON.stringify(mergedSites)) {
-        target.sites = mergedSites;
-        target.updatedAtMs = Date.now();
-      }
-    }
-  }
-
-  return nextAccounts;
-}
-
-function formatYYMMDDHHmmss(ms) {
-  const date = new Date(ms);
-  const yy = String(date.getUTCFullYear() % 100).padStart(2, "0");
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(date.getUTCDate()).padStart(2, "0");
-  const hour = String(date.getUTCHours()).padStart(2, "0");
-  const minute = String(date.getUTCMinutes()).padStart(2, "0");
-  const second = String(date.getUTCSeconds()).padStart(2, "0");
-  return `${yy}${month}${day}${hour}${minute}${second}`;
-}
-
-function buildAccountId(canonicalSite, username, createdAtMs) {
-  return `${canonicalSite}-${formatYYMMDDHHmmss(createdAtMs)}-${username}`;
-}
-
 function formatTime(ms) {
   if (ms == null) return "-";
   const date = new Date(Number(ms));
@@ -2706,6 +2776,83 @@ function formatTime(ms) {
   const minute = date.getMinutes();
   const second = date.getSeconds();
   return `${yy}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+function normalizeLockPolicy(value) {
+  const policy = String(value || "");
+  if (policy === LOCK_POLICY_IDLE_TIMEOUT) return LOCK_POLICY_IDLE_TIMEOUT;
+  if (policy === LOCK_POLICY_ON_BACKGROUND) return LOCK_POLICY_ON_BACKGROUND;
+  return LOCK_POLICY_ONCE_UNTIL_QUIT;
+}
+
+function clampLockIdleMinutes(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return LOCK_IDLE_MINUTES_DEFAULT;
+  const rounded = Math.round(parsed);
+  return Math.min(Math.max(rounded, LOCK_IDLE_MINUTES_MIN), LOCK_IDLE_MINUTES_MAX);
+}
+
+function normalizeLockMasterCredential(value) {
+  if (!value || typeof value !== "object") return null;
+  const version = Number(value.version || 1);
+  const saltBase64 = String(value.saltBase64 || "");
+  const digestBase64 = String(value.digestBase64 || "");
+  if (version !== 1 || !saltBase64 || !digestBase64) return null;
+  const saltBytes = base64ToBytes(saltBase64);
+  if (saltBytes.length === 0) return null;
+  return { version, saltBase64, digestBase64 };
+}
+
+async function createLockMasterCredential(password) {
+  const normalizedPassword = String(password || "").trim();
+  const saltBytes = new Uint8Array(16);
+  crypto.getRandomValues(saltBytes);
+  const digestBase64 = await computePasswordDigest(normalizedPassword, saltBytes);
+  return {
+    version: 1,
+    saltBase64: bytesToBase64(saltBytes),
+    digestBase64,
+  };
+}
+
+async function verifyLockMasterPassword(credential, password) {
+  const normalized = normalizeLockMasterCredential(credential);
+  if (!normalized) return false;
+  const saltBytes = base64ToBytes(normalized.saltBase64);
+  if (saltBytes.length === 0) return false;
+  const digest = await computePasswordDigest(String(password || "").trim(), saltBytes);
+  return digest === normalized.digestBase64;
+}
+
+async function computePasswordDigest(password, saltBytes) {
+  const encoder = new TextEncoder();
+  const passwordBytes = encoder.encode(String(password || ""));
+  const merged = new Uint8Array(saltBytes.length + passwordBytes.length);
+  merged.set(saltBytes, 0);
+  merged.set(passwordBytes, saltBytes.length);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", merged);
+  return bytesToBase64(new Uint8Array(hashBuffer));
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  for (const value of bytes) {
+    binary += String.fromCharCode(value);
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(base64) {
+  try {
+    const binary = atob(String(base64 || ""));
+    const output = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      output[i] = binary.charCodeAt(i);
+    }
+    return output;
+  } catch {
+    return new Uint8Array();
+  }
 }
 
 function escapeHtml(value) {
@@ -2735,6 +2882,192 @@ function setDeviceStatus(message) {
 
 function hasTotpSecret(value) {
   return String(value || "").trim().length > 0;
+}
+
+function isValidTotpSecret(secret) {
+  const normalized = normalizeTotpSecret(secret);
+  if (!normalized) return false;
+  return decodeBase32(normalized).length > 0;
+}
+
+async function pasteRawTotpSecretFromClipboard({ totpInput }) {
+  try {
+    const raw = String(await navigator.clipboard.readText() || "");
+    const secret = normalizeTotpSecret(raw);
+    if (!secret) {
+      setStatus("剪贴板文本为空");
+      return;
+    }
+    if (!isValidTotpSecret(secret)) {
+      setStatus("粘贴失败：原始密钥不是有效 TOTP");
+      return;
+    }
+    totpInput.value = secret;
+    setStatus("已填充 TOTP 原始密钥");
+  } catch (error) {
+    setStatus(`读取剪贴板失败: ${error.message}`);
+  }
+}
+
+async function pasteOtpAuthUriFromClipboard({ totpInput, sitesInput, usernameInput }) {
+  try {
+    const raw = String(await navigator.clipboard.readText() || "");
+    const payload = parseOtpAuthUriPayload(raw);
+    if (!payload) {
+      setStatus("粘贴失败：不是有效的 otpauth://totp URI");
+      return;
+    }
+    applyOtpAuthPayloadToInputs(payload, {
+      totpInput,
+      sitesInput,
+      usernameInput,
+      includeSiteAndUsername: true,
+    });
+    setStatus("已解析 otpauth URI，并填充 TOTP/站点别名/用户名");
+  } catch (error) {
+    setStatus(`读取剪贴板失败: ${error.message}`);
+  }
+}
+
+async function pasteOtpAuthQrFromClipboard({ totpInput, sitesInput, usernameInput }) {
+  try {
+    const payloadText = await parseQrPayloadFromClipboard();
+    if (!payloadText) {
+      setStatus("粘贴失败：剪贴板没有可识别的二维码图片");
+      return;
+    }
+    const payload = parseOtpAuthUriPayload(payloadText);
+    if (!payload) {
+      setStatus("粘贴失败：二维码内容不是有效的 otpauth://totp URI");
+      return;
+    }
+    applyOtpAuthPayloadToInputs(payload, {
+      totpInput,
+      sitesInput,
+      usernameInput,
+      includeSiteAndUsername: true,
+    });
+    setStatus("已解析二维码，并填充 TOTP/站点别名/用户名");
+  } catch (error) {
+    setStatus(`识别二维码失败: ${error.message}`);
+  }
+}
+
+function applyOtpAuthPayloadToInputs(payload, { totpInput, sitesInput, usernameInput, includeSiteAndUsername }) {
+  totpInput.value = payload.secret;
+  if (!includeSiteAndUsername) return;
+  if (sitesInput && payload.siteAlias) {
+    sitesInput.value = payload.siteAlias;
+  }
+  if (usernameInput && payload.username) {
+    usernameInput.value = payload.username;
+  }
+}
+
+function parseOtpAuthUriPayload(raw) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return null;
+
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+
+  if (String(parsed.protocol || "").toLowerCase() !== "otpauth:") return null;
+  if (String(parsed.hostname || "").toLowerCase() !== "totp") return null;
+
+  let secretRaw = "";
+  let issuerFromQuery = "";
+  for (const [key, value] of parsed.searchParams.entries()) {
+    const normalizedKey = String(key || "").toLowerCase();
+    if (normalizedKey === "secret" && !secretRaw) {
+      secretRaw = String(value || "");
+    } else if (normalizedKey === "issuer" && !issuerFromQuery) {
+      issuerFromQuery = String(value || "").trim();
+    }
+  }
+
+  const secret = normalizeTotpSecret(secretRaw);
+  if (!isValidTotpSecret(secret)) return null;
+
+  let decodedPath = String(parsed.pathname || "");
+  try {
+    decodedPath = decodeURIComponent(decodedPath);
+  } catch {
+    // keep original path if decoding fails
+  }
+  const label = decodedPath
+    .replace(/^\/+/g, "")
+    .trim();
+
+  let labelIssuer = "";
+  let labelUsername = "";
+  const colonIndex = label.indexOf(":");
+  if (colonIndex >= 0) {
+    labelIssuer = label.slice(0, colonIndex).trim();
+    labelUsername = label.slice(colonIndex + 1).trim();
+  } else {
+    labelUsername = label.trim();
+  }
+
+  const issuer = issuerFromQuery || labelIssuer;
+  return {
+    secret,
+    siteAlias: siteAliasFromIssuer(issuer),
+    username: labelUsername || "",
+  };
+}
+
+function siteAliasFromIssuer(issuer) {
+  const compactIssuer = String(issuer || "")
+    .trim()
+    .replaceAll(" ", "");
+  if (!compactIssuer) return "";
+  const normalized = normalizeDomain(compactIssuer);
+  if (!normalized) return "";
+  if (normalized.includes(".")) {
+    return normalized;
+  }
+  return `${normalized}.com`;
+}
+
+async function parseQrPayloadFromClipboard() {
+  if (typeof navigator?.clipboard?.read !== "function") {
+    throw new Error("当前浏览器不支持读取剪贴板图片");
+  }
+  if (typeof BarcodeDetector === "undefined") {
+    throw new Error("当前浏览器不支持二维码识别");
+  }
+
+  const detector = new BarcodeDetector({ formats: ["qr_code"] });
+  const items = await navigator.clipboard.read();
+  for (const item of items) {
+    const imageType = item.types.find((type) => String(type).startsWith("image/"));
+    if (!imageType) continue;
+    const blob = await item.getType(imageType);
+    const payload = await parseQrPayloadFromBlob(blob, detector);
+    if (payload) return payload;
+  }
+  return "";
+}
+
+async function parseQrPayloadFromBlob(blob, detector) {
+  if (!blob) return "";
+  const bitmap = await createImageBitmap(blob);
+  try {
+    const results = await detector.detect(bitmap);
+    for (const result of results) {
+      const payload = String(result?.rawValue || "").trim();
+      if (payload) return payload;
+    }
+    return "";
+  } finally {
+    if (typeof bitmap.close === "function") {
+      bitmap.close();
+    }
+  }
 }
 
 function createTotpCopyButton({ accountId, username, totpSecret }) {

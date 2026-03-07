@@ -61,6 +61,63 @@
           <div class="actions">
             <button id="syncNowBtn">立即远端同步</button>
           </div>
+          <div class="lock-settings">
+            <h4>解锁设置</h4>
+            <div class="row lock-row">
+              <label for="lockEnabled">主密码锁</label>
+              <label class="inline-check">
+                <input id="lockEnabled" type="checkbox" />
+                <span>启用</span>
+              </label>
+              <button id="saveLockSettings">保存</button>
+            </div>
+            <p id="lockCredentialHint" class="lock-hint"></p>
+            <div id="lockAdvancedFields" class="lock-advanced hidden">
+              <div class="row lock-policy-row">
+                <label>自动锁策略</label>
+                <div class="lock-policy-radios">
+                  <label class="lock-policy-option">
+                    <input id="lockPolicyOnce" type="radio" name="lockPolicy" value="onceUntilQuit" checked />
+                    <span>退出前不锁定</span>
+                  </label>
+                  <label class="lock-policy-option">
+                    <input id="lockPolicyIdle" type="radio" name="lockPolicy" value="idleTimeout" />
+                    <span>几分钟无操作后锁定</span>
+                  </label>
+                  <label class="lock-policy-option">
+                    <input id="lockPolicyBackground" type="radio" name="lockPolicy" value="onBackground" />
+                    <span>切到后台锁定</span>
+                  </label>
+                </div>
+                <span></span>
+              </div>
+              <div id="lockIdleMinutesRow" class="row">
+                <label for="lockIdleMinutes">空闲分钟</label>
+                <input id="lockIdleMinutes" type="number" min="1" max="60" step="1" />
+                <span></span>
+              </div>
+              <div class="row">
+                <label for="lockMasterPassword">主密码</label>
+                <input
+                  id="lockMasterPassword"
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder="设置或修改主密码"
+                />
+                <span></span>
+              </div>
+              <div class="row">
+                <label for="lockMasterPasswordConfirm">确认密码</label>
+                <input
+                  id="lockMasterPasswordConfirm"
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder="设置或修改主密码时必填"
+                />
+                <span></span>
+              </div>
+            </div>
+          </div>
           <p id="deviceStatus" class="status"></p>
         </details>
       </section>
@@ -125,6 +182,6 @@
         </details>
       </section>
     </main>
-    <script src="./options.js" type="module"></script>
+    <script src="./dist/options.js"></script>
   </body>
   </html>

@@ -481,6 +481,17 @@ button:active {
   gap: 6px;
 }
 
+.totp-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.totp-import-actions > button {
+  font-size: 11px;
+  padding: 6px 9px;
+}
+
 .editor {
   border-top: 1px dashed #c8dbff;
   margin-top: 6px;
@@ -523,6 +534,49 @@ button:active {
 .editor-textarea-recovery {
   min-height: 84px;
   max-height: 130px;
+}
+
+.totp-import-row {
+  gap: 6px;
+}
+
+.popup-lock-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(14, 24, 41, 0.28);
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  box-sizing: border-box;
+}
+
+.popup-lock-overlay.hidden {
+  display: none;
+}
+
+.popup-lock-card {
+  width: 100%;
+  border: 1px solid #cfddf2;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 14px 32px rgba(35, 69, 116, 0.24);
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.popup-lock-card h3 {
+  margin: 0;
+  font-size: 15px;
+  color: #26456e;
+}
+
+.popup-lock-message {
+  margin: 0;
+  color: #3f5d87;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .immutable {

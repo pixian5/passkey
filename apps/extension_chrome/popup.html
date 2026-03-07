@@ -61,6 +61,18 @@
             <label for="createPassword">密码</label>
             <input id="createPassword" type="text" placeholder="密码" />
           </div>
+          <div class="form-row">
+            <label for="createTotp">TOTP（可选）</label>
+            <input id="createTotp" type="text" placeholder="Base32 密钥" />
+          </div>
+          <div class="form-row form-row-multiline">
+            <label>TOTP快速导入</label>
+            <div class="totp-import-actions">
+              <button id="createTotpPasteRawBtn" type="button">粘贴原始密钥</button>
+              <button id="createTotpPasteUriBtn" type="button">粘贴 otpauth URI</button>
+              <button id="createTotpPasteQrBtn" type="button">识别剪贴板二维码</button>
+            </div>
+          </div>
         </div>
         <div class="actions">
           <button id="createAccount" class="button-primary" type="button">创建账号</button>
@@ -68,6 +80,17 @@
         </div>
       </section>
     </div>
-    <script src="./popup.js" type="module"></script>
+    <div id="lockOverlay" class="popup-lock-overlay hidden" aria-hidden="true">
+      <section class="popup-lock-card" role="dialog" aria-modal="true" aria-label="扩展解锁">
+        <h3>Pass 已锁定</h3>
+        <p id="lockMessage" class="popup-lock-message">请输入主密码解锁。</p>
+        <input id="unlockPasswordInput" type="password" autocomplete="current-password" placeholder="主密码" />
+        <div class="actions">
+          <button id="unlockBtn" class="button-primary" type="button">解锁</button>
+          <button id="openOptionsFromLockBtn" type="button">打开设置</button>
+        </div>
+      </section>
+    </div>
+    <script src="./dist/popup.js"></script>
   </body>
   </html>

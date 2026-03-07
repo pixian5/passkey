@@ -86,6 +86,53 @@ label {
   color: #35567f;
 }
 
+.lock-settings {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed #c8dbff;
+  display: grid;
+  gap: 8px;
+}
+
+.lock-settings h4 {
+  margin: 0;
+  font-size: 14px;
+  color: #2d4f79;
+}
+
+.lock-advanced {
+  display: grid;
+  gap: 8px;
+}
+
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lock-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #5b7497;
+}
+
+.lock-policy-radios {
+  display: grid;
+  gap: 6px;
+}
+
+.lock-policy-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #3a5d86;
+}
+
+.lock-policy-option input[type="radio"] {
+  margin: 0;
+}
+
 input {
   border: 1px solid #bfd4f4;
   border-radius: 9px;
@@ -448,6 +495,21 @@ button {
 .editor-textarea-recovery {
   min-height: 84px;
   max-height: 130px;
+}
+
+.totp-import-row {
+  gap: 6px;
+}
+
+.totp-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.totp-import-actions > button {
+  font-size: 12px;
+  padding: 6px 10px;
 }
 
 .badge {
