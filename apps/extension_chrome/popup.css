@@ -154,7 +154,7 @@ button:active {
 }
 
 .tip {
-  margin: 6px 0 0;
+  margin: 4px 0 0;
   min-height: 16px;
   font-size: 11px;
   color: #3f5d87;
@@ -200,7 +200,7 @@ button:active {
 
 .list {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .list.drag-disabled .account,
@@ -223,7 +223,7 @@ button:active {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .search-toolbar > input[type="text"] {
@@ -275,7 +275,7 @@ button:active {
 .passkey-toolbar {
   display: grid;
   gap: 6px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .passkey-filter-check {
@@ -294,7 +294,7 @@ button:active {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   padding: 3px;
   border: 1px solid #d0e1fb;
   border-radius: 12px;
@@ -320,10 +320,14 @@ button:active {
 .account {
   border: 1px solid #d2e2fb;
   border-radius: 12px;
-  padding: 10px;
+  padding: 9px;
   display: grid;
-  gap: 7px;
+  gap: 5px;
   background: rgba(255, 255, 255, 0.92);
+}
+
+.account.account-pinned {
+  border: 2px solid #d84a4a;
 }
 
 .account strong {
@@ -363,15 +367,15 @@ button:active {
 .account .meta {
   font-size: 11px;
   color: #4f6687;
-  line-height: 1.4;
+  line-height: 1.35;
   user-select: text;
   -webkit-user-select: text;
 }
 
 .meta-multiline {
-  margin-top: 3px;
-  margin-bottom: 5px;
-  padding: 6px 7px;
+  margin-top: 2px;
+  margin-bottom: 3px;
+  padding: 5px 7px;
   border: 1px solid #d7e5fb;
   border-radius: 8px;
   background: rgba(245, 250, 255, 0.9);
@@ -409,8 +413,12 @@ button:active {
 
 .actions {
   display: flex;
-  gap: 6px;
+  gap: 5px;
   flex-wrap: wrap;
+}
+
+.top-actions {
+  margin-bottom: 6px;
 }
 
 .totp-copy-button {
@@ -469,6 +477,61 @@ button:active {
 .modal-form textarea {
   min-height: 88px;
   max-height: 140px;
+}
+
+.sort-modal-card {
+  max-width: 760px;
+}
+
+.sort-modal-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #4d678a;
+}
+
+.sort-modal-list {
+  display: grid;
+  gap: 6px;
+  max-height: calc(100vh - 220px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.sort-modal-item {
+  border: 1px solid #cddffa;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(245, 250, 255, 0.95);
+  color: #2e4d77;
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: grab;
+  user-select: none;
+}
+
+.sort-modal-item:active {
+  cursor: grabbing;
+}
+
+.sort-modal-item.sort-modal-item-target {
+  border-color: #7da9e5;
+  background: rgba(224, 237, 255, 0.98);
+}
+
+.sort-modal-item-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sort-modal-item-label {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.sort-modal-pin-btn {
+  flex: 0 0 auto;
 }
 
 .form-row {

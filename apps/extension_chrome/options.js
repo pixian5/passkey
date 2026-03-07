@@ -2,6 +2,7 @@ import {
   buildAccountId,
   compareAccountsForDisplay,
   etldPlusOne,
+  formatYYMMDDHHmmss,
   normalizeDomain,
   normalizeSites,
   normalizeUsername,
@@ -39,6 +40,7 @@ const ACCOUNT_SEARCH_FIELD_KEYS = ["username", "sites", "note", "password"];
 const TOTP_PERIOD_SECONDS = 30;
 const TOTP_DIGITS = 6;
 const TOTP_REFRESH_INTERVAL_MS = 1000;
+const OPTIONS_TOAST_DURATION_MS = 3000;
 
 const dom = {
   deviceName: document.getElementById("deviceName"),
@@ -87,8 +89,12 @@ const dom = {
   allAccountsSearchFieldNote: document.getElementById("allAccountsSearchFieldNote"),
   allAccountsSearchFieldPassword: document.getElementById("allAccountsSearchFieldPassword"),
   allAccountsSearch: document.getElementById("allAccountsSearch"),
+  openSortModalBtn: document.getElementById("openSortModal"),
   clearActiveAccountsBtn: document.getElementById("clearActiveAccounts"),
   clearRecycleBinBtn: document.getElementById("clearRecycleBin"),
+  sortModal: document.getElementById("sortModal"),
+  sortModalList: document.getElementById("sortModalList"),
+  closeSortModalBtn: document.getElementById("closeSortModal"),
   payload: document.getElementById("payload"),
   refreshBtn: document.getElementById("refreshBtn"),
   exportSyncBundleBtn: document.getElementById("exportSyncBundleBtn"),
@@ -107,11 +113,13 @@ let totpRefreshTimer = null;
 let accountSearchUseAll = true;
 let accountSearchFields = new Set();
 let activeAccountView = "all";
-let draggingAccountId = "";
 let contextMenuElement = null;
 let contextMenuOutsideHandler = null;
 let contextMenuEscapeHandler = null;
 let lockCredentialExists = false;
+let sortModalOrderIds = [];
+let sortModalDraggingAccountId = "";
+let optionsToastTimer = null;
 
 init().catch((error) => {
   setStatus(`初始化失败: ${error.message}`);
@@ -154,6 +162,13 @@ async function init() {
   dom.accountsTabTotp.addEventListener("click", () => setAccountView("totp"));
   dom.accountsTabRecycle.addEventListener("click", () => setAccountView("recycle"));
   dom.allAccountsSearch.addEventListener("input", () => renderCurrentView(accountsRaw));
+  dom.openSortModalBtn.addEventListener("click", openSortModal);
+  dom.closeSortModalBtn.addEventListener("click", closeSortModal);
+  dom.sortModal.addEventListener("click", (event) => {
+    if (event.target === dom.sortModal) {
+      closeSortModal();
+    }
+  });
   dom.allAccountsSearchFieldsBtn.addEventListener("click", (event) => {
     event.stopPropagation();
     dom.allAccountsSearchFieldsPanel.classList.toggle("hidden");
@@ -167,16 +182,6 @@ async function init() {
   dom.allAccountsSearchFieldsPanel.addEventListener("click", (event) => {
     event.stopPropagation();
   });
-  dom.allAccountsList.addEventListener("dragstart", blockAccountDragWhileEditing, true);
-  dom.allAccountsList.addEventListener("dragover", blockAccountDragWhileEditing, true);
-  dom.allAccountsList.addEventListener("drop", blockAccountDragWhileEditing, true);
-  dom.allAccountsList.addEventListener("dragend", () => {
-    if (!editingAccountId) return;
-    draggingAccountId = "";
-  }, true);
-  document.addEventListener("dragstart", blockAccountDragWhileEditingGlobal, true);
-  document.addEventListener("dragover", blockAccountDragWhileEditingGlobal, true);
-  document.addEventListener("drop", blockAccountDragWhileEditingGlobal, true);
   document.addEventListener("click", (event) => {
     closeContextMenuIfNeeded(event);
     if (dom.allAccountsSearchFieldsPanel.classList.contains("hidden")) return;
@@ -187,6 +192,10 @@ async function init() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       closeContextMenu();
+    }
+    if (event.key === "Escape" && !dom.sortModal.classList.contains("hidden")) {
+      closeSortModal();
+      return;
     }
     if (event.key === "Escape" && !dom.allAccountsSearchFieldsPanel.classList.contains("hidden")) {
       closeAllAccountsSearchFieldsPanel();
@@ -203,20 +212,6 @@ async function init() {
   dom.exportBtn.addEventListener("click", exportJson);
   dom.importBtn.addEventListener("click", importJson);
   dom.clearBtn.addEventListener("click", clearAll);
-}
-
-function blockAccountDragWhileEditing(event) {
-  if (!editingAccountId) return;
-  event.preventDefault();
-  event.stopPropagation();
-  draggingAccountId = "";
-}
-
-function blockAccountDragWhileEditingGlobal(event) {
-  if (!editingAccountId) return;
-  event.preventDefault();
-  event.stopPropagation();
-  draggingAccountId = "";
 }
 
 async function loadDeviceName() {
@@ -1096,7 +1091,6 @@ function renderAllAccounts(inputAccounts) {
 
   dom.allAccountsCount.textContent = `(${accounts.length})`;
   dom.allAccountsList.innerHTML = "";
-  dom.allAccountsList.classList.toggle("drag-disabled", Boolean(editingAccountId));
 
   if (accounts.length === 0) {
     const empty = document.createElement("p");
@@ -1109,8 +1103,9 @@ function renderAllAccounts(inputAccounts) {
   for (const account of accounts) {
     const card = document.createElement("article");
     card.className = "account";
-    const dragDisabled = Boolean(editingAccountId);
-    card.draggable = !dragDisabled;
+    if (isPinnedAccount(account)) {
+      card.classList.add("account-pinned");
+    }
 
     const titleRow = document.createElement("div");
     titleRow.className = "account-title-row";
@@ -1118,47 +1113,7 @@ function renderAllAccounts(inputAccounts) {
     title.textContent = account.accountId;
     titleRow.appendChild(title);
 
-    const pinBtn = document.createElement("button");
-    pinBtn.type = "button";
-    pinBtn.className = "pin-btn";
-    const pinned = isPinnedAccount(account);
-    pinBtn.textContent = pinned ? "取消置顶" : "置顶";
-    pinBtn.classList.toggle("is-unpin", pinned);
-    pinBtn.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      await togglePin(account.accountId);
-    });
-    titleRow.appendChild(pinBtn);
     card.appendChild(titleRow);
-
-    if (!dragDisabled) {
-      card.addEventListener("dragstart", (event) => {
-        draggingAccountId = account.accountId;
-        event.dataTransfer?.setData("text/plain", account.accountId);
-        if (event.dataTransfer) {
-          event.dataTransfer.effectAllowed = "move";
-        }
-      });
-      card.addEventListener("dragover", (event) => {
-        const source = accountsRaw.find((item) => String(item?.accountId || "") === draggingAccountId);
-        if (!source) return;
-        if (isPinnedAccount(source) !== isPinnedAccount(account)) return;
-        event.preventDefault();
-        if (event.dataTransfer) {
-          event.dataTransfer.dropEffect = "move";
-        }
-      });
-      card.addEventListener("drop", async (event) => {
-        event.preventDefault();
-        const sourceId = draggingAccountId;
-        draggingAccountId = "";
-        if (!sourceId || sourceId === account.accountId) return;
-        await reorderAccount(sourceId, account.accountId);
-      });
-      card.addEventListener("dragend", () => {
-        draggingAccountId = "";
-      });
-    }
 
     const meta = document.createElement("div");
     meta.className = "meta";
@@ -1186,7 +1141,6 @@ function renderAllAccounts(inputAccounts) {
     const editBtn = document.createElement("button");
     editBtn.textContent = editingAccountId === account.accountId ? "收起编辑" : "编辑";
     editBtn.addEventListener("click", () => {
-      draggingAccountId = "";
       editingAccountId = editingAccountId === account.accountId ? null : account.accountId;
       renderAllAccounts(accountsRaw);
     });
@@ -1401,11 +1355,254 @@ function currentVisibleAccounts(inputAccounts) {
   return accounts;
 }
 
+function isSortModalSupportedView() {
+  return activeAccountView !== "recycle";
+}
+
+function getSortableAccountsForCurrentView() {
+  if (!isSortModalSupportedView()) return [];
+  const visible = currentVisibleAccounts(accountsRaw).filter((account) => !account.isDeleted);
+  return sortAccountsForDisplay(visible);
+}
+
+function openSortModal() {
+  if (!isSortModalSupportedView()) {
+    setStatus("回收站不支持排序");
+    return;
+  }
+  const visibleAccounts = getSortableAccountsForCurrentView();
+  if (visibleAccounts.length === 0) {
+    setStatus("当前列表没有可排序账号");
+    return;
+  }
+  sortModalOrderIds = visibleAccounts.map((account) => String(account.accountId || ""));
+  sortModalDraggingAccountId = "";
+  renderSortModalList();
+  dom.sortModal.classList.remove("hidden");
+  dom.sortModal.setAttribute("aria-hidden", "false");
+}
+
+function closeSortModal() {
+  sortModalDraggingAccountId = "";
+  sortModalOrderIds = [];
+  dom.sortModal.classList.add("hidden");
+  dom.sortModal.setAttribute("aria-hidden", "true");
+  dom.sortModalList.innerHTML = "";
+}
+
+function renderSortModalList() {
+  dom.sortModalList.innerHTML = "";
+  const accountById = new Map(
+    accountsRaw
+      .map(normalizeAccountShape)
+      .filter((account) => !account.isDeleted)
+      .map((account) => [String(account.accountId || ""), account])
+  );
+  const normalizedOrder = sortModalOrderIds
+    .map((accountId) => String(accountId || ""))
+    .filter((accountId) => accountById.has(accountId));
+  sortModalOrderIds = normalizedOrder;
+
+  if (normalizedOrder.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "当前列表没有可排序账号";
+    dom.sortModalList.appendChild(empty);
+    return;
+  }
+
+  for (const accountId of normalizedOrder) {
+    const account = accountById.get(accountId);
+    if (!account) continue;
+
+    const item = document.createElement("div");
+    item.className = "sort-modal-item";
+    item.draggable = true;
+    item.dataset.accountId = accountId;
+    const row = document.createElement("div");
+    row.className = "sort-modal-item-row";
+    const label = document.createElement("span");
+    label.className = "sort-modal-item-label";
+    label.textContent = formatSortableAccountLabel(account);
+    row.appendChild(label);
+
+    const pinBtn = document.createElement("button");
+    pinBtn.type = "button";
+    pinBtn.className = "pin-btn sort-modal-pin-btn";
+    const pinned = isPinnedAccount(account);
+    pinBtn.textContent = pinned ? "取消置顶" : "置顶";
+    pinBtn.classList.toggle("is-unpin", pinned);
+    pinBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void togglePin(accountId, { fromSortModal: true });
+    });
+    row.appendChild(pinBtn);
+    item.appendChild(row);
+
+    item.addEventListener("dragstart", (event) => {
+      sortModalDraggingAccountId = accountId;
+      if (event.dataTransfer) {
+        event.dataTransfer.setData("text/plain", accountId);
+        event.dataTransfer.effectAllowed = "move";
+      }
+    });
+    item.addEventListener("dragover", (event) => {
+      if (!sortModalDraggingAccountId || sortModalDraggingAccountId === accountId) return;
+      if (!isSamePinnedGroupForSort(accountById, sortModalDraggingAccountId, accountId)) {
+        return;
+      }
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "move";
+      }
+      item.classList.add("sort-modal-item-target");
+    });
+    item.addEventListener("dragleave", () => {
+      item.classList.remove("sort-modal-item-target");
+    });
+    item.addEventListener("drop", (event) => {
+      event.preventDefault();
+      item.classList.remove("sort-modal-item-target");
+      const sourceId = sortModalDraggingAccountId;
+      sortModalDraggingAccountId = "";
+      if (!sourceId || sourceId === accountId) return;
+      if (!isSamePinnedGroupForSort(accountById, sourceId, accountId)) {
+        setStatus("仅支持置顶项之间、非置顶项之间排序");
+        return;
+      }
+      const from = sortModalOrderIds.indexOf(sourceId);
+      const to = sortModalOrderIds.indexOf(accountId);
+      if (from < 0 || to < 0) return;
+      sortModalOrderIds.splice(from, 1);
+      sortModalOrderIds.splice(to, 0, sourceId);
+      renderSortModalList();
+      void persistSortOrderFromModal(sortModalOrderIds);
+    });
+    item.addEventListener("dragend", () => {
+      sortModalDraggingAccountId = "";
+      const highlighted = dom.sortModalList.querySelectorAll(".sort-modal-item-target");
+      highlighted.forEach((node) => node.classList.remove("sort-modal-item-target"));
+    });
+
+    dom.sortModalList.appendChild(item);
+  }
+}
+
+function isSamePinnedGroupForSort(accountById, sourceId, targetId) {
+  const source = accountById.get(String(sourceId || ""));
+  const target = accountById.get(String(targetId || ""));
+  if (!source || !target) return false;
+  return isPinnedAccount(source) === isPinnedAccount(target);
+}
+
+function formatSortableAccountLabel(account) {
+  const site = etldPlusOne(account?.canonicalSite || account?.sites?.[0] || "") || "-";
+  const createdText = formatYYMMDDHHmmss(Number(account?.createdAtMs || 0));
+  const username = String(account?.username || "");
+  return `${site}-${createdText}-${username}`;
+}
+
+async function persistSortOrderFromModal(orderedIds) {
+  const normalizedOrderedIds = [...new Set((Array.isArray(orderedIds) ? orderedIds : [])
+    .map((value) => String(value || ""))
+    .filter(Boolean))];
+  if (normalizedOrderedIds.length === 0) return;
+
+  const next = cloneAccounts(accountsRaw).map(normalizeAccountShape);
+  const now = Date.now();
+  const deviceName = await getDeviceName();
+  let changed = false;
+
+  const pinnedSubset = [];
+  const regularSubset = [];
+  for (const accountId of normalizedOrderedIds) {
+    const target = next.find((item) => String(item.accountId || "") === accountId);
+    if (!target || target.isDeleted) continue;
+    if (isPinnedAccount(target)) {
+      pinnedSubset.push(accountId);
+    } else {
+      regularSubset.push(accountId);
+    }
+  }
+
+  const allPinnedIds = sortAccountsForDisplay(
+    next.filter((item) => !item.isDeleted && isPinnedAccount(item))
+  ).map((item) => String(item.accountId || ""));
+  const allRegularIds = sortAccountsForDisplay(
+    next.filter((item) => !item.isDeleted && !isPinnedAccount(item))
+  ).map((item) => String(item.accountId || ""));
+
+  const mergedPinnedIds = buildMergedOrderIds(allPinnedIds, pinnedSubset);
+  const mergedRegularIds = buildMergedOrderIds(allRegularIds, regularSubset);
+
+  for (let i = 0; i < mergedPinnedIds.length; i += 1) {
+    const id = mergedPinnedIds[i];
+    const item = next.find((entry) => String(entry.accountId || "") === id);
+    if (!item) continue;
+    const currentOrder = item.pinnedSortOrder == null ? null : Number(item.pinnedSortOrder);
+    if (currentOrder === i) continue;
+    item.pinnedSortOrder = i;
+    item.updatedAtMs = now;
+    item.lastOperatedDeviceName = deviceName;
+    changed = true;
+  }
+
+  for (let i = 0; i < mergedRegularIds.length; i += 1) {
+    const id = mergedRegularIds[i];
+    const item = next.find((entry) => String(entry.accountId || "") === id);
+    if (!item) continue;
+    const currentOrder = item.regularSortOrder == null ? null : Number(item.regularSortOrder);
+    if (currentOrder === i) continue;
+    item.regularSortOrder = i;
+    item.updatedAtMs = now;
+    item.lastOperatedDeviceName = deviceName;
+    changed = true;
+  }
+
+  if (!changed) return;
+  accountsRaw = cloneAccounts(next);
+  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: next });
+  dom.payload.value = JSON.stringify(
+    { accounts: accountsRaw, passkeys: passkeysRaw, folders: foldersRaw },
+    null,
+    2
+  );
+  renderSidebar(accountsRaw);
+  renderCurrentView(accountsRaw);
+}
+
+function buildMergedOrderIds(allIds, subsetIds) {
+  const fullOrder = (Array.isArray(allIds) ? allIds : [])
+    .map((value) => String(value || ""))
+    .filter(Boolean);
+  const fullSet = new Set(fullOrder);
+  const requestedSubset = (Array.isArray(subsetIds) ? subsetIds : [])
+    .map((value) => String(value || ""))
+    .filter((value, index, values) => Boolean(value) && values.indexOf(value) === index)
+    .filter((value) => fullSet.has(value));
+  if (requestedSubset.length === 0) {
+    return fullOrder;
+  }
+
+  const subsetSet = new Set(requestedSubset);
+  const merged = [];
+  let cursor = 0;
+  for (const id of fullOrder) {
+    if (subsetSet.has(id)) {
+      merged.push(requestedSubset[cursor]);
+      cursor += 1;
+    } else {
+      merged.push(id);
+    }
+  }
+  return merged;
+}
+
 function renderCurrentView(inputAccounts) {
   let accounts = sortAccountsForDisplay(currentVisibleAccounts(inputAccounts));
 
   dom.allAccountsList.innerHTML = "";
-  dom.allAccountsList.classList.toggle("drag-disabled", Boolean(editingAccountId));
   if (accounts.length === 0) {
     const empty = document.createElement("p");
     empty.className = "empty";
@@ -1418,8 +1615,9 @@ function renderCurrentView(inputAccounts) {
   for (const account of accounts) {
     const card = document.createElement("article");
     card.className = "account";
-    const dragDisabled = isRecycle || Boolean(editingAccountId);
-    card.draggable = !dragDisabled;
+    if (!isRecycle && isPinnedAccount(account)) {
+      card.classList.add("account-pinned");
+    }
     card.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -1435,46 +1633,7 @@ function renderCurrentView(inputAccounts) {
     const title = document.createElement("strong");
     title.textContent = account.accountId;
     titleRow.appendChild(title);
-    if (!isRecycle) {
-      const pinBtn = document.createElement("button");
-      pinBtn.type = "button";
-      pinBtn.className = "pin-btn";
-      const pinned = isPinnedAccount(account);
-      pinBtn.textContent = pinned ? "取消置顶" : "置顶";
-      pinBtn.classList.toggle("is-unpin", pinned);
-      pinBtn.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        await togglePin(account.accountId);
-      });
-      titleRow.appendChild(pinBtn);
-    }
     card.appendChild(titleRow);
-
-    if (!dragDisabled) {
-      card.addEventListener("dragstart", (event) => {
-        draggingAccountId = account.accountId;
-        event.dataTransfer?.setData("text/plain", account.accountId);
-        if (event.dataTransfer) {
-          event.dataTransfer.effectAllowed = "move";
-        }
-      });
-      card.addEventListener("dragover", (event) => {
-        const source = accountsRaw.find((item) => String(item?.accountId || "") === draggingAccountId);
-        if (!source) return;
-        if (isPinnedAccount(source) !== isPinnedAccount(account)) return;
-        event.preventDefault();
-      });
-      card.addEventListener("drop", async (event) => {
-        event.preventDefault();
-        const sourceId = draggingAccountId;
-        draggingAccountId = "";
-        if (!sourceId || sourceId === account.accountId) return;
-        await reorderAccount(sourceId, account.accountId);
-      });
-      card.addEventListener("dragend", () => {
-        draggingAccountId = "";
-      });
-    }
 
     const meta = document.createElement("div");
     meta.className = "meta";
@@ -1503,7 +1662,6 @@ function renderCurrentView(inputAccounts) {
       const editBtn = document.createElement("button");
       editBtn.textContent = editingAccountId === account.accountId ? "收起编辑" : "编辑";
       editBtn.addEventListener("click", () => {
-        draggingAccountId = "";
         editingAccountId = editingAccountId === account.accountId ? null : account.accountId;
         renderCurrentView(accountsRaw);
       });
@@ -1564,9 +1722,11 @@ function setAccountView(nextView) {
 
   dom.clearActiveAccountsBtn.classList.toggle("hidden", isRecycle);
   dom.clearRecycleBinBtn.classList.toggle("hidden", !isRecycle);
+  dom.openSortModalBtn.classList.toggle("hidden", isRecycle);
 
   if (isRecycle) {
     closeAllAccountsSearchFieldsPanel();
+    closeSortModal();
   }
 
   renderCurrentView(accountsRaw);
@@ -1677,16 +1837,11 @@ function openAccountContextMenu({ account, x, y }) {
       {
         label: "编辑",
         onSelect: async () => {
-          draggingAccountId = "";
           editingAccountId = editingAccountId === account.accountId ? null : account.accountId;
           renderCurrentView(accountsRaw);
         },
       },
       { type: "separator" },
-      {
-        label: isPinnedAccount(account) ? "取消置顶" : "置顶",
-        onSelect: async () => togglePin(account.accountId),
-      },
       {
         label: "放入文件夹",
         disabled: foldersRaw.length === 0,
@@ -2043,7 +2198,7 @@ async function permanentlyDeleteAccount(accountId) {
   setStatus(`已永久删除账号: ${target.accountId}`);
 }
 
-async function togglePin(accountId) {
+async function togglePin(accountId, { fromSortModal = false } = {}) {
   const next = cloneAccounts(accountsRaw);
   const target = next.find((item) => String(item.accountId || "") === String(accountId));
   if (!target) {
@@ -2074,51 +2229,10 @@ async function togglePin(accountId) {
   await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: next });
   await refresh({ silent: true });
   setStatus(nextPinned ? `账号已置顶: ${target.accountId}` : `已取消置顶: ${target.accountId}`);
-}
-
-async function reorderAccount(sourceId, targetId) {
-  if (!sourceId || !targetId || sourceId === targetId) return;
-  if (editingAccountId) return;
-
-  const next = cloneAccounts(accountsRaw).map(normalizeAccountShape);
-  const source = next.find((item) => String(item.accountId || "") === String(sourceId));
-  const target = next.find((item) => String(item.accountId || "") === String(targetId));
-  if (!source || !target) return;
-  if (source.isDeleted || target.isDeleted) return;
-
-  const pinned = isPinnedAccount(source);
-  if (isPinnedAccount(target) !== pinned) {
-    setStatus("仅支持 置顶、非置顶 项目内部排序");
-    return;
+  if (fromSortModal && !dom.sortModal.classList.contains("hidden")) {
+    sortModalOrderIds = getSortableAccountsForCurrentView().map((account) => String(account.accountId || ""));
+    renderSortModalList();
   }
-
-  const group = sortAccountsForDisplay(
-    next.filter((item) => !item.isDeleted && isPinnedAccount(item) === pinned)
-  );
-  const ids = group.map((item) => String(item.accountId || ""));
-  const from = ids.indexOf(String(sourceId));
-  const to = ids.indexOf(String(targetId));
-  if (from < 0 || to < 0) return;
-  ids.splice(from, 1);
-  ids.splice(to, 0, String(sourceId));
-
-  const now = Date.now();
-  const deviceName = await getDeviceName();
-  for (let i = 0; i < ids.length; i += 1) {
-    const id = ids[i];
-    const item = next.find((entry) => String(entry.accountId || "") === id);
-    if (!item) continue;
-    if (pinned) {
-      item.pinnedSortOrder = i;
-    } else {
-      item.regularSortOrder = i;
-    }
-    item.updatedAtMs = now;
-    item.lastOperatedDeviceName = deviceName;
-  }
-
-  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: next });
-  await refresh({ silent: true });
 }
 
 function appendTotpImportActions(parent, { totpInput, sitesInput, usernameInput }) {
@@ -2906,11 +3020,34 @@ function toMultilineHtml(value) {
 }
 
 function setStatus(message) {
-  dom.status.textContent = message;
+  const text = String(message || "").trim();
+  if (!text) return;
+  dom.status.textContent = text;
+  showOptionsToast(text);
 }
 
 function setDeviceStatus(message) {
   dom.deviceStatus.textContent = message;
+}
+
+function showOptionsToast(message) {
+  let toast = document.getElementById("optionsToast");
+  if (!(toast instanceof HTMLDivElement)) {
+    toast = document.createElement("div");
+    toast.id = "optionsToast";
+    toast.className = "options-toast";
+    document.body.appendChild(toast);
+  }
+  toast.textContent = String(message || "");
+  toast.classList.add("options-toast-show");
+  if (optionsToastTimer != null) {
+    clearTimeout(optionsToastTimer);
+  }
+  optionsToastTimer = window.setTimeout(() => {
+    const current = document.getElementById("optionsToast");
+    if (!(current instanceof HTMLDivElement)) return;
+    current.classList.remove("options-toast-show");
+  }, OPTIONS_TOAST_DURATION_MS);
 }
 
 function hasTotpSecret(value) {

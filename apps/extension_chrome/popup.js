@@ -2,6 +2,7 @@ import {
   buildAccountId,
   compareAccountsForDisplay,
   etldPlusOne,
+  formatYYMMDDHHmmss,
   normalizeDomain,
   normalizeSites,
   normalizeUsername,
@@ -38,6 +39,7 @@ const POPUP_TOAST_DURATION_MS = 3000;
 
 const dom = {
   openCreateModalBtn: document.getElementById("openCreateModal"),
+  openSortModalBtn: document.getElementById("openSortModal"),
   modeActiveBtn: document.getElementById("modeActive"),
   modeAllBtn: document.getElementById("modeAll"),
   modeRecycleBtn: document.getElementById("modeRecycle"),
@@ -61,6 +63,9 @@ const dom = {
   createAccountBtn: document.getElementById("createAccount"),
   closeCreateModalBtn: document.getElementById("closeCreateModal"),
   createModal: document.getElementById("createModal"),
+  closeSortModalBtn: document.getElementById("closeSortModal"),
+  sortModal: document.getElementById("sortModal"),
+  sortModalList: document.getElementById("sortModalList"),
   lockOverlay: document.getElementById("lockOverlay"),
   lockMessage: document.getElementById("lockMessage"),
   unlockPasswordInput: document.getElementById("unlockPasswordInput"),
@@ -82,8 +87,9 @@ let viewMode = "accounts";
 let totpRefreshTimer = null;
 let accountSearchUseAll = true;
 let accountSearchFields = new Set();
-let draggingAccountId = "";
 let popupToastTimer = null;
+let sortModalOrderIds = [];
+let sortModalDraggingAccountId = "";
 let lockSettings = {
   enabled: false,
   policy: LOCK_POLICY_ONCE_UNTIL_QUIT,
@@ -140,11 +146,15 @@ function handleStorageChanged(changes, areaName) {
 
   if (shouldRender) {
     renderAccounts();
+    if (!dom.sortModal.classList.contains("modal-hidden")) {
+      renderSortModalList();
+    }
   }
 }
 
 function bindEvents() {
   dom.openCreateModalBtn.addEventListener("click", openCreateModal);
+  dom.openSortModalBtn.addEventListener("click", openSortModal);
   dom.createAccountBtn.addEventListener("click", createAccountFromInputs);
   dom.createTotpPasteRawBtn.addEventListener("click", () => {
     void pasteRawTotpSecretFromClipboard({
@@ -166,9 +176,15 @@ function bindEvents() {
     });
   });
   dom.closeCreateModalBtn.addEventListener("click", closeCreateModal);
+  dom.closeSortModalBtn.addEventListener("click", closeSortModal);
   dom.createModal.addEventListener("click", (event) => {
     if (event.target === dom.createModal) {
       closeCreateModal();
+    }
+  });
+  dom.sortModal.addEventListener("click", (event) => {
+    if (event.target === dom.sortModal) {
+      closeSortModal();
     }
   });
   dom.unlockBtn.addEventListener("click", () => {
@@ -185,6 +201,10 @@ function bindEvents() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !dom.createModal.classList.contains("modal-hidden")) {
       closeCreateModal();
+      return;
+    }
+    if (event.key === "Escape" && !dom.sortModal.classList.contains("modal-hidden")) {
+      closeSortModal();
       return;
     }
     if (event.key === "Escape" && !dom.accountSearchFieldsPanel.classList.contains("hidden")) {
@@ -216,31 +236,7 @@ function bindEvents() {
   dom.accountSearch.addEventListener("input", renderAccounts);
   dom.passkeyCurrentSiteOnly.addEventListener("change", renderAccounts);
   dom.passkeySearch.addEventListener("input", renderAccounts);
-  dom.accountList.addEventListener("dragstart", blockAccountDragWhileEditing, true);
-  dom.accountList.addEventListener("dragover", blockAccountDragWhileEditing, true);
-  dom.accountList.addEventListener("drop", blockAccountDragWhileEditing, true);
-  dom.accountList.addEventListener("dragend", () => {
-    if (!editingAccountId) return;
-    draggingAccountId = "";
-  }, true);
-  document.addEventListener("dragstart", blockAccountDragWhileEditingGlobal, true);
-  document.addEventListener("dragover", blockAccountDragWhileEditingGlobal, true);
-  document.addEventListener("drop", blockAccountDragWhileEditingGlobal, true);
   bindLockRuntimeEvents();
-}
-
-function blockAccountDragWhileEditing(event) {
-  if (!editingAccountId) return;
-  event.preventDefault();
-  event.stopPropagation();
-  draggingAccountId = "";
-}
-
-function blockAccountDragWhileEditingGlobal(event) {
-  if (!editingAccountId) return;
-  event.preventDefault();
-  event.stopPropagation();
-  draggingAccountId = "";
 }
 
 function bindLockRuntimeEvents() {
@@ -335,6 +331,7 @@ function setPopupLockedState(nextLocked, message = "") {
   popupLockMessage = locked ? (message || "请输入主密码解锁。") : "";
   if (locked) {
     closeCreateModal();
+    closeSortModal();
     closeAccountSearchFieldsPanel();
     dom.unlockPasswordInput.value = "";
     clearIdleLockTimer();
@@ -471,6 +468,7 @@ function setViewMode(nextMode) {
   if (viewMode !== "accounts" && viewMode !== "all") {
     editingAccountId = null;
     closeCreateModal();
+    closeSortModal();
   }
   if (viewMode === "passkeys") {
     closeAccountSearchFieldsPanel();
@@ -494,6 +492,33 @@ function openCreateModal() {
 function closeCreateModal() {
   dom.createModal.classList.add("modal-hidden");
   dom.createModal.setAttribute("aria-hidden", "true");
+}
+
+function openSortModal() {
+  if (isLockedForInteraction()) {
+    setStatus("扩展已锁定，请先解锁");
+    return;
+  }
+  if (viewMode !== "accounts" && viewMode !== "all") return;
+  const visibleAccounts = getVisibleAccountsForCurrentMode();
+  if (visibleAccounts.length === 0) {
+    setStatus("当前列表没有可排序账号");
+    return;
+  }
+
+  sortModalOrderIds = visibleAccounts.map((account) => String(account.accountId || ""));
+  sortModalDraggingAccountId = "";
+  renderSortModalList();
+  dom.sortModal.classList.remove("modal-hidden");
+  dom.sortModal.setAttribute("aria-hidden", "false");
+}
+
+function closeSortModal() {
+  sortModalDraggingAccountId = "";
+  sortModalOrderIds = [];
+  dom.sortModal.classList.add("modal-hidden");
+  dom.sortModal.setAttribute("aria-hidden", "true");
+  dom.sortModalList.innerHTML = "";
 }
 
 function closeAccountSearchFieldsPanel() {
@@ -614,12 +639,13 @@ function renderAccounts() {
   dom.modePasskeyBtn.classList.toggle("mode-btn-active", showPasskeyMode);
 
   dom.openCreateModalBtn.classList.toggle("hidden", locked || !(showAccountMode || showAllAccountsMode));
+  dom.openSortModalBtn.classList.toggle("hidden", locked || !(showAccountMode || showAllAccountsMode));
   dom.accountSearchSection.classList.toggle("hidden", locked || showPasskeyMode);
   dom.passkeySection.classList.toggle("passkey-hidden", locked || !showPasskeyMode);
   dom.accountList.style.display = showPasskeyMode ? "none" : "grid";
-  dom.accountList.classList.toggle("drag-disabled", Boolean(editingAccountId));
 
   if (locked) {
+    closeSortModal();
     dom.accountList.innerHTML = "";
     const empty = document.createElement("p");
     empty.className = "empty";
@@ -629,28 +655,13 @@ function renderAccounts() {
   }
 
   if (showPasskeyMode) {
+    closeSortModal();
     renderPasskeyList();
     return;
   }
 
   dom.accountList.innerHTML = "";
-
-  let visibleAccountsByMode = showRecycleBinMode
-    ? accounts.filter((account) => account.isDeleted)
-    : accounts.filter((account) => !account.isDeleted);
-  const accountQuery = String(dom.accountSearch.value || "").trim().toLowerCase();
-  let visibleAccounts = visibleAccountsByMode;
-  if (!showAllAccountsMode) {
-    visibleAccounts = visibleAccounts.filter((account) =>
-      isAccountMatchCurrentDomain(account, currentDomain)
-    );
-  }
-  if (accountQuery) {
-    visibleAccounts = visibleAccounts.filter((account) =>
-      isAccountMatchSearch(account, accountQuery)
-    );
-  }
-  visibleAccounts = sortAccountsForDisplay(visibleAccounts);
+  const visibleAccounts = getVisibleAccountsForCurrentMode();
 
   if (visibleAccounts.length === 0) {
     const empty = document.createElement("p");
@@ -671,8 +682,9 @@ function renderAccounts() {
   for (const account of visibleAccounts) {
     const card = document.createElement("article");
     card.className = "account";
-    const dragDisabled = showRecycleBinMode || Boolean(editingAccountId);
-    card.draggable = !dragDisabled;
+    if (!showRecycleBinMode && isPinnedAccount(account)) {
+      card.classList.add("account-pinned");
+    }
 
     const titleRow = document.createElement("div");
     titleRow.className = "account-title-row";
@@ -680,50 +692,7 @@ function renderAccounts() {
     const title = document.createElement("strong");
     title.textContent = account.accountId;
     titleRow.appendChild(title);
-
-    if (!showRecycleBinMode) {
-      const pinBtn = document.createElement("button");
-      pinBtn.type = "button";
-      pinBtn.className = "pin-btn";
-      const pinned = isPinnedAccount(account);
-      pinBtn.textContent = pinned ? "取消置顶" : "置顶";
-      pinBtn.classList.toggle("is-unpin", pinned);
-      pinBtn.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        await togglePin(account.accountId);
-      });
-      titleRow.appendChild(pinBtn);
-    }
     card.appendChild(titleRow);
-
-    if (!dragDisabled) {
-      card.addEventListener("dragstart", (event) => {
-        draggingAccountId = account.accountId;
-        event.dataTransfer?.setData("text/plain", account.accountId);
-        if (event.dataTransfer) {
-          event.dataTransfer.effectAllowed = "move";
-        }
-      });
-      card.addEventListener("dragover", (event) => {
-        const source = accounts.find((item) => item.accountId === draggingAccountId);
-        if (!source) return;
-        if (isPinnedAccount(source) !== isPinnedAccount(account)) return;
-        event.preventDefault();
-        if (event.dataTransfer) {
-          event.dataTransfer.dropEffect = "move";
-        }
-      });
-      card.addEventListener("drop", async (event) => {
-        event.preventDefault();
-        const sourceId = draggingAccountId;
-        draggingAccountId = "";
-        if (!sourceId || sourceId === account.accountId) return;
-        await reorderAccount(sourceId, account.accountId);
-      });
-      card.addEventListener("dragend", () => {
-        draggingAccountId = "";
-      });
-    }
 
     const meta = document.createElement("div");
     meta.className = "meta";
@@ -771,7 +740,6 @@ function renderAccounts() {
       const editBtn = document.createElement("button");
       editBtn.textContent = editingAccountId === account.accountId ? "收起编辑" : "编辑";
       editBtn.addEventListener("click", () => {
-        draggingAccountId = "";
         editingAccountId = editingAccountId === account.accountId ? null : account.accountId;
         renderAccounts();
       });
@@ -811,6 +779,229 @@ function renderAccounts() {
   }
 
   void refreshVisibleTotpButtons();
+}
+
+function getVisibleAccountsForCurrentMode({ includeSearch = true } = {}) {
+  const showRecycleBinMode = viewMode === "recycle";
+  const showAllAccountsMode = viewMode === "all";
+  let visibleAccounts = showRecycleBinMode
+    ? accounts.filter((account) => account.isDeleted)
+    : accounts.filter((account) => !account.isDeleted);
+
+  if (!showAllAccountsMode) {
+    visibleAccounts = visibleAccounts.filter((account) =>
+      isAccountMatchCurrentDomain(account, currentDomain)
+    );
+  }
+
+  if (includeSearch) {
+    const accountQuery = String(dom.accountSearch.value || "").trim().toLowerCase();
+    if (accountQuery) {
+      visibleAccounts = visibleAccounts.filter((account) =>
+        isAccountMatchSearch(account, accountQuery)
+      );
+    }
+  }
+
+  return sortAccountsForDisplay(visibleAccounts);
+}
+
+function renderSortModalList() {
+  dom.sortModalList.innerHTML = "";
+  const accountById = new Map(accounts.map((account) => [String(account.accountId || ""), account]));
+  const normalizedOrder = sortModalOrderIds
+    .map((accountId) => String(accountId || ""))
+    .filter((accountId) => accountById.has(accountId));
+  sortModalOrderIds = normalizedOrder;
+
+  if (normalizedOrder.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "当前列表没有可排序账号";
+    dom.sortModalList.appendChild(empty);
+    return;
+  }
+
+  for (const accountId of normalizedOrder) {
+    const account = accountById.get(accountId);
+    if (!account) continue;
+
+    const item = document.createElement("div");
+    item.className = "sort-modal-item";
+    item.draggable = true;
+    item.dataset.accountId = accountId;
+
+    const row = document.createElement("div");
+    row.className = "sort-modal-item-row";
+    const label = document.createElement("span");
+    label.className = "sort-modal-item-label";
+    label.textContent = formatSortableAccountLabel(account);
+    row.appendChild(label);
+
+    const pinBtn = document.createElement("button");
+    pinBtn.type = "button";
+    pinBtn.className = "pin-btn sort-modal-pin-btn";
+    const pinned = isPinnedAccount(account);
+    pinBtn.textContent = pinned ? "取消置顶" : "置顶";
+    pinBtn.classList.toggle("is-unpin", pinned);
+    pinBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void togglePin(accountId, { fromSortModal: true });
+    });
+    row.appendChild(pinBtn);
+    item.appendChild(row);
+
+    item.addEventListener("dragstart", (event) => {
+      sortModalDraggingAccountId = accountId;
+      if (event.dataTransfer) {
+        event.dataTransfer.setData("text/plain", accountId);
+        event.dataTransfer.effectAllowed = "move";
+      }
+    });
+    item.addEventListener("dragover", (event) => {
+      if (!sortModalDraggingAccountId || sortModalDraggingAccountId === accountId) return;
+      if (!isSamePinnedGroupForSort(accountById, sortModalDraggingAccountId, accountId)) {
+        return;
+      }
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "move";
+      }
+      item.classList.add("sort-modal-item-target");
+    });
+    item.addEventListener("dragleave", () => {
+      item.classList.remove("sort-modal-item-target");
+    });
+    item.addEventListener("drop", (event) => {
+      event.preventDefault();
+      item.classList.remove("sort-modal-item-target");
+      const sourceId = sortModalDraggingAccountId;
+      sortModalDraggingAccountId = "";
+      if (!sourceId || sourceId === accountId) return;
+      if (!isSamePinnedGroupForSort(accountById, sourceId, accountId)) {
+        setStatus("仅支持置顶项之间、非置顶项之间排序");
+        return;
+      }
+      const from = sortModalOrderIds.indexOf(sourceId);
+      const to = sortModalOrderIds.indexOf(accountId);
+      if (from < 0 || to < 0) return;
+      sortModalOrderIds.splice(from, 1);
+      sortModalOrderIds.splice(to, 0, sourceId);
+      renderSortModalList();
+      void persistSortOrderFromModal(sortModalOrderIds);
+    });
+    item.addEventListener("dragend", () => {
+      sortModalDraggingAccountId = "";
+      const highlighted = dom.sortModalList.querySelectorAll(".sort-modal-item-target");
+      highlighted.forEach((node) => node.classList.remove("sort-modal-item-target"));
+    });
+
+    dom.sortModalList.appendChild(item);
+  }
+}
+
+function isSamePinnedGroupForSort(accountById, sourceId, targetId) {
+  const source = accountById.get(String(sourceId || ""));
+  const target = accountById.get(String(targetId || ""));
+  if (!source || !target) return false;
+  return isPinnedAccount(source) === isPinnedAccount(target);
+}
+
+function formatSortableAccountLabel(account) {
+  const site = etldPlusOne(account?.canonicalSite || account?.sites?.[0] || "") || "-";
+  const createdText = formatYYMMDDHHmmss(Number(account?.createdAtMs || 0));
+  const username = String(account?.username || "");
+  return `${site}-${createdText}-${username}`;
+}
+
+async function persistSortOrderFromModal(orderedIds) {
+  const normalizedOrderedIds = [...new Set((Array.isArray(orderedIds) ? orderedIds : [])
+    .map((value) => String(value || ""))
+    .filter(Boolean))];
+  if (normalizedOrderedIds.length === 0) return;
+
+  const next = accounts.map((item) => ({ ...item, sites: [...(item.sites || [])] }));
+  const now = Date.now();
+  const deviceName = await getDeviceName();
+  let changed = false;
+
+  const pinnedSubset = [];
+  const regularSubset = [];
+  for (const accountId of normalizedOrderedIds) {
+    const target = next.find((item) => String(item.accountId || "") === accountId);
+    if (!target || target.isDeleted) continue;
+    if (isPinnedAccount(target)) {
+      pinnedSubset.push(accountId);
+    } else {
+      regularSubset.push(accountId);
+    }
+  }
+
+  const allPinnedIds = sortAccountsForDisplay(
+    next.filter((item) => !item.isDeleted && isPinnedAccount(item))
+  ).map((item) => String(item.accountId || ""));
+  const allRegularIds = sortAccountsForDisplay(
+    next.filter((item) => !item.isDeleted && !isPinnedAccount(item))
+  ).map((item) => String(item.accountId || ""));
+
+  const mergedPinnedIds = buildMergedOrderIds(allPinnedIds, pinnedSubset);
+  const mergedRegularIds = buildMergedOrderIds(allRegularIds, regularSubset);
+
+  for (let i = 0; i < mergedPinnedIds.length; i += 1) {
+    const id = mergedPinnedIds[i];
+    const item = next.find((entry) => String(entry.accountId || "") === id);
+    if (!item) continue;
+    const currentOrder = item.pinnedSortOrder == null ? null : Number(item.pinnedSortOrder);
+    if (currentOrder === i) continue;
+    item.pinnedSortOrder = i;
+    item.updatedAtMs = now;
+    item.lastOperatedDeviceName = deviceName;
+    changed = true;
+  }
+
+  for (let i = 0; i < mergedRegularIds.length; i += 1) {
+    const id = mergedRegularIds[i];
+    const item = next.find((entry) => String(entry.accountId || "") === id);
+    if (!item) continue;
+    const currentOrder = item.regularSortOrder == null ? null : Number(item.regularSortOrder);
+    if (currentOrder === i) continue;
+    item.regularSortOrder = i;
+    item.updatedAtMs = now;
+    item.lastOperatedDeviceName = deviceName;
+    changed = true;
+  }
+
+  if (!changed) return;
+  await persistAccounts(next);
+  renderAccounts();
+}
+
+function buildMergedOrderIds(allIds, subsetIds) {
+  const fullOrder = (Array.isArray(allIds) ? allIds : [])
+    .map((value) => String(value || ""))
+    .filter(Boolean);
+  const fullSet = new Set(fullOrder);
+  const requestedSubset = (Array.isArray(subsetIds) ? subsetIds : [])
+    .map((value) => String(value || ""))
+    .filter((value, index, values) => Boolean(value) && values.indexOf(value) === index)
+    .filter((value) => fullSet.has(value));
+  if (requestedSubset.length === 0) {
+    return fullOrder;
+  }
+
+  const subsetSet = new Set(requestedSubset);
+  const merged = [];
+  let cursor = 0;
+  for (const id of fullOrder) {
+    if (subsetSet.has(id)) {
+      merged.push(requestedSubset[cursor]);
+      cursor += 1;
+    } else {
+      merged.push(id);
+    }
+  }
+  return merged;
 }
 
 function renderPasskeyList() {
@@ -1480,7 +1671,7 @@ function isPinnedAccount(account) {
   return Boolean(account?.isPinned);
 }
 
-async function togglePin(accountId) {
+async function togglePin(accountId, { fromSortModal = false } = {}) {
   const next = accounts.map((item) => ({ ...item, sites: [...(item.sites || [])] }));
   const target = next.find((item) => item.accountId === accountId);
   if (!target) {
@@ -1510,51 +1701,10 @@ async function togglePin(accountId) {
   await persistAccounts(next);
   setStatus(nextPinned ? "账号已置顶" : "已取消置顶");
   renderAccounts();
-}
-
-async function reorderAccount(sourceId, targetId) {
-  if (!sourceId || !targetId || sourceId === targetId) return;
-  if (editingAccountId) return;
-
-  const next = accounts.map((item) => ({ ...item, sites: [...(item.sites || [])] }));
-  const source = next.find((item) => item.accountId === sourceId);
-  const target = next.find((item) => item.accountId === targetId);
-  if (!source || !target) return;
-  if (source.isDeleted || target.isDeleted) return;
-
-  const pinned = isPinnedAccount(source);
-  if (isPinnedAccount(target) !== pinned) {
-    setStatus("仅支持 置顶、非置顶 项目内部排序");
-    return;
+  if (fromSortModal && !dom.sortModal.classList.contains("modal-hidden")) {
+    sortModalOrderIds = getVisibleAccountsForCurrentMode().map((account) => String(account.accountId || ""));
+    renderSortModalList();
   }
-
-  const group = sortAccountsForDisplay(
-    next.filter((item) => !item.isDeleted && isPinnedAccount(item) === pinned)
-  );
-  const orderedIds = group.map((item) => item.accountId);
-  const from = orderedIds.indexOf(sourceId);
-  const to = orderedIds.indexOf(targetId);
-  if (from < 0 || to < 0) return;
-  orderedIds.splice(from, 1);
-  orderedIds.splice(to, 0, sourceId);
-
-  const now = Date.now();
-  const deviceName = await getDeviceName();
-  for (let i = 0; i < orderedIds.length; i += 1) {
-    const id = orderedIds[i];
-    const item = next.find((entry) => entry.accountId === id);
-    if (!item) continue;
-    if (pinned) {
-      item.pinnedSortOrder = i;
-    } else {
-      item.regularSortOrder = i;
-    }
-    item.updatedAtMs = now;
-    item.lastOperatedDeviceName = deviceName;
-  }
-
-  await persistAccounts(next);
-  renderAccounts();
 }
 
 function parseSites(raw) {

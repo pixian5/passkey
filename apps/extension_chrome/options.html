@@ -149,6 +149,7 @@
                 <div id="allAccountsSearchWrap" class="search-filter-wrap">
                   <button id="allAccountsSearchFieldsBtn" class="search-fields-btn" type="button">筛选</button>
                   <input id="allAccountsSearch" type="text" placeholder="搜索当前列表（用户名 / 站点别名 / 备注 / 密码）" />
+                  <button id="openSortModal" type="button">排序</button>
                   <div id="allAccountsSearchFieldsPanel" class="search-fields-panel hidden">
                     <label><input id="allAccountsSearchFieldAll" type="checkbox" checked />全部</label>
                     <label><input id="allAccountsSearchFieldUsername" type="checkbox" />用户名</label>
@@ -182,6 +183,15 @@
         </details>
       </section>
     </main>
+    <div id="sortModal" class="sort-modal-backdrop hidden" aria-hidden="true">
+      <section class="sort-modal-card" role="dialog" aria-modal="true" aria-label="排序账号">
+        <h3>排序</h3>
+        <div id="sortModalList" class="sort-modal-list"></div>
+        <div class="actions">
+          <button id="closeSortModal" type="button">关闭</button>
+        </div>
+      </section>
+    </div>
     <script src="./dist/options.js"></script>
   </body>
   </html>
