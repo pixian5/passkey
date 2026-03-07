@@ -278,6 +278,7 @@ struct PasskeyRecord: Codable, Hashable {
     var updatedAtMs: Int64
     var lastUsedAtMs: Int64?
     var mode: String
+    var createCompatMethod: String?
 }
 
 enum JSONValue: Codable, Hashable {

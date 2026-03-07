@@ -339,6 +339,12 @@ async function getManagedAssertion({ origin, host, publicKey }) {
       },
       clientExtensionResults: {},
     },
+    assertionHint: {
+      rpId: selected.rpId || rpId,
+      userName: String(selected.userName || "").trim(),
+      displayName: String(selected.displayName || "").trim(),
+      credentialIdB64u: String(selected.credentialIdB64u || ""),
+    },
   };
 }
 
@@ -555,7 +561,8 @@ function normalizeCreateCompatMethod(input) {
     value === CREATE_COMPAT_STANDARD ||
     value === CREATE_COMPAT_USER_NAME_FALLBACK ||
     value === CREATE_COMPAT_RS256 ||
-    value === CREATE_COMPAT_USER_NAME_FALLBACK_RS256
+    value === CREATE_COMPAT_USER_NAME_FALLBACK_RS256 ||
+    value === "unknown_linked"
   ) {
     return value;
   }

@@ -298,7 +298,13 @@ async function handleWebAuthnBridgeRequest(requestId, payload) {
           showPassPageToast(`Pass 已保存通行密钥${compatLabel ? `（${compatLabel}）` : ""}`);
         }
       } else if (payload?.operation === "get") {
-        showPassPageToast("Pass 已读取通行密钥");
+        const siteLabel = resolvePasskeyReadSiteLabel(payload, response);
+        const accountLabel = resolvePasskeyReadAccountLabel(response);
+        if (accountLabel) {
+          showPassPageToast(`${siteLabel} 已读取密钥 ${accountLabel}`);
+        } else {
+          showPassPageToast(`${siteLabel} 已读取密钥`);
+        }
       }
     }
     postWebAuthnBridgeResponse(requestId, response);
@@ -320,6 +326,24 @@ function formatPasskeyCreateCompatToastLabel(method) {
   if (value === "user_name_fallback") return "命中兼容2";
   if (value === "rs256") return "命中兼容3";
   if (value === "standard") return "命中标准托管";
+  return "";
+}
+
+function resolvePasskeyReadSiteLabel(payload, response) {
+  const hintedRpId = normalizeDomain(response?.result?.assertionHint?.rpId || "");
+  if (hintedRpId) return hintedRpId;
+  const rpId = normalizeDomain(payload?.publicKey?.rpId || "");
+  if (rpId) return rpId;
+  const host = normalizeDomain(payload?.host || window.location.hostname || "");
+  if (host) return host;
+  return "当前网站";
+}
+
+function resolvePasskeyReadAccountLabel(response) {
+  const userName = String(response?.result?.assertionHint?.userName || "").trim();
+  if (userName) return userName;
+  const displayName = String(response?.result?.assertionHint?.displayName || "").trim();
+  if (displayName) return displayName;
   return "";
 }
 

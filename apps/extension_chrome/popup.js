@@ -15,6 +15,7 @@ const ACCOUNT_SEARCH_FIELD_KEYS = ["username", "sites", "note", "password"];
 const TOTP_PERIOD_SECONDS = 30;
 const TOTP_DIGITS = 6;
 const TOTP_REFRESH_INTERVAL_MS = 1000;
+const POPUP_TOAST_DURATION_MS = 3000;
 
 const dom = {
   openCreateModalBtn: document.getElementById("openCreateModal"),
@@ -54,6 +55,7 @@ let totpRefreshTimer = null;
 let accountSearchUseAll = true;
 let accountSearchFields = new Set();
 let draggingAccountId = "";
+let popupToastTimer = null;
 
 init().catch((error) => {
   setStatus(`初始化失败: ${error.message}`);
@@ -517,6 +519,13 @@ function renderPasskeyList() {
     const actions = document.createElement("div");
     actions.className = "actions";
 
+    const editUserBtn = document.createElement("button");
+    editUserBtn.textContent = "编辑用户名";
+    editUserBtn.addEventListener("click", async () => {
+      await editPasskeyUsername(item.credentialIdB64u, item.userName || item.displayName || "");
+    });
+    actions.appendChild(editUserBtn);
+
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "button-danger";
     deleteBtn.textContent = "删除通行密钥";
@@ -933,6 +942,69 @@ async function deletePasskey(credentialIdB64u) {
     await persistAccounts(nextAccounts);
   }
   setStatus(`通行密钥已移除: ${shortenMiddle(targetId, 16)}`);
+  renderAccounts();
+}
+
+async function editPasskeyUsername(credentialIdB64u, currentUserName = "") {
+  const targetId = normalizePasskeyId(credentialIdB64u);
+  if (!targetId) {
+    setStatus("通行密钥 ID 非法");
+    return;
+  }
+
+  const input = window.prompt("编辑通行密钥用户名", String(currentUserName || ""));
+  if (input == null) {
+    return;
+  }
+  const nextUserName = String(input || "").trim();
+  if (!nextUserName) {
+    setStatus("用户名不能为空");
+    return;
+  }
+
+  const now = Date.now();
+  const deviceName = await getDeviceName();
+  let passkeysChanged = false;
+  const nextPasskeys = passkeys.map((item) => {
+    if (normalizePasskeyId(item?.credentialIdB64u || item?.id || "") !== targetId) {
+      return item;
+    }
+    passkeysChanged = true;
+    return {
+      ...item,
+      userName: nextUserName,
+      updatedAtMs: now,
+    };
+  });
+
+  let accountsChanged = false;
+  const nextAccounts = accounts.map((account) => {
+    const ids = normalizePasskeyCredentialIds(account?.passkeyCredentialIds || []);
+    if (!ids.includes(targetId)) {
+      return account;
+    }
+    accountsChanged = true;
+    return {
+      ...account,
+      username: nextUserName,
+      usernameUpdatedAtMs: now,
+      updatedAtMs: now,
+      lastOperatedDeviceName: deviceName,
+    };
+  });
+
+  if (!passkeysChanged && !accountsChanged) {
+    setStatus("未找到目标通行密钥");
+    return;
+  }
+
+  if (passkeysChanged) {
+    await persistPasskeys(nextPasskeys);
+  }
+  if (accountsChanged) {
+    await persistAccounts(nextAccounts);
+  }
+  setStatus(`通行密钥用户名已更新: ${nextUserName}`);
   renderAccounts();
 }
 
@@ -1395,7 +1467,31 @@ function shortenMiddle(value, keep = 18) {
 }
 
 function setStatus(message) {
-  dom.status.textContent = message;
+  const text = String(message || "").trim();
+  if (!text) return;
+  if (dom.status) {
+    dom.status.textContent = "";
+  }
+
+  let toast = document.getElementById("popupToast");
+  if (!(toast instanceof HTMLDivElement)) {
+    toast = document.createElement("div");
+    toast.id = "popupToast";
+    toast.className = "popup-toast";
+    document.body.appendChild(toast);
+  }
+
+  toast.textContent = text;
+  toast.classList.add("popup-toast-show");
+
+  if (popupToastTimer != null) {
+    clearTimeout(popupToastTimer);
+  }
+  popupToastTimer = window.setTimeout(() => {
+    const current = document.getElementById("popupToast");
+    if (!(current instanceof HTMLDivElement)) return;
+    current.classList.remove("popup-toast-show");
+  }, POPUP_TOAST_DURATION_MS);
 }
 
 function hasTotpSecret(value) {

@@ -85,12 +85,68 @@ final class AccountStore: ObservableObject {
     @Published private(set) var cloudSyncStatus: String = "iCloud 未连接，使用本机数据"
     @Published private(set) var accounts: [PasswordAccount] = []
     @Published private(set) var passkeys: [PasskeyRecord] = []
+    @Published var syncEnableICloud: Bool = true {
+        didSet {
+            guard !isLoadingSyncPreferences else { return }
+            UserDefaults.standard.set(syncEnableICloud, forKey: Keys.syncEnableICloud)
+            handleSyncSourceSelectionChanged()
+        }
+    }
+    @Published var syncEnableWebDAV: Bool = false {
+        didSet {
+            guard !isLoadingSyncPreferences else { return }
+            UserDefaults.standard.set(syncEnableWebDAV, forKey: Keys.syncEnableWebDAV)
+            handleSyncSourceSelectionChanged()
+        }
+    }
+    @Published var syncEnableSelfHostedServer: Bool = false {
+        didSet {
+            guard !isLoadingSyncPreferences else { return }
+            UserDefaults.standard.set(syncEnableSelfHostedServer, forKey: Keys.syncEnableSelfHostedServer)
+            handleSyncSourceSelectionChanged()
+        }
+    }
+    @Published var webdavBaseURL: String = "" {
+        didSet {
+            guard !isLoadingSyncPreferences else { return }
+            UserDefaults.standard.set(webdavBaseURL, forKey: Keys.webdavBaseURL)
+        }
+    }
+    @Published var webdavRemotePath: String = "pass-sync-bundle-v2.json" {
+        didSet {
+            guard !isLoadingSyncPreferences else { return }
+            UserDefaults.standard.set(webdavRemotePath, forKey: Keys.webdavRemotePath)
+        }
+    }
+    @Published var webdavUsername: String = "" {
+        didSet {
+            guard !isLoadingSyncPreferences else { return }
+            UserDefaults.standard.set(webdavUsername, forKey: Keys.webdavUsername)
+        }
+    }
+    @Published var webdavPassword: String = "" {
+        didSet {
+            guard !isLoadingSyncPreferences else { return }
+            _ = saveSecret(webdavPassword, account: SecretKeys.webdavPasswordAccount)
+        }
+    }
+    @Published var serverBaseURL: String = "" {
+        didSet {
+            guard !isLoadingSyncPreferences else { return }
+            UserDefaults.standard.set(serverBaseURL, forKey: Keys.serverBaseURL)
+        }
+    }
+    @Published var serverAuthToken: String = "" {
+        didSet {
+            guard !isLoadingSyncPreferences else { return }
+            _ = saveSecret(serverAuthToken, account: SecretKeys.serverTokenAccount)
+        }
+    }
 
     static let systemDefaultFontFamily = "系统默认"
     static let fixedNewAccountFolderName = "新账号"
     static let fixedNewAccountFolderId = UUID(uuidString: "F16A2C4E-4A2A-43D5-A670-3F1767D41001")!
     static let syncBundleSchemaV2 = "pass.sync.bundle.v2"
-    static let syncBundleSchemaV1 = "pass.sync.bundle.v1"
     private static let installedFontFamilies: Set<String> = Set(NSFontManager.shared.availableFontFamilies)
 
     private let decoder = JSONDecoder()
@@ -111,6 +167,8 @@ final class AccountStore: ObservableObject {
     private var lastMoveOperation: FolderMoveOperation?
     private var cloudObserver: NSObjectProtocol?
     private var suppressCloudPush: Bool = false
+    private var isLoadingSyncPreferences: Bool = false
+    private var syncNowTask: Task<Void, Never>?
 
     private struct FolderMoveOperation {
         let accountIds: [UUID]
@@ -120,7 +178,7 @@ final class AccountStore: ObservableObject {
 
     init() {
         load()
-        setupICloudSync()
+        handleSyncSourceSelectionChanged()
     }
 
     func saveDeviceName() {
@@ -1042,6 +1100,11 @@ final class AccountStore: ObservableObject {
                 return lhsPinned && !rhsPinned
             }
 
+            // 最近修改优先；恢复回收站、编辑保存后会触发 updatedAtMs 更新并置顶。
+            if lhs.updatedAtMs != rhs.updatedAtMs {
+                return lhs.updatedAtMs > rhs.updatedAtMs
+            }
+
             if lhsPinned && rhsPinned {
                 switch (lhs.pinnedSortOrder, rhs.pinnedSortOrder) {
                 case let (.some(lo), .some(ro)) where lo != ro:
@@ -1065,10 +1128,6 @@ final class AccountStore: ObservableObject {
                     break
                 }
             }
-
-            if lhs.updatedAtMs != rhs.updatedAtMs {
-                return lhs.updatedAtMs > rhs.updatedAtMs
-            }
             if lhs.createdAtMs != rhs.createdAtMs {
                 return lhs.createdAtMs > rhs.createdAtMs
             }
@@ -1087,16 +1146,343 @@ final class AccountStore: ObservableObject {
         return displayFormatter.string(from: date)
     }
 
+    var syncNowButtonTitle: String {
+        "同步已启用源"
+    }
+
     func syncWithICloudNow() {
-        let pulled = pullAccountsFromICloud(trigger: "manual")
-        pushAccountsToICloud(trigger: "manual")
-        if pulled {
-            statusMessage = "已与 iCloud 完成合并同步"
-        } else if !iCloudAvailable() {
-            statusMessage = "iCloud 不可用，当前仅使用本机数据"
-        } else {
-            statusMessage = "iCloud 已同步"
+        syncNow()
+    }
+
+    func syncNow() {
+        if let syncNowTask, !syncNowTask.isCancelled {
+            statusMessage = "同步进行中，请稍候"
+            return
         }
+        syncNowTask = Task { [weak self] in
+            guard let self else { return }
+            await self.performSyncNow()
+            self.syncNowTask = nil
+        }
+    }
+
+    private func performSyncNow() async {
+        let enabledSourceNames = activeSyncSourceNames()
+        guard !enabledSourceNames.isEmpty else {
+            cloudSyncStatus = "未启用同步源"
+            statusMessage = "请先启用至少一个同步源"
+            return
+        }
+
+        var mergedPayload = buildCurrentSyncPayload()
+
+        if syncEnableICloud {
+            do {
+                if let remotePayload = try fetchRemotePayloadFromICloud() {
+                    mergedPayload = mergePayloads(local: mergedPayload, remote: remotePayload)
+                }
+            } catch {
+                statusMessage = "iCloud 拉取失败: \(error.localizedDescription)"
+                return
+            }
+        }
+
+        if syncEnableWebDAV {
+            guard let resourceURL = buildWebDAVResourceURL() else {
+                statusMessage = "WebDAV 配置不完整：请填写服务地址与远端文件路径"
+                return
+            }
+            do {
+                let authorization = buildBasicAuthorization(
+                    username: webdavUsername,
+                    password: webdavPassword
+                )
+                if let remotePayload = try await fetchRemotePayload(
+                    from: resourceURL,
+                    authorization: authorization
+                ) {
+                    mergedPayload = mergePayloads(local: mergedPayload, remote: remotePayload)
+                }
+            } catch {
+                statusMessage = "WebDAV 拉取失败: \(error.localizedDescription)"
+                return
+            }
+        }
+
+        if syncEnableSelfHostedServer {
+            guard let resourceURL = buildSelfHostedPayloadURL() else {
+                statusMessage = "服务器配置不完整：请填写服务地址"
+                return
+            }
+            do {
+                let authorization = buildBearerAuthorization(serverAuthToken)
+                if let remotePayload = try await fetchRemotePayload(
+                    from: resourceURL,
+                    authorization: authorization
+                ) {
+                    mergedPayload = mergePayloads(local: mergedPayload, remote: remotePayload)
+                }
+            } catch {
+                statusMessage = "服务器拉取失败: \(error.localizedDescription)"
+                return
+            }
+        }
+
+        let changed = applyMergedPayloadIfNeeded(mergedPayload)
+        var pushErrors: [String] = []
+
+        if syncEnableICloud {
+            do {
+                _ = try pushPayloadToICloud(mergedPayload)
+            } catch {
+                pushErrors.append("iCloud: \(error.localizedDescription)")
+            }
+        }
+
+        if syncEnableWebDAV {
+            guard let resourceURL = buildWebDAVResourceURL() else {
+                pushErrors.append("WebDAV: 配置不完整")
+                updateSyncStatusAfterSync(changed: changed, enabledSourceNames: enabledSourceNames, pushErrors: pushErrors)
+                return
+            }
+            do {
+                let authorization = buildBasicAuthorization(
+                    username: webdavUsername,
+                    password: webdavPassword
+                )
+                try await pushRemotePayload(
+                    mergedPayload,
+                    to: resourceURL,
+                    authorization: authorization
+                )
+            } catch {
+                pushErrors.append("WebDAV: \(error.localizedDescription)")
+            }
+        }
+
+        if syncEnableSelfHostedServer {
+            guard let resourceURL = buildSelfHostedPayloadURL() else {
+                pushErrors.append("服务器: 配置不完整")
+                updateSyncStatusAfterSync(changed: changed, enabledSourceNames: enabledSourceNames, pushErrors: pushErrors)
+                return
+            }
+            do {
+                let authorization = buildBearerAuthorization(serverAuthToken)
+                try await pushRemotePayload(
+                    mergedPayload,
+                    to: resourceURL,
+                    authorization: authorization
+                )
+            } catch {
+                pushErrors.append("服务器: \(error.localizedDescription)")
+            }
+        }
+
+        updateSyncStatusAfterSync(changed: changed, enabledSourceNames: enabledSourceNames, pushErrors: pushErrors)
+    }
+
+    private func updateSyncStatusAfterSync(
+        changed: Bool,
+        enabledSourceNames: [String],
+        pushErrors: [String]
+    ) {
+        let sourceSummary = enabledSourceNames.joined(separator: " + ")
+        if pushErrors.isEmpty {
+            cloudSyncStatus = changed
+                ? "\(sourceSummary) 已合并并同步: \(displayTime(nowMs()))"
+                : "\(sourceSummary) 已同步: \(displayTime(nowMs()))"
+            statusMessage = changed
+                ? "已与 \(sourceSummary) 完成合并同步"
+                : "\(sourceSummary) 已同步"
+        } else {
+            cloudSyncStatus = "同步部分失败: \(pushErrors.joined(separator: "；"))"
+            statusMessage = "同步完成但部分源失败：\(pushErrors.joined(separator: "；"))"
+        }
+    }
+
+    private func activeSyncSourceNames() -> [String] {
+        var names: [String] = []
+        if syncEnableICloud { names.append("iCloud") }
+        if syncEnableWebDAV { names.append("WebDAV") }
+        if syncEnableSelfHostedServer { names.append("服务器") }
+        return names
+    }
+
+    private func buildCurrentSyncPayload() -> SyncBundlePayload {
+        SyncBundlePayload(
+            accounts: accounts,
+            folders: folders,
+            passkeys: passkeys
+        )
+    }
+
+    private func buildSyncBundleDocument(payload: SyncBundlePayload) -> SyncBundleV2 {
+        SyncBundleV2(
+            schema: Self.syncBundleSchemaV2,
+            exportedAtMs: nowMs(),
+            source: SyncBundleSource(
+                app: "pass-mac",
+                platform: "macos-app",
+                deviceName: currentDeviceName(),
+                formatVersion: 2
+            ),
+            payload: payload
+        )
+    }
+
+    private func mergePayloads(local: SyncBundlePayload, remote: SyncBundlePayload) -> SyncBundlePayload {
+        let mergedFolders = mergeFolderCollections(local: local.folders, remote: remote.folders)
+        let validFolderIds = Set(mergedFolders.map(\.id))
+        var mergedAccounts = mergeAccountCollections(
+            local: normalizeDecodedAccounts(local.accounts),
+            remote: normalizeDecodedAccounts(remote.accounts)
+        )
+        mergedAccounts = reconcileAccountsWithValidFolderIds(mergedAccounts, validFolderIds: validFolderIds)
+        let mergedPasskeys = mergePasskeyCollections(local: local.passkeys, remote: remote.passkeys)
+        return SyncBundlePayload(
+            accounts: mergedAccounts,
+            folders: mergedFolders,
+            passkeys: mergedPasskeys
+        )
+    }
+
+    @discardableResult
+    private func applyMergedPayloadIfNeeded(_ payload: SyncBundlePayload) -> Bool {
+        let currentPayload = buildCurrentSyncPayload()
+        guard !syncPayloadEquals(currentPayload, payload) else { return false }
+        suppressCloudPush = true
+        defer { suppressCloudPush = false }
+        folders = payload.folders
+        accounts = payload.accounts
+        passkeys = payload.passkeys
+        syncAliasGroups()
+        saveFoldersToDefaults()
+        saveAccounts()
+        savePasskeysToLocalDisk()
+        return true
+    }
+
+    private func syncPayloadEquals(_ lhs: SyncBundlePayload, _ rhs: SyncBundlePayload) -> Bool {
+        guard let leftData = try? encoder.encode(lhs),
+              let rightData = try? encoder.encode(rhs)
+        else {
+            return false
+        }
+        return leftData == rightData
+    }
+
+    private func buildWebDAVResourceURL() -> URL? {
+        let base = webdavBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let remotePath = webdavRemotePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !base.isEmpty, !remotePath.isEmpty, let baseURL = URL(string: base) else {
+            return nil
+        }
+        var url = baseURL
+        for component in remotePath.split(separator: "/").map(String.init) {
+            url.appendPathComponent(component)
+        }
+        return url
+    }
+
+    private func buildSelfHostedPayloadURL() -> URL? {
+        let base = serverBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !base.isEmpty else { return nil }
+        let normalizedBase = base.hasSuffix("/") ? base : "\(base)/"
+        return URL(string: "v1/sync/payload", relativeTo: URL(string: normalizedBase))?.absoluteURL
+    }
+
+    private func buildBasicAuthorization(username: String, password: String) -> String? {
+        guard !username.isEmpty || !password.isEmpty else { return nil }
+        let source = "\(username):\(password)"
+        guard let data = source.data(using: .utf8) else { return nil }
+        return "Basic \(data.base64EncodedString())"
+    }
+
+    private func buildBearerAuthorization(_ token: String) -> String? {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return "Bearer \(trimmed)"
+    }
+
+    private func fetchRemotePayload(from url: URL, authorization: String?) async throws -> SyncBundlePayload? {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let authorization {
+            request.setValue(authorization, forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw NSError(
+                domain: "AccountStore.SyncRemote",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "远端响应不可识别"]
+            )
+        }
+        if http.statusCode == 404 {
+            return nil
+        }
+        guard (200 ... 299).contains(http.statusCode) else {
+            throw NSError(
+                domain: "AccountStore.SyncRemote",
+                code: http.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "远端拉取失败，HTTP \(http.statusCode)"]
+            )
+        }
+        guard !data.isEmpty else {
+            return nil
+        }
+        let parsed = try decodeSyncBundle(data)
+        return SyncBundlePayload(
+            accounts: normalizeDecodedAccounts(parsed.accounts),
+            folders: parsed.folders,
+            passkeys: parsed.passkeys
+        )
+    }
+
+    private func pushRemotePayload(_ payload: SyncBundlePayload, to url: URL, authorization: String?) async throws {
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let authorization {
+            request.setValue(authorization, forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try encoder.encode(buildSyncBundleDocument(payload: payload))
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw NSError(
+                domain: "AccountStore.SyncRemote",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "远端响应不可识别"]
+            )
+        }
+        guard (200 ... 299).contains(http.statusCode) else {
+            throw NSError(
+                domain: "AccountStore.SyncRemote",
+                code: http.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "远端上传失败，HTTP \(http.statusCode)"]
+            )
+        }
+    }
+
+    private func saveSecret(_ secret: String, account: String) -> Bool {
+        if secret.isEmpty {
+            return LocalKeychain.delete(service: SecretKeys.service, account: account)
+        }
+        guard let data = secret.data(using: .utf8) else { return false }
+        return LocalKeychain.save(service: SecretKeys.service, account: account, data: data)
+    }
+
+    private func readSecret(account: String) -> String {
+        guard let data = LocalKeychain.read(service: SecretKeys.service, account: account),
+              let value = String(data: data, encoding: .utf8)
+        else {
+            return ""
+        }
+        return value
     }
 
     func currentTotpCode(for account: PasswordAccount, at date: Date = Date()) -> String? {
@@ -1113,6 +1499,17 @@ final class AccountStore: ObservableObject {
         let defaults = UserDefaults.standard
         deviceName = defaults.string(forKey: Keys.deviceName) ?? ""
         exportDirectoryPath = defaults.string(forKey: Keys.exportDirectoryPath) ?? ""
+        isLoadingSyncPreferences = true
+        syncEnableICloud = defaults.object(forKey: Keys.syncEnableICloud) as? Bool ?? true
+        syncEnableWebDAV = defaults.object(forKey: Keys.syncEnableWebDAV) as? Bool ?? false
+        syncEnableSelfHostedServer = defaults.object(forKey: Keys.syncEnableSelfHostedServer) as? Bool ?? false
+        webdavBaseURL = defaults.string(forKey: Keys.webdavBaseURL) ?? ""
+        webdavRemotePath = defaults.string(forKey: Keys.webdavRemotePath) ?? "pass-sync-bundle-v2.json"
+        webdavUsername = defaults.string(forKey: Keys.webdavUsername) ?? ""
+        webdavPassword = readSecret(account: SecretKeys.webdavPasswordAccount)
+        serverBaseURL = defaults.string(forKey: Keys.serverBaseURL) ?? ""
+        serverAuthToken = readSecret(account: SecretKeys.serverTokenAccount)
+        isLoadingSyncPreferences = false
         if let foldersData = defaults.data(forKey: Keys.foldersData),
            let decodedFolders = try? decoder.decode([AccountFolder].self, from: foldersData)
         {
@@ -1183,8 +1580,8 @@ final class AccountStore: ObservableObject {
 
     private func saveAccounts() {
         saveAccountsToLocalDisk()
-        if !suppressCloudPush {
-            pushAccountsToICloud(trigger: "local_update")
+        if !suppressCloudPush && syncEnableICloud {
+            pushSyncDataToICloud(trigger: "local_update")
         }
     }
 
@@ -1220,12 +1617,45 @@ final class AccountStore: ObservableObject {
                 withIntermediateDirectories: true
             )
             try data.write(to: passkeysFileURL(), options: .atomic)
+            if !suppressCloudPush && syncEnableICloud {
+                pushSyncDataToICloud(trigger: "local_update")
+            }
         } catch {
             statusMessage = "保存通行密钥失败: \(error.localizedDescription)"
         }
     }
 
+    private func handleSyncSourceSelectionChanged() {
+        if syncEnableICloud {
+            if cloudObserver == nil {
+                setupICloudSync()
+            }
+        } else {
+            teardownICloudSyncObserver()
+        }
+        if cloudObserver == nil {
+            refreshSyncSourceStatusHint()
+        }
+    }
+
+    private func refreshSyncSourceStatusHint() {
+        let names = activeSyncSourceNames()
+        if names.isEmpty {
+            cloudSyncStatus = "未启用同步源"
+            return
+        }
+        cloudSyncStatus = "已启用同步源：\(names.joined(separator: " + "))"
+    }
+
+    private func teardownICloudSyncObserver() {
+        if let observer = cloudObserver {
+            NotificationCenter.default.removeObserver(observer)
+            cloudObserver = nil
+        }
+    }
+
     private func setupICloudSync() {
+        teardownICloudSyncObserver()
         cloudObserver = NotificationCenter.default.addObserver(
             forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
             object: cloudStore,
@@ -1233,41 +1663,43 @@ final class AccountStore: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                _ = self.pullAccountsFromICloud(trigger: "remote_change")
+                if self.syncEnableWebDAV || self.syncEnableSelfHostedServer {
+                    self.syncNow()
+                } else {
+                    _ = self.pullSyncDataFromICloud(trigger: "remote_change")
+                }
             }
         }
 
-        _ = pullAccountsFromICloud(trigger: "startup")
-        pushAccountsToICloud(trigger: "startup")
+        if syncEnableWebDAV || syncEnableSelfHostedServer {
+            syncNow()
+        } else {
+            _ = pullSyncDataFromICloud(trigger: "startup")
+            pushSyncDataToICloud(trigger: "startup")
+        }
     }
 
     @discardableResult
-    private func pullAccountsFromICloud(trigger: String) -> Bool {
-        guard iCloudAvailable() else {
-            cloudSyncStatus = "iCloud 不可用，已使用本机数据"
+    private func pullSyncDataFromICloud(trigger: String) -> Bool {
+        guard syncEnableICloud else { return false }
+        let remotePayload: SyncBundlePayload
+        do {
+            guard let fetched = try fetchRemotePayloadFromICloud() else {
+                if trigger == "manual" {
+                    cloudSyncStatus = "iCloud 可用，当前无云端数据"
+                }
+                return false
+            }
+            remotePayload = fetched
+        } catch {
+            cloudSyncStatus = error.localizedDescription
             return false
         }
 
-        _ = cloudStore.synchronize()
-        guard let encoded = cloudStore.string(forKey: ICloudKeys.accountsBlob),
-              let data = Data(base64Encoded: encoded)
-        else {
-            cloudSyncStatus = "iCloud 可用，当前无云端数据"
-            return false
-        }
-
-        let remoteAccounts: [PasswordAccount]
-        if let decoded = try? decoder.decode([PasswordAccount].self, from: data) {
-            remoteAccounts = normalizeDecodedAccounts(decoded)
-        } else if let legacy = try? decoder.decode([LegacyPasswordAccount].self, from: data) {
-            remoteAccounts = legacy.map { $0.toCurrent(deviceName: currentDeviceName()) }
-        } else {
-            cloudSyncStatus = "iCloud 数据解析失败，保留本机数据"
-            return false
-        }
-
-        let merged = mergeAccountCollections(local: accounts, remote: remoteAccounts)
-        guard merged != accounts else {
+        let localPayload = buildCurrentSyncPayload()
+        let mergedPayload = mergePayloads(local: localPayload, remote: remotePayload)
+        let changed = applyMergedPayloadIfNeeded(mergedPayload)
+        guard changed else {
             if trigger == "manual" {
                 cloudSyncStatus = "iCloud 已是最新"
             } else {
@@ -1276,46 +1708,80 @@ final class AccountStore: ObservableObject {
             return false
         }
 
-        suppressCloudPush = true
-        accounts = merged
-        syncAliasGroups()
-        saveAccounts()
-        suppressCloudPush = false
-        pushAccountsToICloud(trigger: "post_merge")
+        do {
+            _ = try pushPayloadToICloud(buildCurrentSyncPayload())
+        } catch {
+            cloudSyncStatus = "iCloud 合并后回写失败: \(error.localizedDescription)"
+            return false
+        }
         cloudSyncStatus = "iCloud 已合并同步: \(displayTime(nowMs()))"
         return true
     }
 
-    private func pushAccountsToICloud(trigger: String) {
+    private func pushSyncDataToICloud(trigger: String) {
+        guard syncEnableICloud else { return }
+        do {
+            let requested = try pushPayloadToICloud(buildCurrentSyncPayload())
+            if trigger == "manual" && requested {
+                cloudSyncStatus = "iCloud 同步已提交: \(displayTime(nowMs()))"
+            } else if trigger == "manual" {
+                cloudSyncStatus = "iCloud 同步请求未完成，稍后自动重试"
+            }
+        } catch {
+            cloudSyncStatus = "iCloud 同步失败: \(error.localizedDescription)"
+        }
+    }
+
+    private func fetchRemotePayloadFromICloud() throws -> SyncBundlePayload? {
         guard iCloudAvailable() else {
-            cloudSyncStatus = "iCloud 不可用，已使用本机数据"
-            return
+            throw NSError(
+                domain: "AccountStore.ICloudSync",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "iCloud 不可用，已使用本机数据"]
+            )
         }
 
-        guard let data = try? encoder.encode(accounts) else {
-            cloudSyncStatus = "iCloud 编码失败，保留本机数据"
-            return
+        _ = cloudStore.synchronize()
+        guard let encoded = cloudStore.string(forKey: ICloudKeys.syncPayloadBlob),
+              let data = Data(base64Encoded: encoded)
+        else {
+            return nil
         }
 
+        let parsed = try decodeSyncBundle(data)
+        return SyncBundlePayload(
+            accounts: normalizeDecodedAccounts(parsed.accounts),
+            folders: parsed.folders,
+            passkeys: parsed.passkeys
+        )
+    }
+
+    private func pushPayloadToICloud(_ payload: SyncBundlePayload) throws -> Bool {
+        guard iCloudAvailable() else {
+            throw NSError(
+                domain: "AccountStore.ICloudSync",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "iCloud 不可用，已使用本机数据"]
+            )
+        }
+        let bundle = buildSyncBundleDocument(payload: payload)
+        let data = try encoder.encode(bundle)
         if data.count > 900_000 {
-            cloudSyncStatus = "iCloud 数据过大，当前仅本机保存"
-            return
+            throw NSError(
+                domain: "AccountStore.ICloudSync",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "iCloud 数据过大，当前仅本机保存"]
+            )
         }
 
         let encoded = data.base64EncodedString()
-        if cloudStore.string(forKey: ICloudKeys.accountsBlob) == encoded {
-            if trigger == "manual" {
-                cloudSyncStatus = "iCloud 已是最新"
-            }
-            return
+        if cloudStore.string(forKey: ICloudKeys.syncPayloadBlob) == encoded {
+            return true
         }
 
-        cloudStore.set(encoded, forKey: ICloudKeys.accountsBlob)
-        cloudStore.set(nowMs(), forKey: ICloudKeys.accountsUpdatedAtMs)
-        let requested = cloudStore.synchronize()
-        cloudSyncStatus = requested
-            ? "iCloud 同步已提交: \(displayTime(nowMs()))"
-            : "iCloud 同步请求未完成，稍后自动重试"
+        cloudStore.set(encoded, forKey: ICloudKeys.syncPayloadBlob)
+        cloudStore.set(nowMs(), forKey: ICloudKeys.syncPayloadUpdatedAtMs)
+        return cloudStore.synchronize()
     }
 
     private func iCloudAvailable() -> Bool {
@@ -1543,6 +2009,7 @@ final class AccountStore: ObservableObject {
         let normalizedUserName = source.userName.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedDisplayName = source.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedMode = source.mode.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedCreateCompatMethod = normalizePasskeyCreateCompatMethod(source.createCompatMethod, alg: source.alg)
         let createdAt = max(source.createdAtMs, 0)
         let updatedAt = max(source.updatedAtMs, createdAt)
         let lastUsedAt = source.lastUsedAtMs.map { max($0, 0) }
@@ -1560,8 +2027,19 @@ final class AccountStore: ObservableObject {
             createdAtMs: createdAt,
             updatedAtMs: updatedAt,
             lastUsedAtMs: lastUsedAt,
-            mode: normalizedMode.isEmpty ? "managed" : normalizedMode
+            mode: normalizedMode.isEmpty ? "managed" : normalizedMode,
+            createCompatMethod: normalizedCreateCompatMethod
         )
+    }
+
+    private func normalizePasskeyCreateCompatMethod(_ raw: String?, alg: Int) -> String {
+        let normalized = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized {
+        case "standard", "user_name_fallback", "rs256", "user_name_fallback+rs256", "unknown_linked":
+            return normalized
+        default:
+            return alg == -257 ? "rs256" : "standard"
+        }
     }
 
     private func mergePasskeyCollections(
@@ -1610,7 +2088,11 @@ final class AccountStore: ObservableObject {
             lastUsedAtMs: max(left.lastUsedAtMs ?? 0, right.lastUsedAtMs ?? 0) > 0
                 ? max(left.lastUsedAtMs ?? 0, right.lastUsedAtMs ?? 0)
                 : nil,
-            mode: newer.mode.isEmpty ? older.mode : newer.mode
+            mode: newer.mode.isEmpty ? older.mode : newer.mode,
+            createCompatMethod: normalizePasskeyCreateCompatMethod(
+                newer.createCompatMethod ?? older.createCompatMethod,
+                alg: newer.alg == 0 ? older.alg : newer.alg
+            )
         )
     }
 
@@ -1634,30 +2116,16 @@ final class AccountStore: ObservableObject {
         passkeys: [PasskeyRecord],
         kind: String
     ) {
-        if let v2 = try? decoder.decode(SyncBundleV2.self, from: data),
-           v2.schema == Self.syncBundleSchemaV2
+        if let bundle = try? decoder.decode(SyncBundleV2.self, from: data),
+           bundle.schema == Self.syncBundleSchemaV2
         {
-            return (v2.payload.accounts, v2.payload.folders, v2.payload.passkeys ?? [], "v2")
-        }
-
-        if let v1 = try? decoder.decode(SyncBundleV1.self, from: data),
-           v1.schema == Self.syncBundleSchemaV1
-        {
-            return (v1.payload.accounts, v1.payload.folders, v1.payload.passkeys ?? [], "v1")
-        }
-
-        if let payload = try? decoder.decode(SyncBundlePayload.self, from: data) {
-            return (payload.accounts, payload.folders, payload.passkeys ?? [], "legacy_payload")
-        }
-
-        if let legacy = try? decoder.decode(LegacySyncBundlePayload.self, from: data) {
-            return (legacy.accounts ?? [], legacy.folders ?? [], legacy.passkeys ?? [], "legacy_root")
+            return (bundle.payload.accounts, bundle.payload.folders, bundle.payload.passkeys, "v2")
         }
 
         throw NSError(
             domain: "AccountStore.SyncBundle",
             code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "不支持的同步包格式"]
+            userInfo: [NSLocalizedDescriptionKey: "不支持的同步包格式，仅支持 pass.sync.bundle.v2"]
         )
     }
 
@@ -2221,6 +2689,9 @@ final class AccountStore: ObservableObject {
             return
         }
         UserDefaults.standard.set(data, forKey: Keys.foldersData)
+        if !suppressCloudPush && syncEnableICloud {
+            pushSyncDataToICloud(trigger: "local_update")
+        }
     }
 
     var uiFontFamilyOptions: [String] {
@@ -2254,13 +2725,6 @@ private struct SyncBundleV2: Codable {
     let payload: SyncBundlePayload
 }
 
-private struct SyncBundleV1: Codable {
-    let schema: String
-    let exportedAtMs: Int64
-    let source: SyncBundleSource
-    let payload: SyncBundlePayload
-}
-
 private struct SyncBundleSource: Codable {
     let app: String
     let platform: String
@@ -2271,28 +2735,35 @@ private struct SyncBundleSource: Codable {
 private struct SyncBundlePayload: Codable {
     let accounts: [PasswordAccount]
     let folders: [AccountFolder]
-    let passkeys: [PasskeyRecord]?
-}
-
-private struct LegacySyncBundlePayload: Codable {
-    let accounts: [PasswordAccount]?
-    let folders: [AccountFolder]?
-    let passkeys: [PasskeyRecord]?
+    let passkeys: [PasskeyRecord]
 }
 
 private enum Keys {
     static let deviceName = "pass.deviceName"
     static let exportDirectoryPath = "pass.export.directoryPath"
     static let foldersData = "pass.folders.data"
+    static let syncEnableICloud = "pass.sync.enableICloud.v3"
+    static let syncEnableWebDAV = "pass.sync.enableWebDAV.v3"
+    static let syncEnableSelfHostedServer = "pass.sync.enableSelfHostedServer.v3"
+    static let webdavBaseURL = "pass.sync.webdav.baseURL.v2"
+    static let webdavRemotePath = "pass.sync.webdav.remotePath.v2"
+    static let webdavUsername = "pass.sync.webdav.username.v2"
+    static let serverBaseURL = "pass.sync.server.baseURL.v2"
     static let uiFontFamily = "pass.ui.font.family"
     static let uiTextFontSize = "pass.ui.font.textSize"
     static let uiButtonFontSize = "pass.ui.font.buttonSize"
     static let uiToastDurationSeconds = "pass.ui.toast.duration"
 }
 
+private enum SecretKeys {
+    static let service = "pass.sync.credentials.v2"
+    static let webdavPasswordAccount = "sync.webdav.password"
+    static let serverTokenAccount = "sync.server.token"
+}
+
 private enum ICloudKeys {
-    static let accountsBlob = "pass.accounts.blob.v1"
-    static let accountsUpdatedAtMs = "pass.accounts.updatedAtMs.v1"
+    static let syncPayloadBlob = "pass.sync.payload.blob.v2"
+    static let syncPayloadUpdatedAtMs = "pass.sync.payload.updatedAtMs.v2"
 }
 
 private struct LegacyPasswordAccount: Codable {

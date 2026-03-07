@@ -72,7 +72,30 @@ label {
   color: #4c6688;
 }
 
+.sync-source-checks {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sync-source-checks label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #35567f;
+}
+
 input {
+  border: 1px solid #bfd4f4;
+  border-radius: 9px;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #223a5a;
+}
+
+select {
   border: 1px solid #bfd4f4;
   border-radius: 9px;
   padding: 8px 10px;
@@ -108,6 +131,7 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   outline: none;
   border-color: #7ca9e8;

@@ -80,9 +80,67 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle("iCloud（仅 Apple）", isOn: $store.syncEnableICloud)
+                            .toggleStyle(.switch)
+                        Toggle("WebDAV", isOn: $store.syncEnableWebDAV)
+                            .toggleStyle(.switch)
+                        Toggle("自建服务器", isOn: $store.syncEnableSelfHostedServer)
+                            .toggleStyle(.switch)
+                    }
+
+                    Text("可同时启用多个同步源；点击“同步已启用源”会依次拉取并回写所有已启用源。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if store.syncEnableWebDAV {
+                        HStack(spacing: 8) {
+                            Text("WebDAV 地址")
+                                .frame(width: 80, alignment: .leading)
+                            TextField("https://dav.example.com/remote.php/dav/files/<user>/", text: $store.webdavBaseURL)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        HStack(spacing: 8) {
+                            Text("远端路径")
+                                .frame(width: 80, alignment: .leading)
+                            TextField("pass-sync-bundle-v2.json", text: $store.webdavRemotePath)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        HStack(spacing: 8) {
+                            Text("用户名")
+                                .frame(width: 80, alignment: .leading)
+                            TextField("可选", text: $store.webdavUsername)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        HStack(spacing: 8) {
+                            Text("密码")
+                                .frame(width: 80, alignment: .leading)
+                            SecureField("可选（写入本机 Keychain）", text: $store.webdavPassword)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                    }
+
+                    if store.syncEnableSelfHostedServer {
+                        HStack(spacing: 8) {
+                            Text("服务地址")
+                                .frame(width: 80, alignment: .leading)
+                            TextField("https://sync.example.com/", text: $store.serverBaseURL)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        HStack(spacing: 8) {
+                            Text("访问令牌")
+                                .frame(width: 80, alignment: .leading)
+                            SecureField("可选（Bearer Token，写入本机 Keychain）", text: $store.serverAuthToken)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        Text("服务端接口固定为 /v1/sync/payload，使用 GET/PUT 交换 pass.sync.bundle.v2。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
                     HStack(spacing: 8) {
-                        Button("立即同步 iCloud") {
-                            store.syncWithICloudNow()
+                        Button(store.syncNowButtonTitle) {
+                            store.syncNow()
                         }
                         .font(store.buttonFont())
                         .buttonStyle(.bordered)

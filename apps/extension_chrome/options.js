@@ -2,10 +2,17 @@ const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
 const STORAGE_KEY_ACCOUNTS = "pass.accounts";
 const STORAGE_KEY_PASSKEYS = "pass.passkeys";
 const STORAGE_KEY_FOLDERS = "pass.folders";
+const STORAGE_KEY_SYNC_ENABLE_WEBDAV = "pass.sync.enableWebDAV.v3";
+const STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER = "pass.sync.enableSelfHostedServer.v3";
+const STORAGE_KEY_SYNC_WEBDAV_BASE_URL = "pass.sync.webdav.baseUrl.v2";
+const STORAGE_KEY_SYNC_WEBDAV_PATH = "pass.sync.webdav.path.v2";
+const STORAGE_KEY_SYNC_WEBDAV_USERNAME = "pass.sync.webdav.username.v2";
+const STORAGE_KEY_SYNC_WEBDAV_PASSWORD = "pass.sync.webdav.password.v2";
+const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
+const STORAGE_KEY_SYNC_SERVER_TOKEN = "pass.sync.server.token.v2";
 const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
 const FIXED_NEW_ACCOUNT_FOLDER_NAME = "新账号";
 const SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
-const SYNC_BUNDLE_SCHEMA_V1 = "pass.sync.bundle.v1";
 
 const ETLD2_SUFFIXES = new Set([
   "com.cn",
@@ -24,6 +31,18 @@ const TOTP_REFRESH_INTERVAL_MS = 1000;
 const dom = {
   deviceName: document.getElementById("deviceName"),
   saveDeviceNameBtn: document.getElementById("saveDeviceName"),
+  syncEnableWebdav: document.getElementById("syncEnableWebdav"),
+  syncEnableServer: document.getElementById("syncEnableServer"),
+  syncWebdavFields: document.getElementById("syncWebdavFields"),
+  syncServerFields: document.getElementById("syncServerFields"),
+  syncWebdavBaseUrl: document.getElementById("syncWebdavBaseUrl"),
+  syncWebdavPath: document.getElementById("syncWebdavPath"),
+  syncWebdavUsername: document.getElementById("syncWebdavUsername"),
+  syncWebdavPassword: document.getElementById("syncWebdavPassword"),
+  syncServerBaseUrl: document.getElementById("syncServerBaseUrl"),
+  syncServerToken: document.getElementById("syncServerToken"),
+  saveSyncSettingsBtn: document.getElementById("saveSyncSettings"),
+  syncNowBtn: document.getElementById("syncNowBtn"),
   deviceStatus: document.getElementById("deviceStatus"),
   allAccountsCount: document.getElementById("allAccountsCount"),
   passkeyAccountsCount: document.getElementById("passkeyAccountsCount"),
@@ -76,10 +95,19 @@ init().catch((error) => {
 
 async function init() {
   await loadDeviceName();
+  await loadSyncSettings();
   await refresh();
   startTotpRefreshTicker();
 
   dom.saveDeviceNameBtn.addEventListener("click", saveDeviceName);
+  dom.saveSyncSettingsBtn.addEventListener("click", saveSyncSettings);
+  dom.syncNowBtn.addEventListener("click", syncNowWithRemote);
+  dom.syncEnableWebdav.addEventListener("change", () => {
+    renderSyncBackendFields();
+  });
+  dom.syncEnableServer.addEventListener("change", () => {
+    renderSyncBackendFields();
+  });
   dom.createFolderBtn.addEventListener("click", createFolderFromPrompt);
   dom.accountsFolderList.addEventListener("contextmenu", (event) => {
     if (event.target.closest(".account-view-tab")) return;
@@ -152,6 +180,66 @@ async function saveDeviceName() {
   setDeviceStatus(`设备名称已保存为 ${next}`);
 }
 
+async function loadSyncSettings() {
+  const result = await chrome.storage.local.get([
+    STORAGE_KEY_SYNC_ENABLE_WEBDAV,
+    STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER,
+    STORAGE_KEY_SYNC_WEBDAV_BASE_URL,
+    STORAGE_KEY_SYNC_WEBDAV_PATH,
+    STORAGE_KEY_SYNC_WEBDAV_USERNAME,
+    STORAGE_KEY_SYNC_WEBDAV_PASSWORD,
+    STORAGE_KEY_SYNC_SERVER_BASE_URL,
+    STORAGE_KEY_SYNC_SERVER_TOKEN,
+  ]);
+  const hasEnableWebdav = typeof result[STORAGE_KEY_SYNC_ENABLE_WEBDAV] === "boolean";
+  const hasEnableServer = typeof result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER] === "boolean";
+  const enableWebdav = hasEnableWebdav
+    ? Boolean(result[STORAGE_KEY_SYNC_ENABLE_WEBDAV])
+    : false;
+  const enableServer = hasEnableServer
+    ? Boolean(result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER])
+    : false;
+
+  dom.syncEnableWebdav.checked = enableWebdav;
+  dom.syncEnableServer.checked = enableServer;
+  dom.syncWebdavBaseUrl.value = String(result[STORAGE_KEY_SYNC_WEBDAV_BASE_URL] || "");
+  dom.syncWebdavPath.value = String(result[STORAGE_KEY_SYNC_WEBDAV_PATH] || "pass-sync-bundle-v2.json");
+  dom.syncWebdavUsername.value = String(result[STORAGE_KEY_SYNC_WEBDAV_USERNAME] || "");
+  dom.syncWebdavPassword.value = String(result[STORAGE_KEY_SYNC_WEBDAV_PASSWORD] || "");
+  dom.syncServerBaseUrl.value = String(result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || "");
+  dom.syncServerToken.value = String(result[STORAGE_KEY_SYNC_SERVER_TOKEN] || "");
+  renderSyncBackendFields();
+}
+
+function renderSyncBackendFields() {
+  dom.syncWebdavFields.classList.toggle("hidden", !dom.syncEnableWebdav.checked);
+  dom.syncServerFields.classList.toggle("hidden", !dom.syncEnableServer.checked);
+}
+
+async function saveSyncSettings() {
+  const enableWebdav = Boolean(dom.syncEnableWebdav.checked);
+  const enableServer = Boolean(dom.syncEnableServer.checked);
+  await chrome.storage.local.set({
+    [STORAGE_KEY_SYNC_ENABLE_WEBDAV]: enableWebdav,
+    [STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]: enableServer,
+    [STORAGE_KEY_SYNC_WEBDAV_BASE_URL]: String(dom.syncWebdavBaseUrl.value || "").trim(),
+    [STORAGE_KEY_SYNC_WEBDAV_PATH]: String(dom.syncWebdavPath.value || "").trim() || "pass-sync-bundle-v2.json",
+    [STORAGE_KEY_SYNC_WEBDAV_USERNAME]: String(dom.syncWebdavUsername.value || "").trim(),
+    [STORAGE_KEY_SYNC_WEBDAV_PASSWORD]: String(dom.syncWebdavPassword.value || ""),
+    [STORAGE_KEY_SYNC_SERVER_BASE_URL]: String(dom.syncServerBaseUrl.value || "").trim(),
+    [STORAGE_KEY_SYNC_SERVER_TOKEN]: String(dom.syncServerToken.value || "").trim(),
+  });
+  renderSyncBackendFields();
+  const enabledLabels = [];
+  if (enableWebdav) enabledLabels.push("WebDAV");
+  if (enableServer) enabledLabels.push("服务器");
+  setDeviceStatus(
+    enabledLabels.length > 0
+      ? `同步源配置已保存（已启用：${enabledLabels.join(" + ")}）`
+      : "同步源配置已保存（当前未启用任何远端源）"
+  );
+}
+
 async function refresh({ silent = false } = {}) {
   const result = await chrome.storage.local.get([
     STORAGE_KEY_ACCOUNTS,
@@ -208,7 +296,7 @@ async function importJson() {
     return;
   }
   const accounts = payload.accounts.map(normalizeAccountShape);
-  const passkeys = payload.passkeys.map(normalizePasskeyShape);
+  const passkeys = buildUnifiedPasskeys(accounts, payload.passkeys);
   const folders = payload.folders.map(normalizeFolderShape);
   await chrome.storage.local.set({
     [STORAGE_KEY_ACCOUNTS]: accounts,
@@ -258,9 +346,9 @@ async function importSyncBundleAndMerge() {
     return;
   }
 
-  const incomingPayload = parseSyncBundlePayload(parsed);
+  const incomingPayload = parseSyncBundlePayload(parsed, { requireBundleSchema: true });
   if (!incomingPayload) {
-    setStatus("同步包格式错误，缺少 payload/accounts 字段");
+    setStatus("同步包格式错误，仅支持 pass.sync.bundle.v2");
     return;
   }
 
@@ -272,22 +360,24 @@ async function importSyncBundleAndMerge() {
   const localAccounts = Array.isArray(localStored[STORAGE_KEY_ACCOUNTS])
     ? localStored[STORAGE_KEY_ACCOUNTS].map(normalizeAccountShape)
     : [];
-  const localPasskeys = Array.isArray(localStored[STORAGE_KEY_PASSKEYS])
+  const localStoredPasskeys = Array.isArray(localStored[STORAGE_KEY_PASSKEYS])
     ? localStored[STORAGE_KEY_PASSKEYS].map(normalizePasskeyShape)
     : [];
+  const localPasskeys = buildUnifiedPasskeys(localAccounts, localStoredPasskeys);
   const localFolders = Array.isArray(localStored[STORAGE_KEY_FOLDERS])
     ? localStored[STORAGE_KEY_FOLDERS].map(normalizeFolderShape)
     : [];
 
   const remoteAccounts = incomingPayload.accounts.map(normalizeAccountShape);
-  const remotePasskeys = incomingPayload.passkeys.map(normalizePasskeyShape);
+  const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, incomingPayload.passkeys);
   const remoteFolders = incomingPayload.folders.map(normalizeFolderShape);
 
   const mergedFolders = mergeFolderCollections(localFolders, remoteFolders);
   let mergedAccounts = mergeAccountCollections(localAccounts, remoteAccounts);
   mergedAccounts = syncAliasGroups(mergedAccounts);
   mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
-  const mergedPasskeys = mergePasskeyCollections(localPasskeys, remotePasskeys);
+  let mergedPasskeys = mergePasskeyCollections(localPasskeys, remotePasskeys);
+  mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
 
   await chrome.storage.local.set({
     [STORAGE_KEY_ACCOUNTS]: mergedAccounts,
@@ -304,6 +394,233 @@ async function importSyncBundleAndMerge() {
   );
 }
 
+async function syncNowWithRemote() {
+  await saveSyncSettings();
+  const targets = buildRemoteSyncTargetsFromDom();
+  if (!targets || targets.length === 0) return;
+
+  const localStored = await chrome.storage.local.get([
+    STORAGE_KEY_ACCOUNTS,
+    STORAGE_KEY_PASSKEYS,
+    STORAGE_KEY_FOLDERS,
+  ]);
+  const localAccounts = Array.isArray(localStored[STORAGE_KEY_ACCOUNTS])
+    ? localStored[STORAGE_KEY_ACCOUNTS].map(normalizeAccountShape)
+    : [];
+  const localStoredPasskeys = Array.isArray(localStored[STORAGE_KEY_PASSKEYS])
+    ? localStored[STORAGE_KEY_PASSKEYS].map(normalizePasskeyShape)
+    : [];
+  const localPasskeys = buildUnifiedPasskeys(localAccounts, localStoredPasskeys);
+  const localFolders = Array.isArray(localStored[STORAGE_KEY_FOLDERS])
+    ? localStored[STORAGE_KEY_FOLDERS].map(normalizeFolderShape)
+    : [];
+
+  let mergedAccounts = localAccounts;
+  let mergedPasskeys = localPasskeys;
+  let mergedFolders = localFolders;
+
+  for (const target of targets) {
+    let remotePayload = null;
+    try {
+      remotePayload = await pullRemotePayload(target);
+    } catch (error) {
+      setStatus(`${target.label} 拉取失败: ${error.message}`);
+      return;
+    }
+
+    const remoteAccounts = remotePayload ? remotePayload.accounts.map(normalizeAccountShape) : [];
+    const remotePasskeys = remotePayload
+      ? buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys)
+      : [];
+    const remoteFolders = remotePayload ? remotePayload.folders.map(normalizeFolderShape) : [];
+
+    mergedFolders = mergeFolderCollections(mergedFolders, remoteFolders);
+    mergedAccounts = mergeAccountCollections(mergedAccounts, remoteAccounts);
+    mergedAccounts = syncAliasGroups(mergedAccounts);
+    mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
+    mergedPasskeys = mergePasskeyCollections(mergedPasskeys, remotePasskeys);
+  }
+  mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
+
+  await chrome.storage.local.set({
+    [STORAGE_KEY_ACCOUNTS]: mergedAccounts,
+    [STORAGE_KEY_PASSKEYS]: mergedPasskeys,
+    [STORAGE_KEY_FOLDERS]: mergedFolders,
+  });
+
+  const pushErrors = [];
+  for (const target of targets) {
+    try {
+      await pushRemotePayload(target, {
+        accounts: mergedAccounts,
+        passkeys: mergedPasskeys,
+        folders: mergedFolders,
+      });
+    } catch (error) {
+      pushErrors.push(`${target.label}: ${error.message}`);
+    }
+  }
+
+  editingAccountId = null;
+  await refresh({ silent: true });
+  const sourceSummary = targets.map((item) => item.label).join(" + ");
+  if (pushErrors.length > 0) {
+    setStatus(
+      `已合并本地与 ${sourceSummary}，但部分源上传失败：${pushErrors.join("；")}（账号 ${localAccounts.length}->${mergedAccounts.length}，` +
+        `通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}，文件夹 ${localFolders.length}->${mergedFolders.length}）`
+    );
+    return;
+  }
+  setStatus(
+    `远端同步完成（${sourceSummary}）：账号 ${localAccounts.length}->${mergedAccounts.length}，` +
+      `通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}，文件夹 ${localFolders.length}->${mergedFolders.length}`
+  );
+}
+
+function buildRemoteSyncTargetsFromDom() {
+  const targets = [];
+  if (dom.syncEnableWebdav.checked) {
+    const baseUrl = String(dom.syncWebdavBaseUrl.value || "").trim();
+    const remotePath = String(dom.syncWebdavPath.value || "").trim() || "pass-sync-bundle-v2.json";
+    if (!baseUrl || !remotePath) {
+      setStatus("WebDAV 配置不完整：请填写地址和远端路径");
+      return null;
+    }
+    let url;
+    try {
+      const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+      url = new URL(remotePath.replace(/^\/+/g, ""), normalizedBase).toString();
+    } catch {
+      setStatus("WebDAV 地址格式不正确");
+      return null;
+    }
+    const username = String(dom.syncWebdavUsername.value || "");
+    const password = String(dom.syncWebdavPassword.value || "");
+    let authHeader = null;
+    if (username || password) {
+      authHeader = `Basic ${base64EncodeUtf8(`${username}:${password}`)}`;
+    }
+    targets.push({ label: "WebDAV", url, authHeader });
+  }
+
+  if (dom.syncEnableServer.checked) {
+    const serverBaseUrl = String(dom.syncServerBaseUrl.value || "").trim();
+    if (!serverBaseUrl) {
+      setStatus("服务器配置不完整：请填写服务地址");
+      return null;
+    }
+    let url;
+    try {
+      const normalizedBase = serverBaseUrl.endsWith("/") ? serverBaseUrl : `${serverBaseUrl}/`;
+      url = new URL("v1/sync/payload", normalizedBase).toString();
+    } catch {
+      setStatus("服务器地址格式不正确");
+      return null;
+    }
+    const token = String(dom.syncServerToken.value || "").trim();
+    const authHeader = token ? `Bearer ${token}` : null;
+    targets.push({ label: "服务器", url, authHeader });
+  }
+
+  if (targets.length === 0) {
+    setStatus("请至少启用一个远端同步源（WebDAV 或 自建服务器）");
+    return null;
+  }
+  return targets;
+}
+
+async function pullRemotePayload(target) {
+  const headers = {
+    Accept: "application/json",
+  };
+  if (target.authHeader) {
+    headers.Authorization = target.authHeader;
+  }
+  const response = await fetch(target.url, {
+    method: "GET",
+    headers,
+    cache: "no-store",
+  });
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  const text = await response.text();
+  if (!String(text || "").trim()) {
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`远端 JSON 解析失败: ${error.message}`);
+  }
+  const payload = parseSyncBundlePayload(parsed, { requireBundleSchema: true });
+  if (!payload) {
+    throw new Error("远端数据格式错误，仅支持 pass.sync.bundle.v2");
+  }
+  return payload;
+}
+
+async function pushRemotePayload(target, payload) {
+  const bundle = await buildSyncBundleFromPayload(payload);
+  const headers = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  if (target.authHeader) {
+    headers.Authorization = target.authHeader;
+  }
+  const response = await fetch(target.url, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(bundle, null, 2),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+}
+
+async function buildSyncBundleFromPayload(payload) {
+  const deviceName = await getDeviceName();
+  const accounts = Array.isArray(payload?.accounts)
+    ? payload.accounts.map(normalizeAccountShape)
+    : [];
+  const rawPasskeys = Array.isArray(payload?.passkeys)
+    ? payload.passkeys.map(normalizePasskeyShape)
+    : [];
+  const passkeys = buildUnifiedPasskeys(accounts, rawPasskeys);
+  const folders = Array.isArray(payload?.folders)
+    ? payload.folders.map(normalizeFolderShape)
+    : [];
+  return {
+    schema: SYNC_BUNDLE_SCHEMA_V2,
+    exportedAtMs: Date.now(),
+    source: {
+      app: "pass-extension",
+      platform: "chrome-extension",
+      deviceName,
+      formatVersion: 2,
+    },
+    payload: {
+      accounts,
+      passkeys,
+      folders,
+    },
+  };
+}
+
+function base64EncodeUtf8(input) {
+  const bytes = new TextEncoder().encode(String(input || ""));
+  let binary = "";
+  for (const value of bytes) {
+    binary += String.fromCharCode(value);
+  }
+  return btoa(binary);
+}
+
 async function buildSyncBundle() {
   const [deviceName, stored] = await Promise.all([
     getDeviceName(),
@@ -313,9 +630,10 @@ async function buildSyncBundle() {
   const accounts = Array.isArray(stored[STORAGE_KEY_ACCOUNTS])
     ? stored[STORAGE_KEY_ACCOUNTS].map(normalizeAccountShape)
     : [];
-  const passkeys = Array.isArray(stored[STORAGE_KEY_PASSKEYS])
+  const storedPasskeys = Array.isArray(stored[STORAGE_KEY_PASSKEYS])
     ? stored[STORAGE_KEY_PASSKEYS].map(normalizePasskeyShape)
     : [];
+  const passkeys = buildUnifiedPasskeys(accounts, storedPasskeys);
   const folders = Array.isArray(stored[STORAGE_KEY_FOLDERS])
     ? stored[STORAGE_KEY_FOLDERS].map(normalizeFolderShape)
     : [];
@@ -337,12 +655,13 @@ async function buildSyncBundle() {
   };
 }
 
-function parseSyncBundlePayload(input) {
+function parseSyncBundlePayload(input, { requireBundleSchema = false } = {}) {
   if (!input || typeof input !== "object") return null;
   const schema = String(input?.schema || "");
-  const rawPayload = (schema === SYNC_BUNDLE_SCHEMA_V2 || schema === SYNC_BUNDLE_SCHEMA_V1)
-    ? input.payload
-    : input;
+  const hasSchema = schema.length > 0;
+  if (hasSchema && schema !== SYNC_BUNDLE_SCHEMA_V2) return null;
+  if (requireBundleSchema && !hasSchema) return null;
+  const rawPayload = hasSchema ? input.payload : input;
   if (!rawPayload || typeof rawPayload !== "object") return null;
   return {
     accounts: Array.isArray(rawPayload.accounts) ? rawPayload.accounts : [],
@@ -1738,16 +2057,7 @@ function normalizeAccountShape(account) {
 
 function normalizePasskeyShape(item) {
   const now = Date.now();
-  const rawCompat = String(item?.createCompatMethod || "").trim().toLowerCase();
-  const normalizedCompat = (
-    rawCompat === "standard" ||
-    rawCompat === "user_name_fallback" ||
-    rawCompat === "rs256" ||
-    rawCompat === "user_name_fallback+rs256" ||
-    rawCompat === "unknown_linked"
-  )
-    ? rawCompat
-    : (Number(item?.alg || -7) === -257 ? "rs256" : "standard");
+  const normalizedCompat = normalizePasskeyCreateCompatMethod(item?.createCompatMethod, item?.alg);
   return {
     credentialIdB64u: String(item?.credentialIdB64u || item?.id || "").trim(),
     rpId: normalizeDomain(item?.rpId || ""),
@@ -1764,6 +2074,20 @@ function normalizePasskeyShape(item) {
     mode: String(item?.mode || "managed"),
     createCompatMethod: normalizedCompat,
   };
+}
+
+function normalizePasskeyCreateCompatMethod(input, alg) {
+  const value = String(input || "").trim().toLowerCase();
+  if (
+    value === "standard" ||
+    value === "user_name_fallback" ||
+    value === "rs256" ||
+    value === "user_name_fallback+rs256" ||
+    value === "unknown_linked"
+  ) {
+    return value;
+  }
+  return Number(alg) === -257 ? "rs256" : "standard";
 }
 
 function normalizeFolderShape(item) {
@@ -1829,6 +2153,55 @@ function normalizeSites(sites) {
 function normalizePasskeyCredentialIds(input) {
   const values = Array.isArray(input) ? input : [];
   return [...new Set(values.map((item) => String(item || "").trim()).filter(Boolean))].sort();
+}
+
+function buildUnifiedPasskeys(accountsInput, passkeysInput) {
+  const now = Date.now();
+  const accounts = Array.isArray(accountsInput) ? accountsInput.map(normalizeAccountShape) : [];
+  const storedPasskeys = Array.isArray(passkeysInput) ? passkeysInput.map(normalizePasskeyShape) : [];
+  const linkedById = new Map();
+
+  for (const account of accounts) {
+    const ids = normalizePasskeyCredentialIds(account?.passkeyCredentialIds || []);
+    if (ids.length === 0) continue;
+    const rpId = normalizeDomain((account?.sites && account.sites[0]) || account?.canonicalSite || "");
+    const userName = normalizeUsername(account?.username || account?.usernameAtCreate || "");
+    const createdAtMs = Number(account?.createdAtMs || now);
+
+    for (const rawId of ids) {
+      const credentialIdB64u = String(rawId || "").trim();
+      if (!credentialIdB64u) continue;
+      const existing = linkedById.get(credentialIdB64u);
+      if (existing) {
+        if (!existing.rpId && rpId) {
+          existing.rpId = rpId;
+        }
+        if (!existing.userName && userName) {
+          existing.userName = userName;
+        }
+        continue;
+      }
+      linkedById.set(credentialIdB64u, {
+        credentialIdB64u,
+        rpId,
+        userName,
+        displayName: "",
+        userHandleB64u: "",
+        alg: -7,
+        signCount: 0,
+        privateJwk: null,
+        publicJwk: null,
+        createdAtMs,
+        updatedAtMs: 0,
+        lastUsedAtMs: null,
+        mode: "linked-account",
+        createCompatMethod: "unknown_linked",
+      });
+    }
+  }
+
+  const linkedPasskeys = Array.from(linkedById.values()).filter((item) => String(item.rpId || "").trim().length > 0);
+  return mergePasskeyCollections(storedPasskeys, linkedPasskeys);
 }
 
 function normalizeUsername(value) {
@@ -2141,6 +2514,7 @@ function mergeSamePasskey(lhs, rhs) {
   const rightUpdated = Number(right.updatedAtMs || right.createdAtMs || 0);
   const newer = leftUpdated >= rightUpdated ? left : right;
   const older = newer === left ? right : left;
+  const resolvedAlg = Number(newer.alg || older.alg || -7);
 
   return {
     credentialIdB64u: newer.credentialIdB64u || older.credentialIdB64u,
@@ -2156,6 +2530,10 @@ function mergeSamePasskey(lhs, rhs) {
     updatedAtMs: Math.max(leftUpdated, rightUpdated),
     lastUsedAtMs: Math.max(Number(left.lastUsedAtMs || 0), Number(right.lastUsedAtMs || 0)) || null,
     mode: newer.mode || older.mode || "managed",
+    createCompatMethod: normalizePasskeyCreateCompatMethod(
+      newer.createCompatMethod || older.createCompatMethod,
+      resolvedAlg
+    ),
   };
 }
 

@@ -16,6 +16,51 @@
             <input id="deviceName" type="text" placeholder="例如 ChromeMac" />
             <button id="saveDeviceName">保存</button>
           </div>
+          <div class="row">
+            <label>同步源</label>
+            <div id="syncSourceChecks" class="sync-source-checks">
+              <label><input id="syncEnableWebdav" type="checkbox" /> WebDAV</label>
+              <label><input id="syncEnableServer" type="checkbox" /> 自建服务器</label>
+            </div>
+            <button id="saveSyncSettings">保存</button>
+          </div>
+          <div id="syncWebdavFields">
+            <div class="row">
+              <label for="syncWebdavBaseUrl">WebDAV</label>
+              <input id="syncWebdavBaseUrl" type="text" placeholder="https://dav.example.com/remote.php/dav/files/<user>/" />
+              <span></span>
+            </div>
+            <div class="row">
+              <label for="syncWebdavPath">远端路径</label>
+              <input id="syncWebdavPath" type="text" placeholder="pass-sync-bundle-v2.json" />
+              <span></span>
+            </div>
+            <div class="row">
+              <label for="syncWebdavUsername">用户名</label>
+              <input id="syncWebdavUsername" type="text" placeholder="可选" />
+              <span></span>
+            </div>
+            <div class="row">
+              <label for="syncWebdavPassword">密码</label>
+              <input id="syncWebdavPassword" type="password" placeholder="可选" />
+              <span></span>
+            </div>
+          </div>
+          <div id="syncServerFields" class="hidden">
+            <div class="row">
+              <label for="syncServerBaseUrl">服务地址</label>
+              <input id="syncServerBaseUrl" type="text" placeholder="https://sync.example.com/" />
+              <span></span>
+            </div>
+            <div class="row">
+              <label for="syncServerToken">访问令牌</label>
+              <input id="syncServerToken" type="password" placeholder="可选 Bearer Token" />
+              <span></span>
+            </div>
+          </div>
+          <div class="actions">
+            <button id="syncNowBtn">立即远端同步</button>
+          </div>
           <p id="deviceStatus" class="status"></p>
         </details>
       </section>

@@ -276,7 +276,8 @@
         "signCount",
         "createdAtMs",
         "updatedAtMs",
-        "mode"
+        "mode",
+        "createCompatMethod"
       ],
       "properties": {
         "credentialIdB64u": {
@@ -332,6 +333,16 @@
         },
         "mode": {
           "type": "string"
+        },
+        "createCompatMethod": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "user_name_fallback",
+            "rs256",
+            "user_name_fallback+rs256",
+            "unknown_linked"
+          ]
         }
       }
     }

@@ -52,7 +52,7 @@ struct ContentView: View {
         let allAccounts = store.accounts
         let activeAccounts = allAccounts.filter { !$0.isDeleted }
         let deletedAccounts = allAccounts.filter(\.isDeleted)
-        let passkeyAccounts = activeAccounts.filter { $0.password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let passkeyAccounts = activeAccounts.filter(accountHasPasskey)
         let totpAccounts = activeAccounts.filter { !$0.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let accounts = filteredAccounts(from: allAccounts)
         let editingAccount = store.accountForEditing()
@@ -417,6 +417,15 @@ struct ContentView: View {
             .buttonStyle(.plain)
             .help("点击复制站点别名")
 
+            if let passkeySummary = passkeySummaryText(for: account) {
+                Text(passkeySummary)
+                    .font(store.textFont(size: store.scaledTextSize(12)))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             let secret = account.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines)
             if !secret.isEmpty {
                 TotpRowView(
@@ -439,7 +448,7 @@ struct ContentView: View {
             scopedAccounts = allAccounts.filter { !$0.isDeleted }
         case .passkeys:
             scopedAccounts = allAccounts.filter {
-                !$0.isDeleted && $0.password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                !$0.isDeleted && accountHasPasskey($0)
             }
         case .totp:
             scopedAccounts = allAccounts.filter {
@@ -549,6 +558,71 @@ struct ContentView: View {
         }
         .padding(14)
         .frame(width: 220, alignment: .leading)
+    }
+
+    private func accountHasPasskey(_ account: PasswordAccount) -> Bool {
+        if !account.passkeyCredentialIds.isEmpty {
+            return true
+        }
+        return matchedPasskeys(for: account).first != nil
+    }
+
+    private func passkeySummaryText(for account: PasswordAccount) -> String? {
+        guard accountHasPasskey(account) else { return nil }
+        if let passkey = matchedPasskeys(for: account).first {
+            return "通行密钥 RP ID: \(passkey.rpId) 用户名: \(passkey.userName)"
+        }
+
+        let fallbackRpId = DomainUtils.normalize(account.sites.first ?? account.canonicalSite)
+        let fallbackUserName = account.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "通行密钥 RP ID: \(fallbackRpId.isEmpty ? "-" : fallbackRpId) 用户名: \(fallbackUserName)"
+    }
+
+    private func matchedPasskeys(for account: PasswordAccount) -> [PasskeyRecord] {
+        let linkedIds = Set(
+            account.passkeyCredentialIds
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        )
+
+        let byLinkedIds = store.passkeys.filter { passkey in
+            linkedIds.contains(passkey.credentialIdB64u.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+
+        if !byLinkedIds.isEmpty {
+            return byLinkedIds.sorted { lhs, rhs in
+                if lhs.updatedAtMs != rhs.updatedAtMs {
+                    return lhs.updatedAtMs > rhs.updatedAtMs
+                }
+                return lhs.credentialIdB64u < rhs.credentialIdB64u
+            }
+        }
+
+        let username = account.username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !username.isEmpty else { return [] }
+
+        let accountSites = Set(account.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
+        guard !accountSites.isEmpty else { return [] }
+        let accountEtld1 = Set(accountSites.map { DomainUtils.etldPlusOne(for: $0) }.filter { !$0.isEmpty })
+
+        let fallbackMatched = store.passkeys.filter { passkey in
+            let passkeyUsername = passkey.userName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard passkeyUsername == username else { return false }
+            let passkeyRpId = DomainUtils.normalize(passkey.rpId)
+            guard !passkeyRpId.isEmpty else { return false }
+            if accountSites.contains(passkeyRpId) {
+                return true
+            }
+            let passkeyEtld1 = DomainUtils.etldPlusOne(for: passkeyRpId)
+            return !passkeyEtld1.isEmpty && accountEtld1.contains(passkeyEtld1)
+        }
+
+        return fallbackMatched.sorted { lhs, rhs in
+            if lhs.updatedAtMs != rhs.updatedAtMs {
+                return lhs.updatedAtMs > rhs.updatedAtMs
+            }
+            return lhs.credentialIdB64u < rhs.credentialIdB64u
+        }
     }
 
     private func prepareMoveToFolder(from contextAccountId: UUID) {
@@ -1069,6 +1143,34 @@ private struct AccountEditPopup: View {
                             )
                     }
 
+                    VStack(alignment: .leading, spacing: 6) {
+                        if resolvedPasskeys.isEmpty {
+                            Text("当前账号未匹配到通行密钥（可能尚未绑定或仅存在于其它端）。")
+                                .font(store.textFont(size: store.scaledTextSize(11)))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            ForEach(resolvedPasskeys, id: \.credentialIdB64u) { passkey in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("通行密钥 RPID:\(passkey.rpId)|用户名:\(passkey.userName)")
+                                        .font(store.textFont(size: store.scaledTextSize(11)))
+                                        .textSelection(.enabled)
+                                    Text(
+                                        "创建时间:\(store.displayTime(passkey.createdAtMs))更新时间:\(store.displayTime(passkey.updatedAtMs))上次使用:\(store.displayTime(passkey.lastUsedAtMs))"
+                                    )
+                                    .font(store.textFont(size: store.scaledTextSize(11)))
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                if passkey.credentialIdB64u != resolvedPasskeys.last?.credentialIdB64u {
+                                    Divider()
+                                }
+                            }
+                        }
+                    }
+                    .padding(.top, 2)
+
                     Divider()
 
                     VStack(alignment: .leading, spacing: 2) {
@@ -1108,4 +1210,46 @@ private struct AccountEditPopup: View {
         }
         .shadow(radius: 18)
     }
+
+    private var resolvedPasskeys: [PasskeyRecord] {
+        let ids = Set(
+            editingAccount.passkeyCredentialIds
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        )
+
+        var matchedById: [PasskeyRecord] = []
+        if !ids.isEmpty {
+            matchedById = store.passkeys.filter { ids.contains($0.credentialIdB64u.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        }
+
+        let fallbackMatched: [PasskeyRecord]
+        if matchedById.isEmpty {
+            let username = editingAccount.username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let accountSites = Set(editingAccount.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
+            let accountEtld1 = Set(accountSites.map { DomainUtils.etldPlusOne(for: $0) }.filter { !$0.isEmpty })
+            fallbackMatched = store.passkeys.filter { passkey in
+                let passkeyUsername = passkey.userName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                guard !username.isEmpty, passkeyUsername == username else { return false }
+                let rpId = DomainUtils.normalize(passkey.rpId)
+                guard !rpId.isEmpty else { return false }
+                if accountSites.contains(rpId) {
+                    return true
+                }
+                let rpEtld1 = DomainUtils.etldPlusOne(for: rpId)
+                return !rpEtld1.isEmpty && accountEtld1.contains(rpEtld1)
+            }
+        } else {
+            fallbackMatched = []
+        }
+
+        let merged = matchedById + fallbackMatched
+        return merged.sorted { lhs, rhs in
+            if lhs.updatedAtMs != rhs.updatedAtMs {
+                return lhs.updatedAtMs > rhs.updatedAtMs
+            }
+            return lhs.credentialIdB64u < rhs.credentialIdB64u
+        }
+    }
+
 }
