@@ -1026,6 +1026,9 @@ final class AccountStore: ObservableObject {
     }
 
     func moveAccountBefore(sourceId: UUID, targetId: UUID) {
+        guard editingAccountId == nil else {
+            return
+        }
         guard sourceId != targetId else { return }
         guard let source = accounts.first(where: { $0.id == sourceId }),
               let target = accounts.first(where: { $0.id == targetId })

@@ -56,6 +56,7 @@ struct ContentView: View {
         let totpAccounts = activeAccounts.filter { !$0.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let accounts = filteredAccounts(from: allAccounts)
         let editingAccount = store.accountForEditing()
+        let isEditingAccount = editingAccount != nil
 
         return ZStack {
             HStack(spacing: 0) {
@@ -166,12 +167,15 @@ struct ContentView: View {
                                                 orderedAccountIds: accounts.map(\.id)
                                             )
                                         }
-                                        .onDrag {
-                                            beginDragging(account.id, orderedAccountIds: accounts.map(\.id))
-                                            return NSItemProvider(object: account.id.uuidString as NSString)
-                                        }
-                                        .onDrop(of: [UTType.text], isTargeted: nil) { _ in
-                                            handleAccountReorderDrop(targetAccountId: account.id)
+                                        .applyIf(!isEditingAccount) { view in
+                                            view
+                                                .onDrag {
+                                                    beginDragging(account.id, orderedAccountIds: accounts.map(\.id))
+                                                    return NSItemProvider(object: account.id.uuidString as NSString)
+                                                }
+                                                .onDrop(of: [UTType.text], isTargeted: nil) { _ in
+                                                    return handleAccountReorderDrop(targetAccountId: account.id)
+                                                }
                                         }
                                         .contextMenu {
                                             Button("编辑") {
@@ -212,6 +216,7 @@ struct ContentView: View {
                                 }
                             }
                         }
+                        .allowsHitTesting(!isEditingAccount)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -439,6 +444,7 @@ struct ContentView: View {
             }
         }
         .padding(.vertical, 4)
+        .textSelection(.enabled)
     }
 
     private func filteredAccounts(from allAccounts: [PasswordAccount]) -> [PasswordAccount] {
@@ -744,6 +750,10 @@ struct ContentView: View {
     }
 
     private func beginDragging(_ accountId: UUID, orderedAccountIds _: [UUID]) {
+        guard store.accountForEditing() == nil else {
+            draggingAccountIds = []
+            return
+        }
         if !selectedAccountIds.contains(accountId) {
             selectedAccountIds = [accountId]
             selectionAnchorAccountId = accountId
@@ -755,6 +765,10 @@ struct ContentView: View {
     }
 
     private func handleAccountReorderDrop(targetAccountId: UUID) -> Bool {
+        guard store.accountForEditing() == nil else {
+            draggingAccountIds = []
+            return false
+        }
         guard let sourceAccountId = draggingAccountIds.first else {
             return false
         }
@@ -767,6 +781,10 @@ struct ContentView: View {
     }
 
     private func handleDropToFolder(_ folderId: UUID) -> Bool {
+        guard store.accountForEditing() == nil else {
+            draggingAccountIds = []
+            return false
+        }
         guard !draggingAccountIds.isEmpty else {
             return false
         }
@@ -896,6 +914,17 @@ struct ContentView: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(Color.secondary.opacity(0.35), lineWidth: prominent ? 0 : 1)
             )
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func applyIf<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
+        }
     }
 }
 

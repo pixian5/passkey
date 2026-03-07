@@ -167,6 +167,16 @@ async function init() {
   dom.allAccountsSearchFieldsPanel.addEventListener("click", (event) => {
     event.stopPropagation();
   });
+  dom.allAccountsList.addEventListener("dragstart", blockAccountDragWhileEditing, true);
+  dom.allAccountsList.addEventListener("dragover", blockAccountDragWhileEditing, true);
+  dom.allAccountsList.addEventListener("drop", blockAccountDragWhileEditing, true);
+  dom.allAccountsList.addEventListener("dragend", () => {
+    if (!editingAccountId) return;
+    draggingAccountId = "";
+  }, true);
+  document.addEventListener("dragstart", blockAccountDragWhileEditingGlobal, true);
+  document.addEventListener("dragover", blockAccountDragWhileEditingGlobal, true);
+  document.addEventListener("drop", blockAccountDragWhileEditingGlobal, true);
   document.addEventListener("click", (event) => {
     closeContextMenuIfNeeded(event);
     if (dom.allAccountsSearchFieldsPanel.classList.contains("hidden")) return;
@@ -193,6 +203,20 @@ async function init() {
   dom.exportBtn.addEventListener("click", exportJson);
   dom.importBtn.addEventListener("click", importJson);
   dom.clearBtn.addEventListener("click", clearAll);
+}
+
+function blockAccountDragWhileEditing(event) {
+  if (!editingAccountId) return;
+  event.preventDefault();
+  event.stopPropagation();
+  draggingAccountId = "";
+}
+
+function blockAccountDragWhileEditingGlobal(event) {
+  if (!editingAccountId) return;
+  event.preventDefault();
+  event.stopPropagation();
+  draggingAccountId = "";
 }
 
 async function loadDeviceName() {
@@ -1072,6 +1096,7 @@ function renderAllAccounts(inputAccounts) {
 
   dom.allAccountsCount.textContent = `(${accounts.length})`;
   dom.allAccountsList.innerHTML = "";
+  dom.allAccountsList.classList.toggle("drag-disabled", Boolean(editingAccountId));
 
   if (accounts.length === 0) {
     const empty = document.createElement("p");
@@ -1084,7 +1109,8 @@ function renderAllAccounts(inputAccounts) {
   for (const account of accounts) {
     const card = document.createElement("article");
     card.className = "account";
-    card.draggable = true;
+    const dragDisabled = Boolean(editingAccountId);
+    card.draggable = !dragDisabled;
 
     const titleRow = document.createElement("div");
     titleRow.className = "account-title-row";
@@ -1105,32 +1131,34 @@ function renderAllAccounts(inputAccounts) {
     titleRow.appendChild(pinBtn);
     card.appendChild(titleRow);
 
-    card.addEventListener("dragstart", (event) => {
-      draggingAccountId = account.accountId;
-      event.dataTransfer?.setData("text/plain", account.accountId);
-      if (event.dataTransfer) {
-        event.dataTransfer.effectAllowed = "move";
-      }
-    });
-    card.addEventListener("dragover", (event) => {
-      const source = accountsRaw.find((item) => String(item?.accountId || "") === draggingAccountId);
-      if (!source) return;
-      if (isPinnedAccount(source) !== isPinnedAccount(account)) return;
-      event.preventDefault();
-      if (event.dataTransfer) {
-        event.dataTransfer.dropEffect = "move";
-      }
-    });
-    card.addEventListener("drop", async (event) => {
-      event.preventDefault();
-      const sourceId = draggingAccountId;
-      draggingAccountId = "";
-      if (!sourceId || sourceId === account.accountId) return;
-      await reorderAccount(sourceId, account.accountId);
-    });
-    card.addEventListener("dragend", () => {
-      draggingAccountId = "";
-    });
+    if (!dragDisabled) {
+      card.addEventListener("dragstart", (event) => {
+        draggingAccountId = account.accountId;
+        event.dataTransfer?.setData("text/plain", account.accountId);
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = "move";
+        }
+      });
+      card.addEventListener("dragover", (event) => {
+        const source = accountsRaw.find((item) => String(item?.accountId || "") === draggingAccountId);
+        if (!source) return;
+        if (isPinnedAccount(source) !== isPinnedAccount(account)) return;
+        event.preventDefault();
+        if (event.dataTransfer) {
+          event.dataTransfer.dropEffect = "move";
+        }
+      });
+      card.addEventListener("drop", async (event) => {
+        event.preventDefault();
+        const sourceId = draggingAccountId;
+        draggingAccountId = "";
+        if (!sourceId || sourceId === account.accountId) return;
+        await reorderAccount(sourceId, account.accountId);
+      });
+      card.addEventListener("dragend", () => {
+        draggingAccountId = "";
+      });
+    }
 
     const meta = document.createElement("div");
     meta.className = "meta";
@@ -1158,6 +1186,7 @@ function renderAllAccounts(inputAccounts) {
     const editBtn = document.createElement("button");
     editBtn.textContent = editingAccountId === account.accountId ? "收起编辑" : "编辑";
     editBtn.addEventListener("click", () => {
+      draggingAccountId = "";
       editingAccountId = editingAccountId === account.accountId ? null : account.accountId;
       renderAllAccounts(accountsRaw);
     });
@@ -1376,6 +1405,7 @@ function renderCurrentView(inputAccounts) {
   let accounts = sortAccountsForDisplay(currentVisibleAccounts(inputAccounts));
 
   dom.allAccountsList.innerHTML = "";
+  dom.allAccountsList.classList.toggle("drag-disabled", Boolean(editingAccountId));
   if (accounts.length === 0) {
     const empty = document.createElement("p");
     empty.className = "empty";
@@ -1388,7 +1418,8 @@ function renderCurrentView(inputAccounts) {
   for (const account of accounts) {
     const card = document.createElement("article");
     card.className = "account";
-    card.draggable = !isRecycle;
+    const dragDisabled = isRecycle || Boolean(editingAccountId);
+    card.draggable = !dragDisabled;
     card.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -1419,32 +1450,31 @@ function renderCurrentView(inputAccounts) {
     }
     card.appendChild(titleRow);
 
-    card.addEventListener("dragstart", (event) => {
-      if (isRecycle) return;
-      draggingAccountId = account.accountId;
-      event.dataTransfer?.setData("text/plain", account.accountId);
-      if (event.dataTransfer) {
-        event.dataTransfer.effectAllowed = "move";
-      }
-    });
-    card.addEventListener("dragover", (event) => {
-      if (isRecycle) return;
-      const source = accountsRaw.find((item) => String(item?.accountId || "") === draggingAccountId);
-      if (!source) return;
-      if (isPinnedAccount(source) !== isPinnedAccount(account)) return;
-      event.preventDefault();
-    });
-    card.addEventListener("drop", async (event) => {
-      if (isRecycle) return;
-      event.preventDefault();
-      const sourceId = draggingAccountId;
-      draggingAccountId = "";
-      if (!sourceId || sourceId === account.accountId) return;
-      await reorderAccount(sourceId, account.accountId);
-    });
-    card.addEventListener("dragend", () => {
-      draggingAccountId = "";
-    });
+    if (!dragDisabled) {
+      card.addEventListener("dragstart", (event) => {
+        draggingAccountId = account.accountId;
+        event.dataTransfer?.setData("text/plain", account.accountId);
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = "move";
+        }
+      });
+      card.addEventListener("dragover", (event) => {
+        const source = accountsRaw.find((item) => String(item?.accountId || "") === draggingAccountId);
+        if (!source) return;
+        if (isPinnedAccount(source) !== isPinnedAccount(account)) return;
+        event.preventDefault();
+      });
+      card.addEventListener("drop", async (event) => {
+        event.preventDefault();
+        const sourceId = draggingAccountId;
+        draggingAccountId = "";
+        if (!sourceId || sourceId === account.accountId) return;
+        await reorderAccount(sourceId, account.accountId);
+      });
+      card.addEventListener("dragend", () => {
+        draggingAccountId = "";
+      });
+    }
 
     const meta = document.createElement("div");
     meta.className = "meta";
@@ -1473,6 +1503,7 @@ function renderCurrentView(inputAccounts) {
       const editBtn = document.createElement("button");
       editBtn.textContent = editingAccountId === account.accountId ? "收起编辑" : "编辑";
       editBtn.addEventListener("click", () => {
+        draggingAccountId = "";
         editingAccountId = editingAccountId === account.accountId ? null : account.accountId;
         renderCurrentView(accountsRaw);
       });
@@ -1646,6 +1677,7 @@ function openAccountContextMenu({ account, x, y }) {
       {
         label: "编辑",
         onSelect: async () => {
+          draggingAccountId = "";
           editingAccountId = editingAccountId === account.accountId ? null : account.accountId;
           renderCurrentView(accountsRaw);
         },
@@ -2046,6 +2078,7 @@ async function togglePin(accountId) {
 
 async function reorderAccount(sourceId, targetId) {
   if (!sourceId || !targetId || sourceId === targetId) return;
+  if (editingAccountId) return;
 
   const next = cloneAccounts(accountsRaw).map(normalizeAccountShape);
   const source = next.find((item) => String(item.accountId || "") === String(sourceId));

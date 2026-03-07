@@ -216,7 +216,31 @@ function bindEvents() {
   dom.accountSearch.addEventListener("input", renderAccounts);
   dom.passkeyCurrentSiteOnly.addEventListener("change", renderAccounts);
   dom.passkeySearch.addEventListener("input", renderAccounts);
+  dom.accountList.addEventListener("dragstart", blockAccountDragWhileEditing, true);
+  dom.accountList.addEventListener("dragover", blockAccountDragWhileEditing, true);
+  dom.accountList.addEventListener("drop", blockAccountDragWhileEditing, true);
+  dom.accountList.addEventListener("dragend", () => {
+    if (!editingAccountId) return;
+    draggingAccountId = "";
+  }, true);
+  document.addEventListener("dragstart", blockAccountDragWhileEditingGlobal, true);
+  document.addEventListener("dragover", blockAccountDragWhileEditingGlobal, true);
+  document.addEventListener("drop", blockAccountDragWhileEditingGlobal, true);
   bindLockRuntimeEvents();
+}
+
+function blockAccountDragWhileEditing(event) {
+  if (!editingAccountId) return;
+  event.preventDefault();
+  event.stopPropagation();
+  draggingAccountId = "";
+}
+
+function blockAccountDragWhileEditingGlobal(event) {
+  if (!editingAccountId) return;
+  event.preventDefault();
+  event.stopPropagation();
+  draggingAccountId = "";
 }
 
 function bindLockRuntimeEvents() {
@@ -593,6 +617,7 @@ function renderAccounts() {
   dom.accountSearchSection.classList.toggle("hidden", locked || showPasskeyMode);
   dom.passkeySection.classList.toggle("passkey-hidden", locked || !showPasskeyMode);
   dom.accountList.style.display = showPasskeyMode ? "none" : "grid";
+  dom.accountList.classList.toggle("drag-disabled", Boolean(editingAccountId));
 
   if (locked) {
     dom.accountList.innerHTML = "";
@@ -646,7 +671,8 @@ function renderAccounts() {
   for (const account of visibleAccounts) {
     const card = document.createElement("article");
     card.className = "account";
-    card.draggable = !showRecycleBinMode;
+    const dragDisabled = showRecycleBinMode || Boolean(editingAccountId);
+    card.draggable = !dragDisabled;
 
     const titleRow = document.createElement("div");
     titleRow.className = "account-title-row";
@@ -670,35 +696,34 @@ function renderAccounts() {
     }
     card.appendChild(titleRow);
 
-    card.addEventListener("dragstart", (event) => {
-      if (showRecycleBinMode) return;
-      draggingAccountId = account.accountId;
-      event.dataTransfer?.setData("text/plain", account.accountId);
-      if (event.dataTransfer) {
-        event.dataTransfer.effectAllowed = "move";
-      }
-    });
-    card.addEventListener("dragover", (event) => {
-      if (showRecycleBinMode) return;
-      const source = accounts.find((item) => item.accountId === draggingAccountId);
-      if (!source) return;
-      if (isPinnedAccount(source) !== isPinnedAccount(account)) return;
-      event.preventDefault();
-      if (event.dataTransfer) {
-        event.dataTransfer.dropEffect = "move";
-      }
-    });
-    card.addEventListener("drop", async (event) => {
-      if (showRecycleBinMode) return;
-      event.preventDefault();
-      const sourceId = draggingAccountId;
-      draggingAccountId = "";
-      if (!sourceId || sourceId === account.accountId) return;
-      await reorderAccount(sourceId, account.accountId);
-    });
-    card.addEventListener("dragend", () => {
-      draggingAccountId = "";
-    });
+    if (!dragDisabled) {
+      card.addEventListener("dragstart", (event) => {
+        draggingAccountId = account.accountId;
+        event.dataTransfer?.setData("text/plain", account.accountId);
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = "move";
+        }
+      });
+      card.addEventListener("dragover", (event) => {
+        const source = accounts.find((item) => item.accountId === draggingAccountId);
+        if (!source) return;
+        if (isPinnedAccount(source) !== isPinnedAccount(account)) return;
+        event.preventDefault();
+        if (event.dataTransfer) {
+          event.dataTransfer.dropEffect = "move";
+        }
+      });
+      card.addEventListener("drop", async (event) => {
+        event.preventDefault();
+        const sourceId = draggingAccountId;
+        draggingAccountId = "";
+        if (!sourceId || sourceId === account.accountId) return;
+        await reorderAccount(sourceId, account.accountId);
+      });
+      card.addEventListener("dragend", () => {
+        draggingAccountId = "";
+      });
+    }
 
     const meta = document.createElement("div");
     meta.className = "meta";
@@ -746,6 +771,7 @@ function renderAccounts() {
       const editBtn = document.createElement("button");
       editBtn.textContent = editingAccountId === account.accountId ? "收起编辑" : "编辑";
       editBtn.addEventListener("click", () => {
+        draggingAccountId = "";
         editingAccountId = editingAccountId === account.accountId ? null : account.accountId;
         renderAccounts();
       });
@@ -1488,6 +1514,7 @@ async function togglePin(accountId) {
 
 async function reorderAccount(sourceId, targetId) {
   if (!sourceId || !targetId || sourceId === targetId) return;
+  if (editingAccountId) return;
 
   const next = accounts.map((item) => ({ ...item, sites: [...(item.sites || [])] }));
   const source = next.find((item) => item.accountId === sourceId);
