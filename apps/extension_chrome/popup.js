@@ -9,10 +9,18 @@ import {
   sortAccountsForDisplay,
   syncAliasGroups,
 } from "./account_core.js";
+import {
+  appendHistoryEntry,
+  STORAGE_KEY_DATA_BUMP,
+  ensureDataStorageReady,
+  getAccounts as getAccountsFromDataStore,
+  getHistory as getHistoryFromDataStore,
+  getPasskeys as getPasskeysFromDataStore,
+  setAccounts as setAccountsToDataStore,
+  setPasskeys as setPasskeysToDataStore,
+} from "./data_store.js";
 
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
-const STORAGE_KEY_ACCOUNTS = "pass.accounts";
-const STORAGE_KEY_PASSKEYS = "pass.passkeys";
 const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
 const STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
 const STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
@@ -40,6 +48,7 @@ const POPUP_TOAST_DURATION_MS = 3000;
 const dom = {
   openCreateModalBtn: document.getElementById("openCreateModal"),
   openSortModalBtn: document.getElementById("openSortModal"),
+  openHistoryModalBtn: document.getElementById("openHistoryModal"),
   modeActiveBtn: document.getElementById("modeActive"),
   modeAllBtn: document.getElementById("modeAll"),
   modeRecycleBtn: document.getElementById("modeRecycle"),
@@ -66,6 +75,9 @@ const dom = {
   closeSortModalBtn: document.getElementById("closeSortModal"),
   sortModal: document.getElementById("sortModal"),
   sortModalList: document.getElementById("sortModalList"),
+  closeHistoryModalBtn: document.getElementById("closeHistoryModal"),
+  historyModal: document.getElementById("historyModal"),
+  historyModalList: document.getElementById("historyModalList"),
   lockOverlay: document.getElementById("lockOverlay"),
   lockMessage: document.getElementById("lockMessage"),
   unlockPasswordInput: document.getElementById("unlockPasswordInput"),
@@ -90,6 +102,7 @@ let accountSearchFields = new Set();
 let popupToastTimer = null;
 let sortModalOrderIds = [];
 let sortModalDraggingAccountId = "";
+let historyEntries = [];
 let lockSettings = {
   enabled: false,
   policy: LOCK_POLICY_ONCE_UNTIL_QUIT,
@@ -109,7 +122,9 @@ init().catch((error) => {
 async function init() {
   await resolveCurrentDomain();
   await Promise.all([
+    ensureDataStorageReady(),
     loadAccounts(),
+    loadHistory(),
     loadPasskeys(),
     loadLockSettingsFromStorage(),
   ]);
@@ -125,15 +140,8 @@ function handleStorageChanged(changes, areaName) {
   if (areaName !== "local") return;
   let shouldRender = false;
 
-  if (changes[STORAGE_KEY_ACCOUNTS]) {
-    const next = Array.isArray(changes[STORAGE_KEY_ACCOUNTS].newValue) ? changes[STORAGE_KEY_ACCOUNTS].newValue : [];
-    accounts = next.map(normalizeAccountShape);
-    shouldRender = true;
-  }
-  if (changes[STORAGE_KEY_PASSKEYS]) {
-    const next = Array.isArray(changes[STORAGE_KEY_PASSKEYS].newValue) ? changes[STORAGE_KEY_PASSKEYS].newValue : [];
-    passkeys = next.map(normalizePasskeyShape);
-    shouldRender = true;
+  if (changes[STORAGE_KEY_DATA_BUMP]) {
+    void reloadBusinessData();
   }
   const lockChanged = Object.keys(changes).some((key) => LOCK_STORAGE_KEYS.has(key));
   if (lockChanged) {
@@ -152,9 +160,21 @@ function handleStorageChanged(changes, areaName) {
   }
 }
 
+async function reloadBusinessData() {
+  await Promise.all([loadAccounts(), loadPasskeys(), loadHistory()]);
+  renderAccounts();
+  if (!dom.sortModal.classList.contains("modal-hidden")) {
+    renderSortModalList();
+  }
+  if (!dom.historyModal.classList.contains("modal-hidden")) {
+    renderHistoryModalList();
+  }
+}
+
 function bindEvents() {
   dom.openCreateModalBtn.addEventListener("click", openCreateModal);
   dom.openSortModalBtn.addEventListener("click", openSortModal);
+  dom.openHistoryModalBtn.addEventListener("click", openHistoryModal);
   dom.createAccountBtn.addEventListener("click", createAccountFromInputs);
   dom.createTotpPasteRawBtn.addEventListener("click", () => {
     void pasteRawTotpSecretFromClipboard({
@@ -177,6 +197,7 @@ function bindEvents() {
   });
   dom.closeCreateModalBtn.addEventListener("click", closeCreateModal);
   dom.closeSortModalBtn.addEventListener("click", closeSortModal);
+  dom.closeHistoryModalBtn.addEventListener("click", closeHistoryModal);
   dom.createModal.addEventListener("click", (event) => {
     if (event.target === dom.createModal) {
       closeCreateModal();
@@ -185,6 +206,11 @@ function bindEvents() {
   dom.sortModal.addEventListener("click", (event) => {
     if (event.target === dom.sortModal) {
       closeSortModal();
+    }
+  });
+  dom.historyModal.addEventListener("click", (event) => {
+    if (event.target === dom.historyModal) {
+      closeHistoryModal();
     }
   });
   dom.unlockBtn.addEventListener("click", () => {
@@ -205,6 +231,10 @@ function bindEvents() {
     }
     if (event.key === "Escape" && !dom.sortModal.classList.contains("modal-hidden")) {
       closeSortModal();
+      return;
+    }
+    if (event.key === "Escape" && !dom.historyModal.classList.contains("modal-hidden")) {
+      closeHistoryModal();
       return;
     }
     if (event.key === "Escape" && !dom.accountSearchFieldsPanel.classList.contains("hidden")) {
@@ -332,6 +362,7 @@ function setPopupLockedState(nextLocked, message = "") {
   if (locked) {
     closeCreateModal();
     closeSortModal();
+    closeHistoryModal();
     closeAccountSearchFieldsPanel();
     dom.unlockPasswordInput.value = "";
     clearIdleLockTimer();
@@ -521,6 +552,46 @@ function closeSortModal() {
   dom.sortModalList.innerHTML = "";
 }
 
+async function openHistoryModal() {
+  await loadHistory();
+  renderHistoryModalList();
+  dom.historyModal.classList.remove("modal-hidden");
+  dom.historyModal.setAttribute("aria-hidden", "false");
+}
+
+function closeHistoryModal() {
+  dom.historyModal.classList.add("modal-hidden");
+  dom.historyModal.setAttribute("aria-hidden", "true");
+  dom.historyModalList.innerHTML = "";
+}
+
+function renderHistoryModalList() {
+  dom.historyModalList.innerHTML = "";
+  if (historyEntries.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "暂无历史记录";
+    dom.historyModalList.appendChild(empty);
+    return;
+  }
+
+  for (const entry of historyEntries) {
+    const item = document.createElement("div");
+    item.className = "history-modal-item";
+
+    const time = document.createElement("div");
+    time.className = "history-modal-item-time";
+    time.textContent = formatTime(entry.timestampMs);
+    item.appendChild(time);
+
+    const action = document.createElement("div");
+    action.textContent = entry.action;
+    item.appendChild(action);
+
+    dom.historyModalList.appendChild(item);
+  }
+}
+
 function closeAccountSearchFieldsPanel() {
   dom.accountSearchFieldsPanel.classList.add("hidden");
 }
@@ -543,25 +614,48 @@ async function getDeviceName() {
 }
 
 async function loadAccounts() {
-  const stored = await chrome.storage.local.get([STORAGE_KEY_ACCOUNTS]);
-  const raw = Array.isArray(stored[STORAGE_KEY_ACCOUNTS]) ? stored[STORAGE_KEY_ACCOUNTS] : [];
+  const raw = await getAccountsFromDataStore();
   accounts = raw.map(normalizeAccountShape);
 }
 
 async function loadPasskeys() {
-  const stored = await chrome.storage.local.get([STORAGE_KEY_PASSKEYS]);
-  const raw = Array.isArray(stored[STORAGE_KEY_PASSKEYS]) ? stored[STORAGE_KEY_PASSKEYS] : [];
+  const raw = await getPasskeysFromDataStore();
   passkeys = raw.map(normalizePasskeyShape);
+}
+
+async function loadHistory() {
+  const raw = await getHistoryFromDataStore();
+  historyEntries = (Array.isArray(raw) ? raw : [])
+    .map((item) => ({
+      id: String(item?.id || ""),
+      timestampMs: Number(item?.timestampMs || 0),
+      action: String(item?.action || "").trim(),
+    }))
+    .filter((item) => item.timestampMs > 0 && item.action.length > 0)
+    .sort((lhs, rhs) => {
+      if (lhs.timestampMs !== rhs.timestampMs) return rhs.timestampMs - lhs.timestampMs;
+      return lhs.id.localeCompare(rhs.id);
+    });
+}
+
+async function appendHistory(action, timestampMs = Date.now()) {
+  const normalizedAction = String(action || "").trim();
+  if (!normalizedAction) return;
+  await appendHistoryEntry({ action: normalizedAction, timestampMs });
+  if (!dom.historyModal.classList.contains("modal-hidden")) {
+    await loadHistory();
+    renderHistoryModalList();
+  }
 }
 
 async function persistAccounts(nextAccounts) {
   accounts = nextAccounts.map(normalizeAccountShape);
-  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: accounts });
+  await setAccountsToDataStore(accounts);
 }
 
 async function persistPasskeys(nextPasskeys) {
   passkeys = nextPasskeys.map(normalizePasskeyShape);
-  await chrome.storage.local.set({ [STORAGE_KEY_PASSKEYS]: passkeys });
+  await setPasskeysToDataStore(passkeys);
 }
 
 function normalizeAccountShape(account) {
@@ -640,12 +734,14 @@ function renderAccounts() {
 
   dom.openCreateModalBtn.classList.toggle("hidden", locked || !(showAccountMode || showAllAccountsMode));
   dom.openSortModalBtn.classList.toggle("hidden", locked || !(showAccountMode || showAllAccountsMode));
+  dom.openHistoryModalBtn.classList.toggle("hidden", locked);
   dom.accountSearchSection.classList.toggle("hidden", locked || showPasskeyMode);
   dom.passkeySection.classList.toggle("passkey-hidden", locked || !showPasskeyMode);
   dom.accountList.style.display = showPasskeyMode ? "none" : "grid";
 
   if (locked) {
     closeSortModal();
+    closeHistoryModal();
     dom.accountList.innerHTML = "";
     const empty = document.createElement("p");
     empty.className = "empty";
@@ -1328,20 +1424,23 @@ async function createAccountFromInputs() {
   const createdAtMs = Date.now();
   const deviceName = await getDeviceName();
   const next = accounts.map((item) => ({ ...item, sites: [...(item.sites || [])] }));
-  next.push(
-    createAccount({
-      site: sites[0],
-      sites,
-      username,
-      password,
-      totpSecret,
-      createdAtMs,
-      deviceName,
-    })
-  );
+  const created = createAccount({
+    site: sites[0],
+    sites,
+    username,
+    password,
+    totpSecret,
+    createdAtMs,
+    deviceName,
+  });
+  next.push(created);
 
   const synced = syncAliasGroups(next);
   await persistAccounts(synced);
+  await appendHistory(
+    `${created.accountId}：创建账号（用户名改为${historyValueSnippet(username)}，密码改为${historyValueSnippet(password)}）`,
+    createdAtMs
+  );
   dom.createSiteInput.value = "";
   dom.createUsernameInput.value = "";
   dom.createPasswordInput.value = "";
@@ -1373,6 +1472,7 @@ async function addCurrentDomainToAccount(accountId) {
 
   const synced = syncAliasGroups(next);
   await persistAccounts(synced);
+  await appendHistory(`${target.accountId}：站点别名改为${historyValueSnippet(target.sites.join(", "))}`);
   setStatus(`已将 ${domain} 加入账号别名组并自动同步`);
   renderAccounts();
 }
@@ -1388,11 +1488,13 @@ async function saveAccountEdit(accountId, draft) {
   const now = Date.now();
   const deviceName = await getDeviceName();
   let changed = false;
+  const historyMessages = [];
 
   const nextSites = parseSites(draft.sitesText);
   if (nextSites.length > 0 && JSON.stringify(nextSites) !== JSON.stringify(target.sites)) {
     target.sites = nextSites;
     changed = true;
+    historyMessages.push(`站点别名改为${historyValueSnippet(nextSites.join(", "))}`);
   }
 
   const nextUsername = draft.username.trim();
@@ -1400,12 +1502,14 @@ async function saveAccountEdit(accountId, draft) {
     target.username = nextUsername;
     target.usernameUpdatedAtMs = now;
     changed = true;
+    historyMessages.push(`用户名改为${historyValueSnippet(nextUsername)}`);
   }
 
   if (draft.password !== target.password) {
     target.password = draft.password;
     target.passwordUpdatedAtMs = now;
     changed = true;
+    historyMessages.push(`密码改为${historyValueSnippet(draft.password)}`);
   }
 
   const nextTotpSecret = normalizeTotpSecret(draft.totpSecret);
@@ -1418,18 +1522,21 @@ async function saveAccountEdit(accountId, draft) {
     target.totpSecret = nextTotpSecret;
     target.totpUpdatedAtMs = now;
     changed = true;
+    historyMessages.push(`TOTP 改为${historyValueSnippet(nextTotpSecret)}`);
   }
 
   if (draft.recoveryCodes !== target.recoveryCodes) {
     target.recoveryCodes = draft.recoveryCodes;
     target.recoveryCodesUpdatedAtMs = now;
     changed = true;
+    historyMessages.push(`恢复码改为${historyValueSnippet(draft.recoveryCodes)}`);
   }
 
   if (draft.note !== target.note) {
     target.note = draft.note;
     target.noteUpdatedAtMs = now;
     changed = true;
+    historyMessages.push(`备注改为${historyValueSnippet(draft.note)}`);
   }
 
   if (!changed) {
@@ -1441,6 +1548,9 @@ async function saveAccountEdit(accountId, draft) {
   target.lastOperatedDeviceName = deviceName;
   const synced = syncAliasGroups(next);
   await persistAccounts(synced);
+  for (const message of historyMessages) {
+    await appendHistory(`${target.accountId}：${message}`, now);
+  }
   editingAccountId = null;
   setStatus("账号编辑已保存");
   renderAccounts();
@@ -1466,6 +1576,7 @@ async function moveToRecycleBin(accountId) {
   target.updatedAtMs = now;
   target.lastOperatedDeviceName = deviceName;
   await persistAccounts(next);
+  await appendHistory(`${target.accountId}：移入回收站`, now);
   setStatus("账号已移入回收站");
   renderAccounts();
 }
@@ -1490,6 +1601,7 @@ async function restoreFromRecycleBin(accountId) {
   target.updatedAtMs = now;
   target.lastOperatedDeviceName = deviceName;
   await persistAccounts(next);
+  await appendHistory(`${target.accountId}：从回收站恢复`, now);
   setStatus("账号已从回收站恢复");
   renderAccounts();
 }
@@ -1510,6 +1622,7 @@ async function permanentlyDelete(accountId) {
     editingAccountId = null;
   }
   await persistAccounts(next);
+  await appendHistory(`${accountId}：永久删除`);
   setStatus(`账号已永久删除: ${accountId}`);
   renderAccounts();
 }
@@ -1549,6 +1662,7 @@ async function deletePasskey(credentialIdB64u) {
   if (accountsChanged) {
     await persistAccounts(nextAccounts);
   }
+  await appendHistory(`通行密钥删除：${targetId}`, now);
   setStatus(`通行密钥已移除: ${shortenMiddle(targetId, 16)}`);
   renderAccounts();
 }
@@ -1612,6 +1726,7 @@ async function editPasskeyUsername(credentialIdB64u, currentUserName = "") {
   if (accountsChanged) {
     await persistAccounts(nextAccounts);
   }
+  await appendHistory(`通行密钥用户名改为${historyValueSnippet(nextUserName)}：${targetId}`, now);
   setStatus(`通行密钥用户名已更新: ${nextUserName}`);
   renderAccounts();
 }
@@ -1699,6 +1814,10 @@ async function togglePin(accountId, { fromSortModal = false } = {}) {
   target.updatedAtMs = now;
   target.lastOperatedDeviceName = deviceName;
   await persistAccounts(next);
+  await appendHistory(
+    nextPinned ? `${target.accountId}：账号置顶` : `${target.accountId}：取消账号置顶`,
+    now
+  );
   setStatus(nextPinned ? "账号已置顶" : "已取消置顶");
   renderAccounts();
   if (fromSortModal && !dom.sortModal.classList.contains("modal-hidden")) {
@@ -1714,6 +1833,16 @@ function parseSites(raw) {
       .map((value) => value.trim())
       .filter(Boolean)
   );
+}
+
+function historyValueSnippet(input, maxLength = 80) {
+  const normalized = String(input || "")
+    .replace(/\r\n/g, " ")
+    .replace(/[\r\n]/g, " ")
+    .trim();
+  if (!normalized) return "(空)";
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength)}...`;
 }
 
 function normalizePasskeyId(value) {

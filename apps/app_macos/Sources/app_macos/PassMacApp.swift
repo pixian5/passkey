@@ -74,6 +74,12 @@ private struct PassMacAccountCommands: Commands {
 
     var body: some Commands {
         CommandMenu("账号") {
+            Button("生成演示账号") {
+                store.addDemoAccountsIfNeeded()
+            }
+
+            Divider()
+
             Button("全选账号") {
                 store.triggerSelectAllAccounts()
             }

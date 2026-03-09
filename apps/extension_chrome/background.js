@@ -7,27 +7,29 @@ import {
   normalizeUsername,
   syncAliasGroups,
 } from "./account_core.js";
+import {
+  ensureDataStorageReady,
+  getAccounts as getAccountsFromDataStore,
+  setAccounts as setAccountsToDataStore,
+} from "./data_store.js";
 
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
-const STORAGE_KEY_ACCOUNTS = "pass.accounts";
 const CONTEXT_MENU_ID_ALL_ACCOUNTS = "pass.context.all_accounts";
 const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
 
 chrome.runtime.onInstalled.addListener(async () => {
-  const stored = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME, STORAGE_KEY_ACCOUNTS]);
+  const stored = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
 
   if (!stored[STORAGE_KEY_DEVICE_NAME]) {
     await chrome.storage.local.set({ [STORAGE_KEY_DEVICE_NAME]: "ChromeMac" });
   }
 
-  if (!Array.isArray(stored[STORAGE_KEY_ACCOUNTS])) {
-    await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: [] });
-  }
-
+  await ensureDataStorageReady();
   await ensurePasskeyStorageShape();
   ensureActionContextMenu();
 });
 
+void ensureDataStorageReady();
 void ensurePasskeyStorageShape();
 ensureActionContextMenu();
 
@@ -69,6 +71,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       case "PASS_PASSKEY_OPERATION":
         sendResponse(await handlePasskeyOperationAndSyncAccount(message.payload));
+        return;
+      case "PASS_CONTENT_GET_ACCOUNTS":
+        sendResponse(await handleContentGetAccounts());
         return;
       default:
         return;
@@ -197,15 +202,27 @@ async function handleSaveFromLogin(payload) {
   return { ok: true, mode: "created" };
 }
 
+async function handleContentGetAccounts() {
+  const accounts = await getAccounts();
+  return {
+    ok: true,
+    accounts: accounts.map((account) => ({
+      sites: normalizeSites(account?.sites || []),
+      username: String(account?.username || ""),
+      password: String(account?.password || ""),
+      isDeleted: Boolean(account?.isDeleted),
+    })),
+  };
+}
+
 async function getAccounts() {
-  const stored = await chrome.storage.local.get([STORAGE_KEY_ACCOUNTS]);
-  const raw = Array.isArray(stored[STORAGE_KEY_ACCOUNTS]) ? stored[STORAGE_KEY_ACCOUNTS] : [];
+  const raw = await getAccountsFromDataStore();
   return raw.map(normalizeAccountShape);
 }
 
 async function setAccounts(accounts) {
   const normalized = (Array.isArray(accounts) ? accounts : []).map(normalizeAccountShape);
-  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: normalized });
+  await setAccountsToDataStore(normalized);
 }
 
 async function upsertAccountForPasskey(accountHint) {

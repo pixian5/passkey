@@ -16,7 +16,10 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "app_macos"
+            name: "app_macos",
+            linkerSettings: [
+                .linkedLibrary("sqlite3"),
+            ]
         ),
     ]
 )

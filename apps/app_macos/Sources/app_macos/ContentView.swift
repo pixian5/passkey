@@ -45,6 +45,7 @@ struct ContentView: View {
     @State private var showMoveToFolderSheet: Bool = false
     @State private var pendingMoveAccountIds: [UUID] = []
     @State private var moveFolderCheckedIds: Set<UUID> = []
+    @State private var showHistoryPopup: Bool = false
     @State private var draggingAccountIds: [UUID] = []
     @State private var localKeyDownMonitor: Any?
 
@@ -69,45 +70,6 @@ struct ContentView: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 8) {
-                    GroupBox {
-                        HStack(spacing: 8) {
-                            Button {
-                                openWindow(id: "create-account")
-                            } label: {
-                                topActionButtonLabel(
-                                    "新建账号",
-                                    prominent: true
-                                )
-                            }
-                            .buttonStyle(.plain)
-
-                            Button {
-                                store.addDemoAccountsIfNeeded()
-                            } label: {
-                                topActionButtonLabel(
-                                    "生成演示账号",
-                                    prominent: false
-                                )
-                            }
-                            .buttonStyle(.plain)
-
-                            Button {
-                                store.deleteAllAccounts()
-                            } label: {
-                                topActionButtonLabel(
-                                    "删除全部账号",
-                                    prominent: true,
-                                    tint: .red
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(activeAccounts.isEmpty)
-                            .opacity(activeAccounts.isEmpty ? 0.45 : 1)
-
-                            Spacer()
-                        }
-                    }
-
                     HStack(spacing: 8) {
                         Button {
                             showSearchFieldPopover.toggle()
@@ -133,6 +95,11 @@ struct ContentView: View {
                             }
                             .buttonStyle(.plain)
                         }
+                        Button("历史记录") {
+                            showHistoryPopup = true
+                        }
+                        .font(store.buttonFont(size: max(12, CGFloat(store.uiButtonFontSize - 4))))
+                        .buttonStyle(.bordered)
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
@@ -160,6 +127,11 @@ struct ContentView: View {
                                                         : Color.clear
                                                 )
                                         )
+                                        .overlay {
+                                            SecondaryClickSelectionCatcher {
+                                                _ = adoptContextMenuSelection(for: account.id)
+                                            }
+                                        }
                                         .contentShape(Rectangle())
                                         .onTapGesture {
                                             handleAccountRowTap(
@@ -186,6 +158,9 @@ struct ContentView: View {
                                             Divider()
 
                                             if !account.isDeleted {
+                                                let targetIds = contextMenuTargetAccountIds(for: account.id)
+                                                let targetCount = targetIds.count
+
                                                 Button(store.accountIsPinned(account) ? "取消置顶" : "置顶") {
                                                     selectOnlyAccountIfNoMultiModifier(account.id)
                                                     store.togglePin(for: account)
@@ -198,18 +173,33 @@ struct ContentView: View {
 
                                                 Divider()
 
-                                                Button("删除", role: .destructive) {
-                                                    selectOnlyAccountIfNoMultiModifier(account.id)
-                                                    store.moveToRecycleBin(for: account)
+                                                Button(targetCount > 1 ? "删除选中账号 (\(targetCount))" : "删除", role: .destructive) {
+                                                    let ids = adoptContextMenuSelection(for: account.id)
+                                                    if ids.count > 1 {
+                                                        store.moveToRecycleBin(accountIds: ids)
+                                                    } else {
+                                                        store.moveToRecycleBin(for: account)
+                                                    }
                                                 }
                                             } else {
-                                                Button("恢复账号") {
-                                                    selectOnlyAccountIfNoMultiModifier(account.id)
-                                                    store.restoreFromRecycleBin(for: account)
+                                                let targetIds = contextMenuTargetAccountIds(for: account.id)
+                                                let targetCount = targetIds.count
+
+                                                Button(targetCount > 1 ? "恢复选中账号 (\(targetCount))" : "恢复账号") {
+                                                    let ids = adoptContextMenuSelection(for: account.id)
+                                                    if ids.count > 1 {
+                                                        store.restoreFromRecycleBin(accountIds: ids)
+                                                    } else {
+                                                        store.restoreFromRecycleBin(for: account)
+                                                    }
                                                 }
-                                                Button("永久删除", role: .destructive) {
-                                                    selectOnlyAccountIfNoMultiModifier(account.id)
-                                                    store.permanentlyDeleteFromRecycleBin(account)
+                                                Button(targetCount > 1 ? "永久删除选中账号 (\(targetCount))" : "永久删除", role: .destructive) {
+                                                    let ids = adoptContextMenuSelection(for: account.id)
+                                                    if ids.count > 1 {
+                                                        store.permanentlyDeleteFromRecycleBin(accountIds: ids)
+                                                    } else {
+                                                        store.permanentlyDeleteFromRecycleBin(account)
+                                                    }
                                                 }
                                             }
                                         }
@@ -235,8 +225,7 @@ struct ContentView: View {
                 selectionAnchorAccountId = nil
             }
             .onChange(of: store.selectAllAccountsSignal) { _ in
-                selectedAccountIds = Set(accounts.map(\.id))
-                selectionAnchorAccountId = accounts.first?.id
+                selectAllVisibleAccounts()
             }
             .onChange(of: accounts.map(\.id)) { ids in
                 selectedAccountIds = selectedAccountIds.intersection(Set(ids))
@@ -257,6 +246,19 @@ struct ContentView: View {
 
                 moveToFolderSheet
                     .padding(26)
+            }
+
+            if showHistoryPopup {
+                Color.black.opacity(0.16)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        showHistoryPopup = false
+                    }
+
+                HistoryPopup(store: store) {
+                    showHistoryPopup = false
+                }
+                .padding(26)
             }
 
             if let editingAccount {
@@ -283,21 +285,42 @@ struct ContentView: View {
             sidebarItem(title: "全部 (\(activeCount))", selected: selectedSidebarFilter == .all) {
                 selectedSidebarFilter = .all
             }
+            .contextMenu {
+                Button("新建账号") {
+                    openWindow(id: "create-account")
+                }
+            }
             sidebarItem(title: "通行密钥 (\(passkeyCount))", selected: selectedSidebarFilter == .passkeys) {
                 selectedSidebarFilter = .passkeys
+            }
+            .contextMenu {
+                Button("新建账号") {
+                    openWindow(id: "create-account")
+                }
             }
             sidebarItem(title: "验证码 (\(totpCount))", selected: selectedSidebarFilter == .totp) {
                 selectedSidebarFilter = .totp
             }
+            .contextMenu {
+                Button("新建账号") {
+                    openWindow(id: "create-account")
+                }
+            }
             sidebarItem(title: "回收站 (\(recycleCount))", selected: selectedSidebarFilter == .recycle) {
                 selectedSidebarFilter = .recycle
+            }
+            .contextMenu {
+                Button("清空回收站", role: .destructive) {
+                    confirmAndClearRecycleBin()
+                }
+                .disabled(recycleCount == 0)
             }
 
             Divider()
 
             HStack {
                 Text("文件夹 (\(store.folders.count))")
-                    .font(store.textFont(size: store.scaledTextSize(13), weight: .semibold))
+                .font(store.textFont(size: store.scaledTextSize(13), weight: .semibold))
                 Spacer()
                 Button("新建") {
                     newFolderName = ""
@@ -305,6 +328,12 @@ struct ContentView: View {
                 }
                 .font(store.buttonFont(size: max(12, CGFloat(store.uiButtonFontSize - 4))))
                 .buttonStyle(.bordered)
+            }
+            .contentShape(Rectangle())
+            .contextMenu {
+                Button("新建账号") {
+                    openWindow(id: "create-account")
+                }
             }
 
             if store.folders.isEmpty {
@@ -364,6 +393,11 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
+        .overlay {
+            SecondaryClickSelectionCatcher {
+                action()
+            }
+        }
     }
 
     private func accountRow(_ account: PasswordAccount) -> some View {
@@ -825,9 +859,9 @@ struct ContentView: View {
                 return event
             }
 
-            if let textResponder = NSApp.keyWindow?.firstResponder as? NSTextView,
-               textResponder.isEditable
-            {
+            // In main list, Cmd+A always selects all visible accounts (all/folder/recycle/current filter).
+            // Keep text select-all behavior only in popup/forms.
+            if showCreateFolderSheet || showMoveToFolderSheet || store.accountForEditing() != nil {
                 return event
             }
 
@@ -850,8 +884,8 @@ struct ContentView: View {
         ).intersection(.deviceIndependentFlagsMask)
 
         if flags.contains(.shift) {
-            if let anchor = selectionAnchorAccountId,
-               let anchorIndex = orderedAccountIds.firstIndex(of: anchor),
+            let anchor = selectionAnchorAccountId ?? selectedAccountIds.first ?? accountId
+            if let anchorIndex = orderedAccountIds.firstIndex(of: anchor),
                let targetIndex = orderedAccountIds.firstIndex(of: accountId)
             {
                 let lower = min(anchorIndex, targetIndex)
@@ -860,7 +894,9 @@ struct ContentView: View {
             } else {
                 selectedAccountIds = [accountId]
             }
-            selectionAnchorAccountId = accountId
+            if selectionAnchorAccountId == nil {
+                selectionAnchorAccountId = anchor
+            }
             return
         }
 
@@ -889,32 +925,47 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
-    private func topActionButtonLabel(
-        _ title: String,
-        prominent: Bool,
-        tint: Color = .accentColor
-    ) -> some View {
-        let buttonSize = CGFloat(store.uiButtonFontSize)
-        let verticalPadding = max(6, buttonSize * 0.22)
-        let minHeight = max(44, buttonSize + 24)
-
-        Text(title)
-            .font(store.buttonFont(weight: .semibold))
-            .lineLimit(1)
-            .padding(.horizontal, 18)
-            .padding(.vertical, verticalPadding)
-            .frame(minHeight: minHeight)
-            .foregroundStyle(prominent ? Color.white : Color.primary)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(prominent ? tint : Color.secondary.opacity(0.14))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.secondary.opacity(0.35), lineWidth: prominent ? 0 : 1)
-            )
+    private func contextMenuTargetAccountIds(for accountId: UUID) -> Set<UUID> {
+        if selectedAccountIds.contains(accountId), !selectedAccountIds.isEmpty {
+            return selectedAccountIds
+        }
+        return [accountId]
     }
+
+    private func adoptContextMenuSelection(for accountId: UUID) -> Set<UUID> {
+        let targetIds = contextMenuTargetAccountIds(for: accountId)
+        if selectedAccountIds != targetIds {
+            selectedAccountIds = targetIds
+        }
+        selectionAnchorAccountId = accountId
+        return targetIds
+    }
+
+    private func selectAllVisibleAccounts() {
+        let ids = filteredAccounts(from: store.accounts).map(\.id)
+        selectedAccountIds = Set(ids)
+        selectionAnchorAccountId = ids.first
+    }
+
+    private func confirmAndClearRecycleBin() {
+        let deletedCount = store.accounts.filter(\.isDeleted).count
+        guard deletedCount > 0 else {
+            store.statusMessage = "回收站为空"
+            return
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "清空回收站"
+        alert.informativeText = "将永久删除回收站中的 \(deletedCount) 条账号，此操作不可恢复。"
+        alert.addButton(withTitle: "清空")
+        alert.addButton(withTitle: "取消")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            store.permanentlyDeleteAllFromRecycleBin()
+        }
+    }
+
 }
 
 private extension View {
@@ -924,6 +975,79 @@ private extension View {
             transform(self)
         } else {
             self
+        }
+    }
+}
+
+private struct SecondaryClickSelectionCatcher: NSViewRepresentable {
+    let onSecondaryClick: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onSecondaryClick: onSecondaryClick)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = SecondaryClickPassthroughView()
+        view.onSecondaryClick = context.coordinator.onSecondaryClick
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? SecondaryClickPassthroughView)?.onSecondaryClick = context.coordinator.onSecondaryClick
+    }
+
+    final class Coordinator {
+        let onSecondaryClick: () -> Void
+
+        init(onSecondaryClick: @escaping () -> Void) {
+            self.onSecondaryClick = onSecondaryClick
+        }
+    }
+}
+
+private final class SecondaryClickPassthroughView: NSView {
+    var onSecondaryClick: (() -> Void)?
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard bounds.contains(point), let event = NSApp.currentEvent else {
+            return nil
+        }
+
+        switch event.type {
+        case .rightMouseDown:
+            return self
+        case .leftMouseDown where event.modifierFlags.contains(.control):
+            return self
+        default:
+            return nil
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) {
+            onSecondaryClick?()
+        }
+        if let nextResponder {
+            nextResponder.mouseDown(with: event)
+        } else {
+            super.mouseDown(with: event)
+        }
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        onSecondaryClick?()
+        if let nextResponder {
+            nextResponder.rightMouseDown(with: event)
+        } else {
+            super.rightMouseDown(with: event)
+        }
+    }
+
+    override func otherMouseDown(with event: NSEvent) {
+        if let nextResponder {
+            nextResponder.otherMouseDown(with: event)
+        } else {
+            super.otherMouseDown(with: event)
         }
     }
 }
@@ -961,6 +1085,63 @@ private struct TotpRowView: View {
         let prefix = code.prefix(3)
         let suffix = code.suffix(3)
         return "\(prefix) \(suffix)"
+    }
+}
+
+private struct HistoryPopup: View {
+    @ObservedObject var store: AccountStore
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("历史记录")
+                    .font(store.textFont(size: store.scaledTextSize(17), weight: .semibold))
+                Spacer()
+                Button("清空") {
+                    store.clearHistoryEntries()
+                }
+                .font(store.buttonFont())
+                .buttonStyle(.bordered)
+                .disabled(store.historyEntries.isEmpty)
+                Button("关闭") {
+                    onClose()
+                }
+                .font(store.buttonFont())
+                .buttonStyle(.bordered)
+            }
+
+            if store.historyEntries.isEmpty {
+                Text("暂无历史记录")
+                    .font(store.textFont(size: store.scaledTextSize(17)))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 220, alignment: .center)
+            } else {
+                List(store.historyEntries) { entry in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(store.displayTime(entry.timestampMs))
+                            .font(store.textFont(size: store.scaledTextSize(12), weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text(entry.action)
+                            .font(store.textFont(size: store.scaledTextSize(14)))
+                            .textSelection(.enabled)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .listStyle(.inset(alternatesRowBackgrounds: true))
+                .frame(minHeight: 300)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: 860)
+        .frame(minWidth: 760, minHeight: 460, alignment: .topLeading)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+        }
+        .shadow(radius: 18)
     }
 }
 

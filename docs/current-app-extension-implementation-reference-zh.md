@@ -61,13 +61,14 @@
   - `id: UUID/string`
   - `name: string`
   - `createdAtMs: int64`
+  - `updatedAtMs: int64`
 - 固定文件夹：
   - `id = F16A2C4E-4A2A-43D5-A670-3F1767D41001`（扩展显示时用小写）
   - `name = 新账号`
 - 语义：从“新建账号”面板创建的账号会自动进入该文件夹（mac）。
 
 ### 3.3 通行密钥记录（扩展侧）
-- 存储于 `pass.passkeys`，核心字段：
+- 存储于扩展 IndexedDB（`pass.local.db.v1` / `collections.passkeys`），核心字段：
   - `credentialIdB64u`
   - `rpId`
   - `userName`, `displayName`, `userHandleB64u`
@@ -79,26 +80,40 @@
 ## 4. 存储位置（当前）
 
 ### 4.1 macOS APP
-- 账号文件：
-  - `~/Library/Application Support/pass-mac/accounts.json`
+- 本地主库存储（SQLite + WAL）：
+  - `~/Library/Application Support/pass-mac/pass.db`
+  - 表：`kv(key, value, updated_at_ms)`，当前键：
+    - `accounts`
+    - `folders`
+    - `passkeys`
 - UserDefaults：
   - `pass.deviceName`
   - `pass.export.directoryPath`
-  - `pass.folders.data`
+  - `pass.sync.deviceId.v1`
+  - `pass.folders.data`（兼容镜像，主数据仍以 SQLite 为准）
   - `pass.ui.font.family`
   - `pass.ui.font.textSize`
   - `pass.ui.font.buttonSize`
   - `pass.ui.toast.duration`
 - iCloud（`NSUbiquitousKeyValueStore`）：
-  - `pass.accounts.blob.v1`（base64 JSON）
-  - `pass.accounts.updatedAtMs.v1`
+  - `pass.sync.payload.blob.v2`
+  - `pass.sync.payload.updatedAtMs.v2`
+- 兼容迁移来源（首次加载会迁移到 SQLite）：
+  - `~/Library/Application Support/pass-mac/accounts.json`
+  - `~/Library/Application Support/pass-mac/passkeys.json`
 
 ### 4.2 Chrome 扩展
-- `chrome.storage.local`：
+- 业务数据（账号/通行密钥/文件夹）：
+  - IndexedDB：`pass.local.db.v1`
+  - object store：`collections`
+  - key：`accounts` / `passkeys` / `folders`
+- `chrome.storage.local`（仅设置 + 迁移/变更信号）：
   - `pass.deviceName`
-  - `pass.accounts`
-  - `pass.passkeys`
-  - `pass.folders`
+  - `pass.sync.*`（同步配置）
+  - `pass.lock.*`（主密码和自动锁策略）
+  - `pass.sync.deviceId.v1`
+  - `pass.data.migratedToIndexedDb.v1`
+  - `pass.data.bump.v1`
 
 ## 5. 关键业务规则（当前实现）
 
@@ -118,14 +133,29 @@
 
 ### 5.3 排序与置顶
 - 列表规则：置顶组在前，普通组在后。
-- 组内排序使用：
-  - 置顶组：`pinnedSortOrder`
-  - 普通组：`regularSortOrder`
+- 组内排序优先级（APP 与扩展已对齐）：
+  - 先按 `updatedAtMs`（新到旧）
+  - 若相同再按手动排序号：
+    - 置顶组：`pinnedSortOrder`
+    - 普通组：`regularSortOrder`
 - 支持拖拽同组重排（跨组不允许）。
 
 ### 5.4 时间格式显示
 - UI 显示格式：`yy-M-d H:m:s`，例如 `26-3-14 9:2:8`。
 - 同步与冲突判断使用毫秒时间戳（`...AtMs`）。
+
+### 5.5 同步包与冲突内核
+- 同步包 schema：`pass.sync.bundle.v2`。
+- `source` 元信息包含：
+  - `app`
+  - `platform`
+  - `deviceName`
+  - `deviceId`
+  - `logicalClockMs`
+  - `formatVersion`
+- 扩展端同步冲突/合并已集中到共享内核：
+  - `/Users/x/code/pass/core/pass_core/js/sync_merge_core.js`
+  - `options.js` 通过该内核合并账号/文件夹/通行密钥，避免再次在多页面复制实现。
 
 ## 6. macOS 客户端 UI（当前）
 
@@ -200,7 +230,7 @@
   - 多行备注）
 
 ## 10. 当前限制与重设计提示
-- 当前“跨端自动同步”只完整覆盖 mac↔iCloud（账号）；扩展与移动端主要靠手动导入导出。
+- 当前同步实现仍是“整包（payload）级”同步，不是操作日志级（op-log）同步。
+- 逻辑主库建议放在同步层（云端对象/记录版本）；本地库作为离线可写副本已落地（APP=SQLite，扩展=IndexedDB），但服务端版本治理仍需继续完善。
 - 通行密钥私钥目前在扩展本地存储，安全模型仍需加强（见独立同步文档）。
-- 文件夹没有 `updatedAt`，跨端改名冲突只能采用弱规则（本地优先/固定规则），建议重构时补时间戳与操作日志。
-- 冲突解决依赖设备时间准确性，建议后续引入 HLC/服务器时间锚点。
+- 冲突解决仍依赖设备时间准确性，建议后续把 HLC/向量时钟正式落到同步协议与服务端裁决。

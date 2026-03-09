@@ -9,11 +9,23 @@ import {
   sortAccountsForDisplay,
   syncAliasGroups,
 } from "./account_core.js";
+import {
+  mergeAccountCollections as mergeAccountCollectionsCore,
+  mergeFolderCollections as mergeFolderCollectionsCore,
+  mergePasskeyCollections as mergePasskeyCollectionsCore,
+  reconcileAccountFolders as reconcileAccountFoldersCore,
+} from "../../core/pass_core/js/sync_merge_core.js";
+import {
+  appendHistoryEntry,
+  ensureDataStorageReady,
+  getAllData as getAllDataFromDataStore,
+  getHistory as getHistoryFromDataStore,
+  setAccounts as setAccountsToDataStore,
+  setAllData as setAllDataToDataStore,
+  setFolders as setFoldersToDataStore,
+} from "./data_store.js";
 
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
-const STORAGE_KEY_ACCOUNTS = "pass.accounts";
-const STORAGE_KEY_PASSKEYS = "pass.passkeys";
-const STORAGE_KEY_FOLDERS = "pass.folders";
 const STORAGE_KEY_SYNC_ENABLE_WEBDAV = "pass.sync.enableWebDAV.v3";
 const STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER = "pass.sync.enableSelfHostedServer.v3";
 const STORAGE_KEY_SYNC_WEBDAV_BASE_URL = "pass.sync.webdav.baseUrl.v2";
@@ -22,6 +34,7 @@ const STORAGE_KEY_SYNC_WEBDAV_USERNAME = "pass.sync.webdav.username.v2";
 const STORAGE_KEY_SYNC_WEBDAV_PASSWORD = "pass.sync.webdav.password.v2";
 const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
 const STORAGE_KEY_SYNC_SERVER_TOKEN = "pass.sync.server.token.v2";
+const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
 const STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
 const STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
 const STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
@@ -90,11 +103,15 @@ const dom = {
   allAccountsSearchFieldPassword: document.getElementById("allAccountsSearchFieldPassword"),
   allAccountsSearch: document.getElementById("allAccountsSearch"),
   openSortModalBtn: document.getElementById("openSortModal"),
+  openHistoryModalBtn: document.getElementById("openHistoryModal"),
   clearActiveAccountsBtn: document.getElementById("clearActiveAccounts"),
   clearRecycleBinBtn: document.getElementById("clearRecycleBin"),
   sortModal: document.getElementById("sortModal"),
   sortModalList: document.getElementById("sortModalList"),
   closeSortModalBtn: document.getElementById("closeSortModal"),
+  historyModal: document.getElementById("historyModal"),
+  historyModalList: document.getElementById("historyModalList"),
+  closeHistoryModalBtn: document.getElementById("closeHistoryModal"),
   payload: document.getElementById("payload"),
   refreshBtn: document.getElementById("refreshBtn"),
   exportSyncBundleBtn: document.getElementById("exportSyncBundleBtn"),
@@ -119,6 +136,7 @@ let contextMenuEscapeHandler = null;
 let lockCredentialExists = false;
 let sortModalOrderIds = [];
 let sortModalDraggingAccountId = "";
+let historyEntries = [];
 let optionsToastTimer = null;
 
 init().catch((error) => {
@@ -129,6 +147,7 @@ async function init() {
   await loadDeviceName();
   await loadSyncSettings();
   await loadLockSettings();
+  await ensureDataStorageReady();
   await refresh();
   startTotpRefreshTicker();
 
@@ -163,10 +182,17 @@ async function init() {
   dom.accountsTabRecycle.addEventListener("click", () => setAccountView("recycle"));
   dom.allAccountsSearch.addEventListener("input", () => renderCurrentView(accountsRaw));
   dom.openSortModalBtn.addEventListener("click", openSortModal);
+  dom.openHistoryModalBtn.addEventListener("click", openHistoryModal);
   dom.closeSortModalBtn.addEventListener("click", closeSortModal);
+  dom.closeHistoryModalBtn.addEventListener("click", closeHistoryModal);
   dom.sortModal.addEventListener("click", (event) => {
     if (event.target === dom.sortModal) {
       closeSortModal();
+    }
+  });
+  dom.historyModal.addEventListener("click", (event) => {
+    if (event.target === dom.historyModal) {
+      closeHistoryModal();
     }
   });
   dom.allAccountsSearchFieldsBtn.addEventListener("click", (event) => {
@@ -195,6 +221,10 @@ async function init() {
     }
     if (event.key === "Escape" && !dom.sortModal.classList.contains("hidden")) {
       closeSortModal();
+      return;
+    }
+    if (event.key === "Escape" && !dom.historyModal.classList.contains("hidden")) {
+      closeHistoryModal();
       return;
     }
     if (event.key === "Escape" && !dom.allAccountsSearchFieldsPanel.classList.contains("hidden")) {
@@ -227,6 +257,58 @@ async function saveDeviceName() {
   }
   await chrome.storage.local.set({ [STORAGE_KEY_DEVICE_NAME]: next });
   setDeviceStatus(`设备名称已保存为 ${next}`);
+}
+
+async function readBusinessDataFromStore() {
+  const stored = await getAllDataFromDataStore();
+  return {
+    accounts: Array.isArray(stored?.accounts) ? stored.accounts : [],
+    passkeys: Array.isArray(stored?.passkeys) ? stored.passkeys : [],
+    folders: Array.isArray(stored?.folders) ? stored.folders : [],
+  };
+}
+
+async function writeBusinessDataToStore({ accounts, passkeys, folders }) {
+  await setAllDataToDataStore({
+    accounts: Array.isArray(accounts) ? accounts : [],
+    passkeys: Array.isArray(passkeys) ? passkeys : [],
+    folders: Array.isArray(folders) ? folders : [],
+  });
+}
+
+async function loadHistory() {
+  const raw = await getHistoryFromDataStore();
+  historyEntries = (Array.isArray(raw) ? raw : [])
+    .map((item) => ({
+      id: String(item?.id || ""),
+      timestampMs: Number(item?.timestampMs || 0),
+      action: String(item?.action || "").trim(),
+    }))
+    .filter((item) => item.timestampMs > 0 && item.action.length > 0)
+    .sort((lhs, rhs) => {
+      if (lhs.timestampMs !== rhs.timestampMs) return rhs.timestampMs - lhs.timestampMs;
+      return lhs.id.localeCompare(rhs.id);
+    });
+}
+
+async function appendHistory(action, timestampMs = Date.now()) {
+  const normalizedAction = String(action || "").trim();
+  if (!normalizedAction) return;
+  await appendHistoryEntry({ action: normalizedAction, timestampMs });
+  if (!dom.historyModal.classList.contains("hidden")) {
+    await loadHistory();
+    renderHistoryModalList();
+  }
+}
+
+function historyValueSnippet(input, maxLength = 80) {
+  const normalized = String(input || "")
+    .replace(/\r\n/g, " ")
+    .replace(/[\r\n]/g, " ")
+    .trim();
+  if (!normalized) return "(空)";
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength)}...`;
 }
 
 async function loadSyncSettings() {
@@ -413,14 +495,8 @@ async function saveSyncSettings() {
 }
 
 async function refresh({ silent = false } = {}) {
-  const result = await chrome.storage.local.get([
-    STORAGE_KEY_ACCOUNTS,
-    STORAGE_KEY_PASSKEYS,
-    STORAGE_KEY_FOLDERS,
-  ]);
-  const accounts = Array.isArray(result[STORAGE_KEY_ACCOUNTS]) ? result[STORAGE_KEY_ACCOUNTS] : [];
-  const passkeys = Array.isArray(result[STORAGE_KEY_PASSKEYS]) ? result[STORAGE_KEY_PASSKEYS] : [];
-  const folders = Array.isArray(result[STORAGE_KEY_FOLDERS]) ? result[STORAGE_KEY_FOLDERS] : [];
+  const { accounts, passkeys, folders } = await readBusinessDataFromStore();
+  await loadHistory();
 
   accountsRaw = cloneAccounts(accounts);
   passkeysRaw = passkeys.map(normalizePasskeyShape);
@@ -435,6 +511,9 @@ async function refresh({ silent = false } = {}) {
   renderSidebar(accountsRaw);
   renderCurrentView(accountsRaw);
   setAccountView(activeAccountView);
+  if (!dom.historyModal.classList.contains("hidden")) {
+    renderHistoryModalList();
+  }
 
   if (!silent) {
     setStatus(`已加载 ${accountsRaw.length} 条账号，${passkeysRaw.length} 条通行密钥，${foldersRaw.length} 个文件夹`);
@@ -470,11 +549,8 @@ async function importJson() {
   const accounts = payload.accounts.map(normalizeAccountShape);
   const passkeys = buildUnifiedPasskeys(accounts, payload.passkeys);
   const folders = payload.folders.map(normalizeFolderShape);
-  await chrome.storage.local.set({
-    [STORAGE_KEY_ACCOUNTS]: accounts,
-    [STORAGE_KEY_PASSKEYS]: passkeys,
-    [STORAGE_KEY_FOLDERS]: folders,
-  });
+  await writeBusinessDataToStore({ accounts, passkeys, folders });
+  await appendHistory(`导入 JSON：账号 ${accounts.length} 条，通行密钥 ${passkeys.length} 条，文件夹 ${folders.length} 个`);
 
   editingAccountId = null;
   await refresh({ silent: true });
@@ -482,11 +558,8 @@ async function importJson() {
 }
 
 async function clearAll() {
-  await chrome.storage.local.set({
-    [STORAGE_KEY_ACCOUNTS]: [],
-    [STORAGE_KEY_PASSKEYS]: [],
-    [STORAGE_KEY_FOLDERS]: [],
-  });
+  await writeBusinessDataToStore({ accounts: [], passkeys: [], folders: [] });
+  await appendHistory("清空全部数据：账号、通行密钥、文件夹");
   editingAccountId = null;
   await refresh({ silent: true });
   setStatus("账号、通行密钥与文件夹已清空");
@@ -524,20 +597,16 @@ async function importSyncBundleAndMerge() {
     return;
   }
 
-  const localStored = await chrome.storage.local.get([
-    STORAGE_KEY_ACCOUNTS,
-    STORAGE_KEY_PASSKEYS,
-    STORAGE_KEY_FOLDERS,
-  ]);
-  const localAccounts = Array.isArray(localStored[STORAGE_KEY_ACCOUNTS])
-    ? localStored[STORAGE_KEY_ACCOUNTS].map(normalizeAccountShape)
+  const localStored = await readBusinessDataFromStore();
+  const localAccounts = Array.isArray(localStored.accounts)
+    ? localStored.accounts.map(normalizeAccountShape)
     : [];
-  const localStoredPasskeys = Array.isArray(localStored[STORAGE_KEY_PASSKEYS])
-    ? localStored[STORAGE_KEY_PASSKEYS].map(normalizePasskeyShape)
+  const localStoredPasskeys = Array.isArray(localStored.passkeys)
+    ? localStored.passkeys.map(normalizePasskeyShape)
     : [];
   const localPasskeys = buildUnifiedPasskeys(localAccounts, localStoredPasskeys);
-  const localFolders = Array.isArray(localStored[STORAGE_KEY_FOLDERS])
-    ? localStored[STORAGE_KEY_FOLDERS].map(normalizeFolderShape)
+  const localFolders = Array.isArray(localStored.folders)
+    ? localStored.folders.map(normalizeFolderShape)
     : [];
 
   const remoteAccounts = incomingPayload.accounts.map(normalizeAccountShape);
@@ -551,11 +620,14 @@ async function importSyncBundleAndMerge() {
   let mergedPasskeys = mergePasskeyCollections(localPasskeys, remotePasskeys);
   mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
 
-  await chrome.storage.local.set({
-    [STORAGE_KEY_ACCOUNTS]: mergedAccounts,
-    [STORAGE_KEY_PASSKEYS]: mergedPasskeys,
-    [STORAGE_KEY_FOLDERS]: mergedFolders,
+  await writeBusinessDataToStore({
+    accounts: mergedAccounts,
+    passkeys: mergedPasskeys,
+    folders: mergedFolders,
   });
+  await appendHistory(
+    `导入同步包并合并：账号 ${localAccounts.length}->${mergedAccounts.length}，通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}`
+  );
 
   editingAccountId = null;
   await refresh({ silent: true });
@@ -571,20 +643,16 @@ async function syncNowWithRemote() {
   const targets = buildRemoteSyncTargetsFromDom();
   if (!targets || targets.length === 0) return;
 
-  const localStored = await chrome.storage.local.get([
-    STORAGE_KEY_ACCOUNTS,
-    STORAGE_KEY_PASSKEYS,
-    STORAGE_KEY_FOLDERS,
-  ]);
-  const localAccounts = Array.isArray(localStored[STORAGE_KEY_ACCOUNTS])
-    ? localStored[STORAGE_KEY_ACCOUNTS].map(normalizeAccountShape)
+  const localStored = await readBusinessDataFromStore();
+  const localAccounts = Array.isArray(localStored.accounts)
+    ? localStored.accounts.map(normalizeAccountShape)
     : [];
-  const localStoredPasskeys = Array.isArray(localStored[STORAGE_KEY_PASSKEYS])
-    ? localStored[STORAGE_KEY_PASSKEYS].map(normalizePasskeyShape)
+  const localStoredPasskeys = Array.isArray(localStored.passkeys)
+    ? localStored.passkeys.map(normalizePasskeyShape)
     : [];
   const localPasskeys = buildUnifiedPasskeys(localAccounts, localStoredPasskeys);
-  const localFolders = Array.isArray(localStored[STORAGE_KEY_FOLDERS])
-    ? localStored[STORAGE_KEY_FOLDERS].map(normalizeFolderShape)
+  const localFolders = Array.isArray(localStored.folders)
+    ? localStored.folders.map(normalizeFolderShape)
     : [];
 
   let mergedAccounts = localAccounts;
@@ -614,11 +682,14 @@ async function syncNowWithRemote() {
   }
   mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
 
-  await chrome.storage.local.set({
-    [STORAGE_KEY_ACCOUNTS]: mergedAccounts,
-    [STORAGE_KEY_PASSKEYS]: mergedPasskeys,
-    [STORAGE_KEY_FOLDERS]: mergedFolders,
+  await writeBusinessDataToStore({
+    accounts: mergedAccounts,
+    passkeys: mergedPasskeys,
+    folders: mergedFolders,
   });
+  await appendHistory(
+    `远端同步合并：账号 ${localAccounts.length}->${mergedAccounts.length}，通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}`
+  );
 
   const pushErrors = [];
   for (const target of targets) {
@@ -756,7 +827,7 @@ async function pushRemotePayload(target, payload) {
 }
 
 async function buildSyncBundleFromPayload(payload) {
-  const deviceName = await getDeviceName();
+  const [deviceName, deviceId] = await Promise.all([getDeviceName(), getOrCreateSyncDeviceId()]);
   const accounts = Array.isArray(payload?.accounts)
     ? payload.accounts.map(normalizeAccountShape)
     : [];
@@ -774,6 +845,8 @@ async function buildSyncBundleFromPayload(payload) {
       app: "pass-extension",
       platform: "chrome-extension",
       deviceName,
+      deviceId,
+      logicalClockMs: Date.now(),
       formatVersion: 2,
     },
     payload: {
@@ -794,20 +867,21 @@ function base64EncodeUtf8(input) {
 }
 
 async function buildSyncBundle() {
-  const [deviceName, stored] = await Promise.all([
+  const [deviceName, deviceId, stored] = await Promise.all([
     getDeviceName(),
-    chrome.storage.local.get([STORAGE_KEY_ACCOUNTS, STORAGE_KEY_PASSKEYS, STORAGE_KEY_FOLDERS]),
+    getOrCreateSyncDeviceId(),
+    readBusinessDataFromStore(),
   ]);
 
-  const accounts = Array.isArray(stored[STORAGE_KEY_ACCOUNTS])
-    ? stored[STORAGE_KEY_ACCOUNTS].map(normalizeAccountShape)
+  const accounts = Array.isArray(stored.accounts)
+    ? stored.accounts.map(normalizeAccountShape)
     : [];
-  const storedPasskeys = Array.isArray(stored[STORAGE_KEY_PASSKEYS])
-    ? stored[STORAGE_KEY_PASSKEYS].map(normalizePasskeyShape)
+  const storedPasskeys = Array.isArray(stored.passkeys)
+    ? stored.passkeys.map(normalizePasskeyShape)
     : [];
   const passkeys = buildUnifiedPasskeys(accounts, storedPasskeys);
-  const folders = Array.isArray(stored[STORAGE_KEY_FOLDERS])
-    ? stored[STORAGE_KEY_FOLDERS].map(normalizeFolderShape)
+  const folders = Array.isArray(stored.folders)
+    ? stored.folders.map(normalizeFolderShape)
     : [];
 
   return {
@@ -817,6 +891,8 @@ async function buildSyncBundle() {
       app: "pass-extension",
       platform: "chrome-extension",
       deviceName,
+      deviceId,
+      logicalClockMs: Date.now(),
       formatVersion: 2,
     },
     payload: {
@@ -915,7 +991,8 @@ async function clearActiveAccounts() {
   });
 
   editingAccountId = null;
-  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: next });
+  await setAccountsToDataStore(next);
+  await appendHistory(`批量移入回收站：${activeCount} 条账号`, now);
   await refresh({ silent: true });
   setStatus(`已将当前页面 ${activeCount} 条账号移入回收站`);
 }
@@ -936,7 +1013,8 @@ async function clearRecycleBin() {
 
   const next = cloneAccounts(accountsRaw).filter((account) => !account.isDeleted);
   editingAccountId = null;
-  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: next });
+  await setAccountsToDataStore(next);
+  await appendHistory(`清空回收站：永久删除 ${deletedCount} 条账号`);
   await refresh({ silent: true });
   setStatus(`已清空回收站，永久删除 ${deletedCount} 条记录`);
 }
@@ -972,7 +1050,8 @@ async function createFolderFromPrompt() {
       updatedAtMs: now,
     }),
   ]);
-  await chrome.storage.local.set({ [STORAGE_KEY_FOLDERS]: nextFolders });
+  await setFoldersToDataStore(nextFolders);
+  await appendHistory(`创建文件夹：${name}`, now);
   await refresh({ silent: true });
   setStatus(`已创建文件夹: ${name}`);
 }
@@ -1024,10 +1103,16 @@ async function deleteFolder(folderId) {
       .filter((item) => normalizeFolderId(item?.id) !== normalizedFolderId)
   );
 
-  await chrome.storage.local.set({
-    [STORAGE_KEY_ACCOUNTS]: nextAccounts,
-    [STORAGE_KEY_FOLDERS]: nextFolders,
+  await writeBusinessDataToStore({
+    accounts: nextAccounts,
+    passkeys: passkeysRaw,
+    folders: nextFolders,
   });
+  await appendHistory(
+    removedFromAccountCount > 0
+      ? `删除文件夹：${folder.name}，并从 ${removedFromAccountCount} 个账号中移除`
+      : `删除文件夹：${folder.name}`
+  );
 
   if (activeAccountView === `folder:${normalizedFolderId}`) {
     activeAccountView = "all";
@@ -1072,9 +1157,15 @@ async function toggleAccountFolderMembership(accountId, folderId) {
   target.updatedAtMs = now;
   target.lastOperatedDeviceName = deviceName;
 
-  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: next });
-  await refresh({ silent: true });
+  await setAccountsToDataStore(next);
   const folderName = folderDisplayNameById(normalizedFolderId);
+  await appendHistory(
+    exists
+      ? `${target.accountId}：从文件夹移除 ${folderName}`
+      : `${target.accountId}：放入文件夹 ${folderName}`,
+    now
+  );
+  await refresh({ silent: true });
   setStatus(exists ? `已从文件夹移除: ${folderName}` : `已放入文件夹: ${folderName}`);
 }
 
@@ -1390,6 +1481,46 @@ function closeSortModal() {
   dom.sortModalList.innerHTML = "";
 }
 
+async function openHistoryModal() {
+  await loadHistory();
+  renderHistoryModalList();
+  dom.historyModal.classList.remove("hidden");
+  dom.historyModal.setAttribute("aria-hidden", "false");
+}
+
+function closeHistoryModal() {
+  dom.historyModal.classList.add("hidden");
+  dom.historyModal.setAttribute("aria-hidden", "true");
+  dom.historyModalList.innerHTML = "";
+}
+
+function renderHistoryModalList() {
+  dom.historyModalList.innerHTML = "";
+  if (historyEntries.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "暂无历史记录";
+    dom.historyModalList.appendChild(empty);
+    return;
+  }
+
+  for (const entry of historyEntries) {
+    const item = document.createElement("div");
+    item.className = "history-modal-item";
+
+    const time = document.createElement("div");
+    time.className = "history-modal-item-time";
+    time.textContent = formatTime(entry.timestampMs);
+    item.appendChild(time);
+
+    const action = document.createElement("div");
+    action.textContent = entry.action;
+    item.appendChild(action);
+
+    dom.historyModalList.appendChild(item);
+  }
+}
+
 function renderSortModalList() {
   dom.sortModalList.innerHTML = "";
   const accountById = new Map(
@@ -1562,7 +1693,7 @@ async function persistSortOrderFromModal(orderedIds) {
 
   if (!changed) return;
   accountsRaw = cloneAccounts(next);
-  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: next });
+  await setAccountsToDataStore(next);
   dom.payload.value = JSON.stringify(
     { accounts: accountsRaw, passkeys: passkeysRaw, folders: foldersRaw },
     null,
@@ -2041,12 +2172,14 @@ async function saveAccountEdit(accountId, draft) {
   const now = Date.now();
   const deviceName = await getDeviceName();
   let changed = false;
+  const historyMessages = [];
 
   const nextSites = parseSites(draft.sitesText);
   const prevSites = normalizeSites(target.sites || []);
   if (nextSites.length > 0 && JSON.stringify(nextSites) !== JSON.stringify(prevSites)) {
     target.sites = nextSites;
     changed = true;
+    historyMessages.push(`站点别名改为${historyValueSnippet(nextSites.join(", "))}`);
   }
 
   const nextUsername = normalizeUsername(draft.username);
@@ -2054,12 +2187,14 @@ async function saveAccountEdit(accountId, draft) {
     target.username = nextUsername;
     target.usernameUpdatedAtMs = now;
     changed = true;
+    historyMessages.push(`用户名改为${historyValueSnippet(nextUsername)}`);
   }
 
   if (String(draft.password || "") !== String(target.password || "")) {
     target.password = String(draft.password || "");
     target.passwordUpdatedAtMs = now;
     changed = true;
+    historyMessages.push(`密码改为${historyValueSnippet(draft.password)}`);
   }
 
   const nextTotpSecret = normalizeTotpSecret(String(draft.totpSecret || ""));
@@ -2072,18 +2207,21 @@ async function saveAccountEdit(accountId, draft) {
     target.totpSecret = nextTotpSecret;
     target.totpUpdatedAtMs = now;
     changed = true;
+    historyMessages.push(`TOTP 改为${historyValueSnippet(nextTotpSecret)}`);
   }
 
   if (String(draft.recoveryCodes || "") !== String(target.recoveryCodes || "")) {
     target.recoveryCodes = String(draft.recoveryCodes || "");
     target.recoveryCodesUpdatedAtMs = now;
     changed = true;
+    historyMessages.push(`恢复码改为${historyValueSnippet(draft.recoveryCodes)}`);
   }
 
   if (String(draft.note || "") !== String(target.note || "")) {
     target.note = String(draft.note || "");
     target.noteUpdatedAtMs = now;
     changed = true;
+    historyMessages.push(`备注改为${historyValueSnippet(draft.note)}`);
   }
 
   if (!changed) {
@@ -2095,7 +2233,10 @@ async function saveAccountEdit(accountId, draft) {
   target.lastOperatedDeviceName = deviceName;
 
   const synced = syncAliasGroups(next);
-  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: synced });
+  await setAccountsToDataStore(synced);
+  for (const message of historyMessages) {
+    await appendHistory(`${target.accountId}：${message}`, now);
+  }
   editingAccountId = null;
   await refresh({ silent: true });
   setStatus("账号编辑已保存");
@@ -2118,7 +2259,8 @@ async function deleteAccountFromAll(accountId) {
     if (editingAccountId === target.accountId) {
       editingAccountId = null;
     }
-    await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: next });
+    await setAccountsToDataStore(next);
+    await appendHistory(`${target.accountId}：永久删除`);
     await refresh({ silent: true });
     setStatus(`已永久删除账号: ${target.accountId}`);
     return;
@@ -2136,7 +2278,8 @@ async function deleteAccountFromAll(accountId) {
   if (editingAccountId === target.accountId) {
     editingAccountId = null;
   }
-  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: next });
+  await setAccountsToDataStore(next);
+  await appendHistory(`${target.accountId}：移入回收站`, now);
   await refresh({ silent: true });
   setStatus(`已移入回收站: ${target.accountId}`);
 }
@@ -2166,7 +2309,8 @@ async function restoreDeletedAccount(accountId) {
     editingAccountId = null;
   }
 
-  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: next });
+  await setAccountsToDataStore(next);
+  await appendHistory(`${target.accountId}：从回收站恢复`, now);
   await refresh({ silent: true });
   setStatus(`已恢复账号: ${target.accountId}`);
 }
@@ -2193,7 +2337,8 @@ async function permanentlyDeleteAccount(accountId) {
     editingAccountId = null;
   }
 
-  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: next });
+  await setAccountsToDataStore(next);
+  await appendHistory(`${target.accountId}：永久删除`);
   await refresh({ silent: true });
   setStatus(`已永久删除账号: ${target.accountId}`);
 }
@@ -2226,7 +2371,11 @@ async function togglePin(accountId, { fromSortModal = false } = {}) {
   target.updatedAtMs = now;
   target.lastOperatedDeviceName = deviceName;
 
-  await chrome.storage.local.set({ [STORAGE_KEY_ACCOUNTS]: next });
+  await setAccountsToDataStore(next);
+  await appendHistory(
+    nextPinned ? `${target.accountId}：账号置顶` : `${target.accountId}：取消账号置顶`,
+    now
+  );
   await refresh({ silent: true });
   setStatus(nextPinned ? `账号已置顶: ${target.accountId}` : `已取消置顶: ${target.accountId}`);
   if (fromSortModal && !dom.sortModal.classList.contains("hidden")) {
@@ -2336,6 +2485,18 @@ async function getDeviceName() {
   const result = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
   const value = String(result[STORAGE_KEY_DEVICE_NAME] || "").trim();
   return value || "ChromeMac";
+}
+
+async function getOrCreateSyncDeviceId() {
+  const result = await chrome.storage.local.get([STORAGE_KEY_SYNC_DEVICE_ID]);
+  const existing = String(result[STORAGE_KEY_SYNC_DEVICE_ID] || "").trim().toLowerCase();
+  if (existing) return existing;
+
+  const generated = String(
+    globalThis.crypto?.randomUUID?.() || stableUuidFromText(`sync-device|${Date.now()}|${Math.random()}`)
+  ).toLowerCase();
+  await chrome.storage.local.set({ [STORAGE_KEY_SYNC_DEVICE_ID]: generated });
+  return generated;
 }
 
 function normalizeAccountShape(account) {
@@ -2590,326 +2751,38 @@ function sortFoldersForDisplay(inputFolders) {
 }
 
 function mergeAccountCollections(local, remote) {
-  const mergedById = new Map();
-  const order = [];
-
-  for (const account of [...(Array.isArray(local) ? local : []), ...(Array.isArray(remote) ? remote : [])]) {
-    const normalized = normalizeAccountShape(account);
-    const id = String(normalized.accountId || "").trim();
-    if (!id) continue;
-    if (mergedById.has(id)) {
-      mergedById.set(id, mergeSameAccount(mergedById.get(id), normalized));
-    } else {
-      mergedById.set(id, normalized);
-      order.push(id);
-    }
-  }
-
-  return order.map((id) => mergedById.get(id)).filter(Boolean);
-}
-
-function mergeSameAccount(lhs, rhs) {
-  const left = normalizeAccountShape(lhs);
-  const right = normalizeAccountShape(rhs);
-  const primary = Number(left.createdAtMs || 0) <= Number(right.createdAtMs || 0) ? left : right;
-  const secondary = primary === left ? right : left;
-
-  const mergedSites = normalizeSites([...(left.sites || []), ...(right.sites || [])]);
-  const canonicalBySites = etldPlusOne(mergedSites[0] || "");
-  const canonicalSite = canonicalBySites || primary.canonicalSite || secondary.canonicalSite || "";
-  const mergedFolderIds = normalizeFolderIdList([
-    ...extractAccountFolderIds(left),
-    ...extractAccountFolderIds(right),
-  ]);
-
-  const usernameField = newerField(
-    left.username,
-    left.usernameUpdatedAtMs,
-    left.updatedAtMs,
-    right.username,
-    right.usernameUpdatedAtMs,
-    right.updatedAtMs
-  );
-  const passwordField = newerField(
-    left.password,
-    left.passwordUpdatedAtMs,
-    left.updatedAtMs,
-    right.password,
-    right.passwordUpdatedAtMs,
-    right.updatedAtMs
-  );
-  const totpField = newerField(
-    left.totpSecret,
-    left.totpUpdatedAtMs,
-    left.updatedAtMs,
-    right.totpSecret,
-    right.totpUpdatedAtMs,
-    right.updatedAtMs
-  );
-  const recoveryField = newerField(
-    left.recoveryCodes,
-    left.recoveryCodesUpdatedAtMs,
-    left.updatedAtMs,
-    right.recoveryCodes,
-    right.recoveryCodesUpdatedAtMs,
-    right.updatedAtMs
-  );
-  const noteField = newerField(
-    left.note,
-    left.noteUpdatedAtMs,
-    left.updatedAtMs,
-    right.note,
-    right.noteUpdatedAtMs,
-    right.updatedAtMs
-  );
-
-  const leftPasskeyIds = normalizePasskeyCredentialIds(left.passkeyCredentialIds || []);
-  const rightPasskeyIds = normalizePasskeyCredentialIds(right.passkeyCredentialIds || []);
-  const mergedPasskeyIds = normalizePasskeyCredentialIds([...leftPasskeyIds, ...rightPasskeyIds]);
-  const passkeyUpdatedAtMs = Math.max(
-    Number(left.passkeyUpdatedAtMs || left.updatedAtMs || left.createdAtMs || 0),
-    Number(right.passkeyUpdatedAtMs || right.updatedAtMs || right.createdAtMs || 0)
-  );
-
-  const latestContentUpdatedAt = Math.max(
-    usernameField.updatedAtMs,
-    passwordField.updatedAtMs,
-    totpField.updatedAtMs,
-    recoveryField.updatedAtMs,
-    noteField.updatedAtMs,
-    passkeyUpdatedAtMs
-  );
-
-  const leftDeletedAt = left.isDeleted ? Number(left.deletedAtMs || 0) : 0;
-  const rightDeletedAt = right.isDeleted ? Number(right.deletedAtMs || 0) : 0;
-  const latestDeletedAt = Math.max(leftDeletedAt, rightDeletedAt);
-  const keepDeleted = latestDeletedAt > 0 && latestDeletedAt >= latestContentUpdatedAt;
-
-  const leftUpdatedAt = Number(left.updatedAtMs || 0);
-  const rightUpdatedAt = Number(right.updatedAtMs || 0);
-  const newerAccount = leftUpdatedAt >= rightUpdatedAt ? left : right;
-  const olderAccount = newerAccount === left ? right : left;
-
-  const createdAtMs = Math.min(Number(left.createdAtMs || 0), Number(right.createdAtMs || 0));
-  const updatedAtMs = Math.max(
-    leftUpdatedAt,
-    rightUpdatedAt,
-    latestContentUpdatedAt,
-    latestDeletedAt,
-    createdAtMs
-  );
-
-  const usernameAtCreate = String(primary.usernameAtCreate || "").trim()
-    || String(secondary.usernameAtCreate || "").trim()
-    || String(primary.username || "").trim()
-    || String(secondary.username || "").trim();
-  const lastOperatedDeviceName = String(newerAccount.lastOperatedDeviceName || "").trim()
-    || String(olderAccount.lastOperatedDeviceName || "").trim()
-    || "ChromeMac";
-
-  return {
-    recordId: primary.recordId || left.recordId || right.recordId || stableUuidFromText(`${primary.accountId}|${createdAtMs}`),
-    accountId: primary.accountId,
-    canonicalSite,
-    usernameAtCreate,
-    isPinned: Boolean(newerAccount.isPinned),
-    pinnedSortOrder: newerAccount.pinnedSortOrder == null ? null : Number(newerAccount.pinnedSortOrder),
-    regularSortOrder: newerAccount.regularSortOrder == null ? null : Number(newerAccount.regularSortOrder),
-    folderId: mergedFolderIds[0] || (newerAccount.folderId == null ? null : normalizeFolderId(newerAccount.folderId)),
-    folderIds: mergedFolderIds,
-    sites: mergedSites.length > 0 ? mergedSites : primary.sites,
-    username: usernameField.value,
-    password: passwordField.value,
-    totpSecret: totpField.value,
-    recoveryCodes: recoveryField.value,
-    note: noteField.value,
-    passkeyCredentialIds: mergedPasskeyIds,
-    usernameUpdatedAtMs: usernameField.updatedAtMs,
-    passwordUpdatedAtMs: passwordField.updatedAtMs,
-    totpUpdatedAtMs: totpField.updatedAtMs,
-    recoveryCodesUpdatedAtMs: recoveryField.updatedAtMs,
-    noteUpdatedAtMs: noteField.updatedAtMs,
-    passkeyUpdatedAtMs,
-    isDeleted: keepDeleted,
-    deletedAtMs: keepDeleted ? latestDeletedAt : null,
-    createdAtMs,
-    updatedAtMs,
-    lastOperatedDeviceName,
-  };
-}
-
-function newerField(
-  lhsValue,
-  lhsUpdatedAt,
-  lhsAccountUpdatedAt,
-  rhsValue,
-  rhsUpdatedAt,
-  rhsAccountUpdatedAt
-) {
-  const leftUpdated = Number(lhsUpdatedAt || 0);
-  const rightUpdated = Number(rhsUpdatedAt || 0);
-  if (leftUpdated > rightUpdated) return { value: String(lhsValue || ""), updatedAtMs: leftUpdated };
-  if (rightUpdated > leftUpdated) return { value: String(rhsValue || ""), updatedAtMs: rightUpdated };
-
-  const leftValue = String(lhsValue || "");
-  const rightValue = String(rhsValue || "");
-  if (leftValue === rightValue) {
-    return { value: leftValue, updatedAtMs: leftUpdated };
-  }
-
-  const leftAccountUpdated = Number(lhsAccountUpdatedAt || 0);
-  const rightAccountUpdated = Number(rhsAccountUpdatedAt || 0);
-  if (leftAccountUpdated > rightAccountUpdated) {
-    return { value: leftValue, updatedAtMs: leftUpdated };
-  }
-  if (rightAccountUpdated > leftAccountUpdated) {
-    return { value: rightValue, updatedAtMs: rightUpdated };
-  }
-
-  if (!leftValue && rightValue) {
-    return { value: rightValue, updatedAtMs: rightUpdated };
-  }
-  return { value: leftValue, updatedAtMs: leftUpdated };
+  return mergeAccountCollectionsCore(local, remote, syncMergeHelpers());
 }
 
 function mergePasskeyCollections(local, remote) {
-  const mergedById = new Map();
-  const source = [...(Array.isArray(local) ? local : []), ...(Array.isArray(remote) ? remote : [])];
-
-  for (const passkey of source) {
-    const normalized = normalizePasskeyShape(passkey);
-    const id = String(normalized.credentialIdB64u || "").trim();
-    if (!id) continue;
-
-    if (mergedById.has(id)) {
-      mergedById.set(id, mergeSamePasskey(mergedById.get(id), normalized));
-    } else {
-      mergedById.set(id, normalized);
-    }
-  }
-
-  return Array.from(mergedById.values()).sort((a, b) => {
-    const left = Number(a?.updatedAtMs || a?.createdAtMs || 0);
-    const right = Number(b?.updatedAtMs || b?.createdAtMs || 0);
-    if (left !== right) return right - left;
-    return String(a?.credentialIdB64u || "").localeCompare(String(b?.credentialIdB64u || ""));
-  });
-}
-
-function mergeSamePasskey(lhs, rhs) {
-  const left = normalizePasskeyShape(lhs);
-  const right = normalizePasskeyShape(rhs);
-  const leftUpdated = Number(left.updatedAtMs || left.createdAtMs || 0);
-  const rightUpdated = Number(right.updatedAtMs || right.createdAtMs || 0);
-  const newer = leftUpdated >= rightUpdated ? left : right;
-  const older = newer === left ? right : left;
-  const resolvedAlg = Number(newer.alg || older.alg || -7);
-
-  return {
-    credentialIdB64u: newer.credentialIdB64u || older.credentialIdB64u,
-    rpId: newer.rpId || older.rpId,
-    userName: newer.userName || older.userName,
-    displayName: newer.displayName || older.displayName,
-    userHandleB64u: newer.userHandleB64u || older.userHandleB64u,
-    alg: Number(newer.alg || older.alg || -7),
-    signCount: Math.max(Number(left.signCount || 0), Number(right.signCount || 0)),
-    privateJwk: newer.privateJwk || older.privateJwk || null,
-    publicJwk: newer.publicJwk || older.publicJwk || null,
-    createdAtMs: Math.min(Number(left.createdAtMs || 0), Number(right.createdAtMs || 0)),
-    updatedAtMs: Math.max(leftUpdated, rightUpdated),
-    lastUsedAtMs: Math.max(Number(left.lastUsedAtMs || 0), Number(right.lastUsedAtMs || 0)) || null,
-    mode: newer.mode || older.mode || "managed",
-    createCompatMethod: normalizePasskeyCreateCompatMethod(
-      newer.createCompatMethod || older.createCompatMethod,
-      resolvedAlg
-    ),
-  };
+  return mergePasskeyCollectionsCore(local, remote, syncMergeHelpers());
 }
 
 function mergeFolderCollections(local, remote) {
-  const merged = new Map();
-  const source = [...(Array.isArray(local) ? local : []), ...(Array.isArray(remote) ? remote : [])];
-  for (const folder of source) {
-    const normalized = normalizeFolderShape(folder);
-    const id = normalizeFolderId(normalized.id);
-    if (!id) continue;
-    if (merged.has(id)) {
-      merged.set(id, mergeSameFolder(merged.get(id), normalized));
-    } else {
-      merged.set(id, normalized);
-    }
-  }
-
-  const existingFixed = merged.get(FIXED_NEW_ACCOUNT_FOLDER_ID);
-  if (!existingFixed) {
-    merged.set(
-      FIXED_NEW_ACCOUNT_FOLDER_ID,
-      normalizeFolderShape({
-        id: FIXED_NEW_ACCOUNT_FOLDER_ID,
-        name: FIXED_NEW_ACCOUNT_FOLDER_NAME,
-        createdAtMs: 0,
-      })
-    );
-  } else {
-    merged.set(
-      FIXED_NEW_ACCOUNT_FOLDER_ID,
-      {
-        ...existingFixed,
-        id: FIXED_NEW_ACCOUNT_FOLDER_ID,
-        name: FIXED_NEW_ACCOUNT_FOLDER_NAME,
-      }
-    );
-  }
-
-  return sortFoldersForDisplay(Array.from(merged.values()));
-}
-
-function mergeSameFolder(lhs, rhs) {
-  const left = normalizeFolderShape(lhs);
-  const right = normalizeFolderShape(rhs);
-  const id = normalizeFolderId(left.id || right.id);
-  const leftUpdatedAt = Number(left.updatedAtMs || left.createdAtMs || 0);
-  const rightUpdatedAt = Number(right.updatedAtMs || right.createdAtMs || 0);
-  if (id === FIXED_NEW_ACCOUNT_FOLDER_ID) {
-    return {
-      id,
-      name: FIXED_NEW_ACCOUNT_FOLDER_NAME,
-      createdAtMs: Math.min(Number(left.createdAtMs || 0), Number(right.createdAtMs || 0)),
-      updatedAtMs: Math.max(leftUpdatedAt, rightUpdatedAt),
-    };
-  }
-
-  const leftName = String(left.name || "").trim();
-  const rightName = String(right.name || "").trim();
-  let name = leftName || rightName || `未命名文件夹 ${id.slice(0, 8)}`;
-  if (rightUpdatedAt > leftUpdatedAt && rightName) {
-    name = rightName;
-  } else if (leftUpdatedAt > rightUpdatedAt && leftName) {
-    name = leftName;
-  }
-
-  return {
-    id,
-    name,
-    createdAtMs: Math.min(Number(left.createdAtMs || 0), Number(right.createdAtMs || 0)),
-    updatedAtMs: Math.max(leftUpdatedAt, rightUpdatedAt),
-  };
+  return mergeFolderCollectionsCore(local, remote, syncMergeHelpers());
 }
 
 function reconcileAccountFolders(accounts, folders) {
-  const validIds = new Set((Array.isArray(folders) ? folders : []).map((folder) => normalizeFolderId(folder?.id)));
-  const values = Array.isArray(accounts) ? accounts : [];
-  return values.map((account) => {
-    const normalized = normalizeAccountShape(account);
-    const resolved = normalizeFolderIdList(
-      extractAccountFolderIds(normalized).filter((id) => validIds.has(normalizeFolderId(id)))
-    );
-    return {
-      ...normalized,
-      folderId: resolved[0] || null,
-      folderIds: resolved,
-    };
-  });
+  return reconcileAccountFoldersCore(accounts, folders, syncMergeHelpers());
+}
+
+function syncMergeHelpers() {
+  return {
+    normalizeAccountShape,
+    normalizeFolderIdList,
+    normalizeFolderId,
+    extractAccountFolderIds,
+    normalizeSites,
+    etldPlusOne,
+    normalizePasskeyCredentialIds,
+    stableUuidFromText,
+    normalizePasskeyShape,
+    normalizePasskeyCreateCompatMethod,
+    normalizeFolderShape,
+    sortFoldersForDisplay,
+    fixedNewAccountFolderId: FIXED_NEW_ACCOUNT_FOLDER_ID,
+    fixedNewAccountFolderName: FIXED_NEW_ACCOUNT_FOLDER_NAME,
+  };
 }
 
 function formatTime(ms) {

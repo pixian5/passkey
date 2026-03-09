@@ -48,5 +48,8 @@ RUN_AFTER_INSTALL=0 ./scripts/package_app.sh
 ```
 
 ## Data files
-- JSON data: `~/Library/Application Support/pass-mac/accounts.json`
+- SQLite (WAL) data: `~/Library/Application Support/pass-mac/pass.db`
 - CSV export: `~/Library/Application Support/pass-mac/pass-export-*.csv`
+- Legacy bootstrap (one-time migration source, if present):
+  - `~/Library/Application Support/pass-mac/accounts.json`
+  - `~/Library/Application Support/pass-mac/passkeys.json`

@@ -1,4 +1,8 @@
-const STORAGE_KEY_PASSKEYS = "pass.passkeys";
+import {
+  ensureDataStorageReady,
+  getPasskeys as getPasskeysFromDataStore,
+  setPasskeys as setPasskeysToDataStore,
+} from "./data_store.js";
 
 const COSE_ALG_ES256 = -7;
 const COSE_ALG_RS256 = -257;
@@ -18,9 +22,10 @@ class PasskeyError extends Error {
 }
 
 export async function ensurePasskeyStorageShape() {
-  const stored = await chrome.storage.local.get([STORAGE_KEY_PASSKEYS]);
-  if (!Array.isArray(stored[STORAGE_KEY_PASSKEYS])) {
-    await chrome.storage.local.set({ [STORAGE_KEY_PASSKEYS]: [] });
+  await ensureDataStorageReady();
+  const items = await getPasskeysFromDataStore();
+  if (!Array.isArray(items)) {
+    await setPasskeysToDataStore([]);
   }
 }
 
@@ -384,13 +389,12 @@ async function resolveGetCandidates({ host, publicKey }) {
 }
 
 async function loadPasskeys() {
-  const stored = await chrome.storage.local.get([STORAGE_KEY_PASSKEYS]);
-  const raw = Array.isArray(stored[STORAGE_KEY_PASSKEYS]) ? stored[STORAGE_KEY_PASSKEYS] : [];
+  const raw = await getPasskeysFromDataStore();
   return raw.filter((item) => item && typeof item === "object");
 }
 
 async function savePasskeys(items) {
-  await chrome.storage.local.set({ [STORAGE_KEY_PASSKEYS]: items });
+  await setPasskeysToDataStore(items);
 }
 
 function normalizeCredentialIdList(input) {

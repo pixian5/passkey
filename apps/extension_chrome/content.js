@@ -1,6 +1,6 @@
 import { etldPlusOne, normalizeDomain, normalizeSites } from "./account_core.js";
 
-const STORAGE_KEY_ACCOUNTS = "pass.accounts";
+const STORAGE_KEY_DATA_BUMP = "pass.data.bump.v1";
 const PASS_LOGIN_COOLDOWN_MS = 5000;
 const WEB_AUTHN_BRIDGE_SOURCE = "pass-webauthn-bridge";
 const WEB_AUTHN_REQUEST_TYPE = "PASSKEY_REQUEST";
@@ -21,9 +21,8 @@ window.addEventListener("message", onWebAuthnBridgeMessage, false);
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local") return;
-  if (!changes[STORAGE_KEY_ACCOUNTS]) return;
-  const next = changes[STORAGE_KEY_ACCOUNTS].newValue;
-  accountsCache = Array.isArray(next) ? next.map(normalizeAccountShape) : [];
+  if (!changes[STORAGE_KEY_DATA_BUMP]) return;
+  void initAccountCache();
 });
 
 document.addEventListener(
@@ -90,9 +89,26 @@ document.addEventListener(
 );
 
 async function initAccountCache() {
-  const result = await chrome.storage.local.get([STORAGE_KEY_ACCOUNTS]);
-  const raw = Array.isArray(result[STORAGE_KEY_ACCOUNTS]) ? result[STORAGE_KEY_ACCOUNTS] : [];
+  const raw = await fetchAccountsForContent();
   accountsCache = raw.map(normalizeAccountShape);
+}
+
+async function fetchAccountsForContent() {
+  if (!isRuntimeAvailable()) return [];
+  return await new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ type: "PASS_CONTENT_GET_ACCOUNTS" }, (response) => {
+        const runtimeError = chrome.runtime.lastError;
+        if (runtimeError || !response?.ok || !Array.isArray(response.accounts)) {
+          resolve([]);
+          return;
+        }
+        resolve(response.accounts);
+      });
+    } catch {
+      resolve([]);
+    }
+  });
 }
 
 function decidePromptMode(payload) {

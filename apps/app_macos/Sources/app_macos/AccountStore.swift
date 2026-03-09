@@ -85,6 +85,7 @@ final class AccountStore: ObservableObject {
     @Published private(set) var cloudSyncStatus: String = "iCloud 未连接，使用本机数据"
     @Published private(set) var accounts: [PasswordAccount] = []
     @Published private(set) var passkeys: [PasskeyRecord] = []
+    @Published private(set) var historyEntries: [OperationHistoryEntry] = []
     @Published var syncEnableICloud: Bool = true {
         didSet {
             guard !isLoadingSyncPreferences else { return }
@@ -147,6 +148,7 @@ final class AccountStore: ObservableObject {
     static let fixedNewAccountFolderName = "新账号"
     static let fixedNewAccountFolderId = UUID(uuidString: "F16A2C4E-4A2A-43D5-A670-3F1767D41001")!
     static let syncBundleSchemaV2 = "pass.sync.bundle.v2"
+    private static let maxHistoryEntries = 500
     private static let installedFontFamilies: Set<String> = Set(NSFontManager.shared.availableFontFamilies)
 
     private let decoder = JSONDecoder()
@@ -169,6 +171,16 @@ final class AccountStore: ObservableObject {
     private var suppressCloudPush: Bool = false
     private var isLoadingSyncPreferences: Bool = false
     private var syncNowTask: Task<Void, Never>?
+    private lazy var localSQLiteStore = LocalSQLiteStore(
+        databaseURL: dataDirectoryURL().appendingPathComponent("pass.db", isDirectory: false)
+    )
+
+    private enum LocalDatabaseKeys {
+        static let accounts = "accounts"
+        static let folders = "folders"
+        static let passkeys = "passkeys"
+        static let history = "history"
+    }
 
     private struct FolderMoveOperation {
         let accountIds: [UUID]
@@ -231,6 +243,7 @@ final class AccountStore: ObservableObject {
         folders.append(folder)
         _ = normalizeFoldersEnsuringFixedNewAccountFolder()
         saveFoldersToDefaults()
+        appendHistoryEntry(action: "创建文件夹：\(name)")
         statusMessage = "已创建文件夹: \(name)"
     }
 
@@ -263,8 +276,10 @@ final class AccountStore: ObservableObject {
 
         if removedFromAccountCount > 0 {
             saveAccounts()
+            appendHistoryEntry(action: "删除文件夹：\(folder.name)，并从 \(removedFromAccountCount) 个账号中移除")
             statusMessage = "已删除文件夹: \(folder.name)，并从 \(removedFromAccountCount) 个账号中移除"
         } else {
+            appendHistoryEntry(action: "删除文件夹：\(folder.name)")
             statusMessage = "已删除文件夹: \(folder.name)"
         }
     }
@@ -336,6 +351,7 @@ final class AccountStore: ObservableObject {
             actionSummary: actionSummary
         )
         saveAccounts()
+        appendHistoryEntry(action: actionSummary)
         setStatusMessage("已按勾选更新文件夹（\(changedCount) 个账号），点击撤销", allowsUndoMove: true)
     }
 
@@ -409,6 +425,7 @@ final class AccountStore: ObservableObject {
             actionSummary: actionSummary
         )
         saveAccounts()
+        appendHistoryEntry(action: actionSummary)
         setStatusMessage("\(actionSummary)（\(changedCount) 个账号），点击撤销", allowsUndoMove: true)
     }
 
@@ -462,6 +479,7 @@ final class AccountStore: ObservableObject {
             actionSummary: actionSummary
         )
         saveAccounts()
+        appendHistoryEntry(action: actionSummary)
         setStatusMessage("\(actionSummary)（\(changedCount) 个账号），点击撤销", allowsUndoMove: true)
     }
 
@@ -496,6 +514,7 @@ final class AccountStore: ObservableObject {
         isUndoMoveToastVisible = false
         undoMoveDismissWorkItem?.cancel()
         lastMoveOperation = nil
+        appendHistoryEntry(action: "撤销移动：\(operation.actionSummary)")
         statusMessage = "已撤销: \(operation.actionSummary)"
     }
 
@@ -549,6 +568,7 @@ final class AccountStore: ObservableObject {
         accounts.append(contentsOf: samples)
         syncAliasGroups()
         saveAccounts()
+        appendHistoryEntry(action: "生成演示账号：20 条")
         statusMessage = "已生成演示账号 20 条（含 TOTP/恢复码/备注/站点别名）"
     }
 
@@ -590,6 +610,9 @@ final class AccountStore: ObservableObject {
         accounts.append(created)
         syncAliasGroups()
         saveAccounts()
+        appendHistoryEntry(
+            action: "创建账号 \(created.accountId)：用户名改为\(historyValueSnippet(created.username))，密码改为\(historyValueSnippet(created.password))"
+        )
 
         createSitesText = ""
         createUsername = ""
@@ -641,6 +664,26 @@ final class AccountStore: ObservableObject {
         statusMessage = "账号已移入回收站"
         accounts[index].touchUpdatedAt(now, deviceName: currentDeviceName())
         saveAccounts()
+        appendHistoryEntry(action: "账号移入回收站：\(accounts[index].accountId)", timestampMs: now)
+    }
+
+    func moveToRecycleBin(accountIds: Set<UUID>) {
+        let targetIndexes = accounts.indices.filter { accountIds.contains(accounts[$0].id) && !accounts[$0].isDeleted }
+        guard !targetIndexes.isEmpty else {
+            statusMessage = "未找到可删除账号"
+            return
+        }
+
+        let now = nowMs()
+        let device = currentDeviceName()
+        for index in targetIndexes {
+            accounts[index].isDeleted = true
+            accounts[index].deletedAtMs = now
+            accounts[index].touchUpdatedAt(now, deviceName: device)
+        }
+        saveAccounts()
+        appendHistoryEntry(action: "批量移入回收站：\(targetIndexes.count) 条账号", timestampMs: now)
+        statusMessage = "已将 \(targetIndexes.count) 条账号移入回收站"
     }
 
     func restoreFromRecycleBin(for account: PasswordAccount) {
@@ -660,6 +703,26 @@ final class AccountStore: ObservableObject {
         statusMessage = "账号已从回收站恢复"
         accounts[index].touchUpdatedAt(now, deviceName: currentDeviceName())
         saveAccounts()
+        appendHistoryEntry(action: "账号从回收站恢复：\(accounts[index].accountId)", timestampMs: now)
+    }
+
+    func restoreFromRecycleBin(accountIds: Set<UUID>) {
+        let targetIndexes = accounts.indices.filter { accountIds.contains(accounts[$0].id) && accounts[$0].isDeleted }
+        guard !targetIndexes.isEmpty else {
+            statusMessage = "未找到可恢复账号"
+            return
+        }
+
+        let now = nowMs()
+        let device = currentDeviceName()
+        for index in targetIndexes {
+            accounts[index].isDeleted = false
+            accounts[index].deletedAtMs = nil
+            accounts[index].touchUpdatedAt(now, deviceName: device)
+        }
+        saveAccounts()
+        appendHistoryEntry(action: "批量恢复账号：\(targetIndexes.count) 条", timestampMs: now)
+        statusMessage = "已恢复 \(targetIndexes.count) 个账号"
     }
 
     func permanentlyDeleteFromRecycleBin(_ account: PasswordAccount) {
@@ -679,7 +742,28 @@ final class AccountStore: ObservableObject {
             cancelEditing()
         }
         saveAccounts()
+        appendHistoryEntry(action: "永久删除账号：\(removedId)")
         statusMessage = "账号已永久删除: \(removedId)"
+    }
+
+    func permanentlyDeleteFromRecycleBin(accountIds: Set<UUID>) {
+        let targetIds = Set(
+            accounts
+                .filter { accountIds.contains($0.id) && $0.isDeleted }
+                .map(\.id)
+        )
+        guard !targetIds.isEmpty else {
+            statusMessage = "未找到可永久删除账号"
+            return
+        }
+
+        accounts.removeAll { targetIds.contains($0.id) }
+        if let editingAccountId, targetIds.contains(editingAccountId) {
+            cancelEditing()
+        }
+        saveAccounts()
+        appendHistoryEntry(action: "批量永久删除账号：\(targetIds.count) 条")
+        statusMessage = "已永久删除 \(targetIds.count) 个账号"
     }
 
     func toggleDeleted(for account: PasswordAccount) {
@@ -705,6 +789,7 @@ final class AccountStore: ObservableObject {
             accounts[index].touchUpdatedAt(now, deviceName: device)
         }
         saveAccounts()
+        appendHistoryEntry(action: "全部恢复回收站账号：\(deletedIndexes.count) 条", timestampMs: now)
         statusMessage = "已恢复 \(deletedIndexes.count) 个账号"
     }
 
@@ -721,6 +806,7 @@ final class AccountStore: ObservableObject {
             cancelEditing()
         }
         saveAccounts()
+        appendHistoryEntry(action: "清空回收站：永久删除 \(deletedCount) 条账号")
         statusMessage = "已永久删除 \(deletedCount) 个账号"
     }
 
@@ -740,6 +826,7 @@ final class AccountStore: ObservableObject {
         }
         cancelEditing()
         saveAccounts()
+        appendHistoryEntry(action: "全部账号移入回收站：\(activeIndexes.count) 条", timestampMs: now)
         statusMessage = "已将全部账号移入回收站 \(activeIndexes.count) 条"
     }
 
@@ -793,13 +880,16 @@ final class AccountStore: ObservableObject {
     }
 
     func exportSyncBundle(to fileURL: URL) {
+        let logicalClockMs = nowMs()
         let bundle = SyncBundleV2(
             schema: Self.syncBundleSchemaV2,
-            exportedAtMs: nowMs(),
+            exportedAtMs: logicalClockMs,
             source: SyncBundleSource(
                 app: "pass-mac",
                 platform: "macos-app",
                 deviceName: currentDeviceName(),
+                deviceId: syncDeviceId(),
+                logicalClockMs: logicalClockMs,
                 formatVersion: 2
             ),
             payload: SyncBundlePayload(
@@ -816,7 +906,7 @@ final class AccountStore: ObservableObject {
                 withIntermediateDirectories: true
             )
             let data = try encoder.encode(bundle)
-            try data.write(to: fileURL, options: .atomic)
+            try data.write(to: fileURL, options: Data.WritingOptions.atomic)
             statusMessage = "同步包导出成功: \(fileURL.path)"
         } catch {
             statusMessage = "同步包导出失败: \(error.localizedDescription)"
@@ -857,6 +947,7 @@ final class AccountStore: ObservableObject {
                 "同步包导入并合并完成（\(parsed.kind)）：账号 \(localAccountCount)+\(remoteAccounts.count)->\(accounts.count)，" +
                 "文件夹 \(localFolderCount)+\(remoteFolders.count)->\(folders.count)，" +
                 "通行密钥 \(localPasskeyCount)+\(remotePasskeys.count)->\(passkeys.count)"
+            appendHistoryEntry(action: "导入同步包并合并：账号 \(localAccountCount)->\(accounts.count)")
         } catch {
             statusMessage = "同步包导入失败: \(error.localizedDescription)"
         }
@@ -946,11 +1037,13 @@ final class AccountStore: ObservableObject {
         let now = nowMs()
         let device = currentDeviceName()
         var changed = false
+        var historyMessages: [String] = []
 
         let normalizedSites = parseSites(editSitesText)
         if !normalizedSites.isEmpty, normalizedSites != accounts[index].sites {
             accounts[index].sites = normalizedSites
             changed = true
+            historyMessages.append("站点别名改为\(historyValueSnippet(normalizedSites.joined(separator: ", ")))")
         }
 
         let newUsername = editUsername.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -958,30 +1051,35 @@ final class AccountStore: ObservableObject {
             accounts[index].username = newUsername
             accounts[index].usernameUpdatedAtMs = now
             changed = true
+            historyMessages.append("用户名改为\(historyValueSnippet(newUsername))")
         }
 
         if editPassword != accounts[index].password {
             accounts[index].password = editPassword
             accounts[index].passwordUpdatedAtMs = now
             changed = true
+            historyMessages.append("密码改为\(historyValueSnippet(editPassword))")
         }
 
         if editTotpSecret != accounts[index].totpSecret {
             accounts[index].totpSecret = editTotpSecret
             accounts[index].totpUpdatedAtMs = now
             changed = true
+            historyMessages.append("TOTP 改为\(historyValueSnippet(editTotpSecret))")
         }
 
         if editRecoveryCodes != accounts[index].recoveryCodes {
             accounts[index].recoveryCodes = editRecoveryCodes
             accounts[index].recoveryCodesUpdatedAtMs = now
             changed = true
+            historyMessages.append("恢复码改为\(historyValueSnippet(editRecoveryCodes))")
         }
 
         if editNote != accounts[index].note {
             accounts[index].note = editNote
             accounts[index].noteUpdatedAtMs = now
             changed = true
+            historyMessages.append("备注改为\(historyValueSnippet(editNote))")
         }
 
         guard changed else {
@@ -992,6 +1090,9 @@ final class AccountStore: ObservableObject {
         accounts[index].touchUpdatedAt(now, deviceName: device)
         syncAliasGroups()
         saveAccounts()
+        for message in historyMessages {
+            appendHistoryEntry(action: "\(accounts[index].accountId)：\(message)", timestampMs: now)
+        }
         statusMessage = "账号编辑已保存"
         cancelEditing()
     }
@@ -1022,6 +1123,10 @@ final class AccountStore: ObservableObject {
         }
         accounts[index].touchUpdatedAt(now, deviceName: device)
         saveAccounts()
+        appendHistoryEntry(
+            action: nextPinned ? "账号置顶：\(accounts[index].accountId)" : "取消账号置顶：\(accounts[index].accountId)",
+            timestampMs: now
+        )
         statusMessage = nextPinned ? "账号已置顶" : "已取消置顶"
     }
 
@@ -1069,6 +1174,7 @@ final class AccountStore: ObservableObject {
         }
 
         saveAccounts()
+        appendHistoryEntry(action: pinned ? "重排置顶账号顺序" : "重排普通账号顺序", timestampMs: now)
     }
 
     func activeAccounts() -> [PasswordAccount] {
@@ -1320,13 +1426,16 @@ final class AccountStore: ObservableObject {
     }
 
     private func buildSyncBundleDocument(payload: SyncBundlePayload) -> SyncBundleV2 {
-        SyncBundleV2(
+        let logicalClockMs = nowMs()
+        return SyncBundleV2(
             schema: Self.syncBundleSchemaV2,
-            exportedAtMs: nowMs(),
+            exportedAtMs: logicalClockMs,
             source: SyncBundleSource(
                 app: "pass-mac",
                 platform: "macos-app",
                 deviceName: currentDeviceName(),
+                deviceId: syncDeviceId(),
+                logicalClockMs: logicalClockMs,
                 formatVersion: 2
             ),
             payload: payload
@@ -1513,10 +1622,18 @@ final class AccountStore: ObservableObject {
         serverBaseURL = defaults.string(forKey: Keys.serverBaseURL) ?? ""
         serverAuthToken = readSecret(account: SecretKeys.serverTokenAccount)
         isLoadingSyncPreferences = false
-        if let foldersData = defaults.data(forKey: Keys.foldersData),
-           let decodedFolders = try? decoder.decode([AccountFolder].self, from: foldersData)
+
+        let foldersDataFromDatabase = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.folders)
+        var migratedFoldersFromDefaults = false
+        if let foldersDataFromDatabase,
+           let decodedFolders = try? decoder.decode([AccountFolder].self, from: foldersDataFromDatabase)
         {
             folders = decodedFolders
+        } else if let foldersData = defaults.data(forKey: Keys.foldersData),
+                  let decodedFolders = try? decoder.decode([AccountFolder].self, from: foldersData)
+        {
+            folders = decodedFolders
+            migratedFoldersFromDefaults = true
         } else {
             folders = []
         }
@@ -1539,44 +1656,51 @@ final class AccountStore: ObservableObject {
         uiToastDurationSeconds = savedToastDuration > 0 ? savedToastDuration : 3
 
         passkeys = loadPasskeysFromLocalDisk()
+        historyEntries = loadHistoryFromLocalDisk()
 
+        let accountDataFromDatabase = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.accounts)
         let fileURL = dataFileURL()
-        guard let data = try? Data(contentsOf: fileURL) else {
+        let accountDataFromLegacyFile = try? Data(contentsOf: fileURL)
+        let accountDataCandidates = [accountDataFromDatabase, accountDataFromLegacyFile].compactMap { $0 }
+        guard !accountDataCandidates.isEmpty else {
             accounts = []
-            if folderNormalization.foldersChanged {
+            if folderNormalization.foldersChanged || migratedFoldersFromDefaults {
                 saveFoldersToDefaults()
             }
             return
         }
 
-        if let decoded = try? decoder.decode([PasswordAccount].self, from: data) {
-            accounts = normalizeDecodedAccounts(decoded)
-            let accountsChanged = migrateAccountFolderIdsFromLegacyNewAccountFolder(
-                legacyFolderIds: folderNormalization.legacyNewAccountFolderIds
-            )
-            if accountsChanged {
-                saveAccountsToLocalDisk()
+        for data in accountDataCandidates {
+            if let decoded = try? decoder.decode([PasswordAccount].self, from: data) {
+                accounts = normalizeDecodedAccounts(decoded)
+                let accountsChanged = migrateAccountFolderIdsFromLegacyNewAccountFolder(
+                    legacyFolderIds: folderNormalization.legacyNewAccountFolderIds
+                )
+                let usingDatabaseData = accountDataFromDatabase.map { $0 == data } ?? false
+                if accountsChanged || !usingDatabaseData {
+                    saveAccountsToLocalDisk()
+                }
+                if folderNormalization.foldersChanged || migratedFoldersFromDefaults {
+                    saveFoldersToDefaults()
+                }
+                return
             }
-            if folderNormalization.foldersChanged {
-                saveFoldersToDefaults()
-            }
-            return
-        }
 
-        if let legacy = try? decoder.decode([LegacyPasswordAccount].self, from: data) {
-            accounts = legacy.map { $0.toCurrent(deviceName: currentDeviceName()) }
-            _ = migrateAccountFolderIdsFromLegacyNewAccountFolder(
-                legacyFolderIds: folderNormalization.legacyNewAccountFolderIds
-            )
-            if folderNormalization.foldersChanged {
-                saveFoldersToDefaults()
+            if let legacy = try? decoder.decode([LegacyPasswordAccount].self, from: data) {
+                accounts = legacy.map { $0.toCurrent(deviceName: currentDeviceName()) }
+                _ = migrateAccountFolderIdsFromLegacyNewAccountFolder(
+                    legacyFolderIds: folderNormalization.legacyNewAccountFolderIds
+                )
+                if folderNormalization.foldersChanged || migratedFoldersFromDefaults {
+                    saveFoldersToDefaults()
+                }
+                saveAccounts()
+                return
             }
-            saveAccounts()
-            return
         }
 
         accounts = []
-        if folderNormalization.foldersChanged {
+        if folderNormalization.foldersChanged || migratedFoldersFromDefaults {
             saveFoldersToDefaults()
         }
     }
@@ -1591,41 +1715,114 @@ final class AccountStore: ObservableObject {
     private func saveAccountsToLocalDisk() {
         do {
             let data = try encoder.encode(accounts)
-            try FileManager.default.createDirectory(
-                at: dataDirectoryURL(),
-                withIntermediateDirectories: true
-            )
-            try data.write(to: dataFileURL(), options: .atomic)
+            try saveCollectionDataToLocalDatabase(data, for: LocalDatabaseKeys.accounts)
         } catch {
             statusMessage = "保存失败: \(error.localizedDescription)"
         }
     }
 
     private func loadPasskeysFromLocalDisk() -> [PasskeyRecord] {
+        if let data = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.passkeys),
+           let decoded = try? decoder.decode([PasskeyRecord].self, from: data)
+        {
+            return decoded.map(normalizePasskeyRecord)
+        }
+
         let fileURL = passkeysFileURL()
-        guard let data = try? Data(contentsOf: fileURL) else {
+        guard let data = try? Data(contentsOf: fileURL),
+              let decoded = try? decoder.decode([PasskeyRecord].self, from: data)
+        else {
             return []
         }
-        guard let decoded = try? decoder.decode([PasskeyRecord].self, from: data) else {
-            return []
+        let normalized = decoded.map(normalizePasskeyRecord)
+        do {
+            let migratedData = try encoder.encode(normalized)
+            try saveCollectionDataToLocalDatabase(migratedData, for: LocalDatabaseKeys.passkeys)
+        } catch {
+            statusMessage = "迁移通行密钥到 SQLite 失败: \(error.localizedDescription)"
         }
-        return decoded.map(normalizePasskeyRecord)
+        return normalized
     }
 
     private func savePasskeysToLocalDisk() {
         do {
             let data = try encoder.encode(passkeys.map(normalizePasskeyRecord))
-            try FileManager.default.createDirectory(
-                at: dataDirectoryURL(),
-                withIntermediateDirectories: true
-            )
-            try data.write(to: passkeysFileURL(), options: .atomic)
+            try saveCollectionDataToLocalDatabase(data, for: LocalDatabaseKeys.passkeys)
             if !suppressCloudPush && syncEnableICloud {
                 pushSyncDataToICloud(trigger: "local_update")
             }
         } catch {
             statusMessage = "保存通行密钥失败: \(error.localizedDescription)"
         }
+    }
+
+    func clearHistoryEntries() {
+        historyEntries = []
+        saveHistoryToLocalDisk()
+        statusMessage = "历史记录已清空"
+    }
+
+    private func loadHistoryFromLocalDisk() -> [OperationHistoryEntry] {
+        guard let data = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.history),
+              let decoded = try? decoder.decode([OperationHistoryEntry].self, from: data)
+        else {
+            return []
+        }
+        return decoded
+            .filter { !$0.action.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { lhs, rhs in
+                if lhs.timestampMs != rhs.timestampMs {
+                    return lhs.timestampMs > rhs.timestampMs
+                }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+    }
+
+    private func saveHistoryToLocalDisk() {
+        do {
+            let data = try encoder.encode(historyEntries)
+            try saveCollectionDataToLocalDatabase(data, for: LocalDatabaseKeys.history)
+        } catch {
+            statusMessage = "保存历史记录失败: \(error.localizedDescription)"
+        }
+    }
+
+    private func appendHistoryEntry(action rawAction: String, timestampMs: Int64? = nil) {
+        let action = rawAction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !action.isEmpty else { return }
+        let entry = OperationHistoryEntry(
+            id: UUID(),
+            timestampMs: timestampMs ?? nowMs(),
+            action: action
+        )
+        historyEntries.insert(entry, at: 0)
+        if historyEntries.count > Self.maxHistoryEntries {
+            historyEntries.removeLast(historyEntries.count - Self.maxHistoryEntries)
+        }
+        saveHistoryToLocalDisk()
+    }
+
+    private func historyValueSnippet(_ raw: String, maxLength: Int = 80) -> String {
+        let compact = raw
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if compact.isEmpty {
+            return "(空)"
+        }
+        if compact.count <= maxLength {
+            return compact
+        }
+        return String(compact.prefix(maxLength)) + "..."
+    }
+
+    private func loadCollectionDataFromLocalDatabase(for key: String) -> Data? {
+        try? localSQLiteStore.readData(for: key)
+    }
+
+    private func saveCollectionDataToLocalDatabase(_ data: Data, for key: String) throws {
+        try localSQLiteStore.writeData(data, for: key, updatedAtMs: nowMs())
     }
 
     private func handleSyncSourceSelectionChanged() {
@@ -2646,6 +2843,19 @@ final class AccountStore: ObservableObject {
         return trimmed.isEmpty ? "MacDevice" : trimmed
     }
 
+    private func syncDeviceId() -> String {
+        let defaults = UserDefaults.standard
+        let existing = defaults.string(forKey: Keys.syncDeviceId)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        if !existing.isEmpty {
+            return existing
+        }
+        let generated = UUID().uuidString.lowercased()
+        defaults.set(generated, forKey: Keys.syncDeviceId)
+        return generated
+    }
+
     private func showToast(_ message: String) {
         toastDismissWorkItem?.cancel()
         toastMessage = message
@@ -2691,6 +2901,12 @@ final class AccountStore: ObservableObject {
         guard let data = try? encoder.encode(folders) else {
             return
         }
+        do {
+            try saveCollectionDataToLocalDatabase(data, for: LocalDatabaseKeys.folders)
+        } catch {
+            statusMessage = "保存文件夹到 SQLite 失败: \(error.localizedDescription)"
+            return
+        }
         UserDefaults.standard.set(data, forKey: Keys.foldersData)
         if !suppressCloudPush && syncEnableICloud {
             pushSyncDataToICloud(trigger: "local_update")
@@ -2732,7 +2948,44 @@ private struct SyncBundleSource: Codable {
     let app: String
     let platform: String
     let deviceName: String
+    let deviceId: String
+    let logicalClockMs: Int64
     let formatVersion: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case app
+        case platform
+        case deviceName
+        case deviceId
+        case logicalClockMs
+        case formatVersion
+    }
+
+    init(
+        app: String,
+        platform: String,
+        deviceName: String,
+        deviceId: String,
+        logicalClockMs: Int64,
+        formatVersion: Int
+    ) {
+        self.app = app
+        self.platform = platform
+        self.deviceName = deviceName
+        self.deviceId = deviceId
+        self.logicalClockMs = logicalClockMs
+        self.formatVersion = formatVersion
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        app = try container.decode(String.self, forKey: .app)
+        platform = try container.decode(String.self, forKey: .platform)
+        deviceName = try container.decode(String.self, forKey: .deviceName)
+        deviceId = try container.decodeIfPresent(String.self, forKey: .deviceId) ?? "legacy-device"
+        logicalClockMs = try container.decodeIfPresent(Int64.self, forKey: .logicalClockMs) ?? 0
+        formatVersion = try container.decodeIfPresent(Int.self, forKey: .formatVersion) ?? 2
+    }
 }
 
 private struct SyncBundlePayload: Codable {
@@ -2745,6 +2998,7 @@ private enum Keys {
     static let deviceName = "pass.deviceName"
     static let exportDirectoryPath = "pass.export.directoryPath"
     static let foldersData = "pass.folders.data"
+    static let syncDeviceId = "pass.sync.deviceId.v1"
     static let syncEnableICloud = "pass.sync.enableICloud.v3"
     static let syncEnableWebDAV = "pass.sync.enableWebDAV.v3"
     static let syncEnableSelfHostedServer = "pass.sync.enableSelfHostedServer.v3"

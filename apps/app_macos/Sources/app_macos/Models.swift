@@ -264,6 +264,28 @@ extension AccountFolder {
     }
 }
 
+struct OperationHistoryEntry: Codable, Identifiable, Hashable {
+    let id: UUID
+    let timestampMs: Int64
+    let action: String
+}
+
+extension OperationHistoryEntry {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case timestampMs
+        case action
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        timestampMs = try container.decodeIfPresent(Int64.self, forKey: .timestampMs)
+            ?? Int64(Date().timeIntervalSince1970 * 1000)
+        action = try container.decodeIfPresent(String.self, forKey: .action) ?? ""
+    }
+}
+
 struct PasskeyRecord: Codable, Hashable {
     var credentialIdB64u: String
     var rpId: String

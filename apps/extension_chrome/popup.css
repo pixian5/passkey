@@ -483,6 +483,10 @@ button:active {
   max-width: 760px;
 }
 
+.history-modal-card {
+  max-width: 760px;
+}
+
 .sort-modal-hint {
   margin: 0;
   font-size: 12px;
@@ -490,6 +494,14 @@ button:active {
 }
 
 .sort-modal-list {
+  display: grid;
+  gap: 6px;
+  max-height: calc(100vh - 220px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.history-modal-list {
   display: grid;
   gap: 6px;
   max-height: calc(100vh - 220px);
@@ -522,6 +534,22 @@ button:active {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.history-modal-item {
+  border: 1px solid #cddffa;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(245, 250, 255, 0.95);
+  color: #2e4d77;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.history-modal-item-time {
+  margin-bottom: 4px;
+  color: #5d7393;
+  font-size: 11px;
 }
 
 .sort-modal-item-label {

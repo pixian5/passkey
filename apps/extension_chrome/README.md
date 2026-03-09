@@ -17,7 +17,7 @@ Chrome extension scaffold (Manifest V3).
   (if same site + username + password already exists, no prompt).
 - Managed passkey bridge (WebAuthn):
   - intercept `navigator.credentials.create/get` in page context;
-  - store managed passkey records in extension local storage;
+  - store managed passkey records in extension IndexedDB;
   - perform assertion signing with managed private key for supported RP;
   - auto upsert account record (`rpId + username`, empty password) after passkey registration and link passkey credential ID to that account;
   - auto merge duplicate account rows for same username + same site/alias group.
@@ -49,6 +49,10 @@ Chrome extension scaffold (Manifest V3).
 ## Notes
 - Runtime scripts are loaded from `dist/*.js` in `manifest.json` and HTML.
 - Source files (`popup.js`, `options.js`, `background.js`, `content.js`) are modular and shared via `account_core.js`.
+- Sync merge/conflict logic is centralized in shared core module: `core/pass_core/js/sync_merge_core.js` (imported by `options.js`).
+- Business data (`accounts/passkeys/folders`) now persists in extension IndexedDB via `data_store.js`.
+- `chrome.storage.local` is kept for settings and lightweight data-change signaling only.
+- Legacy `chrome.storage.local` business keys are auto-migrated into IndexedDB on first run.
 
 ## Files
 - `manifest.json`: MV3 entry.
@@ -58,3 +62,5 @@ Chrome extension scaffold (Manifest V3).
 - `options.*`: options UI and source logic.
 - `content.js`: content source logic.
 - `account_core.js`: shared account/domain/sort/merge core logic.
+- `data_store.js`: IndexedDB data access + legacy storage migration.
+- `../../core/pass_core/js/sync_merge_core.js`: shared sync merge/conflict kernel.

@@ -304,7 +304,7 @@ button {
 .search-filter-wrap {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -320,6 +320,10 @@ button {
 
 #openSortModal {
   min-width: 52px;
+}
+
+#openHistoryModal {
+  min-width: 74px;
 }
 
 .search-fields-panel {
@@ -656,6 +660,10 @@ button {
   overflow: auto;
 }
 
+.history-modal-card {
+  width: min(860px, calc(100vw - 40px));
+}
+
 .sort-modal-card h3 {
   margin: 0;
   font-size: 16px;
@@ -669,6 +677,14 @@ button {
 }
 
 .sort-modal-list {
+  display: grid;
+  gap: 6px;
+  max-height: calc(100vh - 240px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.history-modal-list {
   display: grid;
   gap: 6px;
   max-height: calc(100vh - 240px);
@@ -701,6 +717,22 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.history-modal-item {
+  border: 1px solid #cddffa;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(245, 250, 255, 0.95);
+  color: #2e4d77;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.history-modal-item-time {
+  margin-bottom: 4px;
+  color: #5d7393;
+  font-size: 11px;
 }
 
 .sort-modal-item-label {
