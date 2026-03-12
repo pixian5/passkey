@@ -251,7 +251,10 @@ struct ContentView: View {
                     }
                     .zIndex(2)
 
-                HistoryPopup(store: store) {
+                HistoryPopup(
+                    store: store,
+                    accountId: editingAccount?.accountId
+                ) {
                     showHistoryPopup = false
                 }
                 .padding(26)
@@ -1098,20 +1101,35 @@ private struct TotpRowView: View {
 
 private struct HistoryPopup: View {
     @ObservedObject var store: AccountStore
+    let accountId: String?
     let onClose: () -> Void
+
+    private var visibleEntries: [OperationHistoryEntry] {
+        guard let accountId, !accountId.isEmpty else {
+            return store.historyEntries
+        }
+        let prefix = "\(accountId)："
+        return store.historyEntries.filter { $0.action.hasPrefix(prefix) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("历史记录")
+                Text(accountId.map { "历史记录 \($0)" } ?? "历史记录")
                     .font(store.textFont(size: store.scaledTextSize(17), weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 Spacer()
                 Button("清空") {
-                    store.clearHistoryEntries()
+                    if let accountId, !accountId.isEmpty {
+                        store.clearHistoryEntries(forAccountId: accountId)
+                    } else {
+                        store.clearHistoryEntries()
+                    }
                 }
                 .font(store.buttonFont())
                 .buttonStyle(.bordered)
-                .disabled(store.historyEntries.isEmpty)
+                .disabled(visibleEntries.isEmpty)
                 Button("关闭") {
                     onClose()
                 }
@@ -1119,18 +1137,18 @@ private struct HistoryPopup: View {
                 .buttonStyle(.bordered)
             }
 
-            if store.historyEntries.isEmpty {
+            if visibleEntries.isEmpty {
                 Text("暂无历史记录")
                     .font(store.textFont(size: store.scaledTextSize(17)))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 220, alignment: .center)
             } else {
-                List(store.historyEntries) { entry in
+                List(visibleEntries) { entry in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(store.displayTime(entry.timestampMs))
                             .font(store.textFont(size: store.scaledTextSize(12), weight: .semibold))
                             .foregroundStyle(.secondary)
-                        Text(entry.action)
+                        Text(formattedAction(entry.action))
                             .font(store.textFont(size: store.scaledTextSize(14)))
                             .textSelection(.enabled)
                             .lineLimit(nil)
@@ -1153,6 +1171,17 @@ private struct HistoryPopup: View {
                 .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
         }
         .shadow(radius: 18)
+    }
+
+    private func formattedAction(_ action: String) -> String {
+        let trimmed = action.trimmingCharacters(in: .whitespacesAndNewlines)
+        let content: String
+        if let accountId, trimmed.hasPrefix("\(accountId)：") {
+            content = String(trimmed.dropFirst(accountId.count + 1))
+        } else {
+            content = trimmed
+        }
+        return content.replacingOccurrences(of: "改为", with: "改为：\n", options: .literal, range: content.range(of: "改为"))
     }
 }
 

@@ -1762,6 +1762,13 @@ final class AccountStore: ObservableObject {
         statusMessage = "历史记录已清空"
     }
 
+    func clearHistoryEntries(forAccountId accountId: String) {
+        let prefix = "\(accountId)："
+        historyEntries.removeAll { $0.action.hasPrefix(prefix) }
+        saveHistoryToLocalDisk()
+        statusMessage = "历史记录已清空"
+    }
+
     private func loadHistoryFromLocalDisk() -> [OperationHistoryEntry] {
         guard let data = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.history),
               let decoded = try? decoder.decode([OperationHistoryEntry].self, from: data)
