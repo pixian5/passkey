@@ -1147,9 +1147,19 @@ private struct HistoryPopup: View {
             } else {
                 List(visibleEntries) { entry in
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(store.displayTime(entry.timestampMs))
-                            .font(store.textFont(size: store.scaledTextSize(12), weight: .semibold))
-                            .foregroundStyle(.secondary)
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(store.displayTime(entry.timestampMs))
+                                .font(store.textFont(size: store.scaledTextSize(12), weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            if entry.fieldKey == "note" {
+                                Button("回退") {
+                                    store.revertHistoryEntry(entry)
+                                }
+                                .font(store.buttonFont(size: max(12, CGFloat(store.uiButtonFontSize - 4))))
+                                .buttonStyle(.bordered)
+                            }
+                        }
                         historyContent(for: entry)
                     }
                     .padding(.vertical, 4)
@@ -1173,23 +1183,12 @@ private struct HistoryPopup: View {
     @ViewBuilder
     private func historyContent(for entry: OperationHistoryEntry) -> some View {
         if entry.fieldKey == "note" {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 8) {
-                    Spacer()
-                    Button("回退") {
-                        store.revertHistoryEntry(entry)
-                    }
-                    .font(store.buttonFont(size: max(12, CGFloat(store.uiButtonFontSize - 4))))
-                    .buttonStyle(.bordered)
-                }
-
-                Text(noteHistoryText(for: entry))
-                    .font(store.textFont(size: store.scaledTextSize(14)))
-                    .textSelection(.enabled)
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            Text(noteHistoryText(for: entry))
+                .font(store.textFont(size: store.scaledTextSize(14)))
+                .textSelection(.enabled)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             Text(formattedAction(entry.action))
                 .font(store.textFont(size: store.scaledTextSize(14)))
@@ -1204,7 +1203,6 @@ private struct HistoryPopup: View {
         """
         原备注：
         \(displayValue(entry.oldValue))
-
         新备注：
         \(displayValue(entry.newValue))
         """
