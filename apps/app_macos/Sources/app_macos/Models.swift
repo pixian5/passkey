@@ -252,6 +252,8 @@ enum AccountFactory {
 struct AccountFolder: Codable, Identifiable, Hashable {
     let id: UUID
     var name: String
+    var matchedSites: [String]
+    var autoAddMatchingSites: Bool
     let createdAtMs: Int64
     var updatedAtMs: Int64
 }
@@ -260,6 +262,8 @@ extension AccountFolder {
     private enum CodingKeys: String, CodingKey {
         case id
         case name
+        case matchedSites
+        case autoAddMatchingSites
         case createdAtMs
         case updatedAtMs
     }
@@ -268,10 +272,26 @@ extension AccountFolder {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? "未命名文件夹"
+        matchedSites = Array(
+            Set((try container.decodeIfPresent([String].self, forKey: .matchedSites) ?? [])
+                .map(DomainUtils.normalize)
+                .filter { !$0.isEmpty })
+        ).sorted()
+        autoAddMatchingSites = try container.decodeIfPresent(Bool.self, forKey: .autoAddMatchingSites) ?? false
         createdAtMs = try container.decodeIfPresent(Int64.self, forKey: .createdAtMs)
             ?? Int64(Date().timeIntervalSince1970 * 1000)
         updatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMs)
             ?? createdAtMs
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(matchedSites, forKey: .matchedSites)
+        try container.encode(autoAddMatchingSites, forKey: .autoAddMatchingSites)
+        try container.encode(createdAtMs, forKey: .createdAtMs)
+        try container.encode(updatedAtMs, forKey: .updatedAtMs)
     }
 }
 

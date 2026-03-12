@@ -120,6 +120,7 @@ const dom = {
   closeHistoryModalBtn: document.getElementById("closeHistoryModal"),
   addSitesToFolderModal: document.getElementById("addSitesToFolderModal"),
   addSitesToFolderInput: document.getElementById("addSitesToFolderInput"),
+  addSitesToFolderAutoAdd: document.getElementById("addSitesToFolderAutoAdd"),
   cancelAddSitesToFolderBtn: document.getElementById("cancelAddSitesToFolder"),
   confirmAddSitesToFolderBtn: document.getElementById("confirmAddSitesToFolder"),
   payload: document.getElementById("payload"),
@@ -2254,7 +2255,9 @@ function openFolderContextMenu({ folderId, x, y }) {
 
 function openAddSitesToFolderModal(folderId) {
   addSitesTargetFolderId = normalizeFolderId(folderId);
-  dom.addSitesToFolderInput.value = "";
+  const folder = foldersRaw.find((item) => normalizeFolderId(item?.id) === addSitesTargetFolderId);
+  dom.addSitesToFolderInput.value = Array.isArray(folder?.matchedSites) ? folder.matchedSites.join("\n") : "";
+  dom.addSitesToFolderAutoAdd.checked = Boolean(folder?.autoAddMatchingSites);
   dom.addSitesToFolderModal.classList.remove("hidden");
   dom.addSitesToFolderModal.setAttribute("aria-hidden", "false");
   setTimeout(() => {
@@ -2265,6 +2268,7 @@ function openAddSitesToFolderModal(folderId) {
 function closeAddSitesToFolderModal() {
   addSitesTargetFolderId = null;
   dom.addSitesToFolderInput.value = "";
+  dom.addSitesToFolderAutoAdd.checked = false;
   dom.addSitesToFolderModal.classList.add("hidden");
   dom.addSitesToFolderModal.setAttribute("aria-hidden", "true");
 }
@@ -2277,10 +2281,7 @@ async function addAccountsMatchingSitesToFolderFromModal() {
     return;
   }
   const sites = parseSites(dom.addSitesToFolderInput.value || "");
-  if (sites.length === 0) {
-    setStatus("请至少输入一个站点");
-    return;
-  }
+  const autoAddMatchingSites = Boolean(dom.addSitesToFolderAutoAdd.checked);
 
   const targetIds = accountsRaw
     .map(normalizeAccountShape)
@@ -2292,12 +2293,17 @@ async function addAccountsMatchingSitesToFolderFromModal() {
     })
     .map((account) => account.accountId);
 
-  if (targetIds.length === 0) {
-    setStatus("没有找到包含这些站点的账号");
-    return;
-  }
-
   const next = cloneAccounts(accountsRaw).map(normalizeAccountShape);
+  const nextFolders = foldersRaw.map((item) => {
+    const folder = normalizeFolderShape(item);
+    if (normalizeFolderId(folder.id) !== folderId) return folder;
+    return {
+      ...folder,
+      matchedSites: sites,
+      autoAddMatchingSites,
+      updatedAtMs: Date.now(),
+    };
+  });
   const now = Date.now();
   const deviceName = await getDeviceName();
   let changedCount = 0;
@@ -2316,16 +2322,22 @@ async function addAccountsMatchingSitesToFolderFromModal() {
   }
 
   closeAddSitesToFolderModal();
-  if (changedCount === 0) {
-    setStatus(`这些账号已在文件夹: ${folderDisplayNameById(folderId)}`);
-    return;
-  }
-
   accountsRaw = cloneAccounts(next);
-  await setAccountsToDataStore(next);
-  await appendHistory(`按站点批量加入文件夹：${folderDisplayNameById(folderId)}（${changedCount} 个账号）`, now);
+  foldersRaw = sortFoldersForDisplay(withFixedFolder(nextFolders));
+  await writeBusinessDataToStore({ accounts: next, passkeys: passkeysRaw, folders: nextFolders });
+  await appendHistory(
+    `更新文件夹站点规则：${folderDisplayNameById(folderId)}（${sites.length} 个站点，自动加入${autoAddMatchingSites ? "开" : "关"}）`,
+    now
+  );
+  if (changedCount > 0) {
+    await appendHistory(`按站点批量加入文件夹：${folderDisplayNameById(folderId)}（${changedCount} 个账号）`, now);
+  }
   await refresh({ silent: true });
-  setStatus(`已将 ${changedCount} 个账号加入文件夹: ${folderDisplayNameById(folderId)}`);
+  setStatus(
+    changedCount > 0
+      ? `已保存规则，并将 ${changedCount} 个账号加入文件夹: ${folderDisplayNameById(folderId)}`
+      : `已保存文件夹站点规则: ${folderDisplayNameById(folderId)}`
+  );
 }
 
 
@@ -2354,6 +2366,30 @@ function openAccountFolderContextMenu(account, position) {
       };
     }),
   });
+}
+
+function applyAutoFolderRulesToAccount(account, folders = foldersRaw) {
+  if (!account || account.isDeleted) return account;
+  const accountSites = new Set(
+    normalizeSites([...(account.sites || []), account.canonicalSite || ""]).filter(Boolean)
+  );
+  if (accountSites.size === 0) return account;
+  const matchedFolderIds = (Array.isArray(folders) ? folders : [])
+    .map(normalizeFolderShape)
+    .filter((folder) => folder.autoAddMatchingSites)
+    .filter((folder) => folder.matchedSites.some((site) => accountSites.has(site)))
+    .map((folder) => normalizeFolderId(folder.id))
+    .filter(Boolean);
+  if (matchedFolderIds.length === 0) return account;
+  const nextFolderIds = normalizeFolderIdList([
+    ...extractAccountFolderIds(account),
+    ...matchedFolderIds,
+  ]);
+  return {
+    ...account,
+    folderId: nextFolderIds[0] || null,
+    folderIds: nextFolderIds,
+  };
 }
 
 function getActivePinScopeKey() {
@@ -2639,8 +2675,11 @@ async function saveAccountEdit(accountId, draft) {
 
   target.updatedAtMs = now;
   target.lastOperatedDeviceName = deviceName;
+  const withAutoFolders = next.map((item) =>
+    item === target ? applyAutoFolderRulesToAccount(item) : item
+  );
 
-  const synced = syncAliasGroups(next);
+  const synced = syncAliasGroups(withAutoFolders);
   await setAccountsToDataStore(synced);
   for (const message of historyMessages) {
     await appendHistory(`${target.accountId}：${message}`, now);
@@ -3015,6 +3054,8 @@ function normalizeFolderShape(item) {
   return {
     id: safeId,
     name: safeName,
+    matchedSites: normalizeSites(item?.matchedSites || []),
+    autoAddMatchingSites: Boolean(item?.autoAddMatchingSites),
     createdAtMs,
     updatedAtMs: Number(item?.updatedAtMs || createdAtMs),
   };

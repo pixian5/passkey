@@ -76,6 +76,7 @@ struct ContentView: View {
     @State private var showAddSitesToFolderSheet: Bool = false
     @State private var addSitesTargetFolderId: UUID?
     @State private var addSitesText: String = ""
+    @State private var addSitesAutoAddEnabled: Bool = false
     @State private var pendingMoveAccountIds: [UUID] = []
     @State private var moveFolderCheckedIds: Set<UUID> = []
     @State private var showHistoryPopup: Bool = false
@@ -416,7 +417,8 @@ struct ContentView: View {
                             .contextMenu {
                                 Button("指定网站全部账号") {
                                     addSitesTargetFolderId = folder.id
-                                    addSitesText = ""
+                                    addSitesText = store.folderRuleSites(for: folder.id).joined(separator: "\n")
+                                    addSitesAutoAddEnabled = store.folderRuleAutoAddEnabled(for: folder.id)
                                     showAddSitesToFolderSheet = true
                                 }
 
@@ -804,6 +806,9 @@ struct ContentView: View {
                         .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
                 )
 
+            Toggle("后续自动加入", isOn: $addSitesAutoAddEnabled)
+                .font(store.textFont(size: store.scaledTextSize(13)))
+
             HStack {
                 Spacer()
                 Button("取消") {
@@ -820,8 +825,11 @@ struct ContentView: View {
                     let lines = addSitesText
                         .split(whereSeparator: \.isNewline)
                         .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-                        .filter { !$0.isEmpty }
-                    store.addAccountsMatchingSitesToFolder(siteInputs: lines, folderId: folderId)
+                    store.configureFolderSiteRules(
+                        folderId: folderId,
+                        siteInputs: lines,
+                        autoAdd: addSitesAutoAddEnabled
+                    )
                     showAddSitesToFolderSheet = false
                 }
                 .font(store.buttonFont())

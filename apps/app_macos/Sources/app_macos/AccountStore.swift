@@ -295,6 +295,8 @@ final class AccountStore: ObservableObject {
         let folder = AccountFolder(
             id: UUID(),
             name: name,
+            matchedSites: [],
+            autoAddMatchingSites: false,
             createdAtMs: nowMs(),
             updatedAtMs: nowMs()
         )
@@ -344,6 +346,14 @@ final class AccountStore: ObservableObject {
 
     func folderName(for id: UUID) -> String {
         folders.first(where: { $0.id == id })?.name ?? "未命名文件夹"
+    }
+
+    func folderRuleSites(for id: UUID) -> [String] {
+        folders.first(where: { $0.id == id })?.matchedSites ?? []
+    }
+
+    func folderRuleAutoAddEnabled(for id: UUID) -> Bool {
+        folders.first(where: { $0.id == id })?.autoAddMatchingSites ?? false
     }
 
     func checkedFolderIdsForAccounts(accountIds: [UUID]) -> [UUID] {
@@ -603,6 +613,43 @@ final class AccountStore: ObservableObject {
         addAccountsToFolder(accountIds: matchingIds, folderId: folderId)
     }
 
+    func configureFolderSiteRules(folderId: UUID, siteInputs: [String], autoAdd: Bool) {
+        guard let folderIndex = folders.firstIndex(where: { $0.id == folderId }) else {
+            statusMessage = "目标文件夹不存在"
+            return
+        }
+
+        let normalizedSites = Array(
+            Set(siteInputs.map(DomainUtils.normalize).filter { !$0.isEmpty })
+        ).sorted()
+        let now = nowMs()
+        folders[folderIndex].matchedSites = normalizedSites
+        folders[folderIndex].autoAddMatchingSites = autoAdd
+        folders[folderIndex].updatedAtMs = now
+        saveFoldersToDefaults()
+        appendHistoryEntry(
+            action: "更新文件夹站点规则：\(folders[folderIndex].name)（\(normalizedSites.count) 个站点，自动加入\(autoAdd ? "开" : "关")）",
+            timestampMs: now
+        )
+
+        let matchingIds = accounts.compactMap { account -> UUID? in
+            guard !account.isDeleted else { return nil }
+            let aliases = Set(account.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
+            let canonical = DomainUtils.normalize(account.canonicalSite)
+            let matched = normalizedSites.contains { site in
+                aliases.contains(site) || canonical == site
+            }
+            return matched ? account.id : nil
+        }
+
+        guard !matchingIds.isEmpty else {
+            statusMessage = "已保存文件夹站点规则"
+            return
+        }
+
+        addAccountsToFolder(accountIds: matchingIds, folderId: folderId)
+    }
+
     func undoLastMoveOperation() {
         guard let operation = lastMoveOperation else {
             statusMessage = "没有可撤销的移动操作"
@@ -742,6 +789,7 @@ final class AccountStore: ObservableObject {
         created.recoveryCodes = recoveryCodes
         created.note = note
         created.setResolvedFolderIds([Self.fixedNewAccountFolderId])
+        applyAutomaticFolderRules(to: &created)
         accounts.append(created)
         syncAliasGroups()
         saveAccounts()
@@ -1297,6 +1345,7 @@ final class AccountStore: ObservableObject {
             return
         }
 
+        applyAutomaticFolderRules(to: &accounts[index])
         accounts[index].touchUpdatedAt(now, deviceName: device)
         syncAliasGroups()
         saveAccounts()
@@ -1490,6 +1539,20 @@ final class AccountStore: ObservableObject {
             }
             return lhs.accountId.localizedStandardCompare(rhs.accountId) == .orderedAscending
         }
+    }
+
+    private func applyAutomaticFolderRules(to account: inout PasswordAccount) {
+        let accountSites = Set(account.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
+        guard !accountSites.isEmpty else { return }
+        let matchingFolderIds = folders.compactMap { folder -> UUID? in
+            guard folder.autoAddMatchingSites else { return nil }
+            let folderSites = Set(folder.matchedSites.map(DomainUtils.normalize).filter { !$0.isEmpty })
+            guard !folderSites.isDisjoint(with: accountSites) else { return nil }
+            return folder.id
+        }
+        guard !matchingFolderIds.isEmpty else { return }
+        let mergedFolderIds = normalizeFolderIds(account.resolvedFolderIds + matchingFolderIds)
+        account.setResolvedFolderIds(mergedFolderIds)
     }
 
     func accountForEditing() -> PasswordAccount? {
@@ -2765,6 +2828,8 @@ final class AccountStore: ObservableObject {
             mergedById[fixedId] = AccountFolder(
                 id: fixedId,
                 name: Self.fixedNewAccountFolderName,
+                matchedSites: existing.matchedSites,
+                autoAddMatchingSites: existing.autoAddMatchingSites,
                 createdAtMs: existing.createdAtMs,
                 updatedAtMs: existing.updatedAtMs
             )
@@ -2772,6 +2837,8 @@ final class AccountStore: ObservableObject {
             mergedById[fixedId] = AccountFolder(
                 id: fixedId,
                 name: Self.fixedNewAccountFolderName,
+                matchedSites: [],
+                autoAddMatchingSites: false,
                 createdAtMs: nowMs(),
                 updatedAtMs: nowMs()
             )
@@ -2787,6 +2854,8 @@ final class AccountStore: ObservableObject {
             return AccountFolder(
                 id: lhs.id,
                 name: Self.fixedNewAccountFolderName,
+                matchedSites: rightUpdatedAt >= leftUpdatedAt ? rhs.matchedSites : lhs.matchedSites,
+                autoAddMatchingSites: rightUpdatedAt >= leftUpdatedAt ? rhs.autoAddMatchingSites : lhs.autoAddMatchingSites,
                 createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs),
                 updatedAtMs: max(leftUpdatedAt, rightUpdatedAt)
             )
@@ -2806,6 +2875,8 @@ final class AccountStore: ObservableObject {
         return AccountFolder(
             id: lhs.id,
             name: mergedName.isEmpty ? lhs.name : mergedName,
+            matchedSites: rightUpdatedAt > leftUpdatedAt ? rhs.matchedSites : lhs.matchedSites,
+            autoAddMatchingSites: rightUpdatedAt > leftUpdatedAt ? rhs.autoAddMatchingSites : lhs.autoAddMatchingSites,
             createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs),
             updatedAtMs: max(leftUpdatedAt, rightUpdatedAt)
         )
@@ -3063,6 +3134,8 @@ final class AccountStore: ObservableObject {
         let fixedFolder = AccountFolder(
             id: fixedId,
             name: fixedName,
+            matchedSites: folders.first(where: { $0.id == fixedId })?.matchedSites ?? [],
+            autoAddMatchingSites: folders.first(where: { $0.id == fixedId })?.autoAddMatchingSites ?? false,
             createdAtMs: fixedCreatedAt,
             updatedAtMs: fixedUpdatedAt
         )

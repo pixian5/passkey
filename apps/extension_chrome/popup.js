@@ -14,6 +14,7 @@ import {
   STORAGE_KEY_DATA_BUMP,
   ensureDataStorageReady,
   getAccounts as getAccountsFromDataStore,
+  getFolders as getFoldersFromDataStore,
   getHistory as getHistoryFromDataStore,
   getPasskeys as getPasskeysFromDataStore,
   setAccounts as setAccountsToDataStore,
@@ -92,6 +93,7 @@ const dom = {
 
 let currentDomain = "";
 let accounts = [];
+let folders = [];
 let passkeys = [];
 let editingAccountId = null;
 let viewMode = "accounts";
@@ -123,6 +125,7 @@ async function init() {
   await Promise.all([
     ensureDataStorageReady(),
     loadAccounts(),
+    loadFolders(),
     loadHistory(),
     loadPasskeys(),
     loadLockSettingsFromStorage(),
@@ -160,7 +163,7 @@ function handleStorageChanged(changes, areaName) {
 }
 
 async function reloadBusinessData() {
-  await Promise.all([loadAccounts(), loadPasskeys(), loadHistory()]);
+  await Promise.all([loadAccounts(), loadFolders(), loadPasskeys(), loadHistory()]);
   renderAccounts();
   if (!dom.sortModal.classList.contains("modal-hidden")) {
     renderSortModalList();
@@ -617,6 +620,11 @@ async function loadAccounts() {
   accounts = raw.map(normalizeAccountShape);
 }
 
+async function loadFolders() {
+  const raw = await getFoldersFromDataStore();
+  folders = (Array.isArray(raw) ? raw : []).map(normalizeFolderShape);
+}
+
 async function loadPasskeys() {
   const raw = await getPasskeysFromDataStore();
   passkeys = raw.map(normalizePasskeyShape);
@@ -655,6 +663,38 @@ async function persistAccounts(nextAccounts) {
 async function persistPasskeys(nextPasskeys) {
   passkeys = nextPasskeys.map(normalizePasskeyShape);
   await setPasskeysToDataStore(passkeys);
+}
+
+function normalizeFolderShape(folder) {
+  return {
+    id: String(folder?.id || "").trim().toLowerCase(),
+    name: String(folder?.name || "").trim(),
+    matchedSites: normalizeSites(folder?.matchedSites || []),
+    autoAddMatchingSites: Boolean(folder?.autoAddMatchingSites),
+  };
+}
+
+function applyAutoFolderRulesToAccount(account) {
+  if (!account || account.isDeleted) return account;
+  const accountSites = new Set(
+    normalizeSites([...(account.sites || []), account.canonicalSite || ""]).filter(Boolean)
+  );
+  if (accountSites.size === 0) return account;
+  const matchedFolderIds = folders
+    .filter((folder) => folder.autoAddMatchingSites)
+    .filter((folder) => folder.matchedSites.some((site) => accountSites.has(site)))
+    .map((folder) => String(folder.id || ""))
+    .filter(Boolean);
+  if (matchedFolderIds.length === 0) return account;
+  const nextFolderIds = normalizeFolderIdList([
+    ...(Array.isArray(account.folderIds) ? account.folderIds : (account.folderId ? [account.folderId] : [])),
+    ...matchedFolderIds,
+  ]);
+  return {
+    ...account,
+    folderId: nextFolderIds[0] || null,
+    folderIds: nextFolderIds,
+  };
 }
 
 function normalizeAccountShape(account) {
@@ -1441,7 +1481,7 @@ async function createAccountFromInputs() {
     createdAtMs,
     deviceName,
   });
-  next.push(created);
+  next.push(applyAutoFolderRulesToAccount(created));
 
   const synced = syncAliasGroups(next);
   await persistAccounts(synced);
@@ -1554,7 +1594,10 @@ async function saveAccountEdit(accountId, draft) {
 
   target.updatedAtMs = now;
   target.lastOperatedDeviceName = deviceName;
-  const synced = syncAliasGroups(next);
+  const withAutoFolders = next.map((item) =>
+    item === target ? applyAutoFolderRulesToAccount(item) : item
+  );
+  const synced = syncAliasGroups(withAutoFolders);
   await persistAccounts(synced);
   for (const message of historyMessages) {
     await appendHistory(`${target.accountId}：${message}`, now);

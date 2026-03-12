@@ -242,6 +242,8 @@ function mergeSameFolder(lhs, rhs, h) {
     return {
       id,
       name: h.fixedNewAccountFolderName,
+      matchedSites: rightUpdatedAt >= leftUpdatedAt ? right.matchedSites || [] : left.matchedSites || [],
+      autoAddMatchingSites: rightUpdatedAt >= leftUpdatedAt ? Boolean(right.autoAddMatchingSites) : Boolean(left.autoAddMatchingSites),
       createdAtMs: Math.min(asNumber(left.createdAtMs), asNumber(right.createdAtMs)),
       updatedAtMs: Math.max(leftUpdatedAt, rightUpdatedAt),
     };
@@ -259,6 +261,8 @@ function mergeSameFolder(lhs, rhs, h) {
   return {
     id,
     name,
+    matchedSites: rightUpdatedAt > leftUpdatedAt ? right.matchedSites || [] : left.matchedSites || [],
+    autoAddMatchingSites: rightUpdatedAt > leftUpdatedAt ? Boolean(right.autoAddMatchingSites) : Boolean(left.autoAddMatchingSites),
     createdAtMs: Math.min(asNumber(left.createdAtMs), asNumber(right.createdAtMs)),
     updatedAtMs: Math.max(leftUpdatedAt, rightUpdatedAt),
   };
