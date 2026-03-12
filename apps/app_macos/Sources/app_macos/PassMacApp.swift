@@ -16,6 +16,7 @@ struct PassMacApp: App {
             PassMacSettingsCommands()
             PassMacShortcutCommands(store: store)
             PassMacAccountCommands(store: store)
+            PassMacHistoryCommands()
         }
 
         Window("设置", id: "settings") {
@@ -32,6 +33,22 @@ struct PassMacApp: App {
                 .appToast(store)
         }
         .defaultSize(width: 760, height: 760)
+        .windowResizability(.automatic)
+
+        Window(HistoryEntryCategory.sync.menuTitle, id: "history-sync") {
+            HistoryWindowView(store: store, category: .sync)
+                .font(store.textFont())
+                .appToast(store)
+        }
+        .defaultSize(width: 980, height: 720)
+        .windowResizability(.automatic)
+
+        Window(HistoryEntryCategory.local.menuTitle, id: "history-local") {
+            HistoryWindowView(store: store, category: .local)
+                .font(store.textFont())
+                .appToast(store)
+        }
+        .defaultSize(width: 980, height: 720)
         .windowResizability(.automatic)
     }
 }
@@ -86,6 +103,22 @@ private struct PassMacAccountCommands: Commands {
 
             Button("撤销移动") {
                 store.undoLastMoveOperation()
+            }
+        }
+    }
+}
+
+private struct PassMacHistoryCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandMenu("历史") {
+            Button(HistoryEntryCategory.sync.menuTitle) {
+                openWindow(id: "history-sync")
+            }
+
+            Button(HistoryEntryCategory.local.menuTitle) {
+                openWindow(id: "history-local")
             }
         }
     }

@@ -267,28 +267,66 @@ extension AccountFolder {
 struct OperationHistoryEntry: Codable, Identifiable, Hashable {
     let id: UUID
     let timestampMs: Int64
+    let category: HistoryEntryCategory
+    let operationId: UUID
+    let operationTitle: String?
     let action: String
     let accountId: String?
     let fieldKey: String?
     let oldValue: String?
     let newValue: String?
+    let accountBefore: PasswordAccount?
+    let accountAfter: PasswordAccount?
 
     init(
         id: UUID,
         timestampMs: Int64,
+        category: HistoryEntryCategory = .local,
+        operationId: UUID = UUID(),
+        operationTitle: String? = nil,
         action: String,
         accountId: String? = nil,
         fieldKey: String? = nil,
         oldValue: String? = nil,
-        newValue: String? = nil
+        newValue: String? = nil,
+        accountBefore: PasswordAccount? = nil,
+        accountAfter: PasswordAccount? = nil
     ) {
         self.id = id
         self.timestampMs = timestampMs
+        self.category = category
+        self.operationId = operationId
+        self.operationTitle = operationTitle
         self.action = action
         self.accountId = accountId
         self.fieldKey = fieldKey
         self.oldValue = oldValue
         self.newValue = newValue
+        self.accountBefore = accountBefore
+        self.accountAfter = accountAfter
+    }
+}
+
+enum HistoryEntryCategory: String, Codable, CaseIterable, Hashable {
+    case local
+    case sync
+
+    var menuTitle: String {
+        switch self {
+        case .local:
+            return "本地的历史记录"
+        case .sync:
+            return "同步的历史记录"
+        }
+    }
+
+    var operationPrefix: String {
+        switch self {
+        case .local:
+            return "本地"
+        case .sync:
+            return "同步"
+        }
     }
 }
 
@@ -296,11 +334,16 @@ extension OperationHistoryEntry {
     private enum CodingKeys: String, CodingKey {
         case id
         case timestampMs
+        case category
+        case operationId
+        case operationTitle
         case action
         case accountId
         case fieldKey
         case oldValue
         case newValue
+        case accountBefore
+        case accountAfter
     }
 
     init(from decoder: Decoder) throws {
@@ -308,11 +351,16 @@ extension OperationHistoryEntry {
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         timestampMs = try container.decodeIfPresent(Int64.self, forKey: .timestampMs)
             ?? Int64(Date().timeIntervalSince1970 * 1000)
+        category = try container.decodeIfPresent(HistoryEntryCategory.self, forKey: .category) ?? .local
+        operationId = try container.decodeIfPresent(UUID.self, forKey: .operationId) ?? UUID()
+        operationTitle = try container.decodeIfPresent(String.self, forKey: .operationTitle)
         action = try container.decodeIfPresent(String.self, forKey: .action) ?? ""
         accountId = try container.decodeIfPresent(String.self, forKey: .accountId)
         fieldKey = try container.decodeIfPresent(String.self, forKey: .fieldKey)
         oldValue = try container.decodeIfPresent(String.self, forKey: .oldValue)
         newValue = try container.decodeIfPresent(String.self, forKey: .newValue)
+        accountBefore = try container.decodeIfPresent(PasswordAccount.self, forKey: .accountBefore)
+        accountAfter = try container.decodeIfPresent(PasswordAccount.self, forKey: .accountAfter)
     }
 }
 

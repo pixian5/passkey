@@ -1152,7 +1152,7 @@ private struct HistoryPopup: View {
                                 .font(store.textFont(size: store.scaledTextSize(12), weight: .semibold))
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            if entry.fieldKey == "note" {
+                            if store.canRevertHistoryEntry(entry) {
                                 Button("回退") {
                                     store.revertHistoryEntry(entry)
                                 }

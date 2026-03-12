@@ -382,6 +382,7 @@ final class AccountStore: ObservableObject {
         )
 
         var previousFolderIdsByAccountId: [UUID: [UUID]] = [:]
+        var beforeAccounts: [PasswordAccount] = []
         var changedCount = 0
         let now = nowMs()
         let device = currentDeviceName()
@@ -391,6 +392,7 @@ final class AccountStore: ObservableObject {
             previousFolderIdsByAccountId[accounts[index].id] = currentFolderIds
 
             if currentFolderIds != targetFolderIds {
+                beforeAccounts.append(accounts[index])
                 accounts[index].setResolvedFolderIds(targetFolderIds)
                 accounts[index].touchUpdatedAt(now, deviceName: device)
                 changedCount += 1
@@ -409,7 +411,15 @@ final class AccountStore: ObservableObject {
             actionSummary: actionSummary
         )
         saveAccounts()
-        appendHistoryEntry(action: actionSummary)
+        let changedIds = Set(beforeAccounts.map(\.accountId))
+        let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
+        appendAccountHistoryBatch(
+            category: .local,
+            title: actionSummary,
+            timestampMs: now,
+            beforeAccounts: beforeAccounts,
+            afterAccounts: afterAccounts
+        )
         setStatusMessage("已按勾选更新文件夹（\(changedCount) 个账号），点击撤销", allowsUndoMove: true)
     }
 
@@ -443,6 +453,7 @@ final class AccountStore: ObservableObject {
         let shouldAddToFolder = !allAlreadyInFolder
 
         var previousFolderIdsByAccountId: [UUID: [UUID]] = [:]
+        var beforeAccounts: [PasswordAccount] = []
         var changedCount = 0
         let now = nowMs()
         let device = currentDeviceName()
@@ -462,6 +473,7 @@ final class AccountStore: ObservableObject {
 
             let normalizedNext = normalizeFolderIds(nextFolderIds)
             if normalizedNext != currentFolderIds {
+                beforeAccounts.append(accounts[index])
                 accounts[index].setResolvedFolderIds(normalizedNext)
                 accounts[index].touchUpdatedAt(now, deviceName: device)
                 changedCount += 1
@@ -483,7 +495,15 @@ final class AccountStore: ObservableObject {
             actionSummary: actionSummary
         )
         saveAccounts()
-        appendHistoryEntry(action: actionSummary)
+        let changedIds = Set(beforeAccounts.map(\.accountId))
+        let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
+        appendAccountHistoryBatch(
+            category: .local,
+            title: actionSummary,
+            timestampMs: now,
+            beforeAccounts: beforeAccounts,
+            afterAccounts: afterAccounts
+        )
         setStatusMessage("\(actionSummary)（\(changedCount) 个账号），点击撤销", allowsUndoMove: true)
     }
 
@@ -505,6 +525,7 @@ final class AccountStore: ObservableObject {
         }
 
         var previousFolderIdsByAccountId: [UUID: [UUID]] = [:]
+        var beforeAccounts: [PasswordAccount] = []
         var changedCount = 0
         let now = nowMs()
         let device = currentDeviceName()
@@ -519,6 +540,7 @@ final class AccountStore: ObservableObject {
             nextFolderIds.append(folderId)
             let normalizedNext = normalizeFolderIds(nextFolderIds)
             if normalizedNext != currentFolderIds {
+                beforeAccounts.append(accounts[index])
                 accounts[index].setResolvedFolderIds(normalizedNext)
                 accounts[index].touchUpdatedAt(now, deviceName: device)
                 changedCount += 1
@@ -537,7 +559,15 @@ final class AccountStore: ObservableObject {
             actionSummary: actionSummary
         )
         saveAccounts()
-        appendHistoryEntry(action: actionSummary)
+        let changedIds = Set(beforeAccounts.map(\.accountId))
+        let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
+        appendAccountHistoryBatch(
+            category: .local,
+            title: actionSummary,
+            timestampMs: now,
+            beforeAccounts: beforeAccounts,
+            afterAccounts: afterAccounts
+        )
         setStatusMessage("\(actionSummary)（\(changedCount) 个账号），点击撤销", allowsUndoMove: true)
     }
 
@@ -550,6 +580,7 @@ final class AccountStore: ObservableObject {
         let idSet = Set(operation.accountIds)
         let now = nowMs()
         let device = currentDeviceName()
+        let beforeAccounts = accounts.filter { idSet.contains($0.id) }
         var revertedCount = 0
 
         for index in accounts.indices where idSet.contains(accounts[index].id) {
@@ -572,7 +603,14 @@ final class AccountStore: ObservableObject {
         isUndoMoveToastVisible = false
         undoMoveDismissWorkItem?.cancel()
         lastMoveOperation = nil
-        appendHistoryEntry(action: "撤销移动：\(operation.actionSummary)")
+        let afterAccounts = accounts.filter { idSet.contains($0.id) }
+        appendAccountHistoryBatch(
+            category: .local,
+            title: "撤销移动：\(operation.actionSummary)",
+            timestampMs: now,
+            beforeAccounts: beforeAccounts,
+            afterAccounts: afterAccounts
+        )
         statusMessage = "已撤销: \(operation.actionSummary)"
     }
 
@@ -626,7 +664,14 @@ final class AccountStore: ObservableObject {
         accounts.append(contentsOf: samples)
         syncAliasGroups()
         saveAccounts()
-        appendHistoryEntry(action: "生成演示账号：20 条")
+        let createdIds = Set(samples.map(\.accountId))
+        let afterAccounts = accounts.filter { createdIds.contains($0.accountId) }
+        appendAccountHistoryBatch(
+            category: .local,
+            title: "生成演示账号：20 条",
+            beforeAccounts: [],
+            afterAccounts: afterAccounts
+        )
         statusMessage = "已生成演示账号 20 条（含 TOTP/恢复码/备注/站点别名）"
     }
 
@@ -668,8 +713,12 @@ final class AccountStore: ObservableObject {
         accounts.append(created)
         syncAliasGroups()
         saveAccounts()
-        appendHistoryEntry(
-            action: "创建账号 \(created.accountId)：用户名改为\(historyValueSnippet(created.username))，密码改为\(historyValueSnippet(created.password))"
+        let persistedCreated = accounts.first(where: { $0.accountId == created.accountId }) ?? created
+        appendAccountHistoryBatch(
+            category: .local,
+            title: "创建账号：\(created.accountId)",
+            beforeAccounts: [],
+            afterAccounts: [persistedCreated]
         )
 
         createSitesText = ""
@@ -716,13 +765,20 @@ final class AccountStore: ObservableObject {
             return
         }
 
+        let beforeAccount = accounts[index]
         let now = nowMs()
         accounts[index].isDeleted = true
         accounts[index].deletedAtMs = now
         statusMessage = "账号已移入回收站"
         accounts[index].touchUpdatedAt(now, deviceName: currentDeviceName())
         saveAccounts()
-        appendHistoryEntry(action: "账号移入回收站：\(accounts[index].accountId)", timestampMs: now)
+        appendAccountHistoryBatch(
+            category: .local,
+            title: "账号移入回收站：\(accounts[index].accountId)",
+            timestampMs: now,
+            beforeAccounts: [beforeAccount],
+            afterAccounts: [accounts[index]]
+        )
     }
 
     func moveToRecycleBin(accountIds: Set<UUID>) {
@@ -732,6 +788,7 @@ final class AccountStore: ObservableObject {
             return
         }
 
+        let beforeAccounts = targetIndexes.map { accounts[$0] }
         let now = nowMs()
         let device = currentDeviceName()
         for index in targetIndexes {
@@ -740,7 +797,15 @@ final class AccountStore: ObservableObject {
             accounts[index].touchUpdatedAt(now, deviceName: device)
         }
         saveAccounts()
-        appendHistoryEntry(action: "批量移入回收站：\(targetIndexes.count) 条账号", timestampMs: now)
+        let changedIds = Set(beforeAccounts.map(\.accountId))
+        let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
+        appendAccountHistoryBatch(
+            category: .local,
+            title: "批量移入回收站：\(targetIndexes.count) 条账号",
+            timestampMs: now,
+            beforeAccounts: beforeAccounts,
+            afterAccounts: afterAccounts
+        )
         statusMessage = "已将 \(targetIndexes.count) 条账号移入回收站"
     }
 
@@ -755,13 +820,20 @@ final class AccountStore: ObservableObject {
             return
         }
 
+        let beforeAccount = accounts[index]
         let now = nowMs()
         accounts[index].isDeleted = false
         accounts[index].deletedAtMs = nil
         statusMessage = "账号已从回收站恢复"
         accounts[index].touchUpdatedAt(now, deviceName: currentDeviceName())
         saveAccounts()
-        appendHistoryEntry(action: "账号从回收站恢复：\(accounts[index].accountId)", timestampMs: now)
+        appendAccountHistoryBatch(
+            category: .local,
+            title: "账号从回收站恢复：\(accounts[index].accountId)",
+            timestampMs: now,
+            beforeAccounts: [beforeAccount],
+            afterAccounts: [accounts[index]]
+        )
     }
 
     func restoreFromRecycleBin(accountIds: Set<UUID>) {
@@ -771,6 +843,7 @@ final class AccountStore: ObservableObject {
             return
         }
 
+        let beforeAccounts = targetIndexes.map { accounts[$0] }
         let now = nowMs()
         let device = currentDeviceName()
         for index in targetIndexes {
@@ -779,7 +852,15 @@ final class AccountStore: ObservableObject {
             accounts[index].touchUpdatedAt(now, deviceName: device)
         }
         saveAccounts()
-        appendHistoryEntry(action: "批量恢复账号：\(targetIndexes.count) 条", timestampMs: now)
+        let changedIds = Set(beforeAccounts.map(\.accountId))
+        let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
+        appendAccountHistoryBatch(
+            category: .local,
+            title: "批量恢复账号：\(targetIndexes.count) 条",
+            timestampMs: now,
+            beforeAccounts: beforeAccounts,
+            afterAccounts: afterAccounts
+        )
         statusMessage = "已恢复 \(targetIndexes.count) 个账号"
     }
 
@@ -794,22 +875,25 @@ final class AccountStore: ObservableObject {
             return
         }
 
-        let removedId = accounts[index].accountId
+        let removedAccount = accounts[index]
+        let removedId = removedAccount.accountId
         accounts.remove(at: index)
         if editingAccountId == account.id {
             cancelEditing()
         }
         saveAccounts()
-        appendHistoryEntry(action: "永久删除账号：\(removedId)")
+        appendAccountHistoryBatch(
+            category: .local,
+            title: "永久删除账号：\(removedId)",
+            beforeAccounts: [removedAccount],
+            afterAccounts: []
+        )
         statusMessage = "账号已永久删除: \(removedId)"
     }
 
     func permanentlyDeleteFromRecycleBin(accountIds: Set<UUID>) {
-        let targetIds = Set(
-            accounts
-                .filter { accountIds.contains($0.id) && $0.isDeleted }
-                .map(\.id)
-        )
+        let beforeAccounts = accounts.filter { accountIds.contains($0.id) && $0.isDeleted }
+        let targetIds = Set(beforeAccounts.map(\.id))
         guard !targetIds.isEmpty else {
             statusMessage = "未找到可永久删除账号"
             return
@@ -820,7 +904,12 @@ final class AccountStore: ObservableObject {
             cancelEditing()
         }
         saveAccounts()
-        appendHistoryEntry(action: "批量永久删除账号：\(targetIds.count) 条")
+        appendAccountHistoryBatch(
+            category: .local,
+            title: "批量永久删除账号：\(targetIds.count) 条",
+            beforeAccounts: beforeAccounts,
+            afterAccounts: []
+        )
         statusMessage = "已永久删除 \(targetIds.count) 个账号"
     }
 
@@ -839,6 +928,7 @@ final class AccountStore: ObservableObject {
             return
         }
 
+        let beforeAccounts = deletedIndexes.map { accounts[$0] }
         let now = nowMs()
         let device = currentDeviceName()
         for index in deletedIndexes {
@@ -847,7 +937,15 @@ final class AccountStore: ObservableObject {
             accounts[index].touchUpdatedAt(now, deviceName: device)
         }
         saveAccounts()
-        appendHistoryEntry(action: "全部恢复回收站账号：\(deletedIndexes.count) 条", timestampMs: now)
+        let changedIds = Set(beforeAccounts.map(\.accountId))
+        let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
+        appendAccountHistoryBatch(
+            category: .local,
+            title: "全部恢复回收站账号：\(deletedIndexes.count) 条",
+            timestampMs: now,
+            beforeAccounts: beforeAccounts,
+            afterAccounts: afterAccounts
+        )
         statusMessage = "已恢复 \(deletedIndexes.count) 个账号"
     }
 
@@ -858,13 +956,19 @@ final class AccountStore: ObservableObject {
             return
         }
 
-        let deletedIds = Set(accounts.filter(\.isDeleted).map(\.id))
+        let beforeAccounts = accounts.filter(\.isDeleted)
+        let deletedIds = Set(beforeAccounts.map(\.id))
         accounts.removeAll(where: \.isDeleted)
         if let editingAccountId, deletedIds.contains(editingAccountId) {
             cancelEditing()
         }
         saveAccounts()
-        appendHistoryEntry(action: "清空回收站：永久删除 \(deletedCount) 条账号")
+        appendAccountHistoryBatch(
+            category: .local,
+            title: "清空回收站：永久删除 \(deletedCount) 条账号",
+            beforeAccounts: beforeAccounts,
+            afterAccounts: []
+        )
         statusMessage = "已永久删除 \(deletedCount) 个账号"
     }
 
@@ -875,6 +979,7 @@ final class AccountStore: ObservableObject {
             return
         }
 
+        let beforeAccounts = activeIndexes.map { accounts[$0] }
         let now = nowMs()
         let device = currentDeviceName()
         for index in activeIndexes {
@@ -884,7 +989,15 @@ final class AccountStore: ObservableObject {
         }
         cancelEditing()
         saveAccounts()
-        appendHistoryEntry(action: "全部账号移入回收站：\(activeIndexes.count) 条", timestampMs: now)
+        let changedIds = Set(beforeAccounts.map(\.accountId))
+        let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
+        appendAccountHistoryBatch(
+            category: .local,
+            title: "全部账号移入回收站：\(activeIndexes.count) 条",
+            timestampMs: now,
+            beforeAccounts: beforeAccounts,
+            afterAccounts: afterAccounts
+        )
         statusMessage = "已将全部账号移入回收站 \(activeIndexes.count) 条"
     }
 
@@ -973,6 +1086,7 @@ final class AccountStore: ObservableObject {
 
     func importSyncBundle(from fileURL: URL) {
         do {
+            let previousAccounts = accounts
             let data = try Data(contentsOf: fileURL)
             let parsed = try decodeSyncBundle(data)
             let remoteAccounts = normalizeDecodedAccounts(parsed.accounts)
@@ -1005,7 +1119,12 @@ final class AccountStore: ObservableObject {
                 "同步包导入并合并完成（\(parsed.kind)）：账号 \(localAccountCount)+\(remoteAccounts.count)->\(accounts.count)，" +
                 "文件夹 \(localFolderCount)+\(remoteFolders.count)->\(folders.count)，" +
                 "通行密钥 \(localPasskeyCount)+\(remotePasskeys.count)->\(passkeys.count)"
-            appendHistoryEntry(action: "导入同步包并合并：账号 \(localAccountCount)->\(accounts.count)")
+            appendAccountHistoryBatch(
+                category: .sync,
+                title: "导入同步包并合并（\(parsed.kind)）",
+                beforeAccounts: previousAccounts,
+                afterAccounts: accounts
+            )
         } catch {
             statusMessage = "同步包导入失败: \(error.localizedDescription)"
         }
@@ -1092,17 +1211,17 @@ final class AccountStore: ObservableObject {
             return
         }
 
+        let originalAccount = accounts[index]
         let now = nowMs()
         let device = currentDeviceName()
         var changed = false
-        var historyMessages: [String] = []
-        var noteHistoryChange: (oldValue: String, newValue: String)?
+        var changedLabels: [String] = []
 
         let normalizedSites = parseSites(editSitesText)
         if !normalizedSites.isEmpty, normalizedSites != accounts[index].sites {
             accounts[index].sites = normalizedSites
             changed = true
-            historyMessages.append("站点别名改为\(historyValueSnippet(normalizedSites.joined(separator: ", ")))")
+            changedLabels.append("站点别名")
         }
 
         let newUsername = editUsername.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1110,36 +1229,35 @@ final class AccountStore: ObservableObject {
             accounts[index].username = newUsername
             accounts[index].usernameUpdatedAtMs = now
             changed = true
-            historyMessages.append("用户名改为\(historyValueSnippet(newUsername))")
+            changedLabels.append("用户名")
         }
 
         if editPassword != accounts[index].password {
             accounts[index].password = editPassword
             accounts[index].passwordUpdatedAtMs = now
             changed = true
-            historyMessages.append("密码改为\(historyValueSnippet(editPassword))")
+            changedLabels.append("密码")
         }
 
         if editTotpSecret != accounts[index].totpSecret {
             accounts[index].totpSecret = editTotpSecret
             accounts[index].totpUpdatedAtMs = now
             changed = true
-            historyMessages.append("TOTP 改为\(historyValueSnippet(editTotpSecret))")
+            changedLabels.append("TOTP")
         }
 
         if editRecoveryCodes != accounts[index].recoveryCodes {
             accounts[index].recoveryCodes = editRecoveryCodes
             accounts[index].recoveryCodesUpdatedAtMs = now
             changed = true
-            historyMessages.append("恢复码改为\(historyValueSnippet(editRecoveryCodes))")
+            changedLabels.append("恢复码")
         }
 
         if editNote != accounts[index].note {
-            let previousNote = accounts[index].note
             accounts[index].note = editNote
             accounts[index].noteUpdatedAtMs = now
             changed = true
-            noteHistoryChange = (oldValue: previousNote, newValue: editNote)
+            changedLabels.append("备注")
         }
 
         guard changed else {
@@ -1150,19 +1268,14 @@ final class AccountStore: ObservableObject {
         accounts[index].touchUpdatedAt(now, deviceName: device)
         syncAliasGroups()
         saveAccounts()
-        for message in historyMessages {
-            appendHistoryEntry(action: "\(accounts[index].accountId)：\(message)", timestampMs: now)
-        }
-        if let noteHistoryChange {
-            appendHistoryEntry(
-                action: "\(accounts[index].accountId)：备注改为",
-                timestampMs: now,
-                accountId: accounts[index].accountId,
-                fieldKey: "note",
-                oldValue: noteHistoryChange.oldValue,
-                newValue: noteHistoryChange.newValue
-            )
-        }
+        let titleSuffix = changedLabels.isEmpty ? "" : "（" + changedLabels.joined(separator: "、") + "）"
+        appendAccountHistoryBatch(
+            category: .local,
+            title: "编辑账号：\(accounts[index].accountId)\(titleSuffix)",
+            timestampMs: now,
+            beforeAccounts: [originalAccount],
+            afterAccounts: [accounts[index]]
+        )
         statusMessage = "账号编辑已保存"
         cancelEditing()
     }
@@ -1181,6 +1294,7 @@ final class AccountStore: ObservableObject {
             return
         }
 
+        let beforeAccount = accounts[index]
         let now = nowMs()
         let device = currentDeviceName()
         let nextPinned = !effectivePinned(accounts[index])
@@ -1193,9 +1307,12 @@ final class AccountStore: ObservableObject {
         }
         accounts[index].touchUpdatedAt(now, deviceName: device)
         saveAccounts()
-        appendHistoryEntry(
-            action: nextPinned ? "账号置顶：\(accounts[index].accountId)" : "取消账号置顶：\(accounts[index].accountId)",
-            timestampMs: now
+        appendAccountHistoryBatch(
+            category: .local,
+            title: nextPinned ? "账号置顶：\(accounts[index].accountId)" : "取消账号置顶：\(accounts[index].accountId)",
+            timestampMs: now,
+            beforeAccounts: [beforeAccount],
+            afterAccounts: [accounts[index]]
         )
         statusMessage = nextPinned ? "账号已置顶" : "已取消置顶"
     }
@@ -1423,7 +1540,8 @@ final class AccountStore: ObservableObject {
             }
         }
 
-        var changed = applyMergedPayloadIfNeeded(mergedPayload)
+        let syncTitle = "同步并更新本地（\(enabledSourceNames.joined(separator: " + "))，\(mode.label)）"
+        var changed = applyMergedPayloadIfNeeded(mergedPayload, historyTitle: syncTitle)
         var pushErrors: [String] = []
 
         if syncEnableSelfHostedServer {
@@ -1445,7 +1563,8 @@ final class AccountStore: ObservableObject {
                         mergedPayload,
                         to: resourceURL,
                         authorization: authorization,
-                        etag: selfHostedETag
+                        etag: selfHostedETag,
+                        historyTitle: "同步冲突后重新合并（服务器，\(mode.label)）"
                     )
                     mergedPayload = pushResult.payload
                     changed = changed || pushResult.changedLocalData
@@ -1454,7 +1573,8 @@ final class AccountStore: ObservableObject {
                         mergedPayload,
                         to: resourceURL,
                         authorization: authorization,
-                        etag: selfHostedETag
+                        etag: selfHostedETag,
+                        historyTitle: "远端覆盖本地（服务器，\(mode.label)）"
                     )
                     mergedPayload = pushResult.payload
                     changed = changed || pushResult.changedLocalData
@@ -1591,9 +1711,10 @@ final class AccountStore: ObservableObject {
     }
 
     @discardableResult
-    private func applyMergedPayloadIfNeeded(_ payload: SyncBundlePayload) -> Bool {
+    private func applyMergedPayloadIfNeeded(_ payload: SyncBundlePayload, historyTitle: String? = nil) -> Bool {
         let currentPayload = buildCurrentSyncPayload()
         guard !syncPayloadEquals(currentPayload, payload) else { return false }
+        let previousAccounts = currentPayload.accounts
         suppressCloudPush = true
         defer { suppressCloudPush = false }
         folders = payload.folders
@@ -1603,6 +1724,14 @@ final class AccountStore: ObservableObject {
         saveFoldersToDefaults()
         saveAccounts()
         savePasskeysToLocalDisk()
+        if let historyTitle {
+            appendAccountHistoryBatch(
+                category: .sync,
+                title: historyTitle,
+                beforeAccounts: previousAccounts,
+                afterAccounts: accounts
+            )
+        }
         return true
     }
 
@@ -1730,7 +1859,8 @@ final class AccountStore: ObservableObject {
         _ payload: SyncBundlePayload,
         to url: URL,
         authorization: String?,
-        etag: String?
+        etag: String?,
+        historyTitle: String
     ) async throws -> SelfHostedPushResult {
         do {
             try await pushRemotePayload(payload, to: url, authorization: authorization, ifMatch: etag)
@@ -1739,7 +1869,7 @@ final class AccountStore: ObservableObject {
             let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
             let latestPayload = latestResponse.payload ?? SyncBundlePayload(accounts: [], folders: [], passkeys: [])
             let reconciledPayload = mergePayloads(local: payload, remote: latestPayload)
-            let changed = applyMergedPayloadIfNeeded(reconciledPayload)
+            let changed = applyMergedPayloadIfNeeded(reconciledPayload, historyTitle: historyTitle)
             try await pushRemotePayload(
                 reconciledPayload,
                 to: url,
@@ -1754,7 +1884,8 @@ final class AccountStore: ObservableObject {
         _ payload: SyncBundlePayload,
         to url: URL,
         authorization: String?,
-        etag: String?
+        etag: String?,
+        historyTitle: String
     ) async throws -> SelfHostedPushResult {
         do {
             try await pushRemotePayload(payload, to: url, authorization: authorization, ifMatch: etag)
@@ -1762,7 +1893,7 @@ final class AccountStore: ObservableObject {
         } catch SyncRemoteError.preconditionFailed {
             let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
             let latestPayload = latestResponse.payload ?? emptySyncPayload()
-            let changed = applyMergedPayloadIfNeeded(latestPayload)
+            let changed = applyMergedPayloadIfNeeded(latestPayload, historyTitle: historyTitle)
             try await pushRemotePayload(
                 latestPayload,
                 to: url,
@@ -1956,6 +2087,24 @@ final class AccountStore: ObservableObject {
         statusMessage = "历史记录已清空"
     }
 
+    func clearHistoryEntries(category: HistoryEntryCategory) {
+        historyEntries.removeAll { $0.category == category }
+        saveHistoryToLocalDisk()
+        statusMessage = "\(category.menuTitle)已清空"
+    }
+
+    func historyEntries(category: HistoryEntryCategory) -> [OperationHistoryEntry] {
+        historyEntries.filter { $0.category == category }
+    }
+
+    func canRevertHistoryEntry(_ entry: OperationHistoryEntry) -> Bool {
+        if entry.accountBefore != nil || entry.accountAfter != nil {
+            let accountId = historyAccountId(for: entry)
+            return accountId != nil
+        }
+        return entry.fieldKey == "note" && entry.accountId != nil && entry.oldValue != nil
+    }
+
     func clearHistoryEntries(forAccountId accountId: String) {
         let prefix = "\(accountId)："
         historyEntries.removeAll { entry in
@@ -1966,6 +2115,10 @@ final class AccountStore: ObservableObject {
     }
 
     func revertHistoryEntry(_ entry: OperationHistoryEntry) {
+        if entry.accountBefore != nil || entry.accountAfter != nil {
+            revertAccountSnapshotHistoryEntry(entry)
+            return
+        }
         guard entry.fieldKey == "note",
               let accountId = entry.accountId,
               let restoredNote = entry.oldValue
@@ -2006,6 +2159,56 @@ final class AccountStore: ObservableObject {
         statusMessage = "已回退到该次修改前的备注"
     }
 
+    private func revertAccountSnapshotHistoryEntry(_ entry: OperationHistoryEntry) {
+        guard let accountId = historyAccountId(for: entry) else {
+            statusMessage = "未找到历史记录对应的账号"
+            return
+        }
+
+        let currentIndex = accounts.firstIndex(where: { $0.accountId == accountId })
+        let currentAccount = currentIndex.map { accounts[$0] }
+        let restoredAccount = entry.accountBefore
+
+        if currentAccount == restoredAccount {
+            statusMessage = "该账号已经是该历史版本"
+            return
+        }
+
+        if let currentIndex {
+            if let restoredAccount {
+                accounts[currentIndex] = restoredAccount
+            } else {
+                accounts.remove(at: currentIndex)
+            }
+        } else if let restoredAccount {
+            accounts.append(restoredAccount)
+        } else {
+            statusMessage = "该账号已不存在，无需撤回"
+            return
+        }
+
+        syncAliasGroups()
+        saveAccounts()
+
+        if let editingAccountId {
+            if let editingIndex = accounts.firstIndex(where: { $0.id == editingAccountId }) {
+                beginEditing(accounts[editingIndex])
+            } else {
+                cancelEditing()
+            }
+        }
+
+        let now = nowMs()
+        appendAccountHistoryBatch(
+            category: .local,
+            title: "从\(entry.category.operationPrefix)历史撤回 1 个账号",
+            timestampMs: now,
+            beforeAccounts: currentAccount.map { [$0] } ?? [],
+            afterAccounts: restoredAccount.map { [$0] } ?? []
+        )
+        statusMessage = "已按历史记录撤回账号：\(accountId)"
+    }
+
     private func loadHistoryFromLocalDisk() -> [OperationHistoryEntry] {
         guard let data = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.history),
               let decoded = try? decoder.decode([OperationHistoryEntry].self, from: data)
@@ -2031,9 +2234,94 @@ final class AccountStore: ObservableObject {
         }
     }
 
+    private func historyAccountId(for entry: OperationHistoryEntry) -> String? {
+        if let accountId = entry.accountId, !accountId.isEmpty {
+            return accountId
+        }
+        if let accountId = entry.accountBefore?.accountId, !accountId.isEmpty {
+            return accountId
+        }
+        if let accountId = entry.accountAfter?.accountId, !accountId.isEmpty {
+            return accountId
+        }
+        return nil
+    }
+
+    private func appendAccountHistoryBatch(
+        category: HistoryEntryCategory,
+        title: String,
+        timestampMs: Int64? = nil,
+        beforeAccounts: [PasswordAccount],
+        afterAccounts: [PasswordAccount]
+    ) {
+        let now = timestampMs ?? nowMs()
+        let operationId = UUID()
+        let beforeByAccountId = Dictionary(uniqueKeysWithValues: beforeAccounts.map { ($0.accountId, $0) })
+        let afterByAccountId = Dictionary(uniqueKeysWithValues: afterAccounts.map { ($0.accountId, $0) })
+        let accountIds = Set(beforeByAccountId.keys).union(afterByAccountId.keys).sorted()
+        guard !accountIds.isEmpty else { return }
+
+        for accountId in accountIds {
+            let before = beforeByAccountId[accountId]
+            let after = afterByAccountId[accountId]
+            guard before != after else { continue }
+
+            let detail = historyDetailText(before: before, after: after)
+            let entry = OperationHistoryEntry(
+                id: UUID(),
+                timestampMs: now,
+                category: category,
+                operationId: operationId,
+                operationTitle: title,
+                action: detail,
+                accountId: accountId,
+                accountBefore: before,
+                accountAfter: after
+            )
+            historyEntries.insert(entry, at: 0)
+        }
+
+        if historyEntries.count > Self.maxHistoryEntries {
+            historyEntries.removeLast(historyEntries.count - Self.maxHistoryEntries)
+        }
+        saveHistoryToLocalDisk()
+    }
+
+    private func historyDetailText(before: PasswordAccount?, after: PasswordAccount?) -> String {
+        switch (before, after) {
+        case (nil, let created?):
+            return "创建账号：\(created.accountId)"
+        case (let removed?, nil):
+            return "删除账号：\(removed.accountId)"
+        case (let before?, let after?):
+            let changedFields = historyChangedFieldLabels(before: before, after: after)
+            if changedFields.isEmpty {
+                return "更新账号：\(after.accountId)"
+            }
+            return "更新账号：\(after.accountId)（\(changedFields.joined(separator: "、"))）"
+        default:
+            return "账号变更"
+        }
+    }
+
+    private func historyChangedFieldLabels(before: PasswordAccount, after: PasswordAccount) -> [String] {
+        var labels: [String] = []
+        if before.sites != after.sites { labels.append("站点别名") }
+        if before.username != after.username { labels.append("用户名") }
+        if before.password != after.password { labels.append("密码") }
+        if before.totpSecret != after.totpSecret { labels.append("TOTP") }
+        if before.recoveryCodes != after.recoveryCodes { labels.append("恢复码") }
+        if before.note != after.note { labels.append("备注") }
+        if before.passkeyCredentialIds != after.passkeyCredentialIds { labels.append("通行密钥") }
+        if before.resolvedFolderIds != after.resolvedFolderIds { labels.append("文件夹") }
+        if before.isDeleted != after.isDeleted { labels.append(after.isDeleted ? "移入回收站" : "恢复账号") }
+        return labels
+    }
+
     private func appendHistoryEntry(
         action rawAction: String,
         timestampMs: Int64? = nil,
+        category: HistoryEntryCategory = .local,
         accountId: String? = nil,
         fieldKey: String? = nil,
         oldValue: String? = nil,
@@ -2044,6 +2332,7 @@ final class AccountStore: ObservableObject {
         let entry = OperationHistoryEntry(
             id: UUID(),
             timestampMs: timestampMs ?? nowMs(),
+            category: category,
             action: action,
             accountId: accountId,
             fieldKey: fieldKey,
@@ -2152,7 +2441,10 @@ final class AccountStore: ObservableObject {
 
         let localPayload = buildCurrentSyncPayload()
         let mergedPayload = mergePayloads(local: localPayload, remote: remotePayload)
-        let changed = applyMergedPayloadIfNeeded(mergedPayload)
+        let changed = applyMergedPayloadIfNeeded(
+            mergedPayload,
+            historyTitle: "iCloud 自动合并并更新本地"
+        )
         guard changed else {
             if trigger == "manual" {
                 cloudSyncStatus = "iCloud 已是最新"
