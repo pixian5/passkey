@@ -268,6 +268,28 @@ struct OperationHistoryEntry: Codable, Identifiable, Hashable {
     let id: UUID
     let timestampMs: Int64
     let action: String
+    let accountId: String?
+    let fieldKey: String?
+    let oldValue: String?
+    let newValue: String?
+
+    init(
+        id: UUID,
+        timestampMs: Int64,
+        action: String,
+        accountId: String? = nil,
+        fieldKey: String? = nil,
+        oldValue: String? = nil,
+        newValue: String? = nil
+    ) {
+        self.id = id
+        self.timestampMs = timestampMs
+        self.action = action
+        self.accountId = accountId
+        self.fieldKey = fieldKey
+        self.oldValue = oldValue
+        self.newValue = newValue
+    }
 }
 
 extension OperationHistoryEntry {
@@ -275,6 +297,10 @@ extension OperationHistoryEntry {
         case id
         case timestampMs
         case action
+        case accountId
+        case fieldKey
+        case oldValue
+        case newValue
     }
 
     init(from decoder: Decoder) throws {
@@ -283,6 +309,10 @@ extension OperationHistoryEntry {
         timestampMs = try container.decodeIfPresent(Int64.self, forKey: .timestampMs)
             ?? Int64(Date().timeIntervalSince1970 * 1000)
         action = try container.decodeIfPresent(String.self, forKey: .action) ?? ""
+        accountId = try container.decodeIfPresent(String.self, forKey: .accountId)
+        fieldKey = try container.decodeIfPresent(String.self, forKey: .fieldKey)
+        oldValue = try container.decodeIfPresent(String.self, forKey: .oldValue)
+        newValue = try container.decodeIfPresent(String.self, forKey: .newValue)
     }
 }
 

@@ -1038,6 +1038,7 @@ final class AccountStore: ObservableObject {
         let device = currentDeviceName()
         var changed = false
         var historyMessages: [String] = []
+        var noteHistoryChange: (oldValue: String, newValue: String)?
 
         let normalizedSites = parseSites(editSitesText)
         if !normalizedSites.isEmpty, normalizedSites != accounts[index].sites {
@@ -1076,10 +1077,11 @@ final class AccountStore: ObservableObject {
         }
 
         if editNote != accounts[index].note {
+            let previousNote = accounts[index].note
             accounts[index].note = editNote
             accounts[index].noteUpdatedAtMs = now
             changed = true
-            historyMessages.append("备注改为\(historyValueSnippet(editNote))")
+            noteHistoryChange = (oldValue: previousNote, newValue: editNote)
         }
 
         guard changed else {
@@ -1092,6 +1094,16 @@ final class AccountStore: ObservableObject {
         saveAccounts()
         for message in historyMessages {
             appendHistoryEntry(action: "\(accounts[index].accountId)：\(message)", timestampMs: now)
+        }
+        if let noteHistoryChange {
+            appendHistoryEntry(
+                action: "\(accounts[index].accountId)：备注改为",
+                timestampMs: now,
+                accountId: accounts[index].accountId,
+                fieldKey: "note",
+                oldValue: noteHistoryChange.oldValue,
+                newValue: noteHistoryChange.newValue
+            )
         }
         statusMessage = "账号编辑已保存"
         cancelEditing()
@@ -1764,9 +1776,52 @@ final class AccountStore: ObservableObject {
 
     func clearHistoryEntries(forAccountId accountId: String) {
         let prefix = "\(accountId)："
-        historyEntries.removeAll { $0.action.hasPrefix(prefix) }
+        historyEntries.removeAll { entry in
+            entry.accountId == accountId || entry.action.hasPrefix(prefix)
+        }
         saveHistoryToLocalDisk()
         statusMessage = "历史记录已清空"
+    }
+
+    func revertHistoryEntry(_ entry: OperationHistoryEntry) {
+        guard entry.fieldKey == "note",
+              let accountId = entry.accountId,
+              let restoredNote = entry.oldValue
+        else {
+            statusMessage = "该历史记录暂不支持回退"
+            return
+        }
+        guard let index = accounts.firstIndex(where: { $0.accountId == accountId }) else {
+            statusMessage = "未找到历史记录对应的账号"
+            return
+        }
+
+        let currentNote = accounts[index].note
+        guard currentNote != restoredNote else {
+            statusMessage = "备注已经是该历史版本"
+            return
+        }
+
+        let now = nowMs()
+        let device = currentDeviceName()
+        accounts[index].note = restoredNote
+        accounts[index].noteUpdatedAtMs = now
+        accounts[index].touchUpdatedAt(now, deviceName: device)
+        saveAccounts()
+
+        if editingAccountId == accounts[index].id {
+            editNote = restoredNote
+        }
+
+        appendHistoryEntry(
+            action: "\(accountId)：备注改为",
+            timestampMs: now,
+            accountId: accountId,
+            fieldKey: "note",
+            oldValue: currentNote,
+            newValue: restoredNote
+        )
+        statusMessage = "已回退到该次修改前的备注"
     }
 
     private func loadHistoryFromLocalDisk() -> [OperationHistoryEntry] {
@@ -1794,13 +1849,24 @@ final class AccountStore: ObservableObject {
         }
     }
 
-    private func appendHistoryEntry(action rawAction: String, timestampMs: Int64? = nil) {
+    private func appendHistoryEntry(
+        action rawAction: String,
+        timestampMs: Int64? = nil,
+        accountId: String? = nil,
+        fieldKey: String? = nil,
+        oldValue: String? = nil,
+        newValue: String? = nil
+    ) {
         let action = rawAction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !action.isEmpty else { return }
         let entry = OperationHistoryEntry(
             id: UUID(),
             timestampMs: timestampMs ?? nowMs(),
-            action: action
+            action: action,
+            accountId: accountId,
+            fieldKey: fieldKey,
+            oldValue: oldValue,
+            newValue: newValue
         )
         historyEntries.insert(entry, at: 0)
         if historyEntries.count > Self.maxHistoryEntries {

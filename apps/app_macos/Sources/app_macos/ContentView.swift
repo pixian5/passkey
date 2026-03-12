@@ -1109,7 +1109,9 @@ private struct HistoryPopup: View {
             return store.historyEntries
         }
         let prefix = "\(accountId)："
-        return store.historyEntries.filter { $0.action.hasPrefix(prefix) }
+        return store.historyEntries.filter {
+            $0.accountId == accountId || $0.action.hasPrefix(prefix)
+        }
     }
 
     var body: some View {
@@ -1148,12 +1150,7 @@ private struct HistoryPopup: View {
                         Text(store.displayTime(entry.timestampMs))
                             .font(store.textFont(size: store.scaledTextSize(12), weight: .semibold))
                             .foregroundStyle(.secondary)
-                        Text(formattedAction(entry.action))
-                            .font(store.textFont(size: store.scaledTextSize(14)))
-                            .textSelection(.enabled)
-                            .lineLimit(nil)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        historyContent(for: entry)
                     }
                     .padding(.vertical, 4)
                 }
@@ -1173,6 +1170,55 @@ private struct HistoryPopup: View {
         .shadow(radius: 18)
     }
 
+    @ViewBuilder
+    private func historyContent(for entry: OperationHistoryEntry) -> some View {
+        if entry.fieldKey == "note" {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
+                    Text("备注改为：")
+                        .font(store.textFont(size: store.scaledTextSize(14), weight: .semibold))
+                    Spacer()
+                    Button("回退") {
+                        store.revertHistoryEntry(entry)
+                    }
+                    .font(store.buttonFont(size: max(12, CGFloat(store.uiButtonFontSize - 4))))
+                    .buttonStyle(.bordered)
+                }
+
+                historyValueBlock(title: "原备注：", value: entry.oldValue)
+                historyValueBlock(title: "新备注：", value: entry.newValue)
+            }
+        } else {
+            Text(formattedAction(entry.action))
+                .font(store.textFont(size: store.scaledTextSize(14)))
+                .textSelection(.enabled)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func historyValueBlock(title: String, value: String?) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(store.textFont(size: store.scaledTextSize(13), weight: .semibold))
+            Text(displayValue(value))
+                .font(store.textFont(size: store.scaledTextSize(14)))
+                .textSelection(.enabled)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func displayValue(_ value: String?) -> String {
+        let normalized = value?
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return normalized.isEmpty ? "(空)" : normalized
+    }
+
     private func formattedAction(_ action: String) -> String {
         let trimmed = action.trimmingCharacters(in: .whitespacesAndNewlines)
         let content: String
@@ -1181,7 +1227,12 @@ private struct HistoryPopup: View {
         } else {
             content = trimmed
         }
-        return content.replacingOccurrences(of: "改为", with: "改为：\n", options: .literal, range: content.range(of: "改为"))
+        return content.replacingOccurrences(
+            of: "改为",
+            with: "改为：\n",
+            options: .literal,
+            range: content.range(of: "改为")
+        )
     }
 }
 
