@@ -674,6 +674,14 @@ button {
   width: min(860px, calc(100vw - 40px));
 }
 
+.add-sites-modal-card {
+  width: min(620px, calc(100vw - 40px));
+}
+
+.add-sites-modal-input {
+  min-height: 180px;
+}
+
 .sort-modal-card h3 {
   margin: 0;
   font-size: 16px;

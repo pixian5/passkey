@@ -571,6 +571,38 @@ final class AccountStore: ObservableObject {
         setStatusMessage("\(actionSummary)（\(changedCount) 个账号），点击撤销", allowsUndoMove: true)
     }
 
+    func addAccountsMatchingSitesToFolder(siteInputs: [String], folderId: UUID) {
+        guard folders.contains(where: { $0.id == folderId }) else {
+            statusMessage = "目标文件夹不存在"
+            return
+        }
+
+        let normalizedSites = Array(
+            Set(siteInputs.map(DomainUtils.normalize).filter { !$0.isEmpty })
+        ).sorted()
+        guard !normalizedSites.isEmpty else {
+            statusMessage = "请至少输入一个站点"
+            return
+        }
+
+        let matchingIds = accounts.compactMap { account -> UUID? in
+            guard !account.isDeleted else { return nil }
+            let aliases = Set(account.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
+            let canonical = DomainUtils.normalize(account.canonicalSite)
+            let matched = normalizedSites.contains { site in
+                aliases.contains(site) || canonical == site
+            }
+            return matched ? account.id : nil
+        }
+
+        guard !matchingIds.isEmpty else {
+            statusMessage = "没有找到包含这些站点的账号"
+            return
+        }
+
+        addAccountsToFolder(accountIds: matchingIds, folderId: folderId)
+    }
+
     func undoLastMoveOperation() {
         guard let operation = lastMoveOperation else {
             statusMessage = "没有可撤销的移动操作"

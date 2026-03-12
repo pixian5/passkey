@@ -73,6 +73,9 @@ struct ContentView: View {
     @State private var showCreateFolderSheet: Bool = false
     @State private var newFolderName: String = ""
     @State private var showMoveToFolderSheet: Bool = false
+    @State private var showAddSitesToFolderSheet: Bool = false
+    @State private var addSitesTargetFolderId: UUID?
+    @State private var addSitesText: String = ""
     @State private var pendingMoveAccountIds: [UUID] = []
     @State private var moveFolderCheckedIds: Set<UUID> = []
     @State private var showHistoryPopup: Bool = false
@@ -266,6 +269,17 @@ struct ContentView: View {
                 createFolderSheet
             }
 
+            if showAddSitesToFolderSheet {
+                Color.black.opacity(0.16)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        showAddSitesToFolderSheet = false
+                    }
+
+                addSitesToFolderSheet
+                    .padding(26)
+            }
+
             if showMoveToFolderSheet {
                 Color.black.opacity(0.16)
                     .ignoresSafeArea()
@@ -400,10 +414,18 @@ struct ContentView: View {
                                 handleDropToFolder(folder.id)
                             }
                             .contextMenu {
+                                Button("指定网站全部账号") {
+                                    addSitesTargetFolderId = folder.id
+                                    addSitesText = ""
+                                    showAddSitesToFolderSheet = true
+                                }
+
                                 if folder.id == AccountStore.fixedNewAccountFolderId {
+                                    Divider()
                                     Button("固定文件夹不可删除") {}
                                         .disabled(true)
                                 } else {
+                                    Divider()
                                     Button("删除文件夹", role: .destructive) {
                                         if selectedSidebarFilter == .folder(folder.id) {
                                             selectedSidebarFilter = .all
@@ -758,6 +780,63 @@ struct ContentView: View {
         }
         .padding(18)
         .frame(width: 420)
+    }
+
+    private var addSitesToFolderSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("指定网站全部账号")
+                .font(store.textFont(size: store.scaledTextSize(18), weight: .semibold))
+
+            Text("每行输入一个站点，系统会把“全部账号”里包含这些站点别名的账号全部加入当前文件夹。")
+                .font(store.textFont(size: store.scaledTextSize(12)))
+                .foregroundStyle(.secondary)
+
+            TextEditor(text: $addSitesText)
+                .font(store.textFont(size: store.scaledTextSize(13)))
+                .frame(width: 420, height: 180)
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color(NSColor.textBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                )
+
+            HStack {
+                Spacer()
+                Button("取消") {
+                    showAddSitesToFolderSheet = false
+                }
+                .font(store.buttonFont())
+                .buttonStyle(.bordered)
+
+                Button("加入文件夹") {
+                    guard let folderId = addSitesTargetFolderId else {
+                        showAddSitesToFolderSheet = false
+                        return
+                    }
+                    let lines = addSitesText
+                        .split(whereSeparator: \.isNewline)
+                        .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    store.addAccountsMatchingSitesToFolder(siteInputs: lines, folderId: folderId)
+                    showAddSitesToFolderSheet = false
+                }
+                .font(store.buttonFont())
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(18)
+        .frame(width: 500)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+        }
+        .shadow(radius: 18)
     }
 
     private var moveToFolderSheet: some View {

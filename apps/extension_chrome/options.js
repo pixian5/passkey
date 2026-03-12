@@ -118,6 +118,10 @@ const dom = {
   historyModal: document.getElementById("historyModal"),
   historyModalList: document.getElementById("historyModalList"),
   closeHistoryModalBtn: document.getElementById("closeHistoryModal"),
+  addSitesToFolderModal: document.getElementById("addSitesToFolderModal"),
+  addSitesToFolderInput: document.getElementById("addSitesToFolderInput"),
+  cancelAddSitesToFolderBtn: document.getElementById("cancelAddSitesToFolder"),
+  confirmAddSitesToFolderBtn: document.getElementById("confirmAddSitesToFolder"),
   payload: document.getElementById("payload"),
   refreshBtn: document.getElementById("refreshBtn"),
   exportSyncBundleBtn: document.getElementById("exportSyncBundleBtn"),
@@ -144,6 +148,7 @@ let sortModalOrderIds = [];
 let sortModalDraggingAccountId = "";
 let historyEntries = [];
 let optionsToastTimer = null;
+let addSitesTargetFolderId = null;
 
 init().catch((error) => {
   setStatus(`初始化失败: ${error.message}`);
@@ -193,6 +198,8 @@ async function init() {
   dom.openHistoryModalBtn.addEventListener("click", openHistoryModal);
   dom.closeSortModalBtn.addEventListener("click", closeSortModal);
   dom.closeHistoryModalBtn.addEventListener("click", closeHistoryModal);
+  dom.cancelAddSitesToFolderBtn.addEventListener("click", closeAddSitesToFolderModal);
+  dom.confirmAddSitesToFolderBtn.addEventListener("click", addAccountsMatchingSitesToFolderFromModal);
   dom.sortModal.addEventListener("click", (event) => {
     if (event.target === dom.sortModal) {
       closeSortModal();
@@ -201,6 +208,11 @@ async function init() {
   dom.historyModal.addEventListener("click", (event) => {
     if (event.target === dom.historyModal) {
       closeHistoryModal();
+    }
+  });
+  dom.addSitesToFolderModal.addEventListener("click", (event) => {
+    if (event.target === dom.addSitesToFolderModal) {
+      closeAddSitesToFolderModal();
     }
   });
   dom.allAccountsSearchFieldsBtn.addEventListener("click", (event) => {
@@ -233,6 +245,10 @@ async function init() {
     }
     if (event.key === "Escape" && !dom.historyModal.classList.contains("hidden")) {
       closeHistoryModal();
+      return;
+    }
+    if (event.key === "Escape" && !dom.addSitesToFolderModal.classList.contains("hidden")) {
+      closeAddSitesToFolderModal();
       return;
     }
     if (event.key === "Escape" && !dom.allAccountsSearchFieldsPanel.classList.contains("hidden")) {
@@ -2204,6 +2220,11 @@ function openFolderContextMenu({ folderId, x, y }) {
       y,
       items: [
         {
+          label: "指定网站全部账号",
+          onSelect: async () => openAddSitesToFolderModal(normalizedFolderId),
+        },
+        { type: "separator" },
+        {
           label: "固定文件夹不可删除",
           disabled: true,
           onSelect: async () => {},
@@ -2218,6 +2239,11 @@ function openFolderContextMenu({ folderId, x, y }) {
     y,
     items: [
       {
+        label: "指定网站全部账号",
+        onSelect: async () => openAddSitesToFolderModal(normalizedFolderId),
+      },
+      { type: "separator" },
+      {
         label: "删除文件夹",
         danger: true,
         onSelect: async () => deleteFolder(normalizedFolderId),
@@ -2225,6 +2251,83 @@ function openFolderContextMenu({ folderId, x, y }) {
     ],
   });
 }
+
+function openAddSitesToFolderModal(folderId) {
+  addSitesTargetFolderId = normalizeFolderId(folderId);
+  dom.addSitesToFolderInput.value = "";
+  dom.addSitesToFolderModal.classList.remove("hidden");
+  dom.addSitesToFolderModal.setAttribute("aria-hidden", "false");
+  setTimeout(() => {
+    dom.addSitesToFolderInput.focus();
+  }, 0);
+}
+
+function closeAddSitesToFolderModal() {
+  addSitesTargetFolderId = null;
+  dom.addSitesToFolderInput.value = "";
+  dom.addSitesToFolderModal.classList.add("hidden");
+  dom.addSitesToFolderModal.setAttribute("aria-hidden", "true");
+}
+
+async function addAccountsMatchingSitesToFolderFromModal() {
+  const folderId = normalizeFolderId(addSitesTargetFolderId);
+  if (!folderId) {
+    closeAddSitesToFolderModal();
+    setStatus("目标文件夹不存在");
+    return;
+  }
+  const sites = parseSites(dom.addSitesToFolderInput.value || "");
+  if (sites.length === 0) {
+    setStatus("请至少输入一个站点");
+    return;
+  }
+
+  const targetIds = accountsRaw
+    .map(normalizeAccountShape)
+    .filter((account) => !account.isDeleted)
+    .filter((account) => {
+      const aliases = new Set(account.sites.map(normalizeDomain).filter(Boolean));
+      const canonical = normalizeDomain(account.canonicalSite || "");
+      return sites.some((site) => aliases.has(site) || canonical === site);
+    })
+    .map((account) => account.accountId);
+
+  if (targetIds.length === 0) {
+    setStatus("没有找到包含这些站点的账号");
+    return;
+  }
+
+  const next = cloneAccounts(accountsRaw).map(normalizeAccountShape);
+  const now = Date.now();
+  const deviceName = await getDeviceName();
+  let changedCount = 0;
+
+  for (const accountId of targetIds) {
+    const target = next.find((item) => String(item.accountId || "") === String(accountId));
+    if (!target || target.isDeleted) continue;
+    const currentFolderIds = normalizeFolderIdList(extractAccountFolderIds(target));
+    if (currentFolderIds.includes(folderId)) continue;
+    const nextFolderIds = normalizeFolderIdList([...currentFolderIds, folderId]);
+    target.folderId = nextFolderIds[0] || null;
+    target.folderIds = nextFolderIds;
+    target.updatedAtMs = now;
+    target.lastOperatedDeviceName = deviceName;
+    changedCount += 1;
+  }
+
+  closeAddSitesToFolderModal();
+  if (changedCount === 0) {
+    setStatus(`这些账号已在文件夹: ${folderDisplayNameById(folderId)}`);
+    return;
+  }
+
+  accountsRaw = cloneAccounts(next);
+  await setAccountsToDataStore(next);
+  await appendHistory(`按站点批量加入文件夹：${folderDisplayNameById(folderId)}（${changedCount} 个账号）`, now);
+  await refresh({ silent: true });
+  setStatus(`已将 ${changedCount} 个账号加入文件夹: ${folderDisplayNameById(folderId)}`);
+}
+
 
 function openAccountFolderContextMenu(account, position) {
   const normalizedAccount = normalizeAccountShape(account);
