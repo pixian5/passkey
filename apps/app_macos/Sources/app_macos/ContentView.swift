@@ -249,11 +249,13 @@ struct ContentView: View {
                     .onTapGesture {
                         showHistoryPopup = false
                     }
+                    .zIndex(2)
 
                 HistoryPopup(store: store) {
                     showHistoryPopup = false
                 }
                 .padding(26)
+                .zIndex(2)
             }
 
             if let editingAccount {
@@ -262,13 +264,15 @@ struct ContentView: View {
                     .onTapGesture {
                         store.cancelEditing()
                     }
+                    .zIndex(1)
 
                 AccountEditPopup(
                     store: store,
                     editingAccount: editingAccount,
                     showHistoryPopup: $showHistoryPopup
                 )
-                    .padding(26)
+                .padding(26)
+                .zIndex(1)
             }
 
         }
