@@ -455,7 +455,6 @@ function buildClientDataJSON({ type, challengeB64u, origin }) {
     type,
     challenge: normalizeBase64url(challengeB64u),
     origin,
-    crossOrigin: false,
   };
   return utf8(JSON.stringify(payload));
 }
