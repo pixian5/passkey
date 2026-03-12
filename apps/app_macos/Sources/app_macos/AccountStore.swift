@@ -5,6 +5,47 @@ import Vision
 
 @MainActor
 final class AccountStore: ObservableObject {
+    enum SyncMode: String, CaseIterable, Identifiable {
+        case merge
+        case remoteOverwriteLocal
+        case localOverwriteRemote
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .merge:
+                return "合并"
+            case .remoteOverwriteLocal:
+                return "云端覆盖本地"
+            case .localOverwriteRemote:
+                return "本地覆盖云端"
+            }
+        }
+
+        var buttonTitle: String {
+            switch self {
+            case .merge:
+                return "同步已启用源"
+            case .remoteOverwriteLocal:
+                return "用云端覆盖本地"
+            case .localOverwriteRemote:
+                return "用本地覆盖云端"
+            }
+        }
+
+        var completionVerb: String {
+            switch self {
+            case .merge:
+                return "完成合并同步"
+            case .remoteOverwriteLocal:
+                return "完成云端覆盖本地"
+            case .localOverwriteRemote:
+                return "完成本地覆盖云端"
+            }
+        }
+    }
+
     @Published var deviceName: String = ""
     @Published var statusMessage: String = "" {
         didSet {
@@ -141,6 +182,12 @@ final class AccountStore: ObservableObject {
         didSet {
             guard !isLoadingSyncPreferences else { return }
             _ = saveSecret(serverAuthToken, account: SecretKeys.serverTokenAccount)
+        }
+    }
+    @Published var syncMode: SyncMode = .merge {
+        didSet {
+            guard !isLoadingSyncPreferences else { return }
+            UserDefaults.standard.set(syncMode.rawValue, forKey: Keys.syncMode)
         }
     }
 
@@ -1290,26 +1337,26 @@ final class AccountStore: ObservableObject {
     }
 
     var syncNowButtonTitle: String {
-        "同步已启用源"
+        syncMode.buttonTitle
     }
 
     func syncWithICloudNow() {
         syncNow()
     }
 
-    func syncNow() {
+    func syncNow(modeOverride: SyncMode? = nil) {
         if let syncNowTask, !syncNowTask.isCancelled {
             statusMessage = "同步进行中，请稍候"
             return
         }
         syncNowTask = Task { [weak self] in
             guard let self else { return }
-            await self.performSyncNow()
+            await self.performSyncNow(mode: modeOverride ?? self.syncMode)
             self.syncNowTask = nil
         }
     }
 
-    private func performSyncNow() async {
+    private func performSyncNow(mode: SyncMode) async {
         let enabledSourceNames = activeSyncSourceNames()
         guard !enabledSourceNames.isEmpty else {
             cloudSyncStatus = "未启用同步源"
@@ -1317,61 +1364,77 @@ final class AccountStore: ObservableObject {
             return
         }
 
-        var mergedPayload = buildCurrentSyncPayload()
+        let localPayload = buildCurrentSyncPayload()
+        var mergedPayload = localPayload
         var selfHostedETag: String?
 
-        if syncEnableICloud {
-            do {
-                if let remotePayload = try fetchRemotePayloadFromICloud() {
-                    mergedPayload = mergePayloads(local: mergedPayload, remote: remotePayload)
-                }
-            } catch {
-                statusMessage = "iCloud 拉取失败: \(error.localizedDescription)"
-                return
-            }
-        }
+        if mode != .localOverwriteRemote {
+            var remoteAggregate: SyncBundlePayload?
 
-        if syncEnableWebDAV {
-            guard let resourceURL = buildWebDAVResourceURL() else {
-                statusMessage = "WebDAV 配置不完整：请填写服务地址与远端文件路径"
-                return
-            }
-            do {
-                let authorization = buildBasicAuthorization(
-                    username: webdavUsername,
-                    password: webdavPassword
-                )
-                let remoteResponse = try await fetchRemotePayload(
-                    from: resourceURL,
-                    authorization: authorization
-                )
-                if let remotePayload = remoteResponse.payload {
-                    mergedPayload = mergePayloads(local: mergedPayload, remote: remotePayload)
+            if syncEnableICloud {
+                do {
+                    if let remotePayload = try fetchRemotePayloadFromICloud() {
+                        remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: remotePayload)
+                    }
+                } catch {
+                    statusMessage = "iCloud 拉取失败: \(error.localizedDescription)"
+                    return
                 }
-            } catch {
-                statusMessage = "WebDAV 拉取失败: \(error.localizedDescription)"
-                return
             }
-        }
 
-        if syncEnableSelfHostedServer {
-            guard let resourceURL = buildSelfHostedPayloadURL() else {
-                statusMessage = "服务器配置不完整：请填写服务地址"
-                return
-            }
-            do {
-                let authorization = buildBearerAuthorization(serverAuthToken)
-                let remoteResponse = try await fetchRemotePayload(
-                    from: resourceURL,
-                    authorization: authorization
-                )
-                selfHostedETag = remoteResponse.etag
-                if let remotePayload = remoteResponse.payload {
-                    mergedPayload = mergePayloads(local: mergedPayload, remote: remotePayload)
+            if syncEnableWebDAV {
+                guard let resourceURL = buildWebDAVResourceURL() else {
+                    statusMessage = "WebDAV 配置不完整：请填写服务地址与远端文件路径"
+                    return
                 }
-            } catch {
-                statusMessage = "服务器拉取失败: \(error.localizedDescription)"
-                return
+                do {
+                    let authorization = buildBasicAuthorization(
+                        username: webdavUsername,
+                        password: webdavPassword
+                    )
+                    let remoteResponse = try await fetchRemotePayload(
+                        from: resourceURL,
+                        authorization: authorization
+                    )
+                    if let remotePayload = remoteResponse.payload {
+                        remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: remotePayload)
+                    }
+                } catch {
+                    statusMessage = "WebDAV 拉取失败: \(error.localizedDescription)"
+                    return
+                }
+            }
+
+            if syncEnableSelfHostedServer {
+                guard let resourceURL = buildSelfHostedPayloadURL() else {
+                    statusMessage = "服务器配置不完整：请填写服务地址"
+                    return
+                }
+                do {
+                    let authorization = buildBearerAuthorization(serverAuthToken)
+                    let remoteResponse = try await fetchRemotePayload(
+                        from: resourceURL,
+                        authorization: authorization
+                    )
+                    selfHostedETag = remoteResponse.etag
+                    if let remotePayload = remoteResponse.payload {
+                        remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: remotePayload)
+                    }
+                } catch {
+                    statusMessage = "服务器拉取失败: \(error.localizedDescription)"
+                    return
+                }
+            }
+
+            switch mode {
+            case .merge:
+                if let remoteAggregate {
+                    mergedPayload = mergePayloads(local: localPayload, remote: remoteAggregate)
+                }
+            case .remoteOverwriteLocal:
+                mergedPayload = remoteAggregate ?? emptySyncPayload()
+            case .localOverwriteRemote:
+                break
             }
         }
 
@@ -1381,19 +1444,42 @@ final class AccountStore: ObservableObject {
         if syncEnableSelfHostedServer {
             guard let resourceURL = buildSelfHostedPayloadURL() else {
                 pushErrors.append("服务器: 配置不完整")
-                updateSyncStatusAfterSync(changed: changed, enabledSourceNames: enabledSourceNames, pushErrors: pushErrors)
+                updateSyncStatusAfterSync(
+                    changed: changed,
+                    enabledSourceNames: enabledSourceNames,
+                    pushErrors: pushErrors,
+                    mode: mode
+                )
                 return
             }
             do {
                 let authorization = buildBearerAuthorization(serverAuthToken)
-                let pushResult = try await pushSelfHostedPayloadWithRetry(
-                    mergedPayload,
-                    to: resourceURL,
-                    authorization: authorization,
-                    etag: selfHostedETag
-                )
-                mergedPayload = pushResult.payload
-                changed = changed || pushResult.changedLocalData
+                switch mode {
+                case .merge:
+                    let pushResult = try await pushSelfHostedPayloadWithRetry(
+                        mergedPayload,
+                        to: resourceURL,
+                        authorization: authorization,
+                        etag: selfHostedETag
+                    )
+                    mergedPayload = pushResult.payload
+                    changed = changed || pushResult.changedLocalData
+                case .remoteOverwriteLocal:
+                    let pushResult = try await pushSelfHostedRemotePayloadWithRetry(
+                        mergedPayload,
+                        to: resourceURL,
+                        authorization: authorization,
+                        etag: selfHostedETag
+                    )
+                    mergedPayload = pushResult.payload
+                    changed = changed || pushResult.changedLocalData
+                case .localOverwriteRemote:
+                    try await pushRemotePayload(
+                        mergedPayload,
+                        to: resourceURL,
+                        authorization: authorization
+                    )
+                }
             } catch {
                 pushErrors.append("服务器: \(error.localizedDescription)")
             }
@@ -1410,7 +1496,12 @@ final class AccountStore: ObservableObject {
         if syncEnableWebDAV {
             guard let resourceURL = buildWebDAVResourceURL() else {
                 pushErrors.append("WebDAV: 配置不完整")
-                updateSyncStatusAfterSync(changed: changed, enabledSourceNames: enabledSourceNames, pushErrors: pushErrors)
+                updateSyncStatusAfterSync(
+                    changed: changed,
+                    enabledSourceNames: enabledSourceNames,
+                    pushErrors: pushErrors,
+                    mode: mode
+                )
                 return
             }
             do {
@@ -1428,21 +1519,27 @@ final class AccountStore: ObservableObject {
             }
         }
 
-        updateSyncStatusAfterSync(changed: changed, enabledSourceNames: enabledSourceNames, pushErrors: pushErrors)
+        updateSyncStatusAfterSync(
+            changed: changed,
+            enabledSourceNames: enabledSourceNames,
+            pushErrors: pushErrors,
+            mode: mode
+        )
     }
 
     private func updateSyncStatusAfterSync(
         changed: Bool,
         enabledSourceNames: [String],
-        pushErrors: [String]
+        pushErrors: [String],
+        mode: SyncMode
     ) {
         let sourceSummary = enabledSourceNames.joined(separator: " + ")
         if pushErrors.isEmpty {
             cloudSyncStatus = changed
-                ? "\(sourceSummary) 已合并并同步: \(displayTime(nowMs()))"
+                ? "\(sourceSummary) \(mode.completionVerb): \(displayTime(nowMs()))"
                 : "\(sourceSummary) 已同步: \(displayTime(nowMs()))"
             statusMessage = changed
-                ? "已与 \(sourceSummary) 完成合并同步"
+                ? "已与 \(sourceSummary) \(mode.completionVerb)"
                 : "\(sourceSummary) 已同步"
         } else {
             cloudSyncStatus = "同步部分失败: \(pushErrors.joined(separator: "；"))"
@@ -1464,6 +1561,15 @@ final class AccountStore: ObservableObject {
             folders: folders,
             passkeys: passkeys
         )
+    }
+
+    private func emptySyncPayload() -> SyncBundlePayload {
+        SyncBundlePayload(accounts: [], folders: [], passkeys: [])
+    }
+
+    private func mergePayloadsIfNeeded(current: SyncBundlePayload?, incoming: SyncBundlePayload) -> SyncBundlePayload {
+        guard let current else { return incoming }
+        return mergePayloads(local: current, remote: incoming)
     }
 
     private func buildSyncBundleDocument(payload: SyncBundlePayload) -> SyncBundleV2 {
@@ -1659,6 +1765,29 @@ final class AccountStore: ObservableObject {
         }
     }
 
+    private func pushSelfHostedRemotePayloadWithRetry(
+        _ payload: SyncBundlePayload,
+        to url: URL,
+        authorization: String?,
+        etag: String?
+    ) async throws -> SelfHostedPushResult {
+        do {
+            try await pushRemotePayload(payload, to: url, authorization: authorization, ifMatch: etag)
+            return SelfHostedPushResult(payload: payload, changedLocalData: false)
+        } catch SyncRemoteError.preconditionFailed {
+            let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
+            let latestPayload = latestResponse.payload ?? emptySyncPayload()
+            let changed = applyMergedPayloadIfNeeded(latestPayload)
+            try await pushRemotePayload(
+                latestPayload,
+                to: url,
+                authorization: authorization,
+                ifMatch: latestResponse.etag
+            )
+            return SelfHostedPushResult(payload: latestPayload, changedLocalData: changed)
+        }
+    }
+
     private func saveSecret(_ secret: String, account: String) -> Bool {
         if secret.isEmpty {
             return LocalKeychain.delete(service: SecretKeys.service, account: account)
@@ -1694,6 +1823,7 @@ final class AccountStore: ObservableObject {
         syncEnableICloud = defaults.object(forKey: Keys.syncEnableICloud) as? Bool ?? true
         syncEnableWebDAV = defaults.object(forKey: Keys.syncEnableWebDAV) as? Bool ?? false
         syncEnableSelfHostedServer = defaults.object(forKey: Keys.syncEnableSelfHostedServer) as? Bool ?? false
+        syncMode = SyncMode(rawValue: defaults.string(forKey: Keys.syncMode) ?? "") ?? .merge
         webdavBaseURL = defaults.string(forKey: Keys.webdavBaseURL) ?? ""
         webdavRemotePath = defaults.string(forKey: Keys.webdavRemotePath) ?? "pass-sync-bundle-v2.json"
         webdavUsername = defaults.string(forKey: Keys.webdavUsername) ?? ""
@@ -2003,7 +2133,7 @@ final class AccountStore: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 if self.syncEnableWebDAV || self.syncEnableSelfHostedServer {
-                    self.syncNow()
+                    self.syncNow(modeOverride: .merge)
                 } else {
                     _ = self.pullSyncDataFromICloud(trigger: "remote_change")
                 }
@@ -2011,7 +2141,7 @@ final class AccountStore: ObservableObject {
         }
 
         if syncEnableWebDAV || syncEnableSelfHostedServer {
-            syncNow()
+            syncNow(modeOverride: .merge)
         } else {
             _ = pullSyncDataFromICloud(trigger: "startup")
             pushSyncDataToICloud(trigger: "startup")
@@ -3141,6 +3271,7 @@ private enum Keys {
     static let syncEnableICloud = "pass.sync.enableICloud.v3"
     static let syncEnableWebDAV = "pass.sync.enableWebDAV.v3"
     static let syncEnableSelfHostedServer = "pass.sync.enableSelfHostedServer.v3"
+    static let syncMode = "pass.sync.mode.v1"
     static let webdavBaseURL = "pass.sync.webdav.baseURL.v2"
     static let webdavRemotePath = "pass.sync.webdav.remotePath.v2"
     static let webdavUsername = "pass.sync.webdav.username.v2"

@@ -93,6 +93,21 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
+                    HStack(spacing: 8) {
+                        Text("同步方式")
+                            .frame(width: 80, alignment: .leading)
+                        Picker("同步方式", selection: $store.syncMode) {
+                            ForEach(AccountStore.SyncMode.allCases) { mode in
+                                Text(mode.label).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+
+                    Text("合并：保留双方变更；云端覆盖本地：用所有已启用远端的汇总结果替换本机；本地覆盖云端：直接把本机数据推到所有已启用远端。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
                     if store.syncEnableWebDAV {
                         HStack(spacing: 8) {
                             Text("WebDAV 地址")

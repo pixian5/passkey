@@ -35,7 +35,11 @@ const STORAGE_KEY_SYNC_WEBDAV_PASSWORD = "pass.sync.webdav.password.v2";
 const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
 const STORAGE_KEY_SYNC_SERVER_TOKEN = "pass.sync.server.token.v2";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
+const STORAGE_KEY_SYNC_MODE = "pass.sync.mode.v1";
 const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "http://127.0.0.1:53333/";
+const SYNC_MODE_MERGE = "merge";
+const SYNC_MODE_REMOTE_OVERWRITE_LOCAL = "remoteOverwriteLocal";
+const SYNC_MODE_LOCAL_OVERWRITE_REMOTE = "localOverwriteRemote";
 const STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
 const STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
 const STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
@@ -61,6 +65,7 @@ const dom = {
   saveDeviceNameBtn: document.getElementById("saveDeviceName"),
   syncEnableWebdav: document.getElementById("syncEnableWebdav"),
   syncEnableServer: document.getElementById("syncEnableServer"),
+  syncMode: document.getElementById("syncMode"),
   syncWebdavFields: document.getElementById("syncWebdavFields"),
   syncServerFields: document.getElementById("syncServerFields"),
   syncWebdavBaseUrl: document.getElementById("syncWebdavBaseUrl"),
@@ -161,6 +166,7 @@ async function init() {
   dom.syncEnableServer.addEventListener("change", () => {
     renderSyncBackendFields();
   });
+  dom.syncMode.addEventListener("change", renderSyncNowButtonLabel);
   dom.lockEnabled.addEventListener("change", renderLockSettingsFields);
   dom.lockPolicyOnceRadio.addEventListener("change", renderLockSettingsFields);
   dom.lockPolicyIdleRadio.addEventListener("change", renderLockSettingsFields);
@@ -322,6 +328,7 @@ async function loadSyncSettings() {
     STORAGE_KEY_SYNC_WEBDAV_PASSWORD,
     STORAGE_KEY_SYNC_SERVER_BASE_URL,
     STORAGE_KEY_SYNC_SERVER_TOKEN,
+    STORAGE_KEY_SYNC_MODE,
   ]);
   const hasEnableWebdav = typeof result[STORAGE_KEY_SYNC_ENABLE_WEBDAV] === "boolean";
   const hasEnableServer = typeof result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER] === "boolean";
@@ -342,7 +349,9 @@ async function loadSyncSettings() {
     result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL
   );
   dom.syncServerToken.value = String(result[STORAGE_KEY_SYNC_SERVER_TOKEN] || "");
+  dom.syncMode.value = normalizeSyncMode(result[STORAGE_KEY_SYNC_MODE]);
   renderSyncBackendFields();
+  renderSyncNowButtonLabel();
 }
 
 function renderSyncBackendFields() {
@@ -476,6 +485,7 @@ async function saveLockSettings() {
 async function saveSyncSettings() {
   const enableWebdav = Boolean(dom.syncEnableWebdav.checked);
   const enableServer = Boolean(dom.syncEnableServer.checked);
+  const syncMode = normalizeSyncMode(dom.syncMode.value);
   await chrome.storage.local.set({
     [STORAGE_KEY_SYNC_ENABLE_WEBDAV]: enableWebdav,
     [STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]: enableServer,
@@ -485,8 +495,11 @@ async function saveSyncSettings() {
     [STORAGE_KEY_SYNC_WEBDAV_PASSWORD]: String(dom.syncWebdavPassword.value || ""),
     [STORAGE_KEY_SYNC_SERVER_BASE_URL]: String(dom.syncServerBaseUrl.value || "").trim(),
     [STORAGE_KEY_SYNC_SERVER_TOKEN]: String(dom.syncServerToken.value || "").trim(),
+    [STORAGE_KEY_SYNC_MODE]: syncMode,
   });
+  dom.syncMode.value = syncMode;
   renderSyncBackendFields();
+  renderSyncNowButtonLabel();
   const enabledLabels = [];
   if (enableWebdav) enabledLabels.push("WebDAV");
   if (enableServer) enabledLabels.push("服务器");
@@ -645,6 +658,7 @@ async function syncNowWithRemote() {
   await saveSyncSettings();
   const targets = buildRemoteSyncTargetsFromDom();
   if (!targets || targets.length === 0) return;
+  const syncMode = normalizeSyncMode(dom.syncMode.value);
 
   const localStored = await readBusinessDataFromStore();
   const localAccounts = Array.isArray(localStored.accounts)
@@ -662,30 +676,63 @@ async function syncNowWithRemote() {
   let mergedPasskeys = localPasskeys;
   let mergedFolders = localFolders;
 
-  for (const target of targets) {
-    let remotePayload = null;
-    try {
-      const remoteResponse = await pullRemotePayload(target);
-      target.remoteEtag = remoteResponse.etag;
-      remotePayload = remoteResponse.payload;
-    } catch (error) {
-      setStatus(`${target.label} 拉取失败: ${error.message}`);
-      return;
+  if (syncMode !== SYNC_MODE_LOCAL_OVERWRITE_REMOTE) {
+    let remoteAggregate = null;
+    for (const target of targets) {
+      let remotePayload = null;
+      try {
+        const remoteResponse = await pullRemotePayload(target);
+        target.remoteEtag = remoteResponse.etag;
+        remotePayload = remoteResponse.payload;
+      } catch (error) {
+        setStatus(`${target.label} 拉取失败: ${error.message}`);
+        return;
+      }
+
+      const remoteAccounts = remotePayload ? remotePayload.accounts.map(normalizeAccountShape) : [];
+      const remotePasskeys = remotePayload
+        ? buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys)
+        : [];
+      const remoteFolders = remotePayload ? remotePayload.folders.map(normalizeFolderShape) : [];
+
+      if (!remoteAggregate) {
+        remoteAggregate = {
+          accounts: remoteAccounts,
+          passkeys: remotePasskeys,
+          folders: remoteFolders,
+        };
+        continue;
+      }
+
+      remoteAggregate.folders = mergeFolderCollections(remoteAggregate.folders, remoteFolders);
+      remoteAggregate.accounts = mergeAccountCollections(remoteAggregate.accounts, remoteAccounts);
+      remoteAggregate.accounts = syncAliasGroups(remoteAggregate.accounts);
+      remoteAggregate.accounts = reconcileAccountFolders(remoteAggregate.accounts, remoteAggregate.folders);
+      remoteAggregate.passkeys = mergePasskeyCollections(remoteAggregate.passkeys, remotePasskeys);
+      remoteAggregate.passkeys = buildUnifiedPasskeys(remoteAggregate.accounts, remoteAggregate.passkeys);
     }
 
-    const remoteAccounts = remotePayload ? remotePayload.accounts.map(normalizeAccountShape) : [];
-    const remotePasskeys = remotePayload
-      ? buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys)
-      : [];
-    const remoteFolders = remotePayload ? remotePayload.folders.map(normalizeFolderShape) : [];
-
-    mergedFolders = mergeFolderCollections(mergedFolders, remoteFolders);
-    mergedAccounts = mergeAccountCollections(mergedAccounts, remoteAccounts);
-    mergedAccounts = syncAliasGroups(mergedAccounts);
-    mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
-    mergedPasskeys = mergePasskeyCollections(mergedPasskeys, remotePasskeys);
+    if (syncMode === SYNC_MODE_MERGE) {
+      if (remoteAggregate) {
+        mergedFolders = mergeFolderCollections(localFolders, remoteAggregate.folders);
+        mergedAccounts = mergeAccountCollections(localAccounts, remoteAggregate.accounts);
+        mergedAccounts = syncAliasGroups(mergedAccounts);
+        mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
+        mergedPasskeys = mergePasskeyCollections(localPasskeys, remoteAggregate.passkeys);
+        mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
+      }
+    } else if (syncMode === SYNC_MODE_REMOTE_OVERWRITE_LOCAL) {
+      if (remoteAggregate) {
+        mergedAccounts = remoteAggregate.accounts;
+        mergedPasskeys = buildUnifiedPasskeys(remoteAggregate.accounts, remoteAggregate.passkeys);
+        mergedFolders = remoteAggregate.folders;
+      } else {
+        mergedAccounts = [];
+        mergedPasskeys = [];
+        mergedFolders = [];
+      }
+    }
   }
-  mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
 
   await writeBusinessDataToStore({
     accounts: mergedAccounts,
@@ -693,18 +740,18 @@ async function syncNowWithRemote() {
     folders: mergedFolders,
   });
   await appendHistory(
-    `远端同步合并：账号 ${localAccounts.length}->${mergedAccounts.length}，通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}`
+    `${getSyncModeHistoryLabel(syncMode)}：账号 ${localAccounts.length}->${mergedAccounts.length}，通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}`
   );
 
   const pushErrors = [];
   const pushTargets = [...targets].sort((left, right) => Number(right.supportsEtag) - Number(left.supportsEtag));
   for (const target of pushTargets) {
     try {
-      const result = await pushRemotePayloadWithRetry(target, {
+      const result = await pushRemotePayloadWithMode(target, {
         accounts: mergedAccounts,
         passkeys: mergedPasskeys,
         folders: mergedFolders,
-      });
+      }, syncMode);
       mergedAccounts = result.payload.accounts.map(normalizeAccountShape);
       mergedFolders = result.payload.folders.map(normalizeFolderShape);
       mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, result.payload.passkeys);
@@ -718,13 +765,13 @@ async function syncNowWithRemote() {
   const sourceSummary = targets.map((item) => item.label).join(" + ");
   if (pushErrors.length > 0) {
     setStatus(
-      `已合并本地与 ${sourceSummary}，但部分源上传失败：${pushErrors.join("；")}（账号 ${localAccounts.length}->${mergedAccounts.length}，` +
+      `${getSyncModeStatusLabel(syncMode)}，但部分源上传失败（${sourceSummary}）：${pushErrors.join("；")}（账号 ${localAccounts.length}->${mergedAccounts.length}，` +
         `通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}，文件夹 ${localFolders.length}->${mergedFolders.length}）`
     );
     return;
   }
   setStatus(
-    `远端同步完成（${sourceSummary}）：账号 ${localAccounts.length}->${mergedAccounts.length}，` +
+    `${getSyncModeStatusLabel(syncMode)}（${sourceSummary}）：账号 ${localAccounts.length}->${mergedAccounts.length}，` +
       `通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}，文件夹 ${localFolders.length}->${mergedFolders.length}`
   );
 }
@@ -899,6 +946,96 @@ async function pushRemotePayloadWithRetry(target, payload) {
   const retryResult = await pushRemotePayload(target, reconciledPayload, target.remoteEtag);
   target.remoteEtag = retryResult.etag;
   return { payload: reconciledPayload };
+}
+
+async function pushRemotePayloadRemotePreferred(target, payload) {
+  try {
+    const pushResult = await pushRemotePayload(target, payload, target.remoteEtag);
+    target.remoteEtag = pushResult.etag;
+    return { payload };
+  } catch (error) {
+    if (!target.supportsEtag || error?.status !== 412) {
+      throw error;
+    }
+  }
+
+  const latestResponse = await pullRemotePayload(target);
+  target.remoteEtag = latestResponse.etag;
+  const latestPayload = latestResponse.payload || {
+    accounts: [],
+    passkeys: [],
+    folders: [],
+  };
+  await writeBusinessDataToStore(latestPayload);
+  const retryResult = await pushRemotePayload(target, latestPayload, target.remoteEtag);
+  target.remoteEtag = retryResult.etag;
+  return { payload: latestPayload };
+}
+
+async function pushRemotePayloadWithMode(target, payload, syncMode) {
+  switch (syncMode) {
+    case SYNC_MODE_LOCAL_OVERWRITE_REMOTE: {
+      await pushRemotePayload(target, payload, null);
+      return { payload };
+    }
+    case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:
+      return pushRemotePayloadRemotePreferred(target, payload);
+    case SYNC_MODE_MERGE:
+    default:
+      return pushRemotePayloadWithRetry(target, payload);
+  }
+}
+
+function normalizeSyncMode(value) {
+  switch (String(value || "").trim()) {
+    case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:
+      return SYNC_MODE_REMOTE_OVERWRITE_LOCAL;
+    case SYNC_MODE_LOCAL_OVERWRITE_REMOTE:
+      return SYNC_MODE_LOCAL_OVERWRITE_REMOTE;
+    case SYNC_MODE_MERGE:
+    default:
+      return SYNC_MODE_MERGE;
+  }
+}
+
+function renderSyncNowButtonLabel() {
+  const syncMode = normalizeSyncMode(dom.syncMode?.value);
+  switch (syncMode) {
+    case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:
+      dom.syncNowBtn.textContent = "用云端覆盖本地";
+      break;
+    case SYNC_MODE_LOCAL_OVERWRITE_REMOTE:
+      dom.syncNowBtn.textContent = "用本地覆盖云端";
+      break;
+    case SYNC_MODE_MERGE:
+    default:
+      dom.syncNowBtn.textContent = "立即远端同步";
+      break;
+  }
+}
+
+function getSyncModeHistoryLabel(syncMode) {
+  switch (syncMode) {
+    case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:
+      return "云端覆盖本地";
+    case SYNC_MODE_LOCAL_OVERWRITE_REMOTE:
+      return "本地覆盖云端";
+    case SYNC_MODE_MERGE:
+    default:
+      return "远端同步合并";
+  }
+}
+
+function getSyncModeStatusLabel(syncMode) {
+  switch (syncMode) {
+    case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:
+      return "云端覆盖本地完成";
+    case SYNC_MODE_LOCAL_OVERWRITE_REMOTE:
+      return "本地覆盖云端完成";
+    case SYNC_MODE_MERGE:
+    default:
+      return "远端同步完成";
+  }
 }
 
 async function buildSyncBundleFromPayload(payload) {

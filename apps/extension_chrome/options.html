@@ -24,6 +24,18 @@
             </div>
             <button id="saveSyncSettings">保存</button>
           </div>
+          <div class="row">
+            <label for="syncMode">同步方式</label>
+            <select id="syncMode">
+              <option value="merge">合并</option>
+              <option value="remoteOverwriteLocal">云端覆盖本地</option>
+              <option value="localOverwriteRemote">本地覆盖云端</option>
+            </select>
+            <span></span>
+          </div>
+          <p class="hint">
+            合并：保留双方变更；云端覆盖本地：用所有已启用远端的汇总结果替换本机；本地覆盖云端：直接把本机数据推到所有已启用远端。
+          </p>
           <div id="syncWebdavFields">
             <div class="row">
               <label for="syncWebdavBaseUrl">WebDAV</label>
