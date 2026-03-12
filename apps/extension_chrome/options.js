@@ -1637,7 +1637,7 @@ function isSortModalSupportedView() {
 function getSortableAccountsForCurrentView() {
   if (!isSortModalSupportedView()) return [];
   const visible = currentVisibleAccounts(accountsRaw).filter((account) => !account.isDeleted);
-  return sortAccountsForDisplay(visible);
+  return sortAccountsForScope(visible);
 }
 
 function openSortModal() {
@@ -1809,7 +1809,7 @@ function isSamePinnedGroupForSort(accountById, sourceId, targetId) {
   const source = accountById.get(String(sourceId || ""));
   const target = accountById.get(String(targetId || ""));
   if (!source || !target) return false;
-  return isPinnedAccount(source) === isPinnedAccount(target);
+  return isPinnedInCurrentScope(source) === isPinnedInCurrentScope(target);
 }
 
 function formatSortableAccountLabel(account) {
@@ -1826,6 +1826,7 @@ async function persistSortOrderFromModal(orderedIds) {
   if (normalizedOrderedIds.length === 0) return;
 
   const next = cloneAccounts(accountsRaw).map(normalizeAccountShape);
+  const scopeKey = getActivePinScopeKey();
   const now = Date.now();
   const deviceName = await getDeviceName();
   let changed = false;
@@ -1835,18 +1836,25 @@ async function persistSortOrderFromModal(orderedIds) {
   for (const accountId of normalizedOrderedIds) {
     const target = next.find((item) => String(item.accountId || "") === accountId);
     if (!target || target.isDeleted) continue;
-    if (isPinnedAccount(target)) {
+    if (getPinnedViewState(target, scopeKey).pinned) {
       pinnedSubset.push(accountId);
     } else {
       regularSubset.push(accountId);
     }
   }
 
-  const allPinnedIds = sortAccountsForDisplay(
-    next.filter((item) => !item.isDeleted && isPinnedAccount(item))
+  const visibleIds = new Set(
+    currentVisibleAccounts(next)
+      .filter((item) => !item.isDeleted)
+      .map((item) => String(item.accountId || ""))
+  );
+  const allPinnedIds = sortAccountsForScope(
+    next.filter((item) => !item.isDeleted && visibleIds.has(String(item.accountId || "")) && getPinnedViewState(item, scopeKey).pinned),
+    scopeKey
   ).map((item) => String(item.accountId || ""));
-  const allRegularIds = sortAccountsForDisplay(
-    next.filter((item) => !item.isDeleted && !isPinnedAccount(item))
+  const allRegularIds = sortAccountsForScope(
+    next.filter((item) => !item.isDeleted && visibleIds.has(String(item.accountId || "")) && !getPinnedViewState(item, scopeKey).pinned),
+    scopeKey
   ).map((item) => String(item.accountId || ""));
 
   const mergedPinnedIds = buildMergedOrderIds(allPinnedIds, pinnedSubset);
@@ -1856,9 +1864,15 @@ async function persistSortOrderFromModal(orderedIds) {
     const id = mergedPinnedIds[i];
     const item = next.find((entry) => String(entry.accountId || "") === id);
     if (!item) continue;
-    const currentOrder = item.pinnedSortOrder == null ? null : Number(item.pinnedSortOrder);
+    item.pinnedViews = normalizePinnedViewsMap(item.pinnedViews, item);
+    const currentState = getPinnedViewState(item, scopeKey);
+    const currentOrder = currentState.pinnedSortOrder == null ? null : Number(currentState.pinnedSortOrder);
     if (currentOrder === i) continue;
-    item.pinnedSortOrder = i;
+    item.pinnedViews[scopeKey] = {
+      ...currentState,
+      pinned: true,
+      pinnedSortOrder: i,
+    };
     item.updatedAtMs = now;
     item.lastOperatedDeviceName = deviceName;
     changed = true;
@@ -1868,9 +1882,14 @@ async function persistSortOrderFromModal(orderedIds) {
     const id = mergedRegularIds[i];
     const item = next.find((entry) => String(entry.accountId || "") === id);
     if (!item) continue;
-    const currentOrder = item.regularSortOrder == null ? null : Number(item.regularSortOrder);
+    item.pinnedViews = normalizePinnedViewsMap(item.pinnedViews, item);
+    const currentState = getPinnedViewState(item, scopeKey);
+    const currentOrder = currentState.regularSortOrder == null ? null : Number(currentState.regularSortOrder);
     if (currentOrder === i) continue;
-    item.regularSortOrder = i;
+    item.pinnedViews[scopeKey] = {
+      ...currentState,
+      regularSortOrder: i,
+    };
     item.updatedAtMs = now;
     item.lastOperatedDeviceName = deviceName;
     changed = true;
@@ -1916,7 +1935,7 @@ function buildMergedOrderIds(allIds, subsetIds) {
 }
 
 function renderCurrentView(inputAccounts) {
-  let accounts = sortAccountsForDisplay(currentVisibleAccounts(inputAccounts));
+  let accounts = sortAccountsForScope(currentVisibleAccounts(inputAccounts));
 
   dom.allAccountsList.innerHTML = "";
   if (accounts.length === 0) {
@@ -1931,7 +1950,7 @@ function renderCurrentView(inputAccounts) {
   for (const account of accounts) {
     const card = document.createElement("article");
     card.className = "account";
-    if (!isRecycle && isPinnedAccount(account)) {
+    if (!isRecycle && isPinnedInCurrentScope(account)) {
       card.classList.add("account-pinned");
     }
     card.addEventListener("contextmenu", (event) => {
@@ -2151,6 +2170,11 @@ function openAccountContextMenu({ account, x, y }) {
     y,
     items: [
       {
+        label: isPinnedInCurrentScope(account) ? "取消置顶" : "置顶",
+        onSelect: async () => togglePin(account.accountId),
+      },
+      { type: "separator" },
+      {
         label: "编辑",
         onSelect: async () => {
           editingAccountId = editingAccountId === account.accountId ? null : account.accountId;
@@ -2233,8 +2257,101 @@ function openAccountFolderContextMenu(account, position) {
   });
 }
 
+function getActivePinScopeKey() {
+  return String(activeAccountView || "all");
+}
+
+function getPinScopeLabel(scopeKey = getActivePinScopeKey()) {
+  if (scopeKey === "all") return "全部";
+  if (scopeKey === "passkeys") return "通行密钥";
+  if (scopeKey === "totp") return "验证码";
+  if (scopeKey === "recycle") return "回收站";
+  if (String(scopeKey).startsWith("folder:")) {
+    const folderId = normalizeFolderId(String(scopeKey).slice("folder:".length));
+    return folderDisplayNameById(folderId);
+  }
+  return String(scopeKey);
+}
+
+function normalizePinnedViewsMap(input, legacyAccount = null) {
+  const result = {};
+  const source = input && typeof input === "object" ? input : {};
+  for (const [scopeKey, rawValue] of Object.entries(source)) {
+    const normalizedScopeKey = String(scopeKey || "").trim();
+    if (!normalizedScopeKey || !rawValue || typeof rawValue !== "object") continue;
+    const pinned = Boolean(rawValue.pinned);
+    const pinnedSortOrder = rawValue.pinnedSortOrder == null ? null : Number(rawValue.pinnedSortOrder);
+    const regularSortOrder = rawValue.regularSortOrder == null ? null : Number(rawValue.regularSortOrder);
+    result[normalizedScopeKey] = {
+      pinned,
+      pinnedSortOrder: Number.isFinite(pinnedSortOrder) ? pinnedSortOrder : null,
+      regularSortOrder: Number.isFinite(regularSortOrder) ? regularSortOrder : null,
+    };
+  }
+
+  if (legacyAccount && !result.all) {
+    result.all = {
+      pinned: Boolean(legacyAccount?.isPinned),
+      pinnedSortOrder: legacyAccount?.pinnedSortOrder == null ? null : Number(legacyAccount.pinnedSortOrder),
+      regularSortOrder: legacyAccount?.regularSortOrder == null ? null : Number(legacyAccount.regularSortOrder),
+    };
+  }
+
+  return result;
+}
+
+function getPinnedViewState(account, scopeKey = getActivePinScopeKey()) {
+  const pinnedViews = normalizePinnedViewsMap(account?.pinnedViews, account);
+  return pinnedViews[scopeKey] || {
+    pinned: false,
+    pinnedSortOrder: null,
+    regularSortOrder: null,
+  };
+}
+
+function isPinnedInCurrentScope(account) {
+  return Boolean(getPinnedViewState(account).pinned);
+}
+
 function isPinnedAccount(account) {
-  return Boolean(account?.isPinned);
+  return isPinnedInCurrentScope(account);
+}
+
+function compareAccountsForScope(lhs, rhs, scopeKey = getActivePinScopeKey()) {
+  const lhsState = getPinnedViewState(lhs, scopeKey);
+  const rhsState = getPinnedViewState(rhs, scopeKey);
+  if (lhsState.pinned !== rhsState.pinned) {
+    return lhsState.pinned ? -1 : 1;
+  }
+
+  const lhsUpdatedAt = Number(lhs?.updatedAtMs || 0);
+  const rhsUpdatedAt = Number(rhs?.updatedAtMs || 0);
+  if (lhsUpdatedAt !== rhsUpdatedAt) return rhsUpdatedAt - lhsUpdatedAt;
+
+  if (lhsState.pinned && rhsState.pinned) {
+    if (lhsState.pinnedSortOrder != null && rhsState.pinnedSortOrder != null && lhsState.pinnedSortOrder !== rhsState.pinnedSortOrder) {
+      return lhsState.pinnedSortOrder - rhsState.pinnedSortOrder;
+    }
+    if (lhsState.pinnedSortOrder != null && rhsState.pinnedSortOrder == null) return -1;
+    if (lhsState.pinnedSortOrder == null && rhsState.pinnedSortOrder != null) return 1;
+  } else {
+    if (lhsState.regularSortOrder != null && rhsState.regularSortOrder != null && lhsState.regularSortOrder !== rhsState.regularSortOrder) {
+      return lhsState.regularSortOrder - rhsState.regularSortOrder;
+    }
+    if (lhsState.regularSortOrder != null && rhsState.regularSortOrder == null) return -1;
+    if (lhsState.regularSortOrder == null && rhsState.regularSortOrder != null) return 1;
+  }
+
+  const lhsCreatedAt = Number(lhs?.createdAtMs || 0);
+  const rhsCreatedAt = Number(rhs?.createdAtMs || 0);
+  if (lhsCreatedAt !== rhsCreatedAt) return rhsCreatedAt - lhsCreatedAt;
+  return String(lhs?.accountId || "").localeCompare(String(rhs?.accountId || ""));
+}
+
+function sortAccountsForScope(inputAccounts, scopeKey = getActivePinScopeKey()) {
+  return [...(Array.isArray(inputAccounts) ? inputAccounts : [])].sort((lhs, rhs) =>
+    compareAccountsForScope(lhs, rhs, scopeKey)
+  );
 }
 
 function isAccountMatchSearch(account, query) {
@@ -2540,29 +2657,44 @@ async function togglePin(accountId, { fromSortModal = false } = {}) {
     return;
   }
 
+  const scopeKey = getActivePinScopeKey();
+  const scopeLabel = getPinScopeLabel(scopeKey);
   const now = Date.now();
   const deviceName = await getDeviceName();
-  const nextPinned = !isPinnedAccount(target);
-  target.isPinned = nextPinned;
+  target.pinnedViews = normalizePinnedViewsMap(target.pinnedViews, target);
+  const currentState = getPinnedViewState(target, scopeKey);
+  const nextPinned = !currentState.pinned;
   if (nextPinned) {
     const maxOrder = next
-      .filter((item) => !item.isDeleted && isPinnedAccount(item))
-      .reduce((maxValue, item) => Math.max(maxValue, Number(item.pinnedSortOrder ?? -1)), -1);
-    target.pinnedSortOrder = maxOrder + 1;
+      .filter((item) => !item.isDeleted && getPinnedViewState(item, scopeKey).pinned)
+      .reduce((maxValue, item) => Math.max(maxValue, Number(getPinnedViewState(item, scopeKey).pinnedSortOrder ?? -1)), -1);
+    target.pinnedViews[scopeKey] = {
+      ...currentState,
+      pinned: true,
+      pinnedSortOrder: maxOrder + 1,
+    };
   } else {
-    target.pinnedSortOrder = null;
-    target.regularSortOrder = null;
+    target.pinnedViews[scopeKey] = {
+      ...currentState,
+      pinned: false,
+      pinnedSortOrder: null,
+      regularSortOrder: null,
+    };
   }
   target.updatedAtMs = now;
   target.lastOperatedDeviceName = deviceName;
 
   await setAccountsToDataStore(next);
   await appendHistory(
-    nextPinned ? `${target.accountId}：账号置顶` : `${target.accountId}：取消账号置顶`,
+    nextPinned ? `${target.accountId}：在${scopeLabel}置顶` : `${target.accountId}：取消${scopeLabel}置顶`,
     now
   );
   await refresh({ silent: true });
-  setStatus(nextPinned ? `账号已置顶: ${target.accountId}` : `已取消置顶: ${target.accountId}`);
+  setStatus(
+    nextPinned
+      ? `账号已在${scopeLabel}置顶: ${target.accountId}`
+      : `已取消${scopeLabel}置顶: ${target.accountId}`
+  );
   if (fromSortModal && !dom.sortModal.classList.contains("hidden")) {
     sortModalOrderIds = getSortableAccountsForCurrentView().map((account) => String(account.accountId || ""));
     renderSortModalList();
@@ -2663,6 +2795,7 @@ function cloneAccounts(inputAccounts) {
     passkeyCredentialIds: Array.isArray(account?.passkeyCredentialIds)
       ? [...account.passkeyCredentialIds]
       : [],
+    pinnedViews: normalizePinnedViewsMap(account?.pinnedViews, account),
   }));
 }
 
@@ -2702,6 +2835,7 @@ function normalizeAccountShape(account) {
     isPinned: Boolean(account?.isPinned),
     pinnedSortOrder: account?.pinnedSortOrder == null ? null : Number(account.pinnedSortOrder),
     regularSortOrder: account?.regularSortOrder == null ? null : Number(account.regularSortOrder),
+    pinnedViews: normalizePinnedViewsMap(account?.pinnedViews, account),
     folderId: account?.folderId == null ? null : String(account.folderId),
     folderIds: Array.isArray(account?.folderIds)
       ? account.folderIds.map((id) => String(id))
