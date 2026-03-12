@@ -1280,11 +1280,11 @@ final class AccountStore: ObservableObject {
         cancelEditing()
     }
 
-    func accountIsPinned(_ account: PasswordAccount) -> Bool {
-        effectivePinned(account)
+    func accountIsPinned(_ account: PasswordAccount, scopeKey: String = "all") -> Bool {
+        pinnedState(for: account, scopeKey: scopeKey).pinned
     }
 
-    func togglePin(for account: PasswordAccount) {
+    func togglePin(for account: PasswordAccount, scopeKey: String = "all", scopeLabel: String = "全部") {
         guard let index = accounts.firstIndex(where: { $0.id == account.id }) else {
             statusMessage = "未找到目标账号"
             return
@@ -1297,27 +1297,32 @@ final class AccountStore: ObservableObject {
         let beforeAccount = accounts[index]
         let now = nowMs()
         let device = currentDeviceName()
-        let nextPinned = !effectivePinned(accounts[index])
-        accounts[index].isPinned = nextPinned
+        var nextState = pinnedState(for: accounts[index], scopeKey: scopeKey)
+        let nextPinned = !nextState.pinned
         if nextPinned {
-            accounts[index].pinnedSortOrder = nextPinnedSortOrder()
+            nextState.pinned = true
+            nextState.pinnedSortOrder = nextPinnedSortOrder(scopeKey: scopeKey)
         } else {
-            accounts[index].pinnedSortOrder = nil
-            accounts[index].regularSortOrder = nil
+            nextState.pinned = false
+            nextState.pinnedSortOrder = nil
+            nextState.regularSortOrder = nil
         }
+        setPinnedState(nextState, for: &accounts[index], scopeKey: scopeKey)
         accounts[index].touchUpdatedAt(now, deviceName: device)
         saveAccounts()
         appendAccountHistoryBatch(
             category: .local,
-            title: nextPinned ? "账号置顶：\(accounts[index].accountId)" : "取消账号置顶：\(accounts[index].accountId)",
+            title: nextPinned
+                ? "账号置顶[\(scopeLabel)]：\(accounts[index].accountId)"
+                : "取消账号置顶[\(scopeLabel)]：\(accounts[index].accountId)",
             timestampMs: now,
             beforeAccounts: [beforeAccount],
             afterAccounts: [accounts[index]]
         )
-        statusMessage = nextPinned ? "账号已置顶" : "已取消置顶"
+        statusMessage = nextPinned ? "账号已在\(scopeLabel)置顶" : "已取消\(scopeLabel)置顶"
     }
 
-    func moveAccountBefore(sourceId: UUID, targetId: UUID) {
+    func moveAccountBefore(sourceId: UUID, targetId: UUID, scopeKey: String = "all") {
         guard editingAccountId == nil else {
             return
         }
@@ -1331,13 +1336,16 @@ final class AccountStore: ObservableObject {
             return
         }
 
-        let pinned = effectivePinned(source)
-        guard effectivePinned(target) == pinned else {
+        let pinned = pinnedState(for: source, scopeKey: scopeKey).pinned
+        guard pinnedState(for: target, scopeKey: scopeKey).pinned == pinned else {
             statusMessage = "仅支持 置顶、非置顶 项目内部排序"
             return
         }
 
-        let group = sortedAccountsForDisplay(accounts.filter { !$0.isDeleted && effectivePinned($0) == pinned })
+        let group = sortedAccountsForDisplay(
+            accounts.filter { !$0.isDeleted && pinnedState(for: $0, scopeKey: scopeKey).pinned == pinned },
+            scopeKey: scopeKey
+        )
         var orderedIds = group.map(\.id)
         guard let fromIndex = orderedIds.firstIndex(of: sourceId),
               let toIndex = orderedIds.firstIndex(of: targetId)
@@ -1352,11 +1360,13 @@ final class AccountStore: ObservableObject {
         let device = currentDeviceName()
         for (order, id) in orderedIds.enumerated() {
             guard let index = accounts.firstIndex(where: { $0.id == id }) else { continue }
+            var state = pinnedState(for: accounts[index], scopeKey: scopeKey)
             if pinned {
-                accounts[index].pinnedSortOrder = Int64(order)
+                state.pinnedSortOrder = Int64(order)
             } else {
-                accounts[index].regularSortOrder = Int64(order)
+                state.regularSortOrder = Int64(order)
             }
+            setPinnedState(state, for: &accounts[index], scopeKey: scopeKey)
             accounts[index].touchUpdatedAt(now, deviceName: device)
         }
 
@@ -1365,33 +1375,52 @@ final class AccountStore: ObservableObject {
     }
 
     func activeAccounts() -> [PasswordAccount] {
-        sortedAccountsForDisplay(accounts.filter { !$0.isDeleted })
+        sortedAccountsForDisplay(accounts.filter { !$0.isDeleted }, scopeKey: "all")
     }
 
     func filteredAccounts() -> [PasswordAccount] {
         showDeletedAccounts ? accounts.filter(\.isDeleted) : accounts.filter { !$0.isDeleted }
     }
 
-    func displaySortedAccounts(_ source: [PasswordAccount]) -> [PasswordAccount] {
-        sortedAccountsForDisplay(source)
+    func displaySortedAccounts(_ source: [PasswordAccount], scopeKey: String = "all") -> [PasswordAccount] {
+        sortedAccountsForDisplay(source, scopeKey: scopeKey)
     }
 
-    private func effectivePinned(_ account: PasswordAccount) -> Bool {
-        account.isPinned ?? false
+    private func pinnedState(for account: PasswordAccount, scopeKey: String) -> AccountPinnedViewState {
+        let legacy = AccountPinnedViewState(
+            pinned: account.isPinned ?? false,
+            pinnedSortOrder: account.pinnedSortOrder,
+            regularSortOrder: account.regularSortOrder
+        )
+        return account.pinnedViews?[scopeKey] ?? (scopeKey == "all" ? legacy : AccountPinnedViewState(pinned: false, pinnedSortOrder: nil, regularSortOrder: nil))
     }
 
-    private func nextPinnedSortOrder() -> Int64 {
+    private func setPinnedState(_ state: AccountPinnedViewState, for account: inout PasswordAccount, scopeKey: String) {
+        var pinnedViews = account.pinnedViews ?? [:]
+        pinnedViews[scopeKey] = state
+        account.pinnedViews = pinnedViews
+        if scopeKey == "all" {
+            account.isPinned = state.pinned
+            account.pinnedSortOrder = state.pinnedSortOrder
+            account.regularSortOrder = state.regularSortOrder
+        }
+    }
+
+    private func nextPinnedSortOrder(scopeKey: String) -> Int64 {
         let pinnedOrders = accounts.compactMap { account -> Int64? in
-            guard effectivePinned(account) else { return nil }
-            return account.pinnedSortOrder
+            let state = pinnedState(for: account, scopeKey: scopeKey)
+            guard state.pinned else { return nil }
+            return state.pinnedSortOrder
         }
         return (pinnedOrders.max() ?? -1) + 1
     }
 
-    private func sortedAccountsForDisplay(_ source: [PasswordAccount]) -> [PasswordAccount] {
+    private func sortedAccountsForDisplay(_ source: [PasswordAccount], scopeKey: String) -> [PasswordAccount] {
         source.sorted { lhs, rhs in
-            let lhsPinned = effectivePinned(lhs)
-            let rhsPinned = effectivePinned(rhs)
+            let lhsState = pinnedState(for: lhs, scopeKey: scopeKey)
+            let rhsState = pinnedState(for: rhs, scopeKey: scopeKey)
+            let lhsPinned = lhsState.pinned
+            let rhsPinned = rhsState.pinned
             if lhsPinned != rhsPinned {
                 return lhsPinned && !rhsPinned
             }
@@ -1402,7 +1431,7 @@ final class AccountStore: ObservableObject {
             }
 
             if lhsPinned && rhsPinned {
-                switch (lhs.pinnedSortOrder, rhs.pinnedSortOrder) {
+                switch (lhsState.pinnedSortOrder, rhsState.pinnedSortOrder) {
                 case let (.some(lo), .some(ro)) where lo != ro:
                     return lo < ro
                 case (.some, .none):
@@ -1413,7 +1442,7 @@ final class AccountStore: ObservableObject {
                     break
                 }
             } else {
-                switch (lhs.regularSortOrder, rhs.regularSortOrder) {
+                switch (lhsState.regularSortOrder, rhsState.regularSortOrder) {
                 case let (.some(lo), .some(ro)) where lo != ro:
                     return lo < ro
                 case (.some, .none):
@@ -2657,6 +2686,7 @@ final class AccountStore: ObservableObject {
             isPinned: newerAccount.isPinned ?? false,
             pinnedSortOrder: newerAccount.pinnedSortOrder,
             regularSortOrder: newerAccount.regularSortOrder,
+            pinnedViews: newerAccount.pinnedViews,
             folderId: mergedFolderIds.first ?? newerAccount.folderId,
             folderIds: mergedFolderIds,
             sites: mergedSites.isEmpty ? primary.sites : mergedSites,
@@ -3592,6 +3622,7 @@ private extension LegacyPasswordAccount {
             isPinned: false,
             pinnedSortOrder: nil,
             regularSortOrder: nil,
+            pinnedViews: nil,
             folderId: nil,
             folderIds: [],
             sites: normalizedSites,

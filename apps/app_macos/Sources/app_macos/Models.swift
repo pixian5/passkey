@@ -1,5 +1,11 @@
 import Foundation
 
+struct AccountPinnedViewState: Codable, Hashable {
+    var pinned: Bool
+    var pinnedSortOrder: Int64?
+    var regularSortOrder: Int64?
+}
+
 struct PasswordAccount: Codable, Identifiable, Hashable {
     let id: UUID
     let accountId: String
@@ -8,6 +14,7 @@ struct PasswordAccount: Codable, Identifiable, Hashable {
     var isPinned: Bool?
     var pinnedSortOrder: Int64?
     var regularSortOrder: Int64?
+    var pinnedViews: [String: AccountPinnedViewState]?
     var folderId: UUID?
     var folderIds: [UUID]?
     var sites: [String]
@@ -67,6 +74,7 @@ extension PasswordAccount {
         case isPinned
         case pinnedSortOrder
         case regularSortOrder
+        case pinnedViews
         case folderId
         case folderIds
         case sites
@@ -124,6 +132,7 @@ extension PasswordAccount {
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned)
         pinnedSortOrder = try container.decodeIfPresent(Int64.self, forKey: .pinnedSortOrder)
         regularSortOrder = try container.decodeIfPresent(Int64.self, forKey: .regularSortOrder)
+        pinnedViews = try container.decodeIfPresent([String: AccountPinnedViewState].self, forKey: .pinnedViews)
         folderId = try container.decodeIfPresent(UUID.self, forKey: .folderId)
         folderIds = try container.decodeIfPresent([UUID].self, forKey: .folderIds)
         sites = normalizedSites
@@ -161,6 +170,7 @@ extension PasswordAccount {
         try container.encode(isPinned, forKey: .isPinned)
         try container.encode(pinnedSortOrder, forKey: .pinnedSortOrder)
         try container.encode(regularSortOrder, forKey: .regularSortOrder)
+        try container.encode(pinnedViews, forKey: .pinnedViews)
         try container.encode(folderId, forKey: .folderId)
         try container.encode(folderIds, forKey: .folderIds)
         try container.encode(sites, forKey: .sites)
@@ -207,6 +217,7 @@ enum AccountFactory {
             isPinned: false,
             pinnedSortOrder: nil,
             regularSortOrder: nil,
+            pinnedViews: nil,
             folderId: nil,
             folderIds: [],
             sites: [normalizedSite].sorted(),

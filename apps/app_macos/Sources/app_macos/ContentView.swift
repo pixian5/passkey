@@ -8,6 +8,36 @@ private enum AccountSidebarFilter: Hashable {
     case totp
     case recycle
     case folder(UUID)
+
+    var pinScopeKey: String {
+        switch self {
+        case .all:
+            return "all"
+        case .passkeys:
+            return "passkeys"
+        case .totp:
+            return "totp"
+        case .recycle:
+            return "recycle"
+        case let .folder(folderId):
+            return "folder:\(folderId.uuidString.lowercased())"
+        }
+    }
+
+    var pinScopeLabel: String {
+        switch self {
+        case .all:
+            return "全部"
+        case .passkeys:
+            return "通行密钥"
+        case .totp:
+            return "验证码"
+        case .recycle:
+            return "回收站"
+        case .folder:
+            return "当前文件夹"
+        }
+    }
 }
 
 private enum AccountSearchField: CaseIterable, Hashable {
@@ -156,9 +186,13 @@ struct ContentView: View {
                                                 let targetIds = contextMenuTargetAccountIds(for: account.id)
                                                 let targetCount = targetIds.count
 
-                                                Button(store.accountIsPinned(account) ? "取消置顶" : "置顶") {
+                                                Button(store.accountIsPinned(account, scopeKey: selectedSidebarFilter.pinScopeKey) ? "取消置顶" : "置顶") {
                                                     selectOnlyAccountIfNoMultiModifier(account.id)
-                                                    store.togglePin(for: account)
+                                                    store.togglePin(
+                                                        for: account,
+                                                        scopeKey: selectedSidebarFilter.pinScopeKey,
+                                                        scopeLabel: scopeLabel(for: selectedSidebarFilter)
+                                                    )
                                                 }
 
                                                 Button("放入文件夹") {
@@ -425,7 +459,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .help("点击打开编辑")
-                if store.accountIsPinned(account) {
+                if store.accountIsPinned(account, scopeKey: selectedSidebarFilter.pinScopeKey) {
                     Image(systemName: "pin.fill")
                         .font(store.textFont(size: store.scaledTextSize(12)))
                         .foregroundStyle(.orange)
@@ -510,7 +544,7 @@ struct ContentView: View {
         case .folder(let folderId):
             scopedAccounts = allAccounts.filter { !$0.isDeleted && $0.isInFolder(folderId) }
         }
-        let sortedScoped = store.displaySortedAccounts(scopedAccounts)
+        let sortedScoped = store.displaySortedAccounts(scopedAccounts, scopeKey: selectedSidebarFilter.pinScopeKey)
 
         let query = accountSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if query.isEmpty {
@@ -821,8 +855,21 @@ struct ContentView: View {
         guard sourceAccountId != targetAccountId else {
             return false
         }
-        store.moveAccountBefore(sourceId: sourceAccountId, targetId: targetAccountId)
+        store.moveAccountBefore(
+            sourceId: sourceAccountId,
+            targetId: targetAccountId,
+            scopeKey: selectedSidebarFilter.pinScopeKey
+        )
         return true
+    }
+
+    private func scopeLabel(for filter: AccountSidebarFilter) -> String {
+        switch filter {
+        case let .folder(folderId):
+            return store.folderName(for: folderId)
+        default:
+            return filter.pinScopeLabel
+        }
     }
 
     private func handleDropToFolder(_ folderId: UUID) -> Bool {
