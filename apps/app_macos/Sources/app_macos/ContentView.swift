@@ -1175,8 +1175,6 @@ private struct HistoryPopup: View {
         if entry.fieldKey == "note" {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .top, spacing: 8) {
-                    Text("备注改为：")
-                        .font(store.textFont(size: store.scaledTextSize(14), weight: .semibold))
                     Spacer()
                     Button("回退") {
                         store.revertHistoryEntry(entry)
@@ -1185,8 +1183,12 @@ private struct HistoryPopup: View {
                     .buttonStyle(.bordered)
                 }
 
-                historyValueBlock(title: "原备注：", value: entry.oldValue)
-                historyValueBlock(title: "新备注：", value: entry.newValue)
+                Text(noteHistoryText(for: entry))
+                    .font(store.textFont(size: store.scaledTextSize(14)))
+                    .textSelection(.enabled)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
             Text(formattedAction(entry.action))
@@ -1198,17 +1200,14 @@ private struct HistoryPopup: View {
         }
     }
 
-    private func historyValueBlock(title: String, value: String?) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(store.textFont(size: store.scaledTextSize(13), weight: .semibold))
-            Text(displayValue(value))
-                .font(store.textFont(size: store.scaledTextSize(14)))
-                .textSelection(.enabled)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
+    private func noteHistoryText(for entry: OperationHistoryEntry) -> String {
+        """
+        原备注：
+        \(displayValue(entry.oldValue))
+
+        新备注：
+        \(displayValue(entry.newValue))
+        """
     }
 
     private func displayValue(_ value: String?) -> String {
