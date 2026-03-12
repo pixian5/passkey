@@ -241,6 +241,21 @@ function bindEvents() {
     if (event.key === "Escape" && !dom.accountSearchFieldsPanel.classList.contains("hidden")) {
       closeAccountSearchFieldsPanel();
     }
+    if (
+      event.key === "Enter"
+      && !event.shiftKey
+      && !event.metaKey
+      && !event.ctrlKey
+      && !event.altKey
+      && !event.isComposing
+    ) {
+      if (isMultilineInputTarget(event.target)) return;
+      const actionButton = findDefaultActionButtonForPopup();
+      if (actionButton && !actionButton.disabled) {
+        event.preventDefault();
+        actionButton.click();
+      }
+    }
   });
   dom.accountSearchFieldsBtn.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -294,6 +309,20 @@ function bindLockRuntimeEvents() {
     }
     registerPopupActivity();
   });
+}
+
+function isMultilineInputTarget(target) {
+  return target instanceof HTMLTextAreaElement || target?.isContentEditable;
+}
+
+function findDefaultActionButtonForPopup() {
+  if (!dom.lockOverlay.classList.contains("hidden")) {
+    return dom.unlockBtn;
+  }
+  if (!dom.createModal.classList.contains("modal-hidden")) {
+    return dom.createAccountBtn;
+  }
+  return null;
 }
 
 function registerPopupActivity() {

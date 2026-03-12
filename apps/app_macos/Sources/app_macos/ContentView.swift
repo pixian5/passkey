@@ -76,7 +76,7 @@ struct ContentView: View {
     @State private var showAddSitesToFolderSheet: Bool = false
     @State private var addSitesTargetFolderId: UUID?
     @State private var addSitesText: String = ""
-    @State private var addSitesAutoAddEnabled: Bool = false
+    @State private var addSitesAutoAddEnabled: Bool = true
     @State private var pendingMoveAccountIds: [UUID] = []
     @State private var moveFolderCheckedIds: Set<UUID> = []
     @State private var showHistoryPopup: Bool = false
@@ -418,7 +418,9 @@ struct ContentView: View {
                                 Button("指定网站全部账号") {
                                     addSitesTargetFolderId = folder.id
                                     addSitesText = store.folderRuleSites(for: folder.id).joined(separator: "\n")
-                                    addSitesAutoAddEnabled = store.folderRuleAutoAddEnabled(for: folder.id)
+                                    addSitesAutoAddEnabled = store.folderRuleSites(for: folder.id).isEmpty
+                                        ? true
+                                        : store.folderRuleAutoAddEnabled(for: folder.id)
                                     showAddSitesToFolderSheet = true
                                 }
 
@@ -778,6 +780,7 @@ struct ContentView: View {
                 }
                 .font(store.buttonFont())
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(18)
@@ -834,6 +837,7 @@ struct ContentView: View {
                 }
                 .font(store.buttonFont())
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(18)
@@ -1480,6 +1484,7 @@ private struct AccountEditPopup: View {
                 }
                 .font(store.buttonFont())
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
 
                 Button("取消编辑") {
                     store.cancelEditing()

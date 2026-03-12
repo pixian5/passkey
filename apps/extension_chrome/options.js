@@ -255,6 +255,21 @@ async function init() {
     if (event.key === "Escape" && !dom.allAccountsSearchFieldsPanel.classList.contains("hidden")) {
       closeAllAccountsSearchFieldsPanel();
     }
+    if (
+      event.key === "Enter"
+      && !event.shiftKey
+      && !event.metaKey
+      && !event.ctrlKey
+      && !event.altKey
+      && !event.isComposing
+    ) {
+      if (isMultilineInputTarget(event.target)) return;
+      const actionButton = findDefaultActionButtonForOptions(event.target);
+      if (actionButton && !actionButton.disabled) {
+        event.preventDefault();
+        actionButton.click();
+      }
+    }
   });
   document.addEventListener("scroll", () => {
     closeContextMenu();
@@ -2268,7 +2283,7 @@ function openAddSitesToFolderModal(folderId) {
 function closeAddSitesToFolderModal() {
   addSitesTargetFolderId = null;
   dom.addSitesToFolderInput.value = "";
-  dom.addSitesToFolderAutoAdd.checked = false;
+  dom.addSitesToFolderAutoAdd.checked = true;
   dom.addSitesToFolderModal.classList.add("hidden");
   dom.addSitesToFolderModal.setAttribute("aria-hidden", "true");
 }
@@ -2514,6 +2529,37 @@ function isAccountMatchSearch(account, query) {
 
 function closeAllAccountsSearchFieldsPanel() {
   dom.allAccountsSearchFieldsPanel.classList.add("hidden");
+}
+
+function isMultilineInputTarget(target) {
+  return target instanceof HTMLTextAreaElement || target?.isContentEditable;
+}
+
+function findDefaultActionButtonForOptions(target) {
+  if (!dom.addSitesToFolderModal.classList.contains("hidden")) {
+    return dom.confirmAddSitesToFolderBtn;
+  }
+  if (target === dom.deviceName) {
+    return dom.saveDeviceNameBtn;
+  }
+  if (
+    target === dom.syncWebdavBaseUrl
+    || target === dom.syncWebdavPath
+    || target === dom.syncWebdavUsername
+    || target === dom.syncWebdavPassword
+    || target === dom.syncServerBaseUrl
+    || target === dom.syncServerToken
+  ) {
+    return dom.saveSyncSettingsBtn;
+  }
+  if (
+    target === dom.lockMasterPassword
+    || target === dom.lockMasterPasswordConfirm
+    || target === dom.lockIdleMinutes
+  ) {
+    return dom.saveLockSettingsBtn;
+  }
+  return null;
 }
 
 function onAllAccountSearchFieldAllChanged() {

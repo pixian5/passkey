@@ -120,6 +120,7 @@ struct CreateAccountWindowView: View {
                             actionButtonLabel("创建并关闭", prominent: true)
                         }
                         .buttonStyle(.plain)
+                        .keyboardShortcut(.defaultAction)
 
                         Button {
                             dismiss()
