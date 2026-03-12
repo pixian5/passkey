@@ -147,6 +147,7 @@
       authenticatorSelection: publicKey?.authenticatorSelection || null,
       excludeCredentials: serializeCredentialList(publicKey?.excludeCredentials || []),
       extensions: publicKey?.extensions || null,
+      crossOrigin: window.top !== window.self,
     };
   }
 
@@ -161,6 +162,7 @@
       userVerification: publicKey?.userVerification || null,
       allowCredentials: serializeCredentialList(publicKey?.allowCredentials || []),
       extensions: publicKey?.extensions || null,
+      crossOrigin: window.top !== window.self,
     };
   }
 

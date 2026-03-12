@@ -115,6 +115,7 @@ async function createManagedCredential({ origin, host, publicKey }) {
     type: "webauthn.create",
     challengeB64u: bytesToBase64url(challenge),
     origin,
+    crossOrigin: Boolean(publicKey?.crossOrigin),
   });
 
   const rpIdHash = await sha256(utf8(rpId));
@@ -242,6 +243,7 @@ async function buildCreateResultFromStoredPasskey({
     type: "webauthn.create",
     challengeB64u: bytesToBase64url(challenge),
     origin,
+    crossOrigin: Boolean(existing?.crossOrigin),
   });
 
   const rpIdHash = await sha256(utf8(rpId));
@@ -306,6 +308,7 @@ async function getManagedAssertion({ origin, host, publicKey }) {
     type: "webauthn.get",
     challengeB64u: bytesToBase64url(challenge),
     origin,
+    crossOrigin: Boolean(publicKey?.crossOrigin),
   });
   const clientDataHash = await sha256(clientDataJSON);
 
@@ -454,12 +457,12 @@ function randomBytes(length) {
   return bytes;
 }
 
-function buildClientDataJSON({ type, challengeB64u, origin }) {
+function buildClientDataJSON({ type, challengeB64u, origin, crossOrigin = false }) {
   const payload = {
     type,
     challenge: normalizeBase64url(challengeB64u),
     origin,
-    crossOrigin: false,
+    crossOrigin: Boolean(crossOrigin),
   };
   return utf8(JSON.stringify(payload));
 }
