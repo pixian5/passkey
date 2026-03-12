@@ -23,17 +23,6 @@ final class AccountStore: ObservableObject {
             }
         }
 
-        var buttonTitle: String {
-            switch self {
-            case .merge:
-                return "同步已启用源"
-            case .remoteOverwriteLocal:
-                return "用云端覆盖本地"
-            case .localOverwriteRemote:
-                return "用本地覆盖云端"
-            }
-        }
-
         var completionVerb: String {
             switch self {
             case .merge:
@@ -1334,10 +1323,6 @@ final class AccountStore: ObservableObject {
         guard let ms else { return "-" }
         let date = Date(timeIntervalSince1970: Double(ms) / 1000.0)
         return displayFormatter.string(from: date)
-    }
-
-    var syncNowButtonTitle: String {
-        syncMode.buttonTitle
     }
 
     func syncWithICloudNow() {

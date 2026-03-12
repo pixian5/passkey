@@ -86,24 +86,14 @@ label {
   color: #35567f;
 }
 
-.sync-mode-row {
+.sync-actions-row {
   align-items: start;
 }
 
-.sync-mode-radios {
-  display: grid;
-  gap: 6px;
-}
-
-.sync-mode-option {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: #3a5d86;
-}
-
-.sync-mode-option input[type="radio"] {
-  margin: 0;
+.sync-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .lock-settings {
@@ -219,25 +209,6 @@ input[type="checkbox"] {
 }
 
 input[type="checkbox"]:focus {
-  outline: none;
-  box-shadow: none;
-  border: none;
-}
-
-input[type="radio"] {
-  appearance: auto;
-  -webkit-appearance: radio;
-  width: 14px;
-  height: 14px;
-  padding: 0;
-  margin: 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-input[type="radio"]:focus {
   outline: none;
   box-shadow: none;
   border: none;

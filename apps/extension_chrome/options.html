@@ -24,31 +24,12 @@
             </div>
             <button id="saveSyncSettings">保存</button>
           </div>
-          <div class="row sync-mode-row">
-            <label>同步方式</label>
-            <div class="sync-mode-radios">
-              <label class="sync-mode-option">
-                <input id="syncModeMerge" type="radio" name="syncMode" value="merge" checked />
-                <span>合并</span>
-              </label>
-              <label class="sync-mode-option">
-                <input
-                  id="syncModeRemoteOverwriteLocal"
-                  type="radio"
-                  name="syncMode"
-                  value="remoteOverwriteLocal"
-                />
-                <span>云端覆盖本地</span>
-              </label>
-              <label class="sync-mode-option">
-                <input
-                  id="syncModeLocalOverwriteRemote"
-                  type="radio"
-                  name="syncMode"
-                  value="localOverwriteRemote"
-                />
-                <span>本地覆盖云端</span>
-              </label>
+          <div class="row sync-actions-row">
+            <label>同步操作</label>
+            <div class="sync-action-buttons">
+              <button id="syncMergeBtn" type="button">合并已启用源</button>
+              <button id="syncRemoteOverwriteLocalBtn" type="button">云端覆盖本地</button>
+              <button id="syncLocalOverwriteRemoteBtn" type="button">本地覆盖云端</button>
             </div>
             <span></span>
           </div>
@@ -88,9 +69,6 @@
               <input id="syncServerToken" type="password" placeholder="可选 Bearer Token" />
               <span></span>
             </div>
-          </div>
-          <div class="actions">
-            <button id="syncNowBtn">立即远端同步</button>
           </div>
           <div class="lock-settings">
             <h4>解锁设置</h4>

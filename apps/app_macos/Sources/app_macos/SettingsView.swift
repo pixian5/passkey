@@ -93,15 +93,30 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    HStack(spacing: 8) {
-                        Text("同步方式")
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("同步操作")
                             .frame(width: 80, alignment: .leading)
-                        Picker("同步方式", selection: $store.syncMode) {
-                            ForEach(AccountStore.SyncMode.allCases) { mode in
-                                Text(mode.label).tag(mode)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Button("合并已启用源") {
+                                    store.syncNow(modeOverride: .merge)
+                                }
+                                .font(store.buttonFont())
+                                .buttonStyle(.bordered)
+
+                                Button("云端覆盖本地") {
+                                    store.syncNow(modeOverride: .remoteOverwriteLocal)
+                                }
+                                .font(store.buttonFont())
+                                .buttonStyle(.bordered)
+
+                                Button("本地覆盖云端") {
+                                    store.syncNow(modeOverride: .localOverwriteRemote)
+                                }
+                                .font(store.buttonFont())
+                                .buttonStyle(.bordered)
                             }
                         }
-                        .pickerStyle(.segmented)
                     }
 
                     Text("合并：保留双方变更；云端覆盖本地：用所有已启用远端的汇总结果替换本机；本地覆盖云端：直接把本机数据推到所有已启用远端。")
@@ -154,12 +169,6 @@ struct SettingsView: View {
                     }
 
                     HStack(spacing: 8) {
-                        Button(store.syncNowButtonTitle) {
-                            store.syncNow()
-                        }
-                        .font(store.buttonFont())
-                        .buttonStyle(.bordered)
-
                         Button("导出同步包") {
                             exportSyncBundleWithPanel()
                         }

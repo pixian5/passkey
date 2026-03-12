@@ -35,7 +35,6 @@ const STORAGE_KEY_SYNC_WEBDAV_PASSWORD = "pass.sync.webdav.password.v2";
 const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
 const STORAGE_KEY_SYNC_SERVER_TOKEN = "pass.sync.server.token.v2";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
-const STORAGE_KEY_SYNC_MODE = "pass.sync.mode.v1";
 const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "http://127.0.0.1:53333/";
 const SYNC_MODE_MERGE = "merge";
 const SYNC_MODE_REMOTE_OVERWRITE_LOCAL = "remoteOverwriteLocal";
@@ -65,9 +64,9 @@ const dom = {
   saveDeviceNameBtn: document.getElementById("saveDeviceName"),
   syncEnableWebdav: document.getElementById("syncEnableWebdav"),
   syncEnableServer: document.getElementById("syncEnableServer"),
-  syncModeMergeRadio: document.getElementById("syncModeMerge"),
-  syncModeRemoteOverwriteLocalRadio: document.getElementById("syncModeRemoteOverwriteLocal"),
-  syncModeLocalOverwriteRemoteRadio: document.getElementById("syncModeLocalOverwriteRemote"),
+  syncMergeBtn: document.getElementById("syncMergeBtn"),
+  syncRemoteOverwriteLocalBtn: document.getElementById("syncRemoteOverwriteLocalBtn"),
+  syncLocalOverwriteRemoteBtn: document.getElementById("syncLocalOverwriteRemoteBtn"),
   syncWebdavFields: document.getElementById("syncWebdavFields"),
   syncServerFields: document.getElementById("syncServerFields"),
   syncWebdavBaseUrl: document.getElementById("syncWebdavBaseUrl"),
@@ -77,7 +76,6 @@ const dom = {
   syncServerBaseUrl: document.getElementById("syncServerBaseUrl"),
   syncServerToken: document.getElementById("syncServerToken"),
   saveSyncSettingsBtn: document.getElementById("saveSyncSettings"),
-  syncNowBtn: document.getElementById("syncNowBtn"),
   deviceStatus: document.getElementById("deviceStatus"),
   lockEnabled: document.getElementById("lockEnabled"),
   lockAdvancedFields: document.getElementById("lockAdvancedFields"),
@@ -161,16 +159,15 @@ async function init() {
 
   dom.saveDeviceNameBtn.addEventListener("click", saveDeviceName);
   dom.saveSyncSettingsBtn.addEventListener("click", saveSyncSettings);
-  dom.syncNowBtn.addEventListener("click", syncNowWithRemote);
+  dom.syncMergeBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE));
+  dom.syncRemoteOverwriteLocalBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_REMOTE_OVERWRITE_LOCAL));
+  dom.syncLocalOverwriteRemoteBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_LOCAL_OVERWRITE_REMOTE));
   dom.syncEnableWebdav.addEventListener("change", () => {
     renderSyncBackendFields();
   });
   dom.syncEnableServer.addEventListener("change", () => {
     renderSyncBackendFields();
   });
-  dom.syncModeMergeRadio.addEventListener("change", renderSyncNowButtonLabel);
-  dom.syncModeRemoteOverwriteLocalRadio.addEventListener("change", renderSyncNowButtonLabel);
-  dom.syncModeLocalOverwriteRemoteRadio.addEventListener("change", renderSyncNowButtonLabel);
   dom.lockEnabled.addEventListener("change", renderLockSettingsFields);
   dom.lockPolicyOnceRadio.addEventListener("change", renderLockSettingsFields);
   dom.lockPolicyIdleRadio.addEventListener("change", renderLockSettingsFields);
@@ -332,7 +329,6 @@ async function loadSyncSettings() {
     STORAGE_KEY_SYNC_WEBDAV_PASSWORD,
     STORAGE_KEY_SYNC_SERVER_BASE_URL,
     STORAGE_KEY_SYNC_SERVER_TOKEN,
-    STORAGE_KEY_SYNC_MODE,
   ]);
   const hasEnableWebdav = typeof result[STORAGE_KEY_SYNC_ENABLE_WEBDAV] === "boolean";
   const hasEnableServer = typeof result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER] === "boolean";
@@ -353,9 +349,7 @@ async function loadSyncSettings() {
     result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL
   );
   dom.syncServerToken.value = String(result[STORAGE_KEY_SYNC_SERVER_TOKEN] || "");
-  setSyncModeSelection(result[STORAGE_KEY_SYNC_MODE]);
   renderSyncBackendFields();
-  renderSyncNowButtonLabel();
 }
 
 function renderSyncBackendFields() {
@@ -489,7 +483,6 @@ async function saveLockSettings() {
 async function saveSyncSettings() {
   const enableWebdav = Boolean(dom.syncEnableWebdav.checked);
   const enableServer = Boolean(dom.syncEnableServer.checked);
-  const syncMode = getSelectedSyncMode();
   await chrome.storage.local.set({
     [STORAGE_KEY_SYNC_ENABLE_WEBDAV]: enableWebdav,
     [STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]: enableServer,
@@ -499,11 +492,8 @@ async function saveSyncSettings() {
     [STORAGE_KEY_SYNC_WEBDAV_PASSWORD]: String(dom.syncWebdavPassword.value || ""),
     [STORAGE_KEY_SYNC_SERVER_BASE_URL]: String(dom.syncServerBaseUrl.value || "").trim(),
     [STORAGE_KEY_SYNC_SERVER_TOKEN]: String(dom.syncServerToken.value || "").trim(),
-    [STORAGE_KEY_SYNC_MODE]: syncMode,
   });
-  setSyncModeSelection(syncMode);
   renderSyncBackendFields();
-  renderSyncNowButtonLabel();
   const enabledLabels = [];
   if (enableWebdav) enabledLabels.push("WebDAV");
   if (enableServer) enabledLabels.push("服务器");
@@ -658,11 +648,11 @@ async function importSyncBundleAndMerge() {
   );
 }
 
-async function syncNowWithRemote() {
+async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
   await saveSyncSettings();
   const targets = buildRemoteSyncTargetsFromDom();
   if (!targets || targets.length === 0) return;
-  const syncMode = getSelectedSyncMode();
+  const normalizedSyncMode = normalizeSyncMode(syncMode);
 
   const localStored = await readBusinessDataFromStore();
   const localAccounts = Array.isArray(localStored.accounts)
@@ -680,7 +670,7 @@ async function syncNowWithRemote() {
   let mergedPasskeys = localPasskeys;
   let mergedFolders = localFolders;
 
-  if (syncMode !== SYNC_MODE_LOCAL_OVERWRITE_REMOTE) {
+  if (normalizedSyncMode !== SYNC_MODE_LOCAL_OVERWRITE_REMOTE) {
     let remoteAggregate = null;
     for (const target of targets) {
       let remotePayload = null;
@@ -716,7 +706,7 @@ async function syncNowWithRemote() {
       remoteAggregate.passkeys = buildUnifiedPasskeys(remoteAggregate.accounts, remoteAggregate.passkeys);
     }
 
-    if (syncMode === SYNC_MODE_MERGE) {
+    if (normalizedSyncMode === SYNC_MODE_MERGE) {
       if (remoteAggregate) {
         mergedFolders = mergeFolderCollections(localFolders, remoteAggregate.folders);
         mergedAccounts = mergeAccountCollections(localAccounts, remoteAggregate.accounts);
@@ -725,7 +715,7 @@ async function syncNowWithRemote() {
         mergedPasskeys = mergePasskeyCollections(localPasskeys, remoteAggregate.passkeys);
         mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
       }
-    } else if (syncMode === SYNC_MODE_REMOTE_OVERWRITE_LOCAL) {
+    } else if (normalizedSyncMode === SYNC_MODE_REMOTE_OVERWRITE_LOCAL) {
       if (remoteAggregate) {
         mergedAccounts = remoteAggregate.accounts;
         mergedPasskeys = buildUnifiedPasskeys(remoteAggregate.accounts, remoteAggregate.passkeys);
@@ -744,7 +734,7 @@ async function syncNowWithRemote() {
     folders: mergedFolders,
   });
   await appendHistory(
-    `${getSyncModeHistoryLabel(syncMode)}：账号 ${localAccounts.length}->${mergedAccounts.length}，通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}`
+    `${getSyncModeHistoryLabel(normalizedSyncMode)}：账号 ${localAccounts.length}->${mergedAccounts.length}，通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}`
   );
 
   const pushErrors = [];
@@ -755,7 +745,7 @@ async function syncNowWithRemote() {
         accounts: mergedAccounts,
         passkeys: mergedPasskeys,
         folders: mergedFolders,
-      }, syncMode);
+      }, normalizedSyncMode);
       mergedAccounts = result.payload.accounts.map(normalizeAccountShape);
       mergedFolders = result.payload.folders.map(normalizeFolderShape);
       mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, result.payload.passkeys);
@@ -769,13 +759,13 @@ async function syncNowWithRemote() {
   const sourceSummary = targets.map((item) => item.label).join(" + ");
   if (pushErrors.length > 0) {
     setStatus(
-      `${getSyncModeStatusLabel(syncMode)}，但部分源上传失败（${sourceSummary}）：${pushErrors.join("；")}（账号 ${localAccounts.length}->${mergedAccounts.length}，` +
+      `${getSyncModeStatusLabel(normalizedSyncMode)}，但部分源上传失败（${sourceSummary}）：${pushErrors.join("；")}（账号 ${localAccounts.length}->${mergedAccounts.length}，` +
         `通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}，文件夹 ${localFolders.length}->${mergedFolders.length}）`
     );
     return;
   }
   setStatus(
-    `${getSyncModeStatusLabel(syncMode)}（${sourceSummary}）：账号 ${localAccounts.length}->${mergedAccounts.length}，` +
+    `${getSyncModeStatusLabel(normalizedSyncMode)}（${sourceSummary}）：账号 ${localAccounts.length}->${mergedAccounts.length}，` +
       `通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}，文件夹 ${localFolders.length}->${mergedFolders.length}`
   );
 }
@@ -999,39 +989,6 @@ function normalizeSyncMode(value) {
     case SYNC_MODE_MERGE:
     default:
       return SYNC_MODE_MERGE;
-  }
-}
-
-function getSelectedSyncMode() {
-  if (dom.syncModeRemoteOverwriteLocalRadio.checked) {
-    return SYNC_MODE_REMOTE_OVERWRITE_LOCAL;
-  }
-  if (dom.syncModeLocalOverwriteRemoteRadio.checked) {
-    return SYNC_MODE_LOCAL_OVERWRITE_REMOTE;
-  }
-  return SYNC_MODE_MERGE;
-}
-
-function setSyncModeSelection(value) {
-  const syncMode = normalizeSyncMode(value);
-  dom.syncModeMergeRadio.checked = syncMode === SYNC_MODE_MERGE;
-  dom.syncModeRemoteOverwriteLocalRadio.checked = syncMode === SYNC_MODE_REMOTE_OVERWRITE_LOCAL;
-  dom.syncModeLocalOverwriteRemoteRadio.checked = syncMode === SYNC_MODE_LOCAL_OVERWRITE_REMOTE;
-}
-
-function renderSyncNowButtonLabel() {
-  const syncMode = getSelectedSyncMode();
-  switch (syncMode) {
-    case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:
-      dom.syncNowBtn.textContent = "用云端覆盖本地";
-      break;
-    case SYNC_MODE_LOCAL_OVERWRITE_REMOTE:
-      dom.syncNowBtn.textContent = "用本地覆盖云端";
-      break;
-    case SYNC_MODE_MERGE:
-    default:
-      dom.syncNowBtn.textContent = "立即远端同步";
-      break;
   }
 }
 
