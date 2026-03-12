@@ -48,7 +48,6 @@ const POPUP_TOAST_DURATION_MS = 3000;
 const dom = {
   openCreateModalBtn: document.getElementById("openCreateModal"),
   openSortModalBtn: document.getElementById("openSortModal"),
-  openHistoryModalBtn: document.getElementById("openHistoryModal"),
   modeActiveBtn: document.getElementById("modeActive"),
   modeAllBtn: document.getElementById("modeAll"),
   modeRecycleBtn: document.getElementById("modeRecycle"),
@@ -174,7 +173,6 @@ async function reloadBusinessData() {
 function bindEvents() {
   dom.openCreateModalBtn.addEventListener("click", openCreateModal);
   dom.openSortModalBtn.addEventListener("click", openSortModal);
-  dom.openHistoryModalBtn.addEventListener("click", openHistoryModal);
   dom.createAccountBtn.addEventListener("click", createAccountFromInputs);
   dom.createTotpPasteRawBtn.addEventListener("click", () => {
     void pasteRawTotpSecretFromClipboard({
@@ -734,14 +732,16 @@ function renderAccounts() {
 
   dom.openCreateModalBtn.classList.toggle("hidden", locked || !(showAccountMode || showAllAccountsMode));
   dom.openSortModalBtn.classList.toggle("hidden", locked || !(showAccountMode || showAllAccountsMode));
-  dom.openHistoryModalBtn.classList.toggle("hidden", locked);
   dom.accountSearchSection.classList.toggle("hidden", locked || showPasskeyMode);
   dom.passkeySection.classList.toggle("passkey-hidden", locked || !showPasskeyMode);
   dom.accountList.style.display = showPasskeyMode ? "none" : "grid";
 
+  if (!editingAccountId) {
+    closeHistoryModal();
+  }
+
   if (locked) {
     closeSortModal();
-    closeHistoryModal();
     dom.accountList.innerHTML = "";
     const empty = document.createElement("p");
     empty.className = "empty";
@@ -1296,6 +1296,13 @@ function buildEditor(account) {
     });
   });
   buttons.appendChild(saveBtn);
+
+  const historyBtn = document.createElement("button");
+  historyBtn.textContent = "历史记录";
+  historyBtn.addEventListener("click", async () => {
+    await openHistoryModal();
+  });
+  buttons.appendChild(historyBtn);
 
   const cancelBtn = document.createElement("button");
   cancelBtn.textContent = "取消";

@@ -95,11 +95,6 @@ struct ContentView: View {
                             }
                             .buttonStyle(.plain)
                         }
-                        Button("历史记录") {
-                            showHistoryPopup = true
-                        }
-                        .font(store.buttonFont(size: max(12, CGFloat(store.uiButtonFontSize - 4))))
-                        .buttonStyle(.bordered)
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
@@ -268,10 +263,19 @@ struct ContentView: View {
                         store.cancelEditing()
                     }
 
-                AccountEditPopup(store: store, editingAccount: editingAccount)
+                AccountEditPopup(
+                    store: store,
+                    editingAccount: editingAccount,
+                    showHistoryPopup: $showHistoryPopup
+                )
                     .padding(26)
             }
 
+        }
+        .onChange(of: isEditingAccount) { editing in
+            if !editing {
+                showHistoryPopup = false
+            }
         }
     }
 
@@ -1238,6 +1242,7 @@ private struct RecycleBinPopup: View {
 private struct AccountEditPopup: View {
     @ObservedObject var store: AccountStore
     let editingAccount: PasswordAccount
+    @Binding var showHistoryPopup: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1247,6 +1252,11 @@ private struct AccountEditPopup: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
+                Button("历史记录") {
+                    showHistoryPopup = true
+                }
+                .font(store.buttonFont())
+                .buttonStyle(.bordered)
                 Button("保存编辑") {
                     store.saveEditing()
                 }
