@@ -662,7 +662,9 @@ async function syncNowWithRemote() {
   for (const target of targets) {
     let remotePayload = null;
     try {
-      remotePayload = await pullRemotePayload(target);
+      const remoteResponse = await pullRemotePayload(target);
+      target.remoteEtag = remoteResponse.etag;
+      remotePayload = remoteResponse.payload;
     } catch (error) {
       setStatus(`${target.label} 拉取失败: ${error.message}`);
       return;
@@ -692,13 +694,17 @@ async function syncNowWithRemote() {
   );
 
   const pushErrors = [];
-  for (const target of targets) {
+  const pushTargets = [...targets].sort((left, right) => Number(right.supportsEtag) - Number(left.supportsEtag));
+  for (const target of pushTargets) {
     try {
-      await pushRemotePayload(target, {
+      const result = await pushRemotePayloadWithRetry(target, {
         accounts: mergedAccounts,
         passkeys: mergedPasskeys,
         folders: mergedFolders,
       });
+      mergedAccounts = result.payload.accounts.map(normalizeAccountShape);
+      mergedFolders = result.payload.folders.map(normalizeFolderShape);
+      mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, result.payload.passkeys);
     } catch (error) {
       pushErrors.push(`${target.label}: ${error.message}`);
     }
@@ -743,7 +749,7 @@ function buildRemoteSyncTargetsFromDom() {
     if (username || password) {
       authHeader = `Basic ${base64EncodeUtf8(`${username}:${password}`)}`;
     }
-    targets.push({ label: "WebDAV", url, authHeader });
+    targets.push({ label: "WebDAV", url, authHeader, supportsEtag: false, remoteEtag: null });
   }
 
   if (dom.syncEnableServer.checked) {
@@ -762,7 +768,7 @@ function buildRemoteSyncTargetsFromDom() {
     }
     const token = String(dom.syncServerToken.value || "").trim();
     const authHeader = token ? `Bearer ${token}` : null;
-    targets.push({ label: "服务器", url, authHeader });
+    targets.push({ label: "服务器", url, authHeader, supportsEtag: true, remoteEtag: null });
   }
 
   if (targets.length === 0) {
@@ -785,14 +791,17 @@ async function pullRemotePayload(target) {
     cache: "no-store",
   });
   if (response.status === 404) {
-    return null;
+    return { payload: null, etag: null };
   }
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
   const text = await response.text();
   if (!String(text || "").trim()) {
-    return null;
+    return {
+      payload: null,
+      etag: response.headers.get("ETag"),
+    };
   }
   let parsed;
   try {
@@ -804,10 +813,13 @@ async function pullRemotePayload(target) {
   if (!payload) {
     throw new Error("远端数据格式错误，仅支持 pass.sync.bundle.v2");
   }
-  return payload;
+  return {
+    payload,
+    etag: response.headers.get("ETag"),
+  };
 }
 
-async function pushRemotePayload(target, payload) {
+async function pushRemotePayload(target, payload, ifMatch = null) {
   const bundle = await buildSyncBundleFromPayload(payload);
   const headers = {
     "Content-Type": "application/json",
@@ -816,14 +828,74 @@ async function pushRemotePayload(target, payload) {
   if (target.authHeader) {
     headers.Authorization = target.authHeader;
   }
+  if (ifMatch) {
+    headers["If-Match"] = ifMatch;
+  }
   const response = await fetch(target.url, {
     method: "PUT",
     headers,
     body: JSON.stringify(bundle, null, 2),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    const error = new Error(`HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
+  return {
+    etag: response.headers.get("ETag"),
+  };
+}
+
+async function pushRemotePayloadWithRetry(target, payload) {
+  try {
+    const pushResult = await pushRemotePayload(target, payload, target.remoteEtag);
+    target.remoteEtag = pushResult.etag;
+    return { payload };
+  } catch (error) {
+    if (!target.supportsEtag || error?.status !== 412) {
+      throw error;
+    }
+  }
+
+  const latestResponse = await pullRemotePayload(target);
+  target.remoteEtag = latestResponse.etag;
+  const remotePayload = latestResponse.payload || {
+    accounts: [],
+    passkeys: [],
+    folders: [],
+  };
+
+  const localAccounts = Array.isArray(payload.accounts)
+    ? payload.accounts.map(normalizeAccountShape)
+    : [];
+  const localPasskeys = buildUnifiedPasskeys(
+    localAccounts,
+    Array.isArray(payload.passkeys) ? payload.passkeys.map(normalizePasskeyShape) : []
+  );
+  const localFolders = Array.isArray(payload.folders)
+    ? payload.folders.map(normalizeFolderShape)
+    : [];
+  const remoteAccounts = remotePayload.accounts.map(normalizeAccountShape);
+  const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys);
+  const remoteFolders = remotePayload.folders.map(normalizeFolderShape);
+
+  let mergedFolders = mergeFolderCollections(localFolders, remoteFolders);
+  let mergedAccounts = mergeAccountCollections(localAccounts, remoteAccounts);
+  mergedAccounts = syncAliasGroups(mergedAccounts);
+  mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
+  let mergedPasskeys = mergePasskeyCollections(localPasskeys, remotePasskeys);
+  mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
+
+  const reconciledPayload = {
+    accounts: mergedAccounts,
+    passkeys: mergedPasskeys,
+    folders: mergedFolders,
+  };
+
+  await writeBusinessDataToStore(reconciledPayload);
+  const retryResult = await pushRemotePayload(target, reconciledPayload, target.remoteEtag);
+  target.remoteEtag = retryResult.etag;
+  return { payload: reconciledPayload };
 }
 
 async function buildSyncBundleFromPayload(payload) {

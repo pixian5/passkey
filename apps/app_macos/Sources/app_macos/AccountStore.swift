@@ -151,6 +151,27 @@ final class AccountStore: ObservableObject {
     private static let maxHistoryEntries = 500
     private static let installedFontFamilies: Set<String> = Set(NSFontManager.shared.availableFontFamilies)
 
+    private struct RemotePayloadResponse {
+        let payload: SyncBundlePayload?
+        let etag: String?
+    }
+
+    private struct SelfHostedPushResult {
+        let payload: SyncBundlePayload
+        let changedLocalData: Bool
+    }
+
+    private enum SyncRemoteError: LocalizedError {
+        case preconditionFailed
+
+        var errorDescription: String? {
+            switch self {
+            case .preconditionFailed:
+                return "远端数据已被其他设备更新，请重新拉取并合并后再上传"
+            }
+        }
+    }
+
     private let decoder = JSONDecoder()
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -1296,6 +1317,7 @@ final class AccountStore: ObservableObject {
         }
 
         var mergedPayload = buildCurrentSyncPayload()
+        var selfHostedETag: String?
 
         if syncEnableICloud {
             do {
@@ -1318,10 +1340,11 @@ final class AccountStore: ObservableObject {
                     username: webdavUsername,
                     password: webdavPassword
                 )
-                if let remotePayload = try await fetchRemotePayload(
+                let remoteResponse = try await fetchRemotePayload(
                     from: resourceURL,
                     authorization: authorization
-                ) {
+                )
+                if let remotePayload = remoteResponse.payload {
                     mergedPayload = mergePayloads(local: mergedPayload, remote: remotePayload)
                 }
             } catch {
@@ -1337,10 +1360,12 @@ final class AccountStore: ObservableObject {
             }
             do {
                 let authorization = buildBearerAuthorization(serverAuthToken)
-                if let remotePayload = try await fetchRemotePayload(
+                let remoteResponse = try await fetchRemotePayload(
                     from: resourceURL,
                     authorization: authorization
-                ) {
+                )
+                selfHostedETag = remoteResponse.etag
+                if let remotePayload = remoteResponse.payload {
                     mergedPayload = mergePayloads(local: mergedPayload, remote: remotePayload)
                 }
             } catch {
@@ -1349,8 +1374,29 @@ final class AccountStore: ObservableObject {
             }
         }
 
-        let changed = applyMergedPayloadIfNeeded(mergedPayload)
+        var changed = applyMergedPayloadIfNeeded(mergedPayload)
         var pushErrors: [String] = []
+
+        if syncEnableSelfHostedServer {
+            guard let resourceURL = buildSelfHostedPayloadURL() else {
+                pushErrors.append("服务器: 配置不完整")
+                updateSyncStatusAfterSync(changed: changed, enabledSourceNames: enabledSourceNames, pushErrors: pushErrors)
+                return
+            }
+            do {
+                let authorization = buildBearerAuthorization(serverAuthToken)
+                let pushResult = try await pushSelfHostedPayloadWithRetry(
+                    mergedPayload,
+                    to: resourceURL,
+                    authorization: authorization,
+                    etag: selfHostedETag
+                )
+                mergedPayload = pushResult.payload
+                changed = changed || pushResult.changedLocalData
+            } catch {
+                pushErrors.append("服务器: \(error.localizedDescription)")
+            }
+        }
 
         if syncEnableICloud {
             do {
@@ -1378,24 +1424,6 @@ final class AccountStore: ObservableObject {
                 )
             } catch {
                 pushErrors.append("WebDAV: \(error.localizedDescription)")
-            }
-        }
-
-        if syncEnableSelfHostedServer {
-            guard let resourceURL = buildSelfHostedPayloadURL() else {
-                pushErrors.append("服务器: 配置不完整")
-                updateSyncStatusAfterSync(changed: changed, enabledSourceNames: enabledSourceNames, pushErrors: pushErrors)
-                return
-            }
-            do {
-                let authorization = buildBearerAuthorization(serverAuthToken)
-                try await pushRemotePayload(
-                    mergedPayload,
-                    to: resourceURL,
-                    authorization: authorization
-                )
-            } catch {
-                pushErrors.append("服务器: \(error.localizedDescription)")
             }
         }
 
@@ -1528,7 +1556,7 @@ final class AccountStore: ObservableObject {
         return "Bearer \(trimmed)"
     }
 
-    private func fetchRemotePayload(from url: URL, authorization: String?) async throws -> SyncBundlePayload? {
+    private func fetchRemotePayload(from url: URL, authorization: String?) async throws -> RemotePayloadResponse {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 30
@@ -1545,7 +1573,7 @@ final class AccountStore: ObservableObject {
             )
         }
         if http.statusCode == 404 {
-            return nil
+            return RemotePayloadResponse(payload: nil, etag: nil)
         }
         guard (200 ... 299).contains(http.statusCode) else {
             throw NSError(
@@ -1555,17 +1583,25 @@ final class AccountStore: ObservableObject {
             )
         }
         guard !data.isEmpty else {
-            return nil
+            return RemotePayloadResponse(payload: nil, etag: http.value(forHTTPHeaderField: "ETag"))
         }
         let parsed = try decodeSyncBundle(data)
-        return SyncBundlePayload(
-            accounts: normalizeDecodedAccounts(parsed.accounts),
-            folders: parsed.folders,
-            passkeys: parsed.passkeys
+        return RemotePayloadResponse(
+            payload: SyncBundlePayload(
+                accounts: normalizeDecodedAccounts(parsed.accounts),
+                folders: parsed.folders,
+                passkeys: parsed.passkeys
+            ),
+            etag: http.value(forHTTPHeaderField: "ETag")
         )
     }
 
-    private func pushRemotePayload(_ payload: SyncBundlePayload, to url: URL, authorization: String?) async throws {
+    private func pushRemotePayload(
+        _ payload: SyncBundlePayload,
+        to url: URL,
+        authorization: String?,
+        ifMatch: String? = nil
+    ) async throws {
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
         request.timeoutInterval = 30
@@ -1573,6 +1609,9 @@ final class AccountStore: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let authorization {
             request.setValue(authorization, forHTTPHeaderField: "Authorization")
+        }
+        if let ifMatch {
+            request.setValue(ifMatch, forHTTPHeaderField: "If-Match")
         }
         request.httpBody = try encoder.encode(buildSyncBundleDocument(payload: payload))
         let (_, response) = try await URLSession.shared.data(for: request)
@@ -1583,12 +1622,39 @@ final class AccountStore: ObservableObject {
                 userInfo: [NSLocalizedDescriptionKey: "远端响应不可识别"]
             )
         }
+        if http.statusCode == 412 {
+            throw SyncRemoteError.preconditionFailed
+        }
         guard (200 ... 299).contains(http.statusCode) else {
             throw NSError(
                 domain: "AccountStore.SyncRemote",
                 code: http.statusCode,
                 userInfo: [NSLocalizedDescriptionKey: "远端上传失败，HTTP \(http.statusCode)"]
             )
+        }
+    }
+
+    private func pushSelfHostedPayloadWithRetry(
+        _ payload: SyncBundlePayload,
+        to url: URL,
+        authorization: String?,
+        etag: String?
+    ) async throws -> SelfHostedPushResult {
+        do {
+            try await pushRemotePayload(payload, to: url, authorization: authorization, ifMatch: etag)
+            return SelfHostedPushResult(payload: payload, changedLocalData: false)
+        } catch SyncRemoteError.preconditionFailed {
+            let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
+            let latestPayload = latestResponse.payload ?? SyncBundlePayload(accounts: [], folders: [], passkeys: [])
+            let reconciledPayload = mergePayloads(local: payload, remote: latestPayload)
+            let changed = applyMergedPayloadIfNeeded(reconciledPayload)
+            try await pushRemotePayload(
+                reconciledPayload,
+                to: url,
+                authorization: authorization,
+                ifMatch: latestResponse.etag
+            )
+            return SelfHostedPushResult(payload: reconciledPayload, changedLocalData: changed)
         }
     }
 

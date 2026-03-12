@@ -10,6 +10,7 @@ Cross-platform password manager workspace.
   - [`apps/app_flutter`](/Users/x/code/pass/apps/app_flutter/README.md)
   - [`apps/extension_chrome`](/Users/x/code/pass/apps/extension_chrome/README.md)
   - [`apps/sync_agent_desktop`](/Users/x/code/pass/apps/sync_agent_desktop/README.md)
+  - [`apps/sync_server_ubuntu`](/Users/x/code/pass/apps/sync_server_ubuntu/README.md)
 
 ## Core crates
 - `pass-domain`: model primitives (`Operation`, `TimeRange`, `HybridLogicalClock`).
