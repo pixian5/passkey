@@ -65,7 +65,9 @@ const dom = {
   saveDeviceNameBtn: document.getElementById("saveDeviceName"),
   syncEnableWebdav: document.getElementById("syncEnableWebdav"),
   syncEnableServer: document.getElementById("syncEnableServer"),
-  syncMode: document.getElementById("syncMode"),
+  syncModeMergeRadio: document.getElementById("syncModeMerge"),
+  syncModeRemoteOverwriteLocalRadio: document.getElementById("syncModeRemoteOverwriteLocal"),
+  syncModeLocalOverwriteRemoteRadio: document.getElementById("syncModeLocalOverwriteRemote"),
   syncWebdavFields: document.getElementById("syncWebdavFields"),
   syncServerFields: document.getElementById("syncServerFields"),
   syncWebdavBaseUrl: document.getElementById("syncWebdavBaseUrl"),
@@ -166,7 +168,9 @@ async function init() {
   dom.syncEnableServer.addEventListener("change", () => {
     renderSyncBackendFields();
   });
-  dom.syncMode.addEventListener("change", renderSyncNowButtonLabel);
+  dom.syncModeMergeRadio.addEventListener("change", renderSyncNowButtonLabel);
+  dom.syncModeRemoteOverwriteLocalRadio.addEventListener("change", renderSyncNowButtonLabel);
+  dom.syncModeLocalOverwriteRemoteRadio.addEventListener("change", renderSyncNowButtonLabel);
   dom.lockEnabled.addEventListener("change", renderLockSettingsFields);
   dom.lockPolicyOnceRadio.addEventListener("change", renderLockSettingsFields);
   dom.lockPolicyIdleRadio.addEventListener("change", renderLockSettingsFields);
@@ -349,7 +353,7 @@ async function loadSyncSettings() {
     result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL
   );
   dom.syncServerToken.value = String(result[STORAGE_KEY_SYNC_SERVER_TOKEN] || "");
-  dom.syncMode.value = normalizeSyncMode(result[STORAGE_KEY_SYNC_MODE]);
+  setSyncModeSelection(result[STORAGE_KEY_SYNC_MODE]);
   renderSyncBackendFields();
   renderSyncNowButtonLabel();
 }
@@ -485,7 +489,7 @@ async function saveLockSettings() {
 async function saveSyncSettings() {
   const enableWebdav = Boolean(dom.syncEnableWebdav.checked);
   const enableServer = Boolean(dom.syncEnableServer.checked);
-  const syncMode = normalizeSyncMode(dom.syncMode.value);
+  const syncMode = getSelectedSyncMode();
   await chrome.storage.local.set({
     [STORAGE_KEY_SYNC_ENABLE_WEBDAV]: enableWebdav,
     [STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]: enableServer,
@@ -497,7 +501,7 @@ async function saveSyncSettings() {
     [STORAGE_KEY_SYNC_SERVER_TOKEN]: String(dom.syncServerToken.value || "").trim(),
     [STORAGE_KEY_SYNC_MODE]: syncMode,
   });
-  dom.syncMode.value = syncMode;
+  setSyncModeSelection(syncMode);
   renderSyncBackendFields();
   renderSyncNowButtonLabel();
   const enabledLabels = [];
@@ -658,7 +662,7 @@ async function syncNowWithRemote() {
   await saveSyncSettings();
   const targets = buildRemoteSyncTargetsFromDom();
   if (!targets || targets.length === 0) return;
-  const syncMode = normalizeSyncMode(dom.syncMode.value);
+  const syncMode = getSelectedSyncMode();
 
   const localStored = await readBusinessDataFromStore();
   const localAccounts = Array.isArray(localStored.accounts)
@@ -998,8 +1002,25 @@ function normalizeSyncMode(value) {
   }
 }
 
+function getSelectedSyncMode() {
+  if (dom.syncModeRemoteOverwriteLocalRadio.checked) {
+    return SYNC_MODE_REMOTE_OVERWRITE_LOCAL;
+  }
+  if (dom.syncModeLocalOverwriteRemoteRadio.checked) {
+    return SYNC_MODE_LOCAL_OVERWRITE_REMOTE;
+  }
+  return SYNC_MODE_MERGE;
+}
+
+function setSyncModeSelection(value) {
+  const syncMode = normalizeSyncMode(value);
+  dom.syncModeMergeRadio.checked = syncMode === SYNC_MODE_MERGE;
+  dom.syncModeRemoteOverwriteLocalRadio.checked = syncMode === SYNC_MODE_REMOTE_OVERWRITE_LOCAL;
+  dom.syncModeLocalOverwriteRemoteRadio.checked = syncMode === SYNC_MODE_LOCAL_OVERWRITE_REMOTE;
+}
+
 function renderSyncNowButtonLabel() {
-  const syncMode = normalizeSyncMode(dom.syncMode?.value);
+  const syncMode = getSelectedSyncMode();
   switch (syncMode) {
     case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:
       dom.syncNowBtn.textContent = "用云端覆盖本地";

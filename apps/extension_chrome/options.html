@@ -24,13 +24,32 @@
             </div>
             <button id="saveSyncSettings">保存</button>
           </div>
-          <div class="row">
-            <label for="syncMode">同步方式</label>
-            <select id="syncMode">
-              <option value="merge">合并</option>
-              <option value="remoteOverwriteLocal">云端覆盖本地</option>
-              <option value="localOverwriteRemote">本地覆盖云端</option>
-            </select>
+          <div class="row sync-mode-row">
+            <label>同步方式</label>
+            <div class="sync-mode-radios">
+              <label class="sync-mode-option">
+                <input id="syncModeMerge" type="radio" name="syncMode" value="merge" checked />
+                <span>合并</span>
+              </label>
+              <label class="sync-mode-option">
+                <input
+                  id="syncModeRemoteOverwriteLocal"
+                  type="radio"
+                  name="syncMode"
+                  value="remoteOverwriteLocal"
+                />
+                <span>云端覆盖本地</span>
+              </label>
+              <label class="sync-mode-option">
+                <input
+                  id="syncModeLocalOverwriteRemote"
+                  type="radio"
+                  name="syncMode"
+                  value="localOverwriteRemote"
+                />
+                <span>本地覆盖云端</span>
+              </label>
+            </div>
             <span></span>
           </div>
           <p class="hint">
