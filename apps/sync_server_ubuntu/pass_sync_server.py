@@ -379,7 +379,7 @@ def load_config() -> AppConfig:
     token_scopes = parse_token_scopes(os.environ.get("PASS_SYNC_BEARER_TOKENS", ""))
     return AppConfig(
         host=os.environ.get("PASS_SYNC_HOST", "0.0.0.0"),
-        port=int(os.environ.get("PASS_SYNC_PORT", "8787")),
+        port=int(os.environ.get("PASS_SYNC_PORT", "53333")),
         db_path=db_path,
         token_scopes=token_scopes,
     )

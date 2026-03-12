@@ -22,7 +22,7 @@ cd /Users/x/code/pass/apps/sync_server_ubuntu
 python3 pass_sync_server.py
 ```
 
-默认监听 `0.0.0.0:8787`，数据库位于：
+默认监听 `0.0.0.0:53333`，数据库位于：
 
 ```text
 ./data/pass_sync.sqlite3
@@ -33,7 +33,7 @@ python3 pass_sync_server.py
 - `PASS_SYNC_HOST`
   - 默认 `0.0.0.0`
 - `PASS_SYNC_PORT`
-  - 默认 `8787`
+  - 默认 `53333`
 - `PASS_SYNC_DB_PATH`
   - 默认 `./data/pass_sync.sqlite3`
 - `PASS_SYNC_BEARER_TOKENS`
@@ -80,7 +80,7 @@ User=pass
 Group=pass
 WorkingDirectory=/opt/pass-sync-server
 Environment=PASS_SYNC_HOST=127.0.0.1
-Environment=PASS_SYNC_PORT=8787
+Environment=PASS_SYNC_PORT=53333
 Environment=PASS_SYNC_DB_PATH=/var/lib/pass-sync/pass_sync.sqlite3
 Environment=PASS_SYNC_BEARER_TOKENS=default=replace-with-long-random-token
 ExecStart=/usr/bin/python3 /opt/pass-sync-server/pass_sync_server.py

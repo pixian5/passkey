@@ -124,7 +124,7 @@ struct SettingsView: View {
                         HStack(spacing: 8) {
                             Text("服务地址")
                                 .frame(width: 80, alignment: .leading)
-                            TextField("https://sync.example.com/", text: $store.serverBaseURL)
+                            TextField("https://sync.example.com:53333/", text: $store.serverBaseURL)
                                 .textFieldStyle(.roundedBorder)
                         }
                         HStack(spacing: 8) {
