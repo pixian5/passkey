@@ -1133,6 +1133,9 @@ private struct HistoryPopup: View {
                         Text(entry.action)
                             .font(store.textFont(size: store.scaledTextSize(14)))
                             .textSelection(.enabled)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .padding(.vertical, 4)
                 }

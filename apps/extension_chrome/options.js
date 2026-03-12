@@ -303,8 +303,8 @@ async function appendHistory(action, timestampMs = Date.now()) {
 
 function historyValueSnippet(input, maxLength = 80) {
   const normalized = String(input || "")
-    .replace(/\r\n/g, " ")
-    .replace(/[\r\n]/g, " ")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
     .trim();
   if (!normalized) return "(空)";
   if (normalized.length <= maxLength) return normalized;
@@ -1514,6 +1514,7 @@ function renderHistoryModalList() {
     item.appendChild(time);
 
     const action = document.createElement("div");
+    action.className = "history-modal-item-action";
     action.textContent = entry.action;
     item.appendChild(action);
 

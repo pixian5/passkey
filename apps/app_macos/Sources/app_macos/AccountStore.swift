@@ -1803,18 +1803,17 @@ final class AccountStore: ObservableObject {
     }
 
     private func historyValueSnippet(_ raw: String, maxLength: Int = 80) -> String {
-        let compact = raw
-            .replacingOccurrences(of: "\r\n", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
+        let normalized = raw
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        if compact.isEmpty {
+        if normalized.isEmpty {
             return "(空)"
         }
-        if compact.count <= maxLength {
-            return compact
+        if normalized.count <= maxLength {
+            return normalized
         }
-        return String(compact.prefix(maxLength)) + "..."
+        return String(normalized.prefix(maxLength)) + "..."
     }
 
     private func loadCollectionDataFromLocalDatabase(for key: String) -> Data? {

@@ -552,6 +552,11 @@ button:active {
   font-size: 11px;
 }
 
+.history-modal-item-action {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .sort-modal-item-label {
   flex: 1;
   min-width: 0;
