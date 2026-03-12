@@ -1973,14 +1973,10 @@ function renderCurrentView(inputAccounts) {
     const meta = document.createElement("div");
     meta.className = "meta";
     const sitesMultilineHtml = toMultilineHtml(account.sites.join("\n"));
-    const recoveryMultilineHtml = toMultilineHtml(account.recoveryCodes || "-");
     meta.innerHTML =
       `用户名: ${escapeHtml(account.username || "-")}<br/>` +
       `站点别名:<div class="meta-multiline">${sitesMultilineHtml}</div>` +
-      `恢复码:<div class="meta-multiline">${recoveryMultilineHtml}</div>` +
-      `通行密钥: ${account.passkeyCredentialIds.length} 个<br/>` +
-      `创建: ${formatTime(account.createdAtMs)} | 更新: ${formatTime(account.updatedAtMs)}<br/>` +
-      `删除: ${formatTime(account.deletedAtMs)}<br/>`;
+      `通行密钥: ${account.passkeyCredentialIds.length} 个<br/>`;
     card.appendChild(meta);
 
     const actions = document.createElement("div");
@@ -2433,6 +2429,13 @@ function buildAccountEditor(account) {
   const noteInput = createEditorTextarea(editor, "备注", account.note || "", {
     className: "editor-textarea",
   });
+
+  const details = document.createElement("div");
+  details.className = "meta";
+  details.innerHTML =
+    `创建: ${formatTime(account.createdAtMs)} | 更新: ${formatTime(account.updatedAtMs)}<br/>` +
+    `删除: ${formatTime(account.deletedAtMs)}<br/>`;
+  editor.appendChild(details);
 
   const actions = document.createElement("div");
   actions.className = "account-actions";
