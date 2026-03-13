@@ -12,282 +12,285 @@ struct SettingsView: View {
     private let idleMinuteChoices: [Int] = [1, 3, 5, 10, 15, 30, 60]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Text("设备名称")
-                    .frame(width: 80, alignment: .leading)
-                TextField("例如 ChromeMac", text: $store.deviceName)
-                    .textFieldStyle(.roundedBorder)
-                Button("保存") {
-                    store.saveDeviceName()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Text("设备名称")
+                        .frame(width: 80, alignment: .leading)
+                    TextField("例如 ChromeMac", text: $store.deviceName)
+                        .textFieldStyle(.roundedBorder)
+                    Button("保存") {
+                        store.saveDeviceName()
+                    }
+                    .font(store.buttonFont())
+                    .buttonStyle(.borderedProminent)
                 }
-                .font(store.buttonFont())
-                .buttonStyle(.borderedProminent)
-            }
 
-            Text("说明：设备名称会写入账号最后操作设备字段。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Text("说明：设备名称会写入账号最后操作设备字段。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
-            GroupBox("界面字体") {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        Text("字体")
-                            .frame(width: 80, alignment: .leading)
-                        Picker("字体", selection: $store.uiFontFamily) {
-                            ForEach(store.uiFontFamilyOptions, id: \.self) { family in
-                                Text(family).tag(family)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                    }
-
-                    HStack(spacing: 8) {
-                        Text("文本字号")
-                            .frame(width: 80, alignment: .leading)
-                        Slider(value: $store.uiTextFontSize, in: 12 ... 40, step: 1)
-                        Text("\(Int(store.uiTextFontSize))")
-                            .frame(width: 40, alignment: .trailing)
-                            .monospacedDigit()
-                    }
-
-                    HStack(spacing: 8) {
-                        Text("按钮字号")
-                            .frame(width: 80, alignment: .leading)
-                        Slider(value: $store.uiButtonFontSize, in: 12 ... 52, step: 1)
-                        Text("\(Int(store.uiButtonFontSize))")
-                            .frame(width: 40, alignment: .trailing)
-                            .monospacedDigit()
-                    }
-
-                    HStack(spacing: 8) {
-                        Text("提示时长")
-                            .frame(width: 80, alignment: .leading)
-                        Slider(value: $store.uiToastDurationSeconds, in: 1 ... 10, step: 0.5)
-                        Text("\(store.uiToastDurationSeconds, specifier: "%.1f")s")
-                            .frame(width: 58, alignment: .trailing)
-                            .monospacedDigit()
-                    }
-                }
-                .padding(.top, 2)
-            }
-
-            GroupBox("数据同步") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(store.cloudSyncStatus)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Toggle("iCloud（仅 Apple）", isOn: $store.syncEnableICloud)
-                            .toggleStyle(.switch)
-                        Toggle("WebDAV", isOn: $store.syncEnableWebDAV)
-                            .toggleStyle(.switch)
-                        Toggle("自建服务器", isOn: $store.syncEnableSelfHostedServer)
-                            .toggleStyle(.switch)
-                    }
-
-                    Text("可同时启用多个同步源；点击“同步已启用源”会依次拉取并回写所有已启用源。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    HStack(alignment: .top, spacing: 8) {
-                        Text("同步操作")
-                            .frame(width: 80, alignment: .leading)
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 8) {
-                                Button("合并已启用源") {
-                                    store.syncNow(modeOverride: .merge)
-                                }
-                                .font(store.buttonFont())
-                                .buttonStyle(.bordered)
-
-                                Button("云端覆盖本地") {
-                                    store.syncNow(modeOverride: .remoteOverwriteLocal)
-                                }
-                                .font(store.buttonFont())
-                                .buttonStyle(.bordered)
-
-                                Button("本地覆盖云端") {
-                                    store.syncNow(modeOverride: .localOverwriteRemote)
-                                }
-                                .font(store.buttonFont())
-                                .buttonStyle(.bordered)
-                            }
-                        }
-                    }
-
-                    Text("合并：保留双方变更；云端覆盖本地：用所有已启用远端的汇总结果替换本机；本地覆盖云端：直接把本机数据推到所有已启用远端。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if store.syncEnableWebDAV {
+                GroupBox("界面字体") {
+                    VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
-                            Text("WebDAV 地址")
+                            Text("字体")
                                 .frame(width: 80, alignment: .leading)
-                            TextField("https://dav.example.com/remote.php/dav/files/<user>/", text: $store.webdavBaseURL)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        HStack(spacing: 8) {
-                            Text("远端路径")
-                                .frame(width: 80, alignment: .leading)
-                            TextField("pass-sync-bundle-v2.json", text: $store.webdavRemotePath)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        HStack(spacing: 8) {
-                            Text("用户名")
-                                .frame(width: 80, alignment: .leading)
-                            TextField("可选", text: $store.webdavUsername)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        HStack(spacing: 8) {
-                            Text("密码")
-                                .frame(width: 80, alignment: .leading)
-                            SecureField("可选（写入本机 Keychain）", text: $store.webdavPassword)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                    }
-
-                    if store.syncEnableSelfHostedServer {
-                        HStack(spacing: 8) {
-                            Text("服务地址")
-                                .frame(width: 80, alignment: .leading)
-                            TextField(AccountStore.defaultSelfHostedServerBaseURL, text: $store.serverBaseURL)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        HStack(spacing: 8) {
-                            Text("访问令牌")
-                                .frame(width: 80, alignment: .leading)
-                            SecureField("可选（Bearer Token，写入本机 Keychain）", text: $store.serverAuthToken)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        Text("服务端接口固定为 /v1/sync/payload，使用 GET/PUT 交换 pass.sync.bundle.v2。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    HStack(spacing: 8) {
-                        Button("导出同步包") {
-                            exportSyncBundleWithPanel()
-                        }
-                        .font(store.buttonFont())
-                        .buttonStyle(.bordered)
-
-                        Button("导入并合并同步包") {
-                            importSyncBundleWithPanel()
-                        }
-                        .font(store.buttonFont())
-                        .buttonStyle(.bordered)
-                    }
-                }
-                .padding(.top, 2)
-            }
-
-            GroupBox("数据导出") {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        Text("导出账号目录")
-                            .frame(width: 80, alignment: .leading)
-                        TextField("为空时点击导出后选择目录", text: $store.exportDirectoryPath)
-                            .textFieldStyle(.roundedBorder)
-                            .onChange(of: store.exportDirectoryPath) { _ in
-                                store.saveExportDirectoryPath()
-                            }
-                        Button("导出全部账号 CSV") {
-                            exportCsvWithDirectoryRule()
-                        }
-                        .font(store.buttonFont())
-                        .buttonStyle(.bordered)
-                    }
-                }
-                .padding(.top, 2)
-            }
-
-            Divider()
-
-            GroupBox("应用解锁") {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("状态：\(appLock.isUnlockEnabled ? "已启用" : "未启用")")
-                        .font(.subheadline)
-
-                    Toggle("优先通过指纹解锁", isOn: $appLock.preferBiometrics)
-                        .toggleStyle(.switch)
-
-                    Picker("锁定策略", selection: $appLock.lockPolicy) {
-                        ForEach(AppLockPolicy.allCases) { policy in
-                            Text(policy.title).tag(policy)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-
-                    if appLock.lockPolicy == .idleTimeout {
-                        HStack(spacing: 8) {
-                            Text("无操作锁定时间")
-                                .frame(width: 100, alignment: .leading)
-                            Picker("无操作锁定时间", selection: $appLock.idleLockMinutes) {
-                                ForEach(idleMinuteChoices, id: \.self) { minute in
-                                    Text("\(minute) 分钟").tag(minute)
+                            Picker("字体", selection: $store.uiFontFamily) {
+                                ForEach(store.uiFontFamilyOptions, id: \.self) { family in
+                                    Text(family).tag(family)
                                 }
                             }
                             .labelsHidden()
-                            .frame(width: 140)
+                            .pickerStyle(.menu)
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("文本字号")
+                                .frame(width: 80, alignment: .leading)
+                            Slider(value: $store.uiTextFontSize, in: 12 ... 40, step: 1)
+                            Text("\(Int(store.uiTextFontSize))")
+                                .frame(width: 40, alignment: .trailing)
+                                .monospacedDigit()
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("按钮字号")
+                                .frame(width: 80, alignment: .leading)
+                            Slider(value: $store.uiButtonFontSize, in: 12 ... 52, step: 1)
+                            Text("\(Int(store.uiButtonFontSize))")
+                                .frame(width: 40, alignment: .trailing)
+                                .monospacedDigit()
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("提示时长")
+                                .frame(width: 80, alignment: .leading)
+                            Slider(value: $store.uiToastDurationSeconds, in: 1 ... 10, step: 0.5)
+                            Text("\(store.uiToastDurationSeconds, specifier: "%.1f")s")
+                                .frame(width: 58, alignment: .trailing)
+                                .monospacedDigit()
                         }
                     }
+                    .padding(.top, 2)
+                }
 
-                    if appLock.isUnlockEnabled {
-                        HStack(spacing: 8) {
-                            SecureField("输入主密码后可关闭解锁", text: $disableUnlockPassword)
-                                .textFieldStyle(.roundedBorder)
-                            Button("关闭解锁") {
-                                appLock.disableUnlock(currentPassword: disableUnlockPassword)
-                                if !appLock.isUnlockEnabled {
-                                    disableUnlockPassword = ""
+                GroupBox("数据同步") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(store.cloudSyncStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Toggle("iCloud（仅 Apple）", isOn: $store.syncEnableICloud)
+                                .toggleStyle(.switch)
+                            Toggle("WebDAV", isOn: $store.syncEnableWebDAV)
+                                .toggleStyle(.switch)
+                            Toggle("自建服务器", isOn: $store.syncEnableSelfHostedServer)
+                                .toggleStyle(.switch)
+                        }
+
+                        Text("可同时启用多个同步源；点击“同步已启用源”会依次拉取并回写所有已启用源。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack(alignment: .top, spacing: 8) {
+                            Text("同步操作")
+                                .frame(width: 80, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 8) {
+                                    Button("合并已启用源") {
+                                        store.syncNow(modeOverride: .merge)
+                                    }
+                                    .font(store.buttonFont())
+                                    .buttonStyle(.bordered)
+
+                                    Button("云端覆盖本地") {
+                                        store.syncNow(modeOverride: .remoteOverwriteLocal)
+                                    }
+                                    .font(store.buttonFont())
+                                    .buttonStyle(.bordered)
+
+                                    Button("本地覆盖云端") {
+                                        store.syncNow(modeOverride: .localOverwriteRemote)
+                                    }
+                                    .font(store.buttonFont())
+                                    .buttonStyle(.bordered)
                                 }
+                            }
+                        }
+
+                        Text("合并：保留双方变更；云端覆盖本地：用所有已启用远端的汇总结果替换本机；本地覆盖云端：直接把本机数据推到所有已启用远端。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        if store.syncEnableWebDAV {
+                            HStack(spacing: 8) {
+                                Text("WebDAV 地址")
+                                    .frame(width: 80, alignment: .leading)
+                                TextField("https://dav.example.com/remote.php/dav/files/<user>/", text: $store.webdavBaseURL)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                            HStack(spacing: 8) {
+                                Text("远端路径")
+                                    .frame(width: 80, alignment: .leading)
+                                TextField("pass-sync-bundle-v2.json", text: $store.webdavRemotePath)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                            HStack(spacing: 8) {
+                                Text("用户名")
+                                    .frame(width: 80, alignment: .leading)
+                                TextField("可选", text: $store.webdavUsername)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                            HStack(spacing: 8) {
+                                Text("密码")
+                                    .frame(width: 80, alignment: .leading)
+                                SecureField("可选（写入本机 Keychain）", text: $store.webdavPassword)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
+                        if store.syncEnableSelfHostedServer {
+                            HStack(spacing: 8) {
+                                Text("服务地址")
+                                    .frame(width: 80, alignment: .leading)
+                                TextField(AccountStore.defaultSelfHostedServerBaseURL, text: $store.serverBaseURL)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                            HStack(spacing: 8) {
+                                Text("访问令牌")
+                                    .frame(width: 80, alignment: .leading)
+                                SecureField("可选（Bearer Token，写入本机 Keychain）", text: $store.serverAuthToken)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                            Text("服务端接口固定为 /v1/sync/payload，使用 GET/PUT 交换 pass.sync.bundle.v2。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        HStack(spacing: 8) {
+                            Button("导出同步包") {
+                                exportSyncBundleWithPanel()
+                            }
+                            .font(store.buttonFont())
+                            .buttonStyle(.bordered)
+
+                            Button("导入并合并同步包") {
+                                importSyncBundleWithPanel()
                             }
                             .font(store.buttonFont())
                             .buttonStyle(.bordered)
                         }
-                    } else {
-                        HStack(spacing: 8) {
-                            Text("主密码")
-                                .frame(width: 80, alignment: .leading)
-                            SecureField("至少 4 位", text: $newMasterPassword)
-                                .textFieldStyle(.roundedBorder)
-                        }
+                    }
+                    .padding(.top, 2)
+                }
 
+                GroupBox("数据导出") {
+                    VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
-                            Text("确认密码")
+                            Text("导出账号目录")
                                 .frame(width: 80, alignment: .leading)
-                            SecureField("再次输入主密码", text: $confirmMasterPassword)
+                            TextField("为空时点击导出后选择目录", text: $store.exportDirectoryPath)
                                 .textFieldStyle(.roundedBorder)
+                                .onChange(of: store.exportDirectoryPath) { _ in
+                                    store.saveExportDirectoryPath()
+                                }
+                            Button("导出全部账号 CSV") {
+                                exportCsvWithDirectoryRule()
+                            }
+                            .font(store.buttonFont())
+                            .buttonStyle(.bordered)
                         }
+                    }
+                    .padding(.top, 2)
+                }
 
-                        Button("设置主密码并启用") {
-                            appLock.enableUnlock(
-                                newPassword: newMasterPassword,
-                                confirmPassword: confirmMasterPassword
-                            )
-                            if appLock.isUnlockEnabled {
-                                newMasterPassword = ""
-                                confirmMasterPassword = ""
+                Divider()
+
+                GroupBox("应用解锁") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("状态：\(appLock.isUnlockEnabled ? "已启用" : "未启用")")
+                            .font(.subheadline)
+
+                        Toggle("优先通过指纹解锁", isOn: $appLock.preferBiometrics)
+                            .toggleStyle(.switch)
+
+                        Picker("锁定策略", selection: $appLock.lockPolicy) {
+                            ForEach(AppLockPolicy.allCases) { policy in
+                                Text(policy.title).tag(policy)
                             }
                         }
-                        .font(store.buttonFont())
-                        .buttonStyle(.borderedProminent)
-                    }
+                        .pickerStyle(.segmented)
 
-                    if !appLock.settingsMessage.isEmpty {
-                        Text(appLock.settingsMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        if appLock.lockPolicy == .idleTimeout {
+                            HStack(spacing: 8) {
+                                Text("无操作锁定时间")
+                                    .frame(width: 100, alignment: .leading)
+                                Picker("无操作锁定时间", selection: $appLock.idleLockMinutes) {
+                                    ForEach(idleMinuteChoices, id: \.self) { minute in
+                                        Text("\(minute) 分钟").tag(minute)
+                                    }
+                                }
+                                .labelsHidden()
+                                .frame(width: 140)
+                            }
+                        }
+
+                        if appLock.isUnlockEnabled {
+                            HStack(spacing: 8) {
+                                SecureField("输入主密码后可关闭解锁", text: $disableUnlockPassword)
+                                    .textFieldStyle(.roundedBorder)
+                                Button("关闭解锁") {
+                                    appLock.disableUnlock(currentPassword: disableUnlockPassword)
+                                    if !appLock.isUnlockEnabled {
+                                        disableUnlockPassword = ""
+                                    }
+                                }
+                                .font(store.buttonFont())
+                                .buttonStyle(.bordered)
+                            }
+                        } else {
+                            HStack(spacing: 8) {
+                                Text("主密码")
+                                    .frame(width: 80, alignment: .leading)
+                                SecureField("至少 4 位", text: $newMasterPassword)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+
+                            HStack(spacing: 8) {
+                                Text("确认密码")
+                                    .frame(width: 80, alignment: .leading)
+                                SecureField("再次输入主密码", text: $confirmMasterPassword)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+
+                            Button("设置主密码并启用") {
+                                appLock.enableUnlock(
+                                    newPassword: newMasterPassword,
+                                    confirmPassword: confirmMasterPassword
+                                )
+                                if appLock.isUnlockEnabled {
+                                    newMasterPassword = ""
+                                    confirmMasterPassword = ""
+                                }
+                            }
+                            .font(store.buttonFont())
+                            .buttonStyle(.borderedProminent)
+                        }
+
+                        if !appLock.settingsMessage.isEmpty {
+                            Text(appLock.settingsMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                    .padding(.top, 2)
                 }
-                .padding(.top, 2)
             }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .padding(16)
         .frame(
             minWidth: 760,
             maxWidth: .infinity,
