@@ -2056,6 +2056,8 @@ final class AccountStore: ObservableObject {
     }
 
     private func load() {
+        PassSharedData.migrateLegacyStoreToSharedContainerIfNeeded()
+
         let defaults = UserDefaults.standard
         deviceName = defaults.string(forKey: Keys.deviceName) ?? ""
         exportDirectoryPath = defaults.string(forKey: Keys.exportDirectoryPath) ?? ""
@@ -2113,6 +2115,7 @@ final class AccountStore: ObservableObject {
         let accountDataCandidates = [accountDataFromDatabase, accountDataFromLegacyFile].compactMap { $0 }
         guard !accountDataCandidates.isEmpty else {
             accounts = []
+            CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
             if folderNormalization.foldersChanged || migratedFoldersFromDefaults {
                 saveFoldersToDefaults()
             }
@@ -2129,6 +2132,7 @@ final class AccountStore: ObservableObject {
                 if accountsChanged || !usingDatabaseData {
                     saveAccountsToLocalDisk()
                 }
+                CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
                 if folderNormalization.foldersChanged || migratedFoldersFromDefaults {
                     saveFoldersToDefaults()
                 }
@@ -2140,6 +2144,7 @@ final class AccountStore: ObservableObject {
                 _ = migrateAccountFolderIdsFromLegacyNewAccountFolder(
                     legacyFolderIds: folderNormalization.legacyNewAccountFolderIds
                 )
+                CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
                 if folderNormalization.foldersChanged || migratedFoldersFromDefaults {
                     saveFoldersToDefaults()
                 }
@@ -2149,6 +2154,7 @@ final class AccountStore: ObservableObject {
         }
 
         accounts = []
+        CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
         if folderNormalization.foldersChanged || migratedFoldersFromDefaults {
             saveFoldersToDefaults()
         }
@@ -2165,6 +2171,7 @@ final class AccountStore: ObservableObject {
         do {
             let data = try encoder.encode(accounts)
             try saveCollectionDataToLocalDatabase(data, for: LocalDatabaseKeys.accounts)
+            CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
         } catch {
             statusMessage = "保存失败: \(error.localizedDescription)"
         }
@@ -3503,8 +3510,7 @@ final class AccountStore: ObservableObject {
     }
 
     private func dataDirectoryURL() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("pass-mac", isDirectory: true)
+        PassSharedData.dataDirectoryURL()
     }
 
     private func dataFileURL() -> URL {

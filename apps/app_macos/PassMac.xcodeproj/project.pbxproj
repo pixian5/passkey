@@ -1,0 +1,517 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		071179EE119FD71C7B9314E1 /* LocalSQLiteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0754637CBC9E0926C0543F48 /* LocalSQLiteStore.swift */; };
+		19BF9B560D59A922291FE4FC /* AppLockGateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D74364D86164E8DEB13F04AC /* AppLockGateView.swift */; };
+		2098575762A4584406D3A2E0 /* CreateAccountWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0EE98C4F1895D551D4DC15 /* CreateAccountWindowView.swift */; };
+		2D11A2786796D77E55F61DF6 /* PassSharedAccountRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E0C928C5DF28D261971A48C /* PassSharedAccountRepository.swift */; };
+		331E9BF4F148903DB3497C91 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99993A46A4FE0D6D32E70035 /* Models.swift */; };
+		408F44161FCF8F9FFFAD9716 /* PassSharedData.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF4659CDF23C2A1DC24A14FB /* PassSharedData.swift */; };
+		4676C0FE6D5027F0BB466BF8 /* LocalSQLiteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0754637CBC9E0926C0543F48 /* LocalSQLiteStore.swift */; };
+		50B2522415D9C2211529BB67 /* PassMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B33B5DDB6E674C0CAE5D2004 /* PassMacApp.swift */; };
+		5DF58ADC485E206E0AA9706B /* AccountStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F60C5671651BB3C5552DC3CC /* AccountStore.swift */; };
+		62739667FEF351AA012796AC /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99993A46A4FE0D6D32E70035 /* Models.swift */; };
+		72B1C63EA736F70D9C7824BE /* CredentialIdentitySync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 330C3281E19666C2B4CCC829 /* CredentialIdentitySync.swift */; };
+		730FEE94388D9EB2006BFC2F /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DFEDF39603E91A5451DC2C6 /* ContentView.swift */; };
+		7DBF9E3763DEF03C2999C1C8 /* DomainUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A09487F2F423EA5B6B401E3 /* DomainUtils.swift */; };
+		7DE0C2E8A6B3457CC6032939 /* AppLockStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEE2D2CD3411D5E212F6E08A /* AppLockStore.swift */; };
+		814F558759F7E40534701C88 /* AppToastOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = E93F0E304AB6E8C3797AAA42 /* AppToastOverlay.swift */; };
+		8CB1A8E177E0E77C3BCB8C43 /* LocalKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = B27A36689B66024DBA74586B /* LocalKeychain.swift */; };
+		9CDA23BCB4F08E01D8F98399 /* HistoryWindows.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6340E6D0028E8A0735B9DAC /* HistoryWindows.swift */; };
+		9E088675D61DB0F4EE41172D /* AutoFillCredentialProviderViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEC5536DE467F4FC0BA63702 /* AutoFillCredentialProviderViewController.swift */; };
+		9FE33818EFBCBA8F32BAA6D9 /* PassAutoFillExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 893853F422A6F51E043B5715 /* PassAutoFillExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A703B7D4995B2D1DE2842649 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DCAD9B40BB7EEF8131C7B72 /* SettingsView.swift */; };
+		CBC0EF3C889A01C54F478298 /* DomainUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A09487F2F423EA5B6B401E3 /* DomainUtils.swift */; };
+		DD44DFEB677BBDE42F2F5B83 /* PassSharedData.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF4659CDF23C2A1DC24A14FB /* PassSharedData.swift */; };
+		F76DF1A986627720AECF25F8 /* TotpGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0BC1EB784F47F24A5F6ADB /* TotpGenerator.swift */; };
+		F8D633EC72217B9C6C585ACB /* PassSharedAccountRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E0C928C5DF28D261971A48C /* PassSharedAccountRepository.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		59638EAF5E1DEEC7421F0330 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 369FF540245A145274D8BC84 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CE14238CC6801650212FEBF3;
+			remoteInfo = PassAutoFillExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		056C60587103BD0CD5E2E2D0 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				9FE33818EFBCBA8F32BAA6D9 /* PassAutoFillExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		0754637CBC9E0926C0543F48 /* LocalSQLiteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSQLiteStore.swift; sourceTree = "<group>"; };
+		0E0C928C5DF28D261971A48C /* PassSharedAccountRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassSharedAccountRepository.swift; sourceTree = "<group>"; };
+		330C3281E19666C2B4CCC829 /* CredentialIdentitySync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialIdentitySync.swift; sourceTree = "<group>"; };
+		4DFEDF39603E91A5451DC2C6 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		5DCAD9B40BB7EEF8131C7B72 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		69981A62A424D2BC02DD34F8 /* PassMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PassMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		6A09487F2F423EA5B6B401E3 /* DomainUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainUtils.swift; sourceTree = "<group>"; };
+		7A0BC1EB784F47F24A5F6ADB /* TotpGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TotpGenerator.swift; sourceTree = "<group>"; };
+		893853F422A6F51E043B5715 /* PassAutoFillExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PassAutoFillExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		8F8E182D6D5755032C95E9F3 /* AutoFillExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AutoFillExtension.entitlements; sourceTree = "<group>"; };
+		99993A46A4FE0D6D32E70035 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		AF0EE98C4F1895D551D4DC15 /* CreateAccountWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateAccountWindowView.swift; sourceTree = "<group>"; };
+		B27A36689B66024DBA74586B /* LocalKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalKeychain.swift; sourceTree = "<group>"; };
+		B33B5DDB6E674C0CAE5D2004 /* PassMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassMacApp.swift; sourceTree = "<group>"; };
+		D6340E6D0028E8A0735B9DAC /* HistoryWindows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryWindows.swift; sourceTree = "<group>"; };
+		D74364D86164E8DEB13F04AC /* AppLockGateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockGateView.swift; sourceTree = "<group>"; };
+		DEE2D2CD3411D5E212F6E08A /* AppLockStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockStore.swift; sourceTree = "<group>"; };
+		E0B455F3FA9BBFD37B86AA28 /* AutoFillExtension-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "AutoFillExtension-Info.plist"; sourceTree = "<group>"; };
+		E93F0E304AB6E8C3797AAA42 /* AppToastOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppToastOverlay.swift; sourceTree = "<group>"; };
+		EEC5536DE467F4FC0BA63702 /* AutoFillCredentialProviderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoFillCredentialProviderViewController.swift; sourceTree = "<group>"; };
+		F60C5671651BB3C5552DC3CC /* AccountStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountStore.swift; sourceTree = "<group>"; };
+		FF4659CDF23C2A1DC24A14FB /* PassSharedData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassSharedData.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		276394A2C70625BBAC368790 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				B81DCB9A92E3EBD05E0C91BB /* app_macos */,
+				D9CA5BBA83ECE4FC12AE813F /* shared */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		93F2954E76A0C26FC8FC09E0 = {
+			isa = PBXGroup;
+			children = (
+				F3BC1DB5CAE2DF7F30C8EE10 /* AutofillExtension */,
+				276394A2C70625BBAC368790 /* Sources */,
+				F1932AA62EE47DB25733DFC7 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		B81DCB9A92E3EBD05E0C91BB /* app_macos */ = {
+			isa = PBXGroup;
+			children = (
+				F60C5671651BB3C5552DC3CC /* AccountStore.swift */,
+				D74364D86164E8DEB13F04AC /* AppLockGateView.swift */,
+				DEE2D2CD3411D5E212F6E08A /* AppLockStore.swift */,
+				E93F0E304AB6E8C3797AAA42 /* AppToastOverlay.swift */,
+				4DFEDF39603E91A5451DC2C6 /* ContentView.swift */,
+				AF0EE98C4F1895D551D4DC15 /* CreateAccountWindowView.swift */,
+				330C3281E19666C2B4CCC829 /* CredentialIdentitySync.swift */,
+				6A09487F2F423EA5B6B401E3 /* DomainUtils.swift */,
+				D6340E6D0028E8A0735B9DAC /* HistoryWindows.swift */,
+				B27A36689B66024DBA74586B /* LocalKeychain.swift */,
+				0754637CBC9E0926C0543F48 /* LocalSQLiteStore.swift */,
+				99993A46A4FE0D6D32E70035 /* Models.swift */,
+				B33B5DDB6E674C0CAE5D2004 /* PassMacApp.swift */,
+				5DCAD9B40BB7EEF8131C7B72 /* SettingsView.swift */,
+				7A0BC1EB784F47F24A5F6ADB /* TotpGenerator.swift */,
+			);
+			path = app_macos;
+			sourceTree = "<group>";
+		};
+		D9CA5BBA83ECE4FC12AE813F /* shared */ = {
+			isa = PBXGroup;
+			children = (
+				0E0C928C5DF28D261971A48C /* PassSharedAccountRepository.swift */,
+				FF4659CDF23C2A1DC24A14FB /* PassSharedData.swift */,
+			);
+			path = shared;
+			sourceTree = "<group>";
+		};
+		F1932AA62EE47DB25733DFC7 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				893853F422A6F51E043B5715 /* PassAutoFillExtension.appex */,
+				69981A62A424D2BC02DD34F8 /* PassMac.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		F3BC1DB5CAE2DF7F30C8EE10 /* AutofillExtension */ = {
+			isa = PBXGroup;
+			children = (
+				EEC5536DE467F4FC0BA63702 /* AutoFillCredentialProviderViewController.swift */,
+				E0B455F3FA9BBFD37B86AA28 /* AutoFillExtension-Info.plist */,
+				8F8E182D6D5755032C95E9F3 /* AutoFillExtension.entitlements */,
+			);
+			path = AutofillExtension;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AE4F7BB33C6EB0CFC1A647E5 /* PassMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1EFFD6D33AF4ED200BB09146 /* Build configuration list for PBXNativeTarget "PassMac" */;
+			buildPhases = (
+				041D28D4C39715849E855396 /* Sources */,
+				056C60587103BD0CD5E2E2D0 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6FB985B68806C15014BF1129 /* PBXTargetDependency */,
+			);
+			name = PassMac;
+			packageProductDependencies = (
+			);
+			productName = PassMac;
+			productReference = 69981A62A424D2BC02DD34F8 /* PassMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+		CE14238CC6801650212FEBF3 /* PassAutoFillExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 52F499245C5EA2D7AC82AF17 /* Build configuration list for PBXNativeTarget "PassAutoFillExtension" */;
+			buildPhases = (
+				37016C70361340EDD317E919 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PassAutoFillExtension;
+			packageProductDependencies = (
+			);
+			productName = PassAutoFillExtension;
+			productReference = 893853F422A6F51E043B5715 /* PassAutoFillExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		369FF540245A145274D8BC84 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = CA68309784772B054280261F /* Build configuration list for PBXProject "PassMac" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 93F2954E76A0C26FC8FC09E0;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = F1932AA62EE47DB25733DFC7 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				CE14238CC6801650212FEBF3 /* PassAutoFillExtension */,
+				AE4F7BB33C6EB0CFC1A647E5 /* PassMac */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		041D28D4C39715849E855396 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5DF58ADC485E206E0AA9706B /* AccountStore.swift in Sources */,
+				19BF9B560D59A922291FE4FC /* AppLockGateView.swift in Sources */,
+				7DE0C2E8A6B3457CC6032939 /* AppLockStore.swift in Sources */,
+				814F558759F7E40534701C88 /* AppToastOverlay.swift in Sources */,
+				730FEE94388D9EB2006BFC2F /* ContentView.swift in Sources */,
+				2098575762A4584406D3A2E0 /* CreateAccountWindowView.swift in Sources */,
+				72B1C63EA736F70D9C7824BE /* CredentialIdentitySync.swift in Sources */,
+				CBC0EF3C889A01C54F478298 /* DomainUtils.swift in Sources */,
+				9CDA23BCB4F08E01D8F98399 /* HistoryWindows.swift in Sources */,
+				8CB1A8E177E0E77C3BCB8C43 /* LocalKeychain.swift in Sources */,
+				071179EE119FD71C7B9314E1 /* LocalSQLiteStore.swift in Sources */,
+				62739667FEF351AA012796AC /* Models.swift in Sources */,
+				50B2522415D9C2211529BB67 /* PassMacApp.swift in Sources */,
+				2D11A2786796D77E55F61DF6 /* PassSharedAccountRepository.swift in Sources */,
+				408F44161FCF8F9FFFAD9716 /* PassSharedData.swift in Sources */,
+				A703B7D4995B2D1DE2842649 /* SettingsView.swift in Sources */,
+				F76DF1A986627720AECF25F8 /* TotpGenerator.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		37016C70361340EDD317E919 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9E088675D61DB0F4EE41172D /* AutoFillCredentialProviderViewController.swift in Sources */,
+				7DBF9E3763DEF03C2999C1C8 /* DomainUtils.swift in Sources */,
+				4676C0FE6D5027F0BB466BF8 /* LocalSQLiteStore.swift in Sources */,
+				331E9BF4F148903DB3497C91 /* Models.swift in Sources */,
+				F8D633EC72217B9C6C585ACB /* PassSharedAccountRepository.swift in Sources */,
+				DD44DFEB677BBDE42F2F5B83 /* PassSharedData.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		6FB985B68806C15014BF1129 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CE14238CC6801650212FEBF3 /* PassAutoFillExtension */;
+			targetProxy = 59638EAF5E1DEEC7421F0330 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0E1E85E92A0205740186D068 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = AutofillExtension/AutoFillExtension.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = "AutofillExtension/AutoFillExtension-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsqlite3",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pass.desktop.autofill;
+				PRODUCT_MODULE_NAME = PassAutoFillExtension;
+				PRODUCT_NAME = PassAutoFillExtension;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		31DADDD645F3A7F3A5EFDF34 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = PassMac;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		68CDAF1D6B05AE633845D881 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = AutofillExtension/AutoFillExtension.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = "AutofillExtension/AutoFillExtension-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsqlite3",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pass.desktop.autofill;
+				PRODUCT_MODULE_NAME = PassAutoFillExtension;
+				PRODUCT_NAME = PassAutoFillExtension;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		75BF3F0D34B57C106AA92677 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = PassMac.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = PassMac;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsqlite3",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pass.desktop;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		ADCDB335B4BA8FC4CE912DEF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = PassMac.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = PassMac;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsqlite3",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.pass.desktop;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		C6A3A0BC6D249B2108D66AFE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = PassMac;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1EFFD6D33AF4ED200BB09146 /* Build configuration list for PBXNativeTarget "PassMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				75BF3F0D34B57C106AA92677 /* Debug */,
+				ADCDB335B4BA8FC4CE912DEF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		52F499245C5EA2D7AC82AF17 /* Build configuration list for PBXNativeTarget "PassAutoFillExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0E1E85E92A0205740186D068 /* Debug */,
+				68CDAF1D6B05AE633845D881 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		CA68309784772B054280261F /* Build configuration list for PBXProject "PassMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				31DADDD645F3A7F3A5EFDF34 /* Debug */,
+				C6A3A0BC6D249B2108D66AFE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 369FF540245A145274D8BC84 /* Project object */;
+}

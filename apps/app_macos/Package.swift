@@ -17,6 +17,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "app_macos",
+            path: "Sources",
+            exclude: [
+                ".DS_Store",
+            ],
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
             ]
