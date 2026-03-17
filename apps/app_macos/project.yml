@@ -18,32 +18,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pass.desktop
         GENERATE_INFOPLIST_FILE: YES
-        CODE_SIGN_ENTITLEMENTS: PassMac.entitlements
         INFOPLIST_KEY_CFBundleDisplayName: PassMac
         INFOPLIST_KEY_NSHumanReadableCopyright: ""
-        OTHER_LDFLAGS:
-          - "$(inherited)"
-          - "-lsqlite3"
-    dependencies:
-      - target: PassAutoFillExtension
-  PassAutoFillExtension:
-    type: app-extension
-    platform: macOS
-    deploymentTarget: "13.0"
-    info:
-      path: AutofillExtension/AutoFillExtension-Info.plist
-    sources:
-      - path: AutofillExtension
-      - path: Sources/shared
-      - path: Sources/app_macos/Models.swift
-      - path: Sources/app_macos/DomainUtils.swift
-      - path: Sources/app_macos/LocalSQLiteStore.swift
-    settings:
-      base:
-        PRODUCT_NAME: PassAutoFillExtension
-        PRODUCT_MODULE_NAME: PassAutoFillExtension
-        PRODUCT_BUNDLE_IDENTIFIER: com.pass.desktop.autofill
-        CODE_SIGN_ENTITLEMENTS: AutofillExtension/AutoFillExtension.entitlements
         OTHER_LDFLAGS:
           - "$(inherited)"
           - "-lsqlite3"

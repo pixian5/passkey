@@ -24,6 +24,19 @@ cd /Users/x/code/pass/apps/app_macos
 swift build
 ```
 
+## Xcode
+- 默认开发路径：使用 [`project.yml`](/Users/x/code/pass/apps/app_macos/project.yml) 生成纯 App 工程，不包含 AutoFill 扩展和签名要求。
+- 生成默认工程：
+```bash
+cd /Users/x/code/pass/apps/app_macos
+xcodegen generate
+```
+- 如果以后有开发者账号，需要恢复系统级 AutoFill 扩展，再改用 [`project.autofill.yml`](/Users/x/code/pass/apps/app_macos/project.autofill.yml) 生成工程：
+```bash
+cd /Users/x/code/pass/apps/app_macos
+xcodegen generate --spec project.autofill.yml
+```
+
 ## Build .app bundle
 ```bash
 cd /Users/x/code/pass/apps/app_macos
