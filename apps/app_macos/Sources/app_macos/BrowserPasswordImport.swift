@@ -17,6 +17,52 @@ enum BrowserPasswordImportFormat: String {
     }
 }
 
+enum BrowserPasswordExportFormat {
+    case chrome
+    case firefox
+
+    var label: String {
+        switch self {
+        case .chrome:
+            return "Chrome"
+        case .firefox:
+            return "Firefox"
+        }
+    }
+
+    var fileNameToken: String {
+        switch self {
+        case .chrome:
+            return "chrome"
+        case .firefox:
+            return "firefox"
+        }
+    }
+
+    var headers: [String] {
+        switch self {
+        case .chrome:
+            return ["name", "url", "username", "password", "note"]
+        case .firefox:
+            return ["url", "username", "password"]
+        }
+    }
+
+    func row(site: String, username: String, password: String, note: String, canonicalSite: String) -> [String] {
+        let normalizedSite = DomainUtils.normalize(site)
+        let normalizedCanonical = DomainUtils.normalize(canonicalSite)
+        let displayName = normalizedCanonical.isEmpty ? normalizedSite : normalizedCanonical
+        let url = "https://\(normalizedSite)"
+
+        switch self {
+        case .chrome:
+            return [displayName, url, username, password, note]
+        case .firefox:
+            return [url, username, password]
+        }
+    }
+}
+
 struct BrowserPasswordImportEntry {
     let sites: [String]
     let username: String

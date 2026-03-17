@@ -126,6 +126,8 @@ const dom = {
   payload: document.getElementById("payload"),
   refreshBtn: document.getElementById("refreshBtn"),
   exportSyncBundleBtn: document.getElementById("exportSyncBundleBtn"),
+  exportChromeCsvBtn: document.getElementById("exportChromeCsvBtn"),
+  exportFirefoxCsvBtn: document.getElementById("exportFirefoxCsvBtn"),
   importSyncBundleBtn: document.getElementById("importSyncBundleBtn"),
   importBrowserCsvBtn: document.getElementById("importBrowserCsvBtn"),
   exportBtn: document.getElementById("exportBtn"),
@@ -279,6 +281,8 @@ async function init() {
   dom.clearRecycleBinBtn.addEventListener("click", clearRecycleBin);
   dom.refreshBtn.addEventListener("click", () => refresh());
   dom.exportSyncBundleBtn.addEventListener("click", exportSyncBundle);
+  dom.exportChromeCsvBtn.addEventListener("click", () => exportBrowserPasswordCsv("chrome"));
+  dom.exportFirefoxCsvBtn.addEventListener("click", () => exportBrowserPasswordCsv("firefox"));
   dom.importSyncBundleBtn.addEventListener("click", importSyncBundleAndMerge);
   dom.importBrowserCsvBtn.addEventListener("click", importBrowserPasswordCsv);
   dom.exportBtn.addEventListener("click", exportJson);
@@ -618,6 +622,19 @@ async function exportSyncBundle() {
     `同步包已导出：${bundle.payload.accounts.length} 条账号，` +
       `${bundle.payload.passkeys.length} 条通行密钥，${bundle.payload.folders.length} 个文件夹`
   );
+}
+
+async function exportBrowserPasswordCsv(format) {
+  const browser = normalizeBrowserExportFormat(format);
+  const localStored = await readBusinessDataFromStore();
+  const localAccounts = Array.isArray(localStored.accounts)
+    ? localStored.accounts.map(normalizeAccountShape)
+    : [];
+  const activeAccounts = localAccounts.filter((account) => !account.isDeleted);
+  const csv = buildBrowserPasswordCsv(activeAccounts, browser);
+  const fileName = `pass-${browser}-passwords-${formatFileTimestamp(Date.now())}.csv`;
+  downloadTextFile(fileName, csv, "text/csv;charset=utf-8");
+  setStatus(`已导出 ${browser === "chrome" ? "Chrome" : "Firefox"} 密码 CSV，共 ${countBrowserPasswordRows(activeAccounts)} 行`);
 }
 
 async function importSyncBundleAndMerge() {
@@ -1279,6 +1296,46 @@ function pickCsvFile() {
     input.onchange = () => resolve(input.files?.[0] || null);
     input.click();
   });
+}
+
+function normalizeBrowserExportFormat(format) {
+  return String(format || "").trim().toLowerCase() === "firefox" ? "firefox" : "chrome";
+}
+
+function countBrowserPasswordRows(accounts) {
+  return (Array.isArray(accounts) ? accounts : [])
+    .filter((account) => !account?.isDeleted)
+    .reduce((count, account) => count + normalizeSites(account?.sites || []).length, 0);
+}
+
+function buildBrowserPasswordCsv(accounts, format) {
+  const browser = normalizeBrowserExportFormat(format);
+  const headers = browser === "firefox"
+    ? ["url", "username", "password"]
+    : ["name", "url", "username", "password", "note"];
+  const rows = [headers.map(csvEscape).join(",")];
+
+  for (const account of Array.isArray(accounts) ? accounts : []) {
+    if (account?.isDeleted) continue;
+    const sites = normalizeSites(account?.sites || []);
+    for (const site of sites) {
+      const url = `https://${site}`;
+      const username = String(account?.username || "");
+      const password = String(account?.password || "");
+      const note = String(account?.note || "");
+      const name = String(account?.canonicalSite || "").trim() || site;
+      const columns = browser === "firefox"
+        ? [url, username, password]
+        : [name, url, username, password, note];
+      rows.push(columns.map(csvEscape).join(","));
+    }
+  }
+
+  return rows.join("\n");
+}
+
+function csvEscape(value) {
+  return `"${String(value || "").replaceAll("\"", "\"\"")}"`;
 }
 
 function parseBrowserPasswordCsv(text) {

@@ -1085,6 +1085,10 @@ final class AccountStore: ObservableObject {
         "pass-all-accounts-\(timestampForFile()).csv"
     }
 
+    func suggestedBrowserCsvFileName(browser: BrowserPasswordExportFormat) -> String {
+        "pass-\(browser.fileNameToken)-passwords-\(timestampForFile()).csv"
+    }
+
     func suggestedSyncBundleFileName() -> String {
         "pass-sync-bundle-\(timestampForFile()).json"
     }
@@ -1127,6 +1131,22 @@ final class AccountStore: ObservableObject {
             statusMessage = "全部账号 CSV 导出成功: \(fileURL.path)"
         } catch {
             statusMessage = "全部账号 CSV 导出失败: \(error.localizedDescription)"
+        }
+    }
+
+    func exportBrowserPasswordCsv(to fileURL: URL, format: BrowserPasswordExportFormat) {
+        let csv = buildBrowserPasswordCsvContent(format: format)
+        let parentDirectory = fileURL.deletingLastPathComponent()
+
+        do {
+            try FileManager.default.createDirectory(
+                at: parentDirectory,
+                withIntermediateDirectories: true
+            )
+            try csv.write(to: fileURL, atomically: true, encoding: String.Encoding.utf8)
+            statusMessage = "\(format.label) 密码 CSV 导出成功: \(fileURL.path)"
+        } catch {
+            statusMessage = "\(format.label) 密码 CSV 导出失败: \(error.localizedDescription)"
         }
     }
 
@@ -1332,6 +1352,28 @@ final class AccountStore: ObservableObject {
 
             let escaped = columns.map(csvEscaped)
             return escaped.joined(separator: ",")
+        }
+
+        return ([header] + rows).joined(separator: "\n")
+    }
+
+    private func buildBrowserPasswordCsvContent(format: BrowserPasswordExportFormat) -> String {
+        let header = format.headers.joined(separator: ",")
+        let activeAccounts = accounts.filter { !$0.isDeleted }
+        let rows: [String] = activeAccounts.flatMap { account in
+            let sites = Array(
+                Set(account.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
+            ).sorted()
+            return sites.compactMap { site in
+                let columns = format.row(
+                    site: site,
+                    username: account.username,
+                    password: account.password,
+                    note: account.note,
+                    canonicalSite: account.canonicalSite
+                )
+                return columns.map(csvEscaped).joined(separator: ",")
+            }
         }
 
         return ([header] + rows).joined(separator: "\n")

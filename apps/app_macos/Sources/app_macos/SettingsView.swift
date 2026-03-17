@@ -212,6 +212,22 @@ struct SettingsView: View {
                             .font(store.buttonFont())
                             .buttonStyle(.bordered)
                         }
+
+                        HStack(spacing: 8) {
+                            Text("浏览器导出")
+                                .frame(width: 80, alignment: .leading)
+                            Button("导出 Chrome 密码 CSV") {
+                                exportBrowserPasswordCsvWithPanel(format: .chrome)
+                            }
+                            .font(store.buttonFont())
+                            .buttonStyle(.bordered)
+
+                            Button("导出 Firefox 密码 CSV") {
+                                exportBrowserPasswordCsvWithPanel(format: .firefox)
+                            }
+                            .font(store.buttonFont())
+                            .buttonStyle(.bordered)
+                        }
                     }
                     .padding(.top, 2)
                 }
@@ -414,6 +430,23 @@ struct SettingsView: View {
         }
 
         store.importBrowserPasswordCsv(from: url)
+    }
+
+    private func exportBrowserPasswordCsvWithPanel(format: BrowserPasswordExportFormat) {
+        let panel = NSSavePanel()
+        panel.title = "导出\(format.label)密码 CSV"
+        panel.message = "请选择 \(format.label) 可导入密码 CSV 的保存位置"
+        panel.nameFieldStringValue = store.suggestedBrowserCsvFileName(browser: format)
+        panel.allowedContentTypes = [.commaSeparatedText, .plainText]
+        panel.canCreateDirectories = true
+        panel.prompt = "导出"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            store.statusMessage = "已取消\(format.label)密码 CSV 导出"
+            return
+        }
+
+        store.exportBrowserPasswordCsv(to: url, format: format)
     }
 }
 
