@@ -3,6 +3,7 @@ import Foundation
 enum BrowserPasswordImportFormat: String {
     case chrome
     case firefox
+    case safari
     case generic
 
     var label: String {
@@ -11,6 +12,8 @@ enum BrowserPasswordImportFormat: String {
             return "Chrome"
         case .firefox:
             return "Firefox"
+        case .safari:
+            return "Safari"
         case .generic:
             return "浏览器 CSV"
         }
@@ -20,6 +23,7 @@ enum BrowserPasswordImportFormat: String {
 enum BrowserPasswordExportFormat {
     case chrome
     case firefox
+    case safari
 
     var label: String {
         switch self {
@@ -27,6 +31,8 @@ enum BrowserPasswordExportFormat {
             return "Chrome"
         case .firefox:
             return "Firefox"
+        case .safari:
+            return "Safari"
         }
     }
 
@@ -36,6 +42,8 @@ enum BrowserPasswordExportFormat {
             return "chrome"
         case .firefox:
             return "firefox"
+        case .safari:
+            return "safari"
         }
     }
 
@@ -45,6 +53,8 @@ enum BrowserPasswordExportFormat {
             return ["name", "url", "username", "password", "note"]
         case .firefox:
             return ["url", "username", "password"]
+        case .safari:
+            return ["name", "url", "username", "password", "note"]
         }
     }
 
@@ -59,6 +69,8 @@ enum BrowserPasswordExportFormat {
             return [displayName, url, username, password, note]
         case .firefox:
             return [url, username, password]
+        case .safari:
+            return [displayName, url, username, password, note]
         }
     }
 }

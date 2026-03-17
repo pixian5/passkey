@@ -128,6 +128,7 @@ const dom = {
   exportSyncBundleBtn: document.getElementById("exportSyncBundleBtn"),
   exportChromeCsvBtn: document.getElementById("exportChromeCsvBtn"),
   exportFirefoxCsvBtn: document.getElementById("exportFirefoxCsvBtn"),
+  exportSafariCsvBtn: document.getElementById("exportSafariCsvBtn"),
   importSyncBundleBtn: document.getElementById("importSyncBundleBtn"),
   importBrowserCsvBtn: document.getElementById("importBrowserCsvBtn"),
   exportBtn: document.getElementById("exportBtn"),
@@ -283,6 +284,7 @@ async function init() {
   dom.exportSyncBundleBtn.addEventListener("click", exportSyncBundle);
   dom.exportChromeCsvBtn.addEventListener("click", () => exportBrowserPasswordCsv("chrome"));
   dom.exportFirefoxCsvBtn.addEventListener("click", () => exportBrowserPasswordCsv("firefox"));
+  dom.exportSafariCsvBtn.addEventListener("click", () => exportBrowserPasswordCsv("safari"));
   dom.importSyncBundleBtn.addEventListener("click", importSyncBundleAndMerge);
   dom.importBrowserCsvBtn.addEventListener("click", importBrowserPasswordCsv);
   dom.exportBtn.addEventListener("click", exportJson);
@@ -634,7 +636,7 @@ async function exportBrowserPasswordCsv(format) {
   const csv = buildBrowserPasswordCsv(activeAccounts, browser);
   const fileName = `pass-${browser}-passwords-${formatFileTimestamp(Date.now())}.csv`;
   downloadTextFile(fileName, csv, "text/csv;charset=utf-8");
-  setStatus(`已导出 ${browser === "chrome" ? "Chrome" : "Firefox"} 密码 CSV，共 ${countBrowserPasswordRows(activeAccounts)} 行`);
+  setStatus(`已导出 ${browserExportLabel(browser)} 密码 CSV，共 ${countBrowserPasswordRows(activeAccounts)} 行`);
 }
 
 async function importSyncBundleAndMerge() {
@@ -1299,7 +1301,17 @@ function pickCsvFile() {
 }
 
 function normalizeBrowserExportFormat(format) {
-  return String(format || "").trim().toLowerCase() === "firefox" ? "firefox" : "chrome";
+  const value = String(format || "").trim().toLowerCase();
+  if (value === "firefox") return "firefox";
+  if (value === "safari") return "safari";
+  return "chrome";
+}
+
+function browserExportLabel(format) {
+  const browser = normalizeBrowserExportFormat(format);
+  if (browser === "firefox") return "Firefox";
+  if (browser === "safari") return "Safari";
+  return "Chrome";
 }
 
 function countBrowserPasswordRows(accounts) {

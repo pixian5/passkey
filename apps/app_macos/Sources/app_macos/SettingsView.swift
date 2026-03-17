@@ -206,7 +206,7 @@ struct SettingsView: View {
                         HStack(spacing: 8) {
                             Text("浏览器导入")
                                 .frame(width: 80, alignment: .leading)
-                            Button("导入 Chrome/Firefox 密码 CSV") {
+                            Button("导入 Chrome/Firefox/Safari 密码 CSV") {
                                 importBrowserPasswordCsvWithPanel()
                             }
                             .font(store.buttonFont())
@@ -224,6 +224,12 @@ struct SettingsView: View {
 
                             Button("导出 Firefox 密码 CSV") {
                                 exportBrowserPasswordCsvWithPanel(format: .firefox)
+                            }
+                            .font(store.buttonFont())
+                            .buttonStyle(.bordered)
+
+                            Button("导出 Safari 密码 CSV") {
+                                exportBrowserPasswordCsvWithPanel(format: .safari)
                             }
                             .font(store.buttonFont())
                             .buttonStyle(.bordered)
@@ -417,7 +423,7 @@ struct SettingsView: View {
     private func importBrowserPasswordCsvWithPanel() {
         let panel = NSOpenPanel()
         panel.title = "导入浏览器密码 CSV"
-        panel.message = "请选择 Chrome 或 Firefox 导出的密码 CSV，导入后会和当前账号按站点与用户名做合并"
+        panel.message = "请选择 Chrome、Firefox 或 Safari 可导入的密码 CSV，导入后会和当前账号按站点与用户名做合并"
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
