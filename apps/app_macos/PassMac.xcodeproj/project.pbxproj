@@ -29,6 +29,7 @@
 		A703B7D4995B2D1DE2842649 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DCAD9B40BB7EEF8131C7B72 /* SettingsView.swift */; };
 		CBC0EF3C889A01C54F478298 /* DomainUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A09487F2F423EA5B6B401E3 /* DomainUtils.swift */; };
 		DD44DFEB677BBDE42F2F5B83 /* PassSharedData.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF4659CDF23C2A1DC24A14FB /* PassSharedData.swift */; };
+		E0822FEC7F52E7D0E310677E /* BrowserPasswordImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40BB7B94C278D1FC487D8CFD /* BrowserPasswordImport.swift */; };
 		F76DF1A986627720AECF25F8 /* TotpGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0BC1EB784F47F24A5F6ADB /* TotpGenerator.swift */; };
 		F8D633EC72217B9C6C585ACB /* PassSharedAccountRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E0C928C5DF28D261971A48C /* PassSharedAccountRepository.swift */; };
 /* End PBXBuildFile section */
@@ -61,6 +62,7 @@
 		0754637CBC9E0926C0543F48 /* LocalSQLiteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSQLiteStore.swift; sourceTree = "<group>"; };
 		0E0C928C5DF28D261971A48C /* PassSharedAccountRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassSharedAccountRepository.swift; sourceTree = "<group>"; };
 		330C3281E19666C2B4CCC829 /* CredentialIdentitySync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialIdentitySync.swift; sourceTree = "<group>"; };
+		40BB7B94C278D1FC487D8CFD /* BrowserPasswordImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserPasswordImport.swift; sourceTree = "<group>"; };
 		4DFEDF39603E91A5451DC2C6 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		5DCAD9B40BB7EEF8131C7B72 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		69981A62A424D2BC02DD34F8 /* PassMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PassMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -108,6 +110,7 @@
 				D74364D86164E8DEB13F04AC /* AppLockGateView.swift */,
 				DEE2D2CD3411D5E212F6E08A /* AppLockStore.swift */,
 				E93F0E304AB6E8C3797AAA42 /* AppToastOverlay.swift */,
+				40BB7B94C278D1FC487D8CFD /* BrowserPasswordImport.swift */,
 				4DFEDF39603E91A5451DC2C6 /* ContentView.swift */,
 				AF0EE98C4F1895D551D4DC15 /* CreateAccountWindowView.swift */,
 				330C3281E19666C2B4CCC829 /* CredentialIdentitySync.swift */,
@@ -230,6 +233,7 @@
 				19BF9B560D59A922291FE4FC /* AppLockGateView.swift in Sources */,
 				7DE0C2E8A6B3457CC6032939 /* AppLockStore.swift in Sources */,
 				814F558759F7E40534701C88 /* AppToastOverlay.swift in Sources */,
+				E0822FEC7F52E7D0E310677E /* BrowserPasswordImport.swift in Sources */,
 				730FEE94388D9EB2006BFC2F /* ContentView.swift in Sources */,
 				2098575762A4584406D3A2E0 /* CreateAccountWindowView.swift in Sources */,
 				72B1C63EA736F70D9C7824BE /* CredentialIdentitySync.swift in Sources */,

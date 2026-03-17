@@ -127,6 +127,7 @@ const dom = {
   refreshBtn: document.getElementById("refreshBtn"),
   exportSyncBundleBtn: document.getElementById("exportSyncBundleBtn"),
   importSyncBundleBtn: document.getElementById("importSyncBundleBtn"),
+  importBrowserCsvBtn: document.getElementById("importBrowserCsvBtn"),
   exportBtn: document.getElementById("exportBtn"),
   importBtn: document.getElementById("importBtn"),
   clearBtn: document.getElementById("clearBtn"),
@@ -279,6 +280,7 @@ async function init() {
   dom.refreshBtn.addEventListener("click", () => refresh());
   dom.exportSyncBundleBtn.addEventListener("click", exportSyncBundle);
   dom.importSyncBundleBtn.addEventListener("click", importSyncBundleAndMerge);
+  dom.importBrowserCsvBtn.addEventListener("click", importBrowserPasswordCsv);
   dom.exportBtn.addEventListener("click", exportJson);
   dom.importBtn.addEventListener("click", importJson);
   dom.clearBtn.addEventListener("click", clearAll);
@@ -677,6 +679,109 @@ async function importSyncBundleAndMerge() {
     `同步包合并完成：账号 ${localAccounts.length}+${remoteAccounts.length}->${mergedAccounts.length}，` +
       `通行密钥 ${localPasskeys.length}+${remotePasskeys.length}->${mergedPasskeys.length}，` +
       `文件夹 ${localFolders.length}+${remoteFolders.length}->${mergedFolders.length}`
+  );
+}
+
+async function importBrowserPasswordCsv() {
+  const file = await pickCsvFile();
+  if (!file) {
+    setStatus("已取消浏览器密码 CSV 导入");
+    return;
+  }
+
+  let parsed;
+  try {
+    parsed = parseBrowserPasswordCsv(await file.text());
+  } catch (error) {
+    setStatus(`浏览器密码 CSV 导入失败: ${error.message}`);
+    return;
+  }
+
+  const localStored = await readBusinessDataFromStore();
+  let mergedAccounts = Array.isArray(localStored.accounts)
+    ? localStored.accounts.map(normalizeAccountShape)
+    : [];
+  const localStoredPasskeys = Array.isArray(localStored.passkeys)
+    ? localStored.passkeys.map(normalizePasskeyShape)
+    : [];
+  const localPasskeys = buildUnifiedPasskeys(mergedAccounts, localStoredPasskeys);
+  const localFolders = Array.isArray(localStored.folders)
+    ? localStored.folders.map(normalizeFolderShape)
+    : [];
+
+  const startedAtMs = Date.now();
+  let createdCount = 0;
+  let updatedCount = 0;
+  let unchangedCount = 0;
+
+  parsed.entries.forEach((entry, index) => {
+    const nowMs = startedAtMs + index;
+    const matchIndex = findImportedBrowserAccountIndex(mergedAccounts, entry);
+    if (matchIndex >= 0) {
+      const updated = applyImportedBrowserEntryToAccount(mergedAccounts[matchIndex], entry, nowMs);
+      if (JSON.stringify(updated) === JSON.stringify(mergedAccounts[matchIndex])) {
+        unchangedCount += 1;
+      } else {
+        mergedAccounts[matchIndex] = updated;
+        updatedCount += 1;
+      }
+      return;
+    }
+
+    const createdAtMs = startedAtMs + index * 1000;
+    const canonicalSite = etldPlusOne(entry.sites[0] || "");
+    mergedAccounts.push(normalizeAccountShape({
+      accountId: buildAccountId(canonicalSite, entry.username, createdAtMs),
+      canonicalSite,
+      usernameAtCreate: entry.username,
+      sites: entry.sites,
+      username: entry.username,
+      password: entry.password,
+      note: entry.note,
+      createdAtMs,
+      updatedAtMs: createdAtMs,
+      usernameUpdatedAtMs: createdAtMs,
+      passwordUpdatedAtMs: createdAtMs,
+      noteUpdatedAtMs: entry.note ? createdAtMs : 0,
+      lastOperatedDeviceName: currentImportDeviceName(),
+      isDeleted: false,
+      deletedAtMs: null,
+      folderIds: [],
+      passkeyCredentialIds: [],
+    }));
+    createdCount += 1;
+  });
+
+  if (createdCount === 0 && updatedCount === 0) {
+    setStatus(
+      `浏览器密码 CSV 导入完成（${parsed.formatLabel}），没有新增或更新账号` +
+        (parsed.skippedRowCount > 0 ? `，跳过 ${parsed.skippedRowCount} 行` : "") +
+        (unchangedCount > 0 ? `，未变化 ${unchangedCount} 行` : "")
+    );
+    return;
+  }
+
+  mergedAccounts = syncAliasGroups(mergedAccounts);
+  mergedAccounts = reconcileAccountFolders(mergedAccounts, localFolders);
+  const mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, localPasskeys);
+
+  await writeBusinessDataToStore({
+    accounts: mergedAccounts,
+    passkeys: mergedPasskeys,
+    folders: localFolders,
+  });
+  await appendHistory(
+    `导入 ${parsed.formatLabel} 密码 CSV：新增 ${createdCount} 条，更新 ${updatedCount} 条` +
+      (parsed.skippedRowCount > 0 ? `，跳过 ${parsed.skippedRowCount} 行` : "") +
+      (unchangedCount > 0 ? `，未变化 ${unchangedCount} 行` : "")
+  );
+
+  editingAccountId = null;
+  await refresh({ silent: true });
+  setStatus(
+    `浏览器密码 CSV 导入完成（${parsed.formatLabel}）：新增 ${createdCount} 条，更新 ${updatedCount} 条` +
+      (parsed.skippedRowCount > 0 ? `，跳过 ${parsed.skippedRowCount} 行` : "") +
+      (unchangedCount > 0 ? `，未变化 ${unchangedCount} 行` : "")
   );
 }
 
@@ -1164,6 +1269,254 @@ function pickJsonFile() {
     );
     input.click();
   });
+}
+
+function pickCsvFile() {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".csv,text/csv,text/plain";
+    input.onchange = () => resolve(input.files?.[0] || null);
+    input.click();
+  });
+}
+
+function parseBrowserPasswordCsv(text) {
+  const normalized = String(text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .trim();
+  if (!normalized) {
+    throw new Error("文件内容为空");
+  }
+
+  const rows = parseCsvRows(normalized);
+  if (!rows.length || !rows[0].length) {
+    throw new Error("CSV 缺少表头");
+  }
+
+  const headers = rows[0].map((value) => normalizeBrowserCsvHeader(value));
+  const format = detectBrowserCsvFormat(headers);
+  if (!format) {
+    throw new Error("无法识别为 Chrome 或 Firefox 导出的密码 CSV");
+  }
+
+  const entries = [];
+  let skippedRowCount = 0;
+  for (const row of rows.slice(1)) {
+    const entry = parseBrowserCsvEntry(headers, row);
+    if (entry) {
+      entries.push(entry);
+    } else if (row.join("").trim()) {
+      skippedRowCount += 1;
+    }
+  }
+
+  return {
+    formatLabel: format,
+    entries,
+    skippedRowCount,
+  };
+}
+
+function parseCsvRows(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (inQuotes) {
+      if (char === "\"") {
+        if (text[index + 1] === "\"") {
+          field += "\"";
+          index += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += char;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inQuotes = true;
+    } else if (char === ",") {
+      row.push(field);
+      field = "";
+    } else if (char === "\n") {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += char;
+    }
+  }
+
+  if (field || row.length) {
+    row.push(field);
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function normalizeBrowserCsvHeader(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\ufeff/, "")
+    .replace(/\s+/g, "")
+    .replace(/-/g, "_");
+}
+
+function detectBrowserCsvFormat(headers) {
+  const values = new Set(headers);
+  if (values.has("url") && values.has("username") && values.has("password")) {
+    if (values.has("name") || values.has("note") || values.has("notes")) return "Chrome";
+    if (values.has("httprealm") || values.has("formactionorigin") || values.has("guid")) return "Firefox";
+    return "浏览器 CSV";
+  }
+  if (values.has("origin") && values.has("username") && values.has("password")) return "Chrome";
+  if (values.has("signon_realm") && values.has("username") && values.has("password")) return "Chrome";
+  return "";
+}
+
+function parseBrowserCsvEntry(headers, row) {
+  const values = {};
+  headers.forEach((header, index) => {
+    values[header] = String(row[index] || "").trim();
+  });
+
+  const sites = extractBrowserCsvSites(values);
+  const username = normalizeUsername(values.username || "");
+  const password = String(values.password || "");
+  if (!sites.length || (!username && !password)) {
+    return null;
+  }
+
+  const note = mergeImportedBrowserNotes([
+    values.name ? `来源名称：${values.name}` : "",
+    values.note ? `备注：${values.note}` : "",
+    values.notes ? `备注：${values.notes}` : "",
+    values.httprealm ? `HTTP Realm：${values.httprealm}` : "",
+  ]);
+
+  return { sites, username, password, note };
+}
+
+function extractBrowserCsvSites(values) {
+  const rawCandidates = [
+    values.url,
+    values.origin,
+    values.website,
+    values.hostname,
+    values.signon_realm,
+    values.formactionorigin,
+    values.action,
+  ];
+  return [...new Set(rawCandidates.map(normalizeBrowserCsvSite).filter(Boolean))].sort();
+}
+
+function normalizeBrowserCsvSite(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (raw.includes("://")) {
+    try {
+      return normalizeDomain(new URL(raw).hostname);
+    } catch {
+      return "";
+    }
+  }
+  return normalizeDomain(raw);
+}
+
+function findImportedBrowserAccountIndex(accounts, entry) {
+  const targetSites = new Set(normalizeSites(entry.sites || []));
+  const targetCanonicalSites = new Set([...targetSites].map((site) => etldPlusOne(site)));
+  const normalizedUsername = normalizeUsername(entry.username || "");
+  let bestIndex = -1;
+  let bestScore = -1;
+
+  accounts.forEach((account, index) => {
+    const accountSites = new Set(normalizeSites(account?.sites || []));
+    const accountCanonicalSites = new Set([...accountSites].map((site) => etldPlusOne(site)));
+    accountCanonicalSites.add(String(account?.canonicalSite || ""));
+    const usernameMatches = normalizedUsername
+      ? normalizeUsername(account?.username || "") === normalizedUsername ||
+        normalizeUsername(account?.usernameAtCreate || "") === normalizedUsername
+      : !normalizeUsername(account?.username || "");
+    const siteOverlaps = [...targetSites].some((site) => accountSites.has(site));
+    const canonicalMatches = [...targetCanonicalSites].some((site) => accountCanonicalSites.has(site));
+
+    let score = -1;
+    if (usernameMatches && siteOverlaps) score = account?.isDeleted ? 35 : 40;
+    else if (usernameMatches && canonicalMatches) score = account?.isDeleted ? 25 : 30;
+    else if (!normalizedUsername && siteOverlaps) score = account?.isDeleted ? 15 : 20;
+    else if (!normalizedUsername && canonicalMatches) score = account?.isDeleted ? 5 : 10;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  });
+
+  return bestIndex;
+}
+
+function applyImportedBrowserEntryToAccount(account, entry, nowMs) {
+  const next = normalizeAccountShape(account);
+  let changed = false;
+  const mergedSites = normalizeSites([...(next.sites || []), ...(entry.sites || [])]);
+  if (JSON.stringify(mergedSites) !== JSON.stringify(next.sites || [])) {
+    next.sites = mergedSites;
+    changed = true;
+  }
+  if (entry.username && entry.username !== next.username) {
+    next.username = entry.username;
+    next.usernameUpdatedAtMs = nowMs;
+    changed = true;
+  }
+  if (entry.password && entry.password !== next.password) {
+    next.password = entry.password;
+    next.passwordUpdatedAtMs = nowMs;
+    changed = true;
+  }
+  const mergedNote = mergeImportedBrowserNotes([next.note || "", entry.note || ""]);
+  if (mergedNote !== String(next.note || "")) {
+    next.note = mergedNote;
+    next.noteUpdatedAtMs = nowMs;
+    changed = true;
+  }
+  if (next.isDeleted) {
+    next.isDeleted = false;
+    next.deletedAtMs = null;
+    changed = true;
+  }
+  if (changed) {
+    next.updatedAtMs = nowMs;
+    next.lastOperatedDeviceName = currentImportDeviceName();
+  }
+  return next;
+}
+
+function mergeImportedBrowserNotes(parts) {
+  const result = [];
+  const seen = new Set();
+  for (const rawPart of Array.isArray(parts) ? parts : []) {
+    const part = String(rawPart || "").trim();
+    if (!part || seen.has(part)) continue;
+    seen.add(part);
+    result.push(part);
+  }
+  return result.join("\n");
+}
+
+function currentImportDeviceName() {
+  return String(dom.deviceName?.value || "").trim() || "ChromeMac";
 }
 
 function formatFileTimestamp(ms) {

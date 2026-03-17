@@ -202,6 +202,16 @@ struct SettingsView: View {
                             .font(store.buttonFont())
                             .buttonStyle(.bordered)
                         }
+
+                        HStack(spacing: 8) {
+                            Text("浏览器导入")
+                                .frame(width: 80, alignment: .leading)
+                            Button("导入 Chrome/Firefox 密码 CSV") {
+                                importBrowserPasswordCsvWithPanel()
+                            }
+                            .font(store.buttonFont())
+                            .buttonStyle(.bordered)
+                        }
                     }
                     .padding(.top, 2)
                 }
@@ -386,6 +396,24 @@ struct SettingsView: View {
         }
 
         store.importSyncBundle(from: url)
+    }
+
+    private func importBrowserPasswordCsvWithPanel() {
+        let panel = NSOpenPanel()
+        panel.title = "导入浏览器密码 CSV"
+        panel.message = "请选择 Chrome 或 Firefox 导出的密码 CSV，导入后会和当前账号按站点与用户名做合并"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.commaSeparatedText, .plainText]
+        panel.prompt = "导入"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            store.statusMessage = "已取消浏览器密码 CSV 导入"
+            return
+        }
+
+        store.importBrowserPasswordCsv(from: url)
     }
 }
 

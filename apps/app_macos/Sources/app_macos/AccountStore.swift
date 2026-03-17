@@ -1210,6 +1210,83 @@ final class AccountStore: ObservableObject {
         }
     }
 
+    func importBrowserPasswordCsv(from fileURL: URL) {
+        do {
+            let previousAccounts = accounts
+            let data = try Data(contentsOf: fileURL)
+            let parsed = try BrowserPasswordImportParser.parse(data: data)
+            let startedAtMs = nowMs()
+            var nextAccounts = accounts
+            var createdCount = 0
+            var updatedCount = 0
+            var unchangedCount = 0
+
+            for (offset, entry) in parsed.entries.enumerated() {
+                if let matchedIndex = matchedImportedAccountIndex(in: nextAccounts, entry: entry) {
+                    let updated = applyImportedBrowserEntry(
+                        entry,
+                        to: nextAccounts[matchedIndex],
+                        nowMs: startedAtMs + Int64(offset)
+                    )
+                    if updated == nextAccounts[matchedIndex] {
+                        unchangedCount += 1
+                    } else {
+                        nextAccounts[matchedIndex] = updated
+                        updatedCount += 1
+                    }
+                    continue
+                }
+
+                let createdAtMs = startedAtMs + Int64(offset) * 1000
+                let createdAt = Date(timeIntervalSince1970: TimeInterval(createdAtMs) / 1000)
+                var created = AccountFactory.create(
+                    site: entry.sites.first ?? "",
+                    username: entry.username,
+                    password: entry.password,
+                    deviceName: currentDeviceName(),
+                    createdAt: createdAt
+                )
+                created.sites = entry.sites
+                created.note = entry.note
+                created.noteUpdatedAtMs = entry.note.isEmpty ? created.noteUpdatedAtMs : createdAtMs
+                created.updatedAtMs = createdAtMs
+                created.lastOperatedDeviceName = currentDeviceName()
+                nextAccounts.append(created)
+                createdCount += 1
+            }
+
+            guard createdCount > 0 || updatedCount > 0 else {
+                statusMessage =
+                    "浏览器密码 CSV 导入完成（\(parsed.format.label)），没有新增或更新账号" +
+                    (parsed.skippedRowCount > 0 ? "，跳过 \(parsed.skippedRowCount) 行" : "") +
+                    (unchangedCount > 0 ? "，未变化 \(unchangedCount) 行" : "")
+                return
+            }
+
+            accounts = nextAccounts
+            syncAliasGroups()
+            saveAccounts()
+
+            if let editingAccountId, !accounts.contains(where: { $0.id == editingAccountId }) {
+                cancelEditing()
+            }
+
+            appendAccountHistoryBatch(
+                category: .local,
+                title: "导入 \(parsed.format.label) 密码 CSV",
+                beforeAccounts: previousAccounts,
+                afterAccounts: accounts
+            )
+
+            statusMessage =
+                "浏览器密码 CSV 导入完成（\(parsed.format.label)）：新增 \(createdCount) 条，更新 \(updatedCount) 条" +
+                (parsed.skippedRowCount > 0 ? "，跳过 \(parsed.skippedRowCount) 行" : "") +
+                (unchangedCount > 0 ? "，未变化 \(unchangedCount) 行" : "")
+        } catch {
+            statusMessage = "浏览器密码 CSV 导入失败: \(error.localizedDescription)"
+        }
+    }
+
     private func buildCsvContent() -> String {
         
         let header = [
@@ -3208,6 +3285,109 @@ final class AccountStore: ObservableObject {
 
     private func csvEscaped(_ value: String) -> String {
         "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+    }
+
+    private func matchedImportedAccountIndex(
+        in source: [PasswordAccount],
+        entry: BrowserPasswordImportEntry
+    ) -> Int? {
+        let entrySites = Set(entry.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
+        let entryCanonicalSites = Set(entrySites.map(DomainUtils.etldPlusOne))
+        let normalizedUsername = entry.username.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var bestMatch: (index: Int, score: Int)?
+
+        for (index, account) in source.enumerated() {
+            let accountSites = Set(account.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
+            let accountCanonicalSites = Set(accountSites.map(DomainUtils.etldPlusOne)).union([account.canonicalSite])
+            let usernameMatches = normalizedUsername.isEmpty
+                ? account.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                : (
+                    account.username.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedUsername ||
+                    account.usernameAtCreate.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedUsername
+                )
+            let siteOverlaps = !entrySites.isDisjoint(with: accountSites)
+            let canonicalMatches = !entryCanonicalSites.isDisjoint(with: accountCanonicalSites)
+
+            let score: Int
+            if usernameMatches && siteOverlaps {
+                score = account.isDeleted ? 35 : 40
+            } else if usernameMatches && canonicalMatches {
+                score = account.isDeleted ? 25 : 30
+            } else if normalizedUsername.isEmpty && siteOverlaps {
+                score = account.isDeleted ? 15 : 20
+            } else if normalizedUsername.isEmpty && canonicalMatches {
+                score = account.isDeleted ? 5 : 10
+            } else {
+                continue
+            }
+
+            if bestMatch == nil || score > bestMatch!.score {
+                bestMatch = (index, score)
+            }
+        }
+
+        return bestMatch?.index
+    }
+
+    private func applyImportedBrowserEntry(
+        _ entry: BrowserPasswordImportEntry,
+        to account: PasswordAccount,
+        nowMs: Int64
+    ) -> PasswordAccount {
+        var updated = account
+        var changed = false
+
+        let mergedSites = Array(
+            Set((updated.sites + entry.sites).map(DomainUtils.normalize).filter { !$0.isEmpty })
+        ).sorted()
+        if mergedSites != updated.sites {
+            updated.sites = mergedSites
+            changed = true
+        }
+
+        if !entry.username.isEmpty, entry.username != updated.username {
+            updated.username = entry.username
+            updated.usernameUpdatedAtMs = nowMs
+            changed = true
+        }
+
+        if !entry.password.isEmpty, entry.password != updated.password {
+            updated.password = entry.password
+            updated.passwordUpdatedAtMs = nowMs
+            changed = true
+        }
+
+        let mergedNote = mergedImportedBrowserNote(existing: updated.note, incoming: entry.note)
+        if mergedNote != updated.note {
+            updated.note = mergedNote
+            updated.noteUpdatedAtMs = nowMs
+            changed = true
+        }
+
+        if updated.isDeleted {
+            updated.isDeleted = false
+            updated.deletedAtMs = nil
+            changed = true
+        }
+
+        if changed {
+            updated.touchUpdatedAt(nowMs, deviceName: currentDeviceName())
+        }
+
+        return updated
+    }
+
+    private func mergedImportedBrowserNote(existing: String, incoming: String) -> String {
+        let normalizedIncoming = incoming.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedIncoming.isEmpty else { return existing }
+
+        let normalizedExisting = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedExisting.isEmpty else { return normalizedIncoming }
+        if normalizedExisting.contains(normalizedIncoming) {
+            return normalizedExisting
+        }
+        return "\(normalizedExisting)\n\(normalizedIncoming)"
     }
 
     private enum TotpDraftTarget {
