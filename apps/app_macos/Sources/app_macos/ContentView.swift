@@ -1000,67 +1000,7 @@ struct ContentView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         ForEach(groups) { group in
-                            VStack(alignment: .leading, spacing: 10) {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(group.siteAliases.joined(separator: ", "))
-                                        .font(store.textFont(size: store.scaledTextSize(15), weight: .semibold))
-                                    Text("用户名：\(group.usernameDisplay) · \(group.accounts.count) 个账号")
-                                        .font(store.textFont(size: store.scaledTextSize(12)))
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                ForEach(Array(group.accounts.enumerated()), id: \.element.id) { index, account in
-                                    HStack(alignment: .top, spacing: 12) {
-                                        VStack(alignment: .leading, spacing: 5) {
-                                            Text(account.accountId)
-                                                .font(store.textFont(size: store.scaledTextSize(13), weight: .medium))
-                                                .textSelection(.enabled)
-                                            Text("更新时间：\(store.displayTime(account.updatedAtMs))")
-                                                .font(store.textFont(size: store.scaledTextSize(12)))
-                                                .foregroundStyle(.secondary)
-                                            Text("创建时间：\(store.displayTime(account.createdAtMs))")
-                                                .font(store.textFont(size: store.scaledTextSize(12)))
-                                                .foregroundStyle(.secondary)
-                                            Text("站点别名：\(account.sites.joined(separator: ", "))")
-                                                .font(store.textFont(size: store.scaledTextSize(12)))
-                                                .foregroundStyle(.secondary)
-                                                .textSelection(.enabled)
-                                        }
-                                        Spacer()
-                                        VStack(alignment: .trailing, spacing: 8) {
-                                            if index == 0 {
-                                                Text("最新")
-                                                    .font(store.textFont(size: store.scaledTextSize(11), weight: .semibold))
-                                                    .padding(.horizontal, 8)
-                                                    .padding(.vertical, 4)
-                                                    .background(Color.accentColor.opacity(0.14))
-                                                    .clipShape(Capsule())
-                                            } else if index == group.accounts.count - 1 {
-                                                Text("最早")
-                                                    .font(store.textFont(size: store.scaledTextSize(11), weight: .semibold))
-                                                    .padding(.horizontal, 8)
-                                                    .padding(.vertical, 4)
-                                                    .background(Color.secondary.opacity(0.14))
-                                                    .clipShape(Capsule())
-                                            }
-
-                                            Button("仅保留此账号") {
-                                                guard let dedupTargetFolderId else { return }
-                                                store.keepOnlyDuplicateAccount(inFolder: dedupTargetFolderId, accountIdToKeep: account.id)
-                                            }
-                                            .font(store.buttonFont(size: max(12, CGFloat(store.uiButtonFontSize - 3))))
-                                            .buttonStyle(.borderedProminent)
-                                        }
-                                    }
-                                    .padding(12)
-                                    .background(Color.white)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                    .overlay {
-                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                            .stroke(Color.black.opacity(0.06), lineWidth: 1)
-                                    }
-                                }
-                            }
+                            dedupGroupCard(group)
                             .padding(14)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(.regularMaterial)
@@ -1085,6 +1025,100 @@ struct ContentView: View {
                 .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
         }
         .shadow(radius: 18)
+    }
+
+    @ViewBuilder
+    private func dedupGroupCard(_ group: FolderDuplicateAccountGroup) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(group.siteAliases.joined(separator: ", "))
+                    .font(store.textFont(size: store.scaledTextSize(15), weight: .semibold))
+                Text("用户名：\(group.usernameDisplay) · \(group.accounts.count) 个账号")
+                    .font(store.textFont(size: store.scaledTextSize(12)))
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(Array(group.accounts.enumerated()), id: \.element.id) { index, account in
+                dedupAccountCard(group: group, index: index, account: account)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func dedupAccountCard(group: FolderDuplicateAccountGroup, index: Int, account: PasswordAccount) -> some View {
+        let passwordText = "密码：\(dedupDisplayValue(account.password))"
+        let siteAliasesText = account.sites.joined(separator: ", ")
+
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                Button {
+                    store.beginEditing(account)
+                } label: {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(account.accountId)
+                            .font(store.textFont(size: store.scaledTextSize(13), weight: .medium))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(passwordText)
+                            .font(store.textFont(size: store.scaledTextSize(12)))
+                            .foregroundStyle(.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Text("更新时间：\(store.displayTime(account.updatedAtMs))")
+                    .font(store.textFont(size: store.scaledTextSize(12)))
+                    .foregroundStyle(.secondary)
+                Text("创建时间：\(store.displayTime(account.createdAtMs))")
+                    .font(store.textFont(size: store.scaledTextSize(12)))
+                    .foregroundStyle(.secondary)
+                Text("站点别名：\(siteAliasesText)")
+                    .font(store.textFont(size: store.scaledTextSize(12)))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 8) {
+                if index == 0 {
+                    Text("最新")
+                        .font(store.textFont(size: store.scaledTextSize(11), weight: .semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.accentColor.opacity(0.14))
+                        .clipShape(Capsule())
+                } else if index == group.accounts.count - 1 {
+                    Text("最早")
+                        .font(store.textFont(size: store.scaledTextSize(11), weight: .semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.secondary.opacity(0.14))
+                        .clipShape(Capsule())
+                }
+
+                Button("仅保留此账号") {
+                    guard let dedupTargetFolderId else { return }
+                    store.keepOnlyDuplicateAccount(inFolder: dedupTargetFolderId, accountIdToKeep: account.id)
+                }
+                .font(store.buttonFont(size: max(12, CGFloat(store.uiButtonFontSize - 3))))
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(12)
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.black.opacity(0.06), lineWidth: 1)
+        }
+    }
+
+    private func dedupDisplayValue(_ value: String) -> String {
+        let normalized = value
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? "(空)" : normalized
     }
 
     private func activeFolderAccountCount(_ folderId: UUID) -> Int {
