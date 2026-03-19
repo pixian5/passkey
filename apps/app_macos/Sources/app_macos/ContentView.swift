@@ -945,11 +945,8 @@ struct ContentView: View {
         return VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("文件夹去重")
+                    Text("\(folderName) 内去重")
                         .font(store.textFont(size: store.scaledTextSize(18), weight: .semibold))
-                    Text(folderName)
-                        .font(store.textFont(size: store.scaledTextSize(13)))
-                        .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("关闭") {
