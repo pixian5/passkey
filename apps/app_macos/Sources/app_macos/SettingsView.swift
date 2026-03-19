@@ -9,7 +9,7 @@ struct SettingsView: View {
     @State private var confirmMasterPassword: String = ""
     @State private var disableUnlockPassword: String = ""
     @State private var didConfigureWindow: Bool = false
-    private let labelColumnWidth: CGFloat = 124
+    private let labelColumnWidth: CGFloat = 170
     private let idleMinuteChoices: [Int] = [1, 3, 5, 10, 15, 30, 60]
 
     var body: some View {
