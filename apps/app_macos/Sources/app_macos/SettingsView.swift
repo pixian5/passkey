@@ -264,7 +264,7 @@ struct SettingsView: View {
                             .font(.subheadline)
 
                         Toggle("优先通过指纹解锁", isOn: $appLock.preferBiometrics)
-                            .toggleStyle(.switch)
+                            .toggleStyle(.checkbox)
 
                         Picker("锁定策略", selection: $appLock.lockPolicy) {
                             ForEach(AppLockPolicy.allCases) { policy in
@@ -371,12 +371,8 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func leadingToggle(_ title: String, isOn: Binding<Bool>) -> some View {
-        HStack(spacing: 10) {
-            Toggle("", isOn: isOn)
-                .toggleStyle(.checkbox)
-                .labelsHidden()
-            Text(title)
-        }
+        Toggle(title, isOn: isOn)
+            .toggleStyle(.checkbox)
     }
 
     private func exportCsvWithDirectoryRule() {
