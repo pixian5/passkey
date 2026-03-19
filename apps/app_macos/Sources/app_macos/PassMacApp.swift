@@ -24,7 +24,7 @@ struct PassMacApp: App {
                 .font(store.textFont())
                 .appToast(store)
         }
-        .defaultSize(width: 1100, height: 700)
+        .defaultSize(width: 860, height: 620)
         .windowResizability(.automatic)
 
         Window("新建账号", id: "create-account") {

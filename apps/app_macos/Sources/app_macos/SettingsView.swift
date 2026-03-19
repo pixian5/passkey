@@ -345,7 +345,7 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .frame(
-            minWidth: 980,
+            minWidth: 760,
             maxWidth: .infinity,
             minHeight: 520,
             maxHeight: .infinity,
@@ -361,10 +361,10 @@ struct SettingsView: View {
         didConfigureWindow = true
 
         window.styleMask.insert(.resizable)
-        window.minSize = NSSize(width: 980, height: 520)
+        window.minSize = NSSize(width: 760, height: 520)
 
         var frame = window.frame
-        let targetWidth = max(frame.width, 1100)
+        let targetWidth = max(frame.width, 760)
         let targetHeight = max(frame.height, 520)
         if frame.width != targetWidth || frame.height != targetHeight {
             frame.size = NSSize(width: targetWidth, height: targetHeight)
