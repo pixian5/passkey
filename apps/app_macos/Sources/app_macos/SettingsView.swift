@@ -83,12 +83,9 @@ struct SettingsView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         VStack(alignment: .leading, spacing: 6) {
-                            Toggle("iCloud（仅 Apple）", isOn: $store.syncEnableICloud)
-                                .toggleStyle(.switch)
-                            Toggle("WebDAV", isOn: $store.syncEnableWebDAV)
-                                .toggleStyle(.switch)
-                            Toggle("自建服务器", isOn: $store.syncEnableSelfHostedServer)
-                                .toggleStyle(.switch)
+                            leadingToggle("iCloud（仅 Apple）", isOn: $store.syncEnableICloud)
+                            leadingToggle("WebDAV", isOn: $store.syncEnableWebDAV)
+                            leadingToggle("自建服务器", isOn: $store.syncEnableSelfHostedServer)
                         }
 
                         Text("可同时启用多个同步源；点击“同步已启用源”会依次拉取并回写所有已启用源。")
@@ -369,6 +366,16 @@ struct SettingsView: View {
         if frame.width != targetWidth || frame.height != targetHeight {
             frame.size = NSSize(width: targetWidth, height: targetHeight)
             window.setFrame(frame, display: true)
+        }
+    }
+
+    @ViewBuilder
+    private func leadingToggle(_ title: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 10) {
+            Toggle("", isOn: isOn)
+                .toggleStyle(.checkbox)
+                .labelsHidden()
+            Text(title)
         }
     }
 
