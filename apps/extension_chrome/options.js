@@ -133,6 +133,8 @@ const dom = {
   importBrowserCsvBtn: document.getElementById("importBrowserCsvBtn"),
   importGoogleAuthQrBtn: document.getElementById("importGoogleAuthQrBtn"),
   importGoogleAuthQrFilesBtn: document.getElementById("importGoogleAuthQrFilesBtn"),
+  importGoogleAuthFolderSelect: document.getElementById("importGoogleAuthFolderSelect"),
+  importGoogleAuthNewFolderName: document.getElementById("importGoogleAuthNewFolderName"),
   exportBtn: document.getElementById("exportBtn"),
   importBtn: document.getElementById("importBtn"),
   clearBtn: document.getElementById("clearBtn"),
@@ -562,6 +564,7 @@ async function refresh({ silent = false } = {}) {
     null,
     2
   );
+  renderGoogleAuthenticatorImportFolderOptions();
   renderSidebar(accountsRaw);
   renderCurrentView(accountsRaw);
   setAccountView(activeAccountView);
@@ -822,7 +825,7 @@ async function importGoogleAuthenticatorExportQrFromClipboard() {
     return;
   }
 
-  await importGoogleAuthenticatorMigration(migration);
+  await importGoogleAuthenticatorMigration(migration, buildGoogleAuthenticatorImportFolderPlan());
 }
 
 async function importGoogleAuthenticatorExportQrFromFiles() {
@@ -845,10 +848,10 @@ async function importGoogleAuthenticatorExportQrFromFiles() {
     return;
   }
 
-  await importGoogleAuthenticatorMigration(migration);
+  await importGoogleAuthenticatorMigration(migration, buildGoogleAuthenticatorImportFolderPlan());
 }
 
-async function importGoogleAuthenticatorMigration(migration) {
+async function importGoogleAuthenticatorMigration(migration, folderPlan = null) {
   const localStored = await readBusinessDataFromStore();
   let mergedAccounts = Array.isArray(localStored.accounts)
     ? localStored.accounts.map(normalizeAccountShape)
@@ -857,9 +860,18 @@ async function importGoogleAuthenticatorMigration(migration) {
     ? localStored.passkeys.map(normalizePasskeyShape)
     : [];
   const localPasskeys = buildUnifiedPasskeys(mergedAccounts, localStoredPasskeys);
-  const localFolders = Array.isArray(localStored.folders)
+  let localFolders = Array.isArray(localStored.folders)
     ? localStored.folders.map(normalizeFolderShape)
     : [];
+
+  const resolvedImportFolder = resolveGoogleAuthenticatorImportFolder(folderPlan, localFolders);
+  if (
+    (String(folderPlan?.newFolderName || "").trim() || String(folderPlan?.selectedFolderId || "").trim()) &&
+    !resolvedImportFolder.folderId
+  ) {
+    return;
+  }
+  localFolders = resolvedImportFolder.folders;
 
   const startedAtMs = Date.now();
   let createdCount = 0;
@@ -876,7 +888,12 @@ async function importGoogleAuthenticatorMigration(migration) {
     const nowMs = startedAtMs + index;
     const matchIndex = findImportedTotpAccountIndex(mergedAccounts, entry);
     if (matchIndex >= 0) {
-      const updated = applyImportedTotpEntryToAccount(mergedAccounts[matchIndex], entry, nowMs);
+      const updated = applyImportedTotpEntryToAccount(
+        mergedAccounts[matchIndex],
+        entry,
+        nowMs,
+        resolvedImportFolder.folderId
+      );
       if (JSON.stringify(updated) === JSON.stringify(mergedAccounts[matchIndex])) {
         unchangedCount += 1;
       } else {
@@ -904,7 +921,8 @@ async function importGoogleAuthenticatorMigration(migration) {
       lastOperatedDeviceName: currentImportDeviceName(),
       isDeleted: false,
       deletedAtMs: null,
-      folderIds: [],
+      folderIds: resolvedImportFolder.folderId ? [resolvedImportFolder.folderId] : [],
+      folderId: resolvedImportFolder.folderId,
       passkeyCredentialIds: [],
     }));
     createdCount += 1;
@@ -934,6 +952,9 @@ async function importGoogleAuthenticatorMigration(migration) {
     folders: localFolders,
   });
   await appendHistory(
+    (resolvedImportFolder.createdFolderName
+      ? `创建文件夹：${resolvedImportFolder.createdFolderName}；`
+      : "") +
     `导入谷歌验证器导出二维码：新增 ${createdCount} 条，更新 ${updatedCount} 条` +
       buildGoogleAuthenticatorImportSuffix({
         importedCount: migration.entries.length,
@@ -948,6 +969,7 @@ async function importGoogleAuthenticatorMigration(migration) {
   await refresh({ silent: true });
   setStatus(
     `谷歌验证器导入完成：新增 ${createdCount} 条，更新 ${updatedCount} 条` +
+      (resolvedImportFolder.folderName ? `，导入到文件夹 ${resolvedImportFolder.folderName}` : "") +
       buildGoogleAuthenticatorImportSuffix({
         importedCount: migration.entries.length,
         skippedCount,
@@ -1863,6 +1885,81 @@ async function createFolderFromPrompt() {
   await appendHistory(`创建文件夹：${name}`, now);
   await refresh({ silent: true });
   setStatus(`已创建文件夹: ${name}`);
+}
+
+function renderGoogleAuthenticatorImportFolderOptions() {
+  const select = dom.importGoogleAuthFolderSelect;
+  if (!select) return;
+  const previousValue = String(select.value || "");
+  select.innerHTML = "";
+
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = "不放入文件夹";
+  select.appendChild(empty);
+
+  for (const folder of foldersRaw) {
+    const option = document.createElement("option");
+    option.value = normalizeFolderId(folder?.id);
+    option.textContent = String(folder?.name || "未命名文件夹");
+    select.appendChild(option);
+  }
+
+  const hasPrevious = Array.from(select.options).some((option) => option.value === previousValue);
+  select.value = hasPrevious ? previousValue : "";
+}
+
+function buildGoogleAuthenticatorImportFolderPlan() {
+  return {
+    selectedFolderId: normalizeFolderId(dom.importGoogleAuthFolderSelect?.value || ""),
+    newFolderName: String(dom.importGoogleAuthNewFolderName?.value || "").trim(),
+  };
+}
+
+function resolveGoogleAuthenticatorImportFolder(folderPlan, foldersInput) {
+  const folders = Array.isArray(foldersInput) ? foldersInput.map(normalizeFolderShape) : [];
+  const newFolderName = String(folderPlan?.newFolderName || "").trim();
+  if (newFolderName) {
+    const existing = folders.find((folder) => String(folder?.name || "").trim().toLowerCase() === newFolderName.toLowerCase());
+    if (existing) {
+      return {
+        folderId: normalizeFolderId(existing.id),
+        folderName: String(existing.name || ""),
+        createdFolderName: "",
+        folders,
+      };
+    }
+
+    const now = Date.now();
+    const created = normalizeFolderShape({
+      id: (globalThis.crypto?.randomUUID?.() || stableUuidFromText(`folder|${newFolderName}|${now}`)).toLowerCase(),
+      name: newFolderName,
+      createdAtMs: now,
+      updatedAtMs: now,
+    });
+    return {
+      folderId: normalizeFolderId(created.id),
+      folderName: String(created.name || ""),
+      createdFolderName: String(created.name || ""),
+      folders: sortFoldersForDisplay([...folders, created]),
+    };
+  }
+
+  const selectedFolderId = normalizeFolderId(folderPlan?.selectedFolderId || "");
+  if (!selectedFolderId) {
+    return { folderId: "", folderName: "", createdFolderName: "", folders };
+  }
+  const existing = folders.find((folder) => normalizeFolderId(folder?.id) === selectedFolderId);
+  if (!existing) {
+    setStatus("目标文件夹不存在");
+    return { folderId: "", folderName: "", createdFolderName: "", folders };
+  }
+  return {
+    folderId: selectedFolderId,
+    folderName: String(existing.name || ""),
+    createdFolderName: "",
+    folders,
+  };
 }
 
 async function deleteFolder(folderId) {
@@ -4484,7 +4581,7 @@ function findImportedTotpAccountIndex(accounts, entry) {
   });
 }
 
-function applyImportedTotpEntryToAccount(account, entry, nowMs) {
+function applyImportedTotpEntryToAccount(account, entry, nowMs, targetFolderId = "") {
   const next = normalizeAccountShape(account);
   let changed = false;
   const mergedSites = normalizeSites([...(next.sites || []), entry.siteAlias || ""]);
@@ -4501,6 +4598,14 @@ function applyImportedTotpEntryToAccount(account, entry, nowMs) {
     next.totpSecret = entry.secret;
     next.totpUpdatedAtMs = nowMs;
     changed = true;
+  }
+  if (targetFolderId) {
+    const mergedFolderIds = normalizeFolderIdList([...(next.folderIds || []), targetFolderId]);
+    if (JSON.stringify(mergedFolderIds) !== JSON.stringify(normalizeFolderIdList(next.folderIds || []))) {
+      next.folderIds = mergedFolderIds;
+      next.folderId = mergedFolderIds[0] || null;
+      changed = true;
+    }
   }
   if (next.isDeleted) {
     next.isDeleted = false;

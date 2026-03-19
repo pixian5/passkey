@@ -195,6 +195,20 @@
             <button id="importBtn">导入 JSON</button>
             <button id="clearBtn">清空账号</button>
           </div>
+          <div class="row import-google-auth-folder-row">
+            <label for="importGoogleAuthFolderSelect">验证器导入</label>
+            <div class="import-google-auth-folder-controls">
+              <select id="importGoogleAuthFolderSelect">
+                <option value="">不放入文件夹</option>
+              </select>
+              <input
+                id="importGoogleAuthNewFolderName"
+                type="text"
+                placeholder="新文件夹名（可选，填写后自动创建并导入）"
+              />
+            </div>
+            <span></span>
+          </div>
           <p id="status" class="status"></p>
         </details>
       </section>

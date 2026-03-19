@@ -307,6 +307,45 @@ final class AccountStore: ObservableObject {
         statusMessage = "已创建文件夹: \(name)"
     }
 
+    private func resolveAuthenticatorImportFolderId(
+        targetFolderId: UUID?,
+        newFolderName: String
+    ) -> UUID? {
+        let normalizedNewFolderName = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalizedNewFolderName.isEmpty {
+            if let existing = folders.first(where: {
+                $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .caseInsensitiveCompare(normalizedNewFolderName) == .orderedSame
+            }) {
+                return existing.id
+            }
+
+            let now = nowMs()
+            let folder = AccountFolder(
+                id: UUID(),
+                name: normalizedNewFolderName,
+                matchedSites: [],
+                autoAddMatchingSites: false,
+                createdAtMs: now,
+                updatedAtMs: now
+            )
+            folders.append(folder)
+            _ = normalizeFoldersEnsuringFixedNewAccountFolder()
+            saveFoldersToDefaults()
+            appendHistoryEntry(action: "创建文件夹：\(normalizedNewFolderName)")
+            return folder.id
+        }
+
+        guard let targetFolderId else {
+            return nil
+        }
+        guard folders.contains(where: { $0.id == targetFolderId }) else {
+            statusMessage = "目标文件夹不存在"
+            return nil
+        }
+        return targetFolderId
+    }
+
     func deleteFolder(id: UUID) {
         guard let folder = folders.first(where: { $0.id == id }) else {
             statusMessage = "目标文件夹不存在"
@@ -834,24 +873,53 @@ final class AccountStore: ObservableObject {
         pasteQRCodeFromClipboard(to: .edit)
     }
 
-    func importGoogleAuthenticatorExportQRCodeFromClipboard() {
+    func importGoogleAuthenticatorExportQRCodeFromClipboard(
+        targetFolderId: UUID? = nil,
+        newFolderName: String = ""
+    ) {
         guard let migration = readGoogleAuthenticatorMigrationFromPasteboard() else {
             statusMessage = "剪贴板里没有可识别的谷歌验证器导出二维码"
             return
         }
-        importGoogleAuthenticatorMigration(migration)
+        importGoogleAuthenticatorMigration(
+            migration,
+            targetFolderId: targetFolderId,
+            newFolderName: newFolderName
+        )
     }
 
-    func importGoogleAuthenticatorExportQRCodes(from fileURLs: [URL]) {
+    func importGoogleAuthenticatorExportQRCodes(
+        from fileURLs: [URL],
+        targetFolderId: UUID? = nil,
+        newFolderName: String = ""
+    ) {
         let migrations = fileURLs.compactMap(parseGoogleAuthenticatorMigrationFromImageFile)
         guard !migrations.isEmpty else {
             statusMessage = "未从所选图片中识别到谷歌验证器导出二维码"
             return
         }
-        importGoogleAuthenticatorMigration(mergedGoogleAuthenticatorMigrations(migrations))
+        importGoogleAuthenticatorMigration(
+            mergedGoogleAuthenticatorMigrations(migrations),
+            targetFolderId: targetFolderId,
+            newFolderName: newFolderName
+        )
     }
 
-    private func importGoogleAuthenticatorMigration(_ migration: ParsedGoogleAuthenticatorMigration) {
+    private func importGoogleAuthenticatorMigration(
+        _ migration: ParsedGoogleAuthenticatorMigration,
+        targetFolderId: UUID?,
+        newFolderName: String
+    ) {
+        let resolvedFolderId = resolveAuthenticatorImportFolderId(
+            targetFolderId: targetFolderId,
+            newFolderName: newFolderName
+        )
+        if (
+            !newFolderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            targetFolderId != nil
+        ) && resolvedFolderId == nil {
+            return
+        }
         let previousAccounts = accounts
         let startedAtMs = nowMs()
         var nextAccounts = accounts
@@ -859,6 +927,9 @@ final class AccountStore: ObservableObject {
         var updatedCount = 0
         var unchangedCount = 0
         var skippedCount = migration.skippedCount
+        let normalizedTargetFolderId = resolvedFolderId.flatMap { folderId in
+            folders.contains(where: { $0.id == folderId }) ? folderId : nil
+        }
 
         for (offset, entry) in migration.entries.enumerated() {
             guard let siteAlias = entry.siteAlias, !siteAlias.isEmpty, !entry.secret.isEmpty else {
@@ -876,7 +947,8 @@ final class AccountStore: ObservableObject {
                     entry,
                     siteAlias: siteAlias,
                     to: nextAccounts[matchedIndex],
-                    nowMs: timestamp
+                    nowMs: timestamp,
+                    targetFolderId: normalizedTargetFolderId
                 )
                 if updated == nextAccounts[matchedIndex] {
                     unchangedCount += 1
@@ -901,6 +973,10 @@ final class AccountStore: ObservableObject {
             created.totpUpdatedAtMs = createdAtMs
             created.updatedAtMs = createdAtMs
             created.lastOperatedDeviceName = currentDeviceName()
+            if let normalizedTargetFolderId {
+                created.setResolvedFolderIds([normalizedTargetFolderId])
+            }
+            applyAutomaticFolderRules(to: &created)
             nextAccounts.append(created)
             createdCount += 1
         }
@@ -935,6 +1011,7 @@ final class AccountStore: ObservableObject {
 
         statusMessage =
             "谷歌验证器导入完成：新增 \(createdCount) 条，更新 \(updatedCount) 条" +
+            (normalizedTargetFolderId.map { "，导入到文件夹 \(folderName(for: $0))" } ?? "") +
             googleAuthenticatorImportSuffix(
                 importedCount: migration.entries.count,
                 skippedCount: skippedCount,
@@ -4068,7 +4145,8 @@ final class AccountStore: ObservableObject {
         _ entry: ParsedGoogleAuthenticatorEntry,
         siteAlias: String,
         to account: PasswordAccount,
-        nowMs: Int64
+        nowMs: Int64,
+        targetFolderId: UUID?
     ) -> PasswordAccount {
         var updated = account
         var changed = false
@@ -4097,6 +4175,14 @@ final class AccountStore: ObservableObject {
             updated.isDeleted = false
             updated.deletedAtMs = nil
             changed = true
+        }
+
+        if let targetFolderId {
+            let nextFolderIds = normalizeFolderIds(updated.resolvedFolderIds + [targetFolderId])
+            if nextFolderIds != updated.resolvedFolderIds {
+                updated.setResolvedFolderIds(nextFolderIds)
+                changed = true
+            }
         }
 
         if changed {

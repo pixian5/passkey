@@ -9,6 +9,8 @@ struct SettingsView: View {
     @State private var confirmMasterPassword: String = ""
     @State private var disableUnlockPassword: String = ""
     @State private var didConfigureWindow: Bool = false
+    @State private var selectedAuthenticatorImportFolderId: String = ""
+    @State private var newAuthenticatorImportFolderName: String = ""
     private let labelColumnWidth: CGFloat = 170
     private let idleMinuteChoices: [Int] = [1, 3, 5, 10, 15, 30, 60]
 
@@ -218,16 +220,39 @@ struct SettingsView: View {
                                 .frame(width: labelColumnWidth, alignment: .leading)
                                 .fixedSize(horizontal: true, vertical: false)
                             Button("导入谷歌验证器导出二维码（剪贴板）") {
-                                store.importGoogleAuthenticatorExportQRCodeFromClipboard()
+                                store.importGoogleAuthenticatorExportQRCodeFromClipboard(
+                                    targetFolderId: selectedAuthenticatorImportFolderUUID(),
+                                    newFolderName: newAuthenticatorImportFolderName
+                                )
                             }
                             .font(store.buttonFont())
                             .buttonStyle(.bordered)
 
                             Button("多选二维码图片导入") {
-                                importGoogleAuthenticatorQRCodesWithPanel()
+                                importGoogleAuthenticatorQRCodesWithPanel(
+                                    targetFolderId: selectedAuthenticatorImportFolderUUID(),
+                                    newFolderName: newAuthenticatorImportFolderName
+                                )
                             }
                             .font(store.buttonFont())
                             .buttonStyle(.bordered)
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("导入文件夹")
+                                .frame(width: labelColumnWidth, alignment: .leading)
+                                .fixedSize(horizontal: true, vertical: false)
+                            Picker("导入文件夹", selection: $selectedAuthenticatorImportFolderId) {
+                                Text("不放入文件夹").tag("")
+                                ForEach(store.folders, id: \.id) { folder in
+                                    Text(folder.name).tag(folder.id.uuidString.lowercased())
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+
+                            TextField("新文件夹名（可选，填写后自动创建并导入）", text: $newAuthenticatorImportFolderName)
+                                .textFieldStyle(.roundedBorder)
                         }
 
                         HStack(spacing: 8) {
@@ -375,6 +400,12 @@ struct SettingsView: View {
             .toggleStyle(.checkbox)
     }
 
+    private func selectedAuthenticatorImportFolderUUID() -> UUID? {
+        let raw = selectedAuthenticatorImportFolderId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !raw.isEmpty else { return nil }
+        return UUID(uuidString: raw)
+    }
+
     private func exportCsvWithDirectoryRule() {
         if let directoryURL = store.configuredExportDirectoryURL() {
             store.saveExportDirectoryPath()
@@ -462,7 +493,7 @@ struct SettingsView: View {
         store.importBrowserPasswordCsv(from: url)
     }
 
-    private func importGoogleAuthenticatorQRCodesWithPanel() {
+    private func importGoogleAuthenticatorQRCodesWithPanel(targetFolderId: UUID?, newFolderName: String) {
         let panel = NSOpenPanel()
         panel.title = "导入谷歌验证器导出二维码"
         panel.message = "请选择一张或多张谷歌验证器导出二维码图片，程序会按所有选中的批次合并导入"
@@ -477,7 +508,11 @@ struct SettingsView: View {
             return
         }
 
-        store.importGoogleAuthenticatorExportQRCodes(from: panel.urls)
+        store.importGoogleAuthenticatorExportQRCodes(
+            from: panel.urls,
+            targetFolderId: targetFolderId,
+            newFolderName: newFolderName
+        )
     }
 
     private func exportBrowserPasswordCsvWithPanel(format: BrowserPasswordExportFormat) {

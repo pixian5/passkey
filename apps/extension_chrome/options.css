@@ -227,6 +227,27 @@ input[type="checkbox"]:focus {
   margin-top: 10px;
 }
 
+.import-google-auth-folder-row {
+  margin-top: 10px;
+  align-items: start;
+}
+
+.import-google-auth-folder-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.import-google-auth-folder-controls > select {
+  min-width: 180px;
+}
+
+.import-google-auth-folder-controls > input {
+  min-width: 320px;
+  flex: 1 1 320px;
+}
+
 .hidden {
   display: none;
 }
