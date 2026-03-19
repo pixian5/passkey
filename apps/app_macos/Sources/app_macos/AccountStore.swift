@@ -1069,7 +1069,8 @@ final class AccountStore: ObservableObject {
             if let matchedIndex = matchedImportedTotpAccountIndex(
                 in: nextAccounts,
                 siteAlias: siteAlias,
-                username: entry.username ?? ""
+                username: entry.username ?? "",
+                secret: entry.secret
             ) {
                 let updated = applyImportedTotpEntry(
                     entry,
@@ -4371,15 +4372,48 @@ final class AccountStore: ObservableObject {
     private func matchedImportedTotpAccountIndex(
         in accounts: [PasswordAccount],
         siteAlias: String,
-        username: String
+        username: String,
+        secret: String
     ) -> Int? {
-        let entry = BrowserPasswordImportEntry(
-            sites: [siteAlias],
-            username: username,
-            password: "",
-            note: ""
-        )
-        return matchedImportedAccountIndex(in: accounts, entry: entry)
+        let entrySite = DomainUtils.normalize(siteAlias)
+        let entryCanonicalSite = DomainUtils.etldPlusOne(for: entrySite)
+        let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedSecret = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var bestMatch: (index: Int, score: Int)?
+
+        for (index, account) in accounts.enumerated() {
+            let accountSecret = account.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedSecret.isEmpty, accountSecret == normalizedSecret else {
+                continue
+            }
+
+            let accountSites = Set(account.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
+            let accountCanonicalSites = Set(accountSites.map(DomainUtils.etldPlusOne)).union([account.canonicalSite])
+            let usernameMatches = normalizedUsername.isEmpty
+                ? account.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                : (
+                    account.username.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedUsername ||
+                    account.usernameAtCreate.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedUsername
+                )
+            let siteOverlaps = accountSites.contains(entrySite)
+            let canonicalMatches = !entryCanonicalSite.isEmpty && accountCanonicalSites.contains(entryCanonicalSite)
+
+            let score: Int
+            if usernameMatches && siteOverlaps {
+                score = account.isDeleted ? 35 : 40
+            } else if usernameMatches && canonicalMatches {
+                score = account.isDeleted ? 25 : 30
+            } else {
+                continue
+            }
+
+            if bestMatch == nil || score > bestMatch!.score {
+                bestMatch = (index, score)
+            }
+        }
+
+        return bestMatch?.index
     }
 
     private func applyImportedTotpEntry(
