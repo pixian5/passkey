@@ -131,6 +131,7 @@ const dom = {
   exportSafariCsvBtn: document.getElementById("exportSafariCsvBtn"),
   importSyncBundleBtn: document.getElementById("importSyncBundleBtn"),
   importBrowserCsvBtn: document.getElementById("importBrowserCsvBtn"),
+  importGoogleAuthQrBtn: document.getElementById("importGoogleAuthQrBtn"),
   exportBtn: document.getElementById("exportBtn"),
   importBtn: document.getElementById("importBtn"),
   clearBtn: document.getElementById("clearBtn"),
@@ -287,6 +288,7 @@ async function init() {
   dom.exportSafariCsvBtn.addEventListener("click", () => exportBrowserPasswordCsv("safari"));
   dom.importSyncBundleBtn.addEventListener("click", importSyncBundleAndMerge);
   dom.importBrowserCsvBtn.addEventListener("click", importBrowserPasswordCsv);
+  dom.importGoogleAuthQrBtn.addEventListener("click", importGoogleAuthenticatorExportQrFromClipboard);
   dom.exportBtn.addEventListener("click", exportJson);
   dom.importBtn.addEventListener("click", importJson);
   dom.clearBtn.addEventListener("click", clearAll);
@@ -801,6 +803,129 @@ async function importBrowserPasswordCsv() {
     `浏览器密码 CSV 导入完成（${parsed.formatLabel}）：新增 ${createdCount} 条，更新 ${updatedCount} 条` +
       (parsed.skippedRowCount > 0 ? `，跳过 ${parsed.skippedRowCount} 行` : "") +
       (unchangedCount > 0 ? `，未变化 ${unchangedCount} 行` : "")
+  );
+}
+
+async function importGoogleAuthenticatorExportQrFromClipboard() {
+  let migration;
+  try {
+    migration = await readGoogleAuthenticatorMigrationFromClipboard();
+  } catch (error) {
+    setStatus(`谷歌验证器导入失败: ${error.message}`);
+    return;
+  }
+
+  if (!migration) {
+    setStatus("剪贴板里没有可识别的谷歌验证器导出二维码");
+    return;
+  }
+
+  const localStored = await readBusinessDataFromStore();
+  let mergedAccounts = Array.isArray(localStored.accounts)
+    ? localStored.accounts.map(normalizeAccountShape)
+    : [];
+  const localStoredPasskeys = Array.isArray(localStored.passkeys)
+    ? localStored.passkeys.map(normalizePasskeyShape)
+    : [];
+  const localPasskeys = buildUnifiedPasskeys(mergedAccounts, localStoredPasskeys);
+  const localFolders = Array.isArray(localStored.folders)
+    ? localStored.folders.map(normalizeFolderShape)
+    : [];
+
+  const startedAtMs = Date.now();
+  let createdCount = 0;
+  let updatedCount = 0;
+  let unchangedCount = 0;
+  let skippedCount = Number(migration.skippedCount || 0);
+
+  migration.entries.forEach((entry, index) => {
+    if (!entry?.siteAlias || !entry?.secret) {
+      skippedCount += 1;
+      return;
+    }
+
+    const nowMs = startedAtMs + index;
+    const matchIndex = findImportedTotpAccountIndex(mergedAccounts, entry);
+    if (matchIndex >= 0) {
+      const updated = applyImportedTotpEntryToAccount(mergedAccounts[matchIndex], entry, nowMs);
+      if (JSON.stringify(updated) === JSON.stringify(mergedAccounts[matchIndex])) {
+        unchangedCount += 1;
+      } else {
+        mergedAccounts[matchIndex] = updated;
+        updatedCount += 1;
+      }
+      return;
+    }
+
+    const createdAtMs = startedAtMs + index * 1000;
+    const canonicalSite = etldPlusOne(entry.siteAlias || "");
+    mergedAccounts.push(normalizeAccountShape({
+      accountId: buildAccountId(canonicalSite, entry.username || "", createdAtMs),
+      canonicalSite,
+      usernameAtCreate: entry.username || "",
+      sites: [entry.siteAlias],
+      username: entry.username || "",
+      password: "",
+      totpSecret: entry.secret,
+      createdAtMs,
+      updatedAtMs: createdAtMs,
+      usernameUpdatedAtMs: createdAtMs,
+      passwordUpdatedAtMs: createdAtMs,
+      totpUpdatedAtMs: createdAtMs,
+      lastOperatedDeviceName: currentImportDeviceName(),
+      isDeleted: false,
+      deletedAtMs: null,
+      folderIds: [],
+      passkeyCredentialIds: [],
+    }));
+    createdCount += 1;
+  });
+
+  if (createdCount === 0 && updatedCount === 0) {
+    setStatus(
+      `谷歌验证器导入完成，没有新增或更新账号` +
+        buildGoogleAuthenticatorImportSuffix({
+          importedCount: migration.entries.length,
+          skippedCount,
+          unchangedCount,
+          batchSize: migration.batchSize,
+          batchIndex: migration.batchIndex,
+        })
+    );
+    return;
+  }
+
+  mergedAccounts = syncAliasGroups(mergedAccounts);
+  mergedAccounts = reconcileAccountFolders(mergedAccounts, localFolders);
+  const mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, localPasskeys);
+
+  await writeBusinessDataToStore({
+    accounts: mergedAccounts,
+    passkeys: mergedPasskeys,
+    folders: localFolders,
+  });
+  await appendHistory(
+    `导入谷歌验证器导出二维码：新增 ${createdCount} 条，更新 ${updatedCount} 条` +
+      buildGoogleAuthenticatorImportSuffix({
+        importedCount: migration.entries.length,
+        skippedCount,
+        unchangedCount,
+        batchSize: migration.batchSize,
+        batchIndex: migration.batchIndex,
+      })
+  );
+
+  editingAccountId = null;
+  await refresh({ silent: true });
+  setStatus(
+    `谷歌验证器导入完成：新增 ${createdCount} 条，更新 ${updatedCount} 条` +
+      buildGoogleAuthenticatorImportSuffix({
+        importedCount: migration.entries.length,
+        skippedCount,
+        unchangedCount,
+        batchSize: migration.batchSize,
+        batchIndex: migration.batchIndex,
+      })
   );
 }
 
@@ -3992,7 +4117,7 @@ function parseOtpAuthUriPayload(raw) {
   const issuer = issuerFromQuery || labelIssuer;
   return {
     secret,
-    siteAlias: siteAliasFromIssuer(issuer),
+    siteAlias: resolveImportedSiteAlias({ issuer, username: labelUsername }),
     username: labelUsername || "",
   };
 }
@@ -4008,6 +4133,339 @@ function siteAliasFromIssuer(issuer) {
     return normalized;
   }
   return `${normalized}.com`;
+}
+
+function resolveImportedSiteAlias({ issuer, username }) {
+  const byIssuer = siteAliasFromIssuer(issuer);
+  if (byIssuer) return byIssuer;
+  const byUsername = siteAliasFromUsername(username);
+  if (byUsername) return byUsername;
+  return "";
+}
+
+function siteAliasFromUsername(username) {
+  const raw = String(username || "").trim();
+  if (!raw) return "";
+  const atIndex = raw.lastIndexOf("@");
+  if (atIndex >= 0 && atIndex < raw.length - 1) {
+    return normalizeDomain(raw.slice(atIndex + 1));
+  }
+  return normalizeDomain(raw);
+}
+
+async function readGoogleAuthenticatorMigrationFromClipboard() {
+  let rawText = "";
+  if (typeof navigator?.clipboard?.readText === "function") {
+    try {
+      rawText = String(await navigator.clipboard.readText() || "").trim();
+    } catch {
+      rawText = "";
+    }
+  }
+
+  let parsed = parseGoogleAuthenticatorMigrationUriPayload(rawText);
+  if (parsed) return parsed;
+
+  const qrPayload = await parseQrPayloadFromClipboard();
+  if (!qrPayload) {
+    return null;
+  }
+
+  parsed = parseGoogleAuthenticatorMigrationUriPayload(qrPayload);
+  if (parsed) return parsed;
+  throw new Error("二维码内容不是有效的谷歌验证器导出数据");
+}
+
+function parseGoogleAuthenticatorMigrationUriPayload(raw) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return null;
+
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+
+  if (String(parsed.protocol || "").toLowerCase() !== "otpauth-migration:") return null;
+  if (String(parsed.hostname || "").toLowerCase() !== "offline") return null;
+
+  const payloadB64 = String(parsed.searchParams.get("data") || "").trim();
+  if (!payloadB64) return null;
+
+  const bytes = decodeBase64ToBytes(payloadB64);
+  if (!bytes || bytes.length === 0) return null;
+  return decodeGoogleAuthenticatorMigrationPayload(bytes);
+}
+
+function decodeGoogleAuthenticatorMigrationPayload(bytes) {
+  const payload = {
+    entries: [],
+    skippedCount: 0,
+    batchSize: 0,
+    batchIndex: 0,
+  };
+
+  let offset = 0;
+  while (offset < bytes.length) {
+    const tag = readProtoVarint(bytes, offset);
+    if (!tag) break;
+    offset = tag.nextOffset;
+    const fieldNumber = tag.value >>> 3;
+    const wireType = tag.value & 0x07;
+
+    if (fieldNumber === 1 && wireType === 2) {
+      const chunk = readProtoLengthDelimited(bytes, offset);
+      if (!chunk) break;
+      offset = chunk.nextOffset;
+      const entry = decodeGoogleAuthenticatorOtpParameters(chunk.value);
+      if (entry) {
+        payload.entries.push(entry);
+      } else {
+        payload.skippedCount += 1;
+      }
+      continue;
+    }
+
+    if (fieldNumber === 3 && wireType === 0) {
+      const value = readProtoVarint(bytes, offset);
+      if (!value) break;
+      payload.batchSize = value.value;
+      offset = value.nextOffset;
+      continue;
+    }
+
+    if (fieldNumber === 4 && wireType === 0) {
+      const value = readProtoVarint(bytes, offset);
+      if (!value) break;
+      payload.batchIndex = value.value;
+      offset = value.nextOffset;
+      continue;
+    }
+
+    offset = skipProtoField(bytes, offset, wireType);
+    if (offset < 0) break;
+  }
+
+  return payload;
+}
+
+function decodeGoogleAuthenticatorOtpParameters(bytes) {
+  let secretBytes = null;
+  let name = "";
+  let issuer = "";
+  let algorithm = 1;
+  let digits = 1;
+  let type = 2;
+  let offset = 0;
+
+  while (offset < bytes.length) {
+    const tag = readProtoVarint(bytes, offset);
+    if (!tag) break;
+    offset = tag.nextOffset;
+    const fieldNumber = tag.value >>> 3;
+    const wireType = tag.value & 0x07;
+
+    if (fieldNumber === 1 && wireType === 2) {
+      const chunk = readProtoLengthDelimited(bytes, offset);
+      if (!chunk) return null;
+      secretBytes = chunk.value;
+      offset = chunk.nextOffset;
+      continue;
+    }
+    if (fieldNumber === 2 && wireType === 2) {
+      const chunk = readProtoLengthDelimited(bytes, offset);
+      if (!chunk) return null;
+      name = decodeProtoUtf8(chunk.value);
+      offset = chunk.nextOffset;
+      continue;
+    }
+    if (fieldNumber === 3 && wireType === 2) {
+      const chunk = readProtoLengthDelimited(bytes, offset);
+      if (!chunk) return null;
+      issuer = decodeProtoUtf8(chunk.value);
+      offset = chunk.nextOffset;
+      continue;
+    }
+    if ((fieldNumber === 4 || fieldNumber === 5 || fieldNumber === 6) && wireType === 0) {
+      const value = readProtoVarint(bytes, offset);
+      if (!value) return null;
+      if (fieldNumber === 4) algorithm = value.value;
+      if (fieldNumber === 5) digits = value.value;
+      if (fieldNumber === 6) type = value.value;
+      offset = value.nextOffset;
+      continue;
+    }
+
+    offset = skipProtoField(bytes, offset, wireType);
+    if (offset < 0) return null;
+  }
+
+  if (!secretBytes || secretBytes.length === 0) return null;
+  if (type !== 2 || algorithm !== 1 || digits !== 1) return null;
+
+  const labelParts = parseImportedOtpLabel(name);
+  const effectiveIssuer = String(issuer || "").trim() || labelParts.issuer;
+  const username = labelParts.username || String(name || "").trim();
+  const siteAlias = resolveImportedSiteAlias({ issuer: effectiveIssuer, username });
+  const secret = bytesToBase32(secretBytes);
+  if (!secret || !siteAlias || !isValidTotpSecret(secret)) return null;
+
+  return {
+    secret,
+    siteAlias,
+    username,
+  };
+}
+
+function parseImportedOtpLabel(label) {
+  const text = String(label || "").trim();
+  if (!text) {
+    return { issuer: "", username: "" };
+  }
+  const colonIndex = text.indexOf(":");
+  if (colonIndex < 0) {
+    return { issuer: "", username: text };
+  }
+  return {
+    issuer: text.slice(0, colonIndex).trim(),
+    username: text.slice(colonIndex + 1).trim(),
+  };
+}
+
+function readProtoVarint(bytes, startOffset) {
+  let result = 0;
+  let shift = 0;
+  let offset = startOffset;
+  while (offset < bytes.length && shift <= 35) {
+    const byte = bytes[offset];
+    result |= (byte & 0x7f) << shift;
+    offset += 1;
+    if ((byte & 0x80) === 0) {
+      return { value: result >>> 0, nextOffset: offset };
+    }
+    shift += 7;
+  }
+  return null;
+}
+
+function readProtoLengthDelimited(bytes, startOffset) {
+  const lengthValue = readProtoVarint(bytes, startOffset);
+  if (!lengthValue) return null;
+  const start = lengthValue.nextOffset;
+  const end = start + lengthValue.value;
+  if (end > bytes.length) return null;
+  return {
+    value: bytes.slice(start, end),
+    nextOffset: end,
+  };
+}
+
+function skipProtoField(bytes, startOffset, wireType) {
+  if (wireType === 0) {
+    const value = readProtoVarint(bytes, startOffset);
+    return value ? value.nextOffset : -1;
+  }
+  if (wireType === 1) {
+    return startOffset + 8 <= bytes.length ? startOffset + 8 : -1;
+  }
+  if (wireType === 2) {
+    const chunk = readProtoLengthDelimited(bytes, startOffset);
+    return chunk ? chunk.nextOffset : -1;
+  }
+  if (wireType === 5) {
+    return startOffset + 4 <= bytes.length ? startOffset + 4 : -1;
+  }
+  return -1;
+}
+
+function decodeBase64ToBytes(input) {
+  const normalized = String(input || "")
+    .trim()
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+  if (!normalized) return new Uint8Array();
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  const bin = atob(padded);
+  const out = new Uint8Array(bin.length);
+  for (let index = 0; index < bin.length; index += 1) {
+    out[index] = bin.charCodeAt(index);
+  }
+  return out;
+}
+
+function decodeProtoUtf8(bytes) {
+  return new TextDecoder().decode(bytes).trim();
+}
+
+function bytesToBase32(bytes) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let output = "";
+  let buffer = 0;
+  let bitsInBuffer = 0;
+  for (const byte of bytes) {
+    buffer = (buffer << 8) | byte;
+    bitsInBuffer += 8;
+    while (bitsInBuffer >= 5) {
+      output += alphabet[(buffer >> (bitsInBuffer - 5)) & 0x1f];
+      bitsInBuffer -= 5;
+    }
+  }
+  if (bitsInBuffer > 0) {
+    output += alphabet[(buffer << (5 - bitsInBuffer)) & 0x1f];
+  }
+  return output;
+}
+
+function findImportedTotpAccountIndex(accounts, entry) {
+  return findImportedBrowserAccountIndex(accounts, {
+    sites: [entry.siteAlias],
+    username: entry.username || "",
+  });
+}
+
+function applyImportedTotpEntryToAccount(account, entry, nowMs) {
+  const next = normalizeAccountShape(account);
+  let changed = false;
+  const mergedSites = normalizeSites([...(next.sites || []), entry.siteAlias || ""]);
+  if (JSON.stringify(mergedSites) !== JSON.stringify(next.sites || [])) {
+    next.sites = mergedSites;
+    changed = true;
+  }
+  if (entry.username && entry.username !== next.username) {
+    next.username = entry.username;
+    next.usernameUpdatedAtMs = nowMs;
+    changed = true;
+  }
+  if (entry.secret && entry.secret !== next.totpSecret) {
+    next.totpSecret = entry.secret;
+    next.totpUpdatedAtMs = nowMs;
+    changed = true;
+  }
+  if (next.isDeleted) {
+    next.isDeleted = false;
+    next.deletedAtMs = null;
+    changed = true;
+  }
+  if (changed) {
+    next.updatedAtMs = nowMs;
+    next.lastOperatedDeviceName = currentImportDeviceName();
+  }
+  return next;
+}
+
+function buildGoogleAuthenticatorImportSuffix({ importedCount, skippedCount, unchangedCount, batchSize, batchIndex }) {
+  let suffix = `，解析 ${Number(importedCount || 0)} 条`;
+  if (Number(skippedCount || 0) > 0) {
+    suffix += `，跳过 ${Number(skippedCount)} 条`;
+  }
+  if (Number(unchangedCount || 0) > 0) {
+    suffix += `，未变化 ${Number(unchangedCount)} 条`;
+  }
+  if (Number(batchSize || 0) > 1) {
+    suffix += `，当前批次 ${Number(batchIndex || 0) + 1}/${Number(batchSize)}`;
+  }
+  return suffix;
 }
 
 async function parseQrPayloadFromClipboard() {

@@ -214,6 +214,16 @@ struct SettingsView: View {
                         }
 
                         HStack(spacing: 8) {
+                            Text("验证器导入")
+                                .frame(width: 80, alignment: .leading)
+                            Button("导入谷歌验证器导出二维码（剪贴板）") {
+                                store.importGoogleAuthenticatorExportQRCodeFromClipboard()
+                            }
+                            .font(store.buttonFont())
+                            .buttonStyle(.bordered)
+                        }
+
+                        HStack(spacing: 8) {
                             Text("浏览器导出")
                                 .frame(width: 80, alignment: .leading)
                             Button("导出 Chrome 密码 CSV") {

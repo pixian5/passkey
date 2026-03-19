@@ -834,6 +834,104 @@ final class AccountStore: ObservableObject {
         pasteQRCodeFromClipboard(to: .edit)
     }
 
+    func importGoogleAuthenticatorExportQRCodeFromClipboard() {
+        guard let migration = readGoogleAuthenticatorMigrationFromPasteboard() else {
+            statusMessage = "剪贴板里没有可识别的谷歌验证器导出二维码"
+            return
+        }
+
+        let previousAccounts = accounts
+        let startedAtMs = nowMs()
+        var nextAccounts = accounts
+        var createdCount = 0
+        var updatedCount = 0
+        var unchangedCount = 0
+        var skippedCount = migration.skippedCount
+
+        for (offset, entry) in migration.entries.enumerated() {
+            guard let siteAlias = entry.siteAlias, !siteAlias.isEmpty, !entry.secret.isEmpty else {
+                skippedCount += 1
+                continue
+            }
+
+            let timestamp = startedAtMs + Int64(offset)
+            if let matchedIndex = matchedImportedTotpAccountIndex(
+                in: nextAccounts,
+                siteAlias: siteAlias,
+                username: entry.username ?? ""
+            ) {
+                let updated = applyImportedTotpEntry(
+                    entry,
+                    siteAlias: siteAlias,
+                    to: nextAccounts[matchedIndex],
+                    nowMs: timestamp
+                )
+                if updated == nextAccounts[matchedIndex] {
+                    unchangedCount += 1
+                } else {
+                    nextAccounts[matchedIndex] = updated
+                    updatedCount += 1
+                }
+                continue
+            }
+
+            let createdAtMs = startedAtMs + Int64(offset) * 1000
+            let createdAt = Date(timeIntervalSince1970: TimeInterval(createdAtMs) / 1000)
+            var created = AccountFactory.create(
+                site: siteAlias,
+                username: entry.username ?? "",
+                password: "",
+                deviceName: currentDeviceName(),
+                createdAt: createdAt
+            )
+            created.sites = [siteAlias]
+            created.totpSecret = entry.secret
+            created.totpUpdatedAtMs = createdAtMs
+            created.updatedAtMs = createdAtMs
+            created.lastOperatedDeviceName = currentDeviceName()
+            nextAccounts.append(created)
+            createdCount += 1
+        }
+
+        guard createdCount > 0 || updatedCount > 0 else {
+            statusMessage =
+                "谷歌验证器导入完成，没有新增或更新账号" +
+                googleAuthenticatorImportSuffix(
+                    importedCount: migration.entries.count,
+                    skippedCount: skippedCount,
+                    unchangedCount: unchangedCount,
+                    batchSize: migration.batchSize,
+                    batchIndex: migration.batchIndex
+                )
+            return
+        }
+
+        accounts = nextAccounts
+        syncAliasGroups()
+        saveAccounts()
+
+        if let editingAccountId, !accounts.contains(where: { $0.id == editingAccountId }) {
+            cancelEditing()
+        }
+
+        appendAccountHistoryBatch(
+            category: .local,
+            title: "导入谷歌验证器导出二维码",
+            beforeAccounts: previousAccounts,
+            afterAccounts: accounts
+        )
+
+        statusMessage =
+            "谷歌验证器导入完成：新增 \(createdCount) 条，更新 \(updatedCount) 条" +
+            googleAuthenticatorImportSuffix(
+                importedCount: migration.entries.count,
+                skippedCount: skippedCount,
+                unchangedCount: unchangedCount,
+                batchSize: migration.batchSize,
+                batchIndex: migration.batchIndex
+            )
+    }
+
     func moveToRecycleBin(for account: PasswordAccount) {
         guard let index = accounts.firstIndex(where: { $0.id == account.id }) else {
             statusMessage = "未找到目标账号"
@@ -3443,6 +3541,19 @@ final class AccountStore: ObservableObject {
         let username: String?
     }
 
+    private struct ParsedGoogleAuthenticatorEntry {
+        let secret: String
+        let siteAlias: String?
+        let username: String?
+    }
+
+    private struct ParsedGoogleAuthenticatorMigration {
+        let entries: [ParsedGoogleAuthenticatorEntry]
+        let skippedCount: Int
+        let batchSize: Int
+        let batchIndex: Int
+    }
+
     private func pasteRawTotpSecretFromClipboard(to target: TotpDraftTarget) {
         guard let rawText = NSPasteboard.general.string(forType: .string) else {
             statusMessage = "剪贴板没有文本内容"
@@ -3559,7 +3670,7 @@ final class AccountStore: ObservableObject {
         }
 
         let issuer = issuerFromQuery.isEmpty ? labelIssuer : issuerFromQuery
-        let siteAlias = siteAliasFromIssuer(issuer)
+        let siteAlias = resolveImportedSiteAlias(issuer: issuer, username: labelUsername)
 
         return ParsedOtpAuthPayload(
             secret: secret,
@@ -3579,6 +3690,28 @@ final class AccountStore: ObservableObject {
             return normalized
         }
         return "\(normalized).com"
+    }
+
+    private func resolveImportedSiteAlias(issuer: String, username: String?) -> String? {
+        if let site = siteAliasFromIssuer(issuer), !site.isEmpty {
+            return site
+        }
+        if let site = siteAliasFromUsername(username), !site.isEmpty {
+            return site
+        }
+        return nil
+    }
+
+    private func siteAliasFromUsername(_ username: String?) -> String? {
+        let raw = (username ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+        if let atIndex = raw.lastIndex(of: "@"), atIndex < raw.index(before: raw.endIndex) {
+            let domainPart = String(raw[raw.index(after: atIndex)...])
+            let normalized = DomainUtils.normalize(domainPart)
+            return normalized.isEmpty ? nil : normalized
+        }
+        let normalized = DomainUtils.normalize(raw)
+        return normalized.isEmpty ? nil : normalized
     }
 
     private func isValidTotpSecret(_ secret: String) -> Bool {
@@ -3626,6 +3759,318 @@ final class AccountStore: ObservableObject {
             }
         }
         return nil
+    }
+
+    private func readGoogleAuthenticatorMigrationFromPasteboard() -> ParsedGoogleAuthenticatorMigration? {
+        if let rawText = NSPasteboard.general.string(forType: .string),
+           let payload = parseGoogleAuthenticatorMigrationURI(rawText)
+        {
+            return payload
+        }
+        guard let qrPayload = parseQRCodePayloadFromPasteboard() else {
+            return nil
+        }
+        return parseGoogleAuthenticatorMigrationURI(qrPayload)
+    }
+
+    private func parseGoogleAuthenticatorMigrationURI(_ raw: String) -> ParsedGoogleAuthenticatorMigration? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let components = URLComponents(string: trimmed) else {
+            return nil
+        }
+        guard components.scheme?.lowercased() == "otpauth-migration" else { return nil }
+        guard components.host?.lowercased() == "offline" else { return nil }
+        let dataB64 = components.queryItems?
+            .first(where: { $0.name.caseInsensitiveCompare("data") == .orderedSame })?
+            .value?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !dataB64.isEmpty else { return nil }
+        guard let rawData = Data(base64Encoded: normalizedBase64String(dataB64)) else {
+            return nil
+        }
+        return decodeGoogleAuthenticatorMigrationPayload(rawData)
+    }
+
+    private func normalizedBase64String(_ raw: String) -> String {
+        let normalized = raw
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let remainder = normalized.count % 4
+        guard remainder != 0 else { return normalized }
+        return normalized + String(repeating: "=", count: 4 - remainder)
+    }
+
+    private func decodeGoogleAuthenticatorMigrationPayload(_ data: Data) -> ParsedGoogleAuthenticatorMigration? {
+        var reader = ProtoReader(data: data)
+        var entries: [ParsedGoogleAuthenticatorEntry] = []
+        var skippedCount = 0
+        var batchSize = 0
+        var batchIndex = 0
+
+        while !reader.isAtEnd {
+            guard let tag = reader.readVarint() else { break }
+            let fieldNumber = Int(tag >> 3)
+            let wireType = Int(tag & 0x07)
+
+            switch (fieldNumber, wireType) {
+            case (1, 2):
+                guard let nested = reader.readLengthDelimited() else { return nil }
+                if let entry = decodeGoogleAuthenticatorOtpParameters(nested) {
+                    entries.append(entry)
+                } else {
+                    skippedCount += 1
+                }
+            case (3, 0):
+                guard let value = reader.readVarint() else { return nil }
+                batchSize = Int(value)
+            case (4, 0):
+                guard let value = reader.readVarint() else { return nil }
+                batchIndex = Int(value)
+            default:
+                guard reader.skipField(wireType: wireType) else { return nil }
+            }
+        }
+
+        return ParsedGoogleAuthenticatorMigration(
+            entries: entries,
+            skippedCount: skippedCount,
+            batchSize: batchSize,
+            batchIndex: batchIndex
+        )
+    }
+
+    private func decodeGoogleAuthenticatorOtpParameters(_ data: Data) -> ParsedGoogleAuthenticatorEntry? {
+        var reader = ProtoReader(data: data)
+        var secretData = Data()
+        var name = ""
+        var issuer = ""
+        var algorithm = 1
+        var digits = 1
+        var type = 2
+
+        while !reader.isAtEnd {
+            guard let tag = reader.readVarint() else { break }
+            let fieldNumber = Int(tag >> 3)
+            let wireType = Int(tag & 0x07)
+
+            switch (fieldNumber, wireType) {
+            case (1, 2):
+                guard let value = reader.readLengthDelimited() else { return nil }
+                secretData = value
+            case (2, 2):
+                guard let value = reader.readLengthDelimitedString() else { return nil }
+                name = value
+            case (3, 2):
+                guard let value = reader.readLengthDelimitedString() else { return nil }
+                issuer = value
+            case (4, 0):
+                guard let value = reader.readVarint() else { return nil }
+                algorithm = Int(value)
+            case (5, 0):
+                guard let value = reader.readVarint() else { return nil }
+                digits = Int(value)
+            case (6, 0):
+                guard let value = reader.readVarint() else { return nil }
+                type = Int(value)
+            default:
+                guard reader.skipField(wireType: wireType) else { return nil }
+            }
+        }
+
+        guard !secretData.isEmpty else { return nil }
+        guard type == 2, algorithm == 1, digits == 1 else { return nil }
+
+        let label = parseImportedOtpLabel(name)
+        let effectiveIssuer = issuer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? label.issuer : issuer
+        let username = !label.username.isEmpty ? label.username : name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let siteAlias = resolveImportedSiteAlias(issuer: effectiveIssuer, username: username)
+        let secret = base32EncodedString(secretData)
+        guard let siteAlias, !secret.isEmpty, isValidTotpSecret(secret) else {
+            return nil
+        }
+
+        return ParsedGoogleAuthenticatorEntry(
+            secret: secret,
+            siteAlias: siteAlias,
+            username: username.isEmpty ? nil : username
+        )
+    }
+
+    private func parseImportedOtpLabel(_ raw: String) -> (issuer: String, username: String) {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return ("", "") }
+        guard let colonIndex = text.firstIndex(of: ":") else {
+            return ("", text)
+        }
+        let issuer = String(text[..<colonIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let username = String(text[text.index(after: colonIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (issuer, username)
+    }
+
+    private func base32EncodedString(_ data: Data) -> String {
+        let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+        var output = ""
+        var buffer: UInt16 = 0
+        var bitsInBuffer = 0
+
+        for byte in data {
+            buffer = (buffer << 8) | UInt16(byte)
+            bitsInBuffer += 8
+
+            while bitsInBuffer >= 5 {
+                let index = Int((buffer >> UInt16(bitsInBuffer - 5)) & 0x1F)
+                output.append(alphabet[index])
+                bitsInBuffer -= 5
+                if bitsInBuffer == 0 {
+                    buffer = 0
+                } else {
+                    buffer &= (UInt16(1) << UInt16(bitsInBuffer)) - 1
+                }
+            }
+        }
+
+        if bitsInBuffer > 0 {
+            let index = Int((buffer << UInt16(5 - bitsInBuffer)) & 0x1F)
+            output.append(alphabet[index])
+        }
+
+        return output
+    }
+
+    private struct ProtoReader {
+        let data: Data
+        var offset: Int = 0
+
+        var isAtEnd: Bool {
+            offset >= data.count
+        }
+
+        mutating func readVarint() -> UInt64? {
+            var result: UInt64 = 0
+            var shift: UInt64 = 0
+
+            while offset < data.count && shift <= 63 {
+                let byte = data[offset]
+                offset += 1
+                result |= UInt64(byte & 0x7F) << shift
+                if (byte & 0x80) == 0 {
+                    return result
+                }
+                shift += 7
+            }
+
+            return nil
+        }
+
+        mutating func readLengthDelimited() -> Data? {
+            guard let length = readVarint() else { return nil }
+            let count = Int(length)
+            guard count >= 0, offset + count <= data.count else { return nil }
+            let slice = data.subdata(in: offset ..< offset + count)
+            offset += count
+            return slice
+        }
+
+        mutating func readLengthDelimitedString() -> String? {
+            guard let value = readLengthDelimited() else { return nil }
+            return String(data: value, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        mutating func skipField(wireType: Int) -> Bool {
+            switch wireType {
+            case 0:
+                return readVarint() != nil
+            case 1:
+                guard offset + 8 <= data.count else { return false }
+                offset += 8
+                return true
+            case 2:
+                return readLengthDelimited() != nil
+            case 5:
+                guard offset + 4 <= data.count else { return false }
+                offset += 4
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    private func matchedImportedTotpAccountIndex(
+        in accounts: [PasswordAccount],
+        siteAlias: String,
+        username: String
+    ) -> Int? {
+        let entry = BrowserPasswordImportEntry(
+            sites: [siteAlias],
+            username: username,
+            password: "",
+            note: ""
+        )
+        return matchedImportedAccountIndex(in: accounts, entry: entry)
+    }
+
+    private func applyImportedTotpEntry(
+        _ entry: ParsedGoogleAuthenticatorEntry,
+        siteAlias: String,
+        to account: PasswordAccount,
+        nowMs: Int64
+    ) -> PasswordAccount {
+        var updated = account
+        var changed = false
+
+        let mergedSites = Array(
+            Set((updated.sites + [siteAlias]).map(DomainUtils.normalize).filter { !$0.isEmpty })
+        ).sorted()
+        if mergedSites != updated.sites {
+            updated.sites = mergedSites
+            changed = true
+        }
+
+        if let username = entry.username, !username.isEmpty, username != updated.username {
+            updated.username = username
+            updated.usernameUpdatedAtMs = nowMs
+            changed = true
+        }
+
+        if !entry.secret.isEmpty, entry.secret != updated.totpSecret {
+            updated.totpSecret = entry.secret
+            updated.totpUpdatedAtMs = nowMs
+            changed = true
+        }
+
+        if updated.isDeleted {
+            updated.isDeleted = false
+            updated.deletedAtMs = nil
+            changed = true
+        }
+
+        if changed {
+            updated.touchUpdatedAt(nowMs, deviceName: currentDeviceName())
+        }
+
+        return updated
+    }
+
+    private func googleAuthenticatorImportSuffix(
+        importedCount: Int,
+        skippedCount: Int,
+        unchangedCount: Int,
+        batchSize: Int,
+        batchIndex: Int
+    ) -> String {
+        var parts: [String] = ["解析 \(importedCount) 条"]
+        if skippedCount > 0 {
+            parts.append("跳过 \(skippedCount) 条")
+        }
+        if unchangedCount > 0 {
+            parts.append("未变化 \(unchangedCount) 条")
+        }
+        if batchSize > 1 {
+            parts.append("当前批次 \(batchIndex + 1)/\(batchSize)")
+        }
+        return "，" + parts.joined(separator: "，")
     }
 
     private func parseSites(_ raw: String) -> [String] {
