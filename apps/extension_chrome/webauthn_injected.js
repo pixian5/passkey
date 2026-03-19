@@ -283,6 +283,7 @@
     const code = String(error?.code || "");
     const name = String(error?.name || "");
     return code === "PASSKEY_NOT_FOUND" ||
+      code === "PASSKEY_USE_BROWSER" ||
       code === "PASSKEY_CONTEXT_INVALIDATED" ||
       code === "PASSKEY_RUNTIME_ERROR" ||
       code === "PASSKEY_EMPTY_RESPONSE" ||

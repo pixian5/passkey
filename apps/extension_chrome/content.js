@@ -7,6 +7,7 @@ const WEB_AUTHN_REQUEST_TYPE = "PASSKEY_REQUEST";
 const WEB_AUTHN_RESPONSE_TYPE = "PASSKEY_RESPONSE";
 const PASS_PAGE_TOAST_ID = "pass-page-toast";
 const PASS_PAGE_TOAST_DURATION_MS = 3000;
+const PASSKEY_USE_BROWSER_FALLBACK = "__PASSKEY_USE_BROWSER_FALLBACK__";
 
 let lastPromptKey = "";
 let lastPromptAt = 0;
@@ -391,9 +392,19 @@ async function handlePasskeyGetWithChooser(payload) {
     return {
       ok: false,
       error: {
-        name: "NotAllowedError",
-        message: "用户取消通行密钥选择",
-        code: "PASSKEY_USER_CANCEL",
+        name: "AbortError",
+        message: "用户关闭 Pass 通行密钥选择，继续使用浏览器通行密钥",
+        code: "PASSKEY_USE_BROWSER",
+      },
+    };
+  }
+  if (selectedId === PASSKEY_USE_BROWSER_FALLBACK) {
+    return {
+      ok: false,
+      error: {
+        name: "AbortError",
+        message: "用户关闭 Pass 通行密钥选择，继续使用浏览器通行密钥",
+        code: "PASSKEY_USE_BROWSER",
       },
     };
   }
@@ -492,7 +503,7 @@ function selectPasskeyCandidate(candidates) {
     const root = document.createElement("div");
     root.id = "pass-passkey-chooser";
     root.style.position = "fixed";
-    root.style.left = "12px";
+    root.style.right = "12px";
     root.style.top = "12px";
     root.style.zIndex = "2147483647";
     root.style.maxWidth = "340px";
@@ -530,7 +541,7 @@ function selectPasskeyCandidate(candidates) {
     const onKeydown = (event) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        cleanup(null);
+        cleanup(PASSKEY_USE_BROWSER_FALLBACK);
       }
     };
     document.addEventListener("keydown", onKeydown, true);
@@ -583,14 +594,14 @@ function selectPasskeyCandidate(candidates) {
 
     const cancelBtn = document.createElement("button");
     cancelBtn.type = "button";
-    cancelBtn.textContent = "取消";
+    cancelBtn.textContent = "关闭";
     cancelBtn.style.border = "1px solid #9ab9eb";
     cancelBtn.style.borderRadius = "8px";
     cancelBtn.style.padding = "5px 8px";
     cancelBtn.style.background = "#ffffff";
     cancelBtn.style.cursor = "pointer";
     cancelBtn.addEventListener("click", () => {
-      cleanup(null);
+      cleanup(PASSKEY_USE_BROWSER_FALLBACK);
     });
     footer.appendChild(cancelBtn);
 
@@ -598,7 +609,7 @@ function selectPasskeyCandidate(candidates) {
     document.documentElement.appendChild(root);
 
     timerId = setTimeout(() => {
-      cleanup(null);
+      cleanup(PASSKEY_USE_BROWSER_FALLBACK);
     }, 120000);
   });
 }
