@@ -428,7 +428,7 @@ struct ContentView: View {
                                 handleDropToFolder(folder.id)
                             }
                             .contextMenu {
-                                Button("指定网站全部账号") {
+                                Button("加入指定网站全部账号") {
                                     addSitesTargetFolderId = folder.id
                                     addSitesText = store.folderRuleSites(for: folder.id).joined(separator: "\n")
                                     addSitesAutoAddEnabled = store.folderRuleSites(for: folder.id).isEmpty
@@ -437,7 +437,7 @@ struct ContentView: View {
                                     showAddSitesToFolderSheet = true
                                 }
 
-                                Button("文件夹去重") {
+                                Button("文件夹内去重") {
                                     dedupTargetFolderId = folder.id
                                     showFolderDedupSheet = true
                                 }
