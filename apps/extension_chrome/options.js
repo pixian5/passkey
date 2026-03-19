@@ -132,6 +132,7 @@ const dom = {
   importSyncBundleBtn: document.getElementById("importSyncBundleBtn"),
   importBrowserCsvBtn: document.getElementById("importBrowserCsvBtn"),
   importGoogleAuthQrBtn: document.getElementById("importGoogleAuthQrBtn"),
+  importGoogleAuthQrFilesBtn: document.getElementById("importGoogleAuthQrFilesBtn"),
   exportBtn: document.getElementById("exportBtn"),
   importBtn: document.getElementById("importBtn"),
   clearBtn: document.getElementById("clearBtn"),
@@ -289,6 +290,7 @@ async function init() {
   dom.importSyncBundleBtn.addEventListener("click", importSyncBundleAndMerge);
   dom.importBrowserCsvBtn.addEventListener("click", importBrowserPasswordCsv);
   dom.importGoogleAuthQrBtn.addEventListener("click", importGoogleAuthenticatorExportQrFromClipboard);
+  dom.importGoogleAuthQrFilesBtn.addEventListener("click", importGoogleAuthenticatorExportQrFromFiles);
   dom.exportBtn.addEventListener("click", exportJson);
   dom.importBtn.addEventListener("click", importJson);
   dom.clearBtn.addEventListener("click", clearAll);
@@ -820,6 +822,33 @@ async function importGoogleAuthenticatorExportQrFromClipboard() {
     return;
   }
 
+  await importGoogleAuthenticatorMigration(migration);
+}
+
+async function importGoogleAuthenticatorExportQrFromFiles() {
+  const files = await pickImageFiles();
+  if (!files || files.length === 0) {
+    setStatus("已取消谷歌验证器二维码导入");
+    return;
+  }
+
+  let migration;
+  try {
+    migration = await readGoogleAuthenticatorMigrationFromFiles(files);
+  } catch (error) {
+    setStatus(`谷歌验证器导入失败: ${error.message}`);
+    return;
+  }
+
+  if (!migration) {
+    setStatus("未从所选图片中识别到谷歌验证器导出二维码");
+    return;
+  }
+
+  await importGoogleAuthenticatorMigration(migration);
+}
+
+async function importGoogleAuthenticatorMigration(migration) {
   const localStored = await readBusinessDataFromStore();
   let mergedAccounts = Array.isArray(localStored.accounts)
     ? localStored.accounts.map(normalizeAccountShape)
@@ -1421,6 +1450,17 @@ function pickCsvFile() {
     input.type = "file";
     input.accept = ".csv,text/csv,text/plain";
     input.onchange = () => resolve(input.files?.[0] || null);
+    input.click();
+  });
+}
+
+function pickImageFiles() {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/webp,image/gif,image/bmp,image/tiff";
+    input.multiple = true;
+    input.onchange = () => resolve(Array.from(input.files || []));
     input.click();
   });
 }
@@ -4176,6 +4216,26 @@ async function readGoogleAuthenticatorMigrationFromClipboard() {
   throw new Error("二维码内容不是有效的谷歌验证器导出数据");
 }
 
+async function readGoogleAuthenticatorMigrationFromFiles(files) {
+  if (typeof BarcodeDetector === "undefined") {
+    throw new Error("当前浏览器不支持二维码识别");
+  }
+
+  const detector = new BarcodeDetector({ formats: ["qr_code"] });
+  const migrations = [];
+  for (const file of Array.isArray(files) ? files : []) {
+    const payloadText = await parseQrPayloadFromBlob(file, detector);
+    if (!payloadText) continue;
+    const parsed = parseGoogleAuthenticatorMigrationUriPayload(payloadText);
+    if (parsed) {
+      migrations.push(parsed);
+    }
+  }
+
+  if (migrations.length === 0) return null;
+  return mergeGoogleAuthenticatorMigrations(migrations);
+}
+
 function parseGoogleAuthenticatorMigrationUriPayload(raw) {
   const trimmed = String(raw || "").trim();
   if (!trimmed) return null;
@@ -4466,6 +4526,34 @@ function buildGoogleAuthenticatorImportSuffix({ importedCount, skippedCount, unc
     suffix += `，当前批次 ${Number(batchIndex || 0) + 1}/${Number(batchSize)}`;
   }
   return suffix;
+}
+
+function mergeGoogleAuthenticatorMigrations(migrations) {
+  const merged = {
+    entries: [],
+    skippedCount: 0,
+    batchSize: 0,
+    batchIndex: 0,
+  };
+  const seen = new Set();
+
+  for (const migration of Array.isArray(migrations) ? migrations : []) {
+    merged.skippedCount += Number(migration?.skippedCount || 0);
+    merged.batchSize += Math.max(Number(migration?.batchSize || 0), migration?.entries?.length ? 1 : 0);
+    for (const entry of Array.isArray(migration?.entries) ? migration.entries : []) {
+      const key = [
+        String(entry?.siteAlias || ""),
+        String(entry?.username || ""),
+        String(entry?.secret || ""),
+      ].join("|");
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      merged.entries.push(entry);
+    }
+  }
+
+  merged.batchSize = Math.max(merged.batchSize, Array.isArray(migrations) ? migrations.length : 0);
+  return merged;
 }
 
 async function parseQrPayloadFromClipboard() {

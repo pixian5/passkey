@@ -221,6 +221,12 @@ struct SettingsView: View {
                             }
                             .font(store.buttonFont())
                             .buttonStyle(.bordered)
+
+                            Button("多选二维码图片导入") {
+                                importGoogleAuthenticatorQRCodesWithPanel()
+                            }
+                            .font(store.buttonFont())
+                            .buttonStyle(.bordered)
                         }
 
                         HStack(spacing: 8) {
@@ -446,6 +452,24 @@ struct SettingsView: View {
         }
 
         store.importBrowserPasswordCsv(from: url)
+    }
+
+    private func importGoogleAuthenticatorQRCodesWithPanel() {
+        let panel = NSOpenPanel()
+        panel.title = "导入谷歌验证器导出二维码"
+        panel.message = "请选择一张或多张谷歌验证器导出二维码图片，程序会按所有选中的批次合并导入"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = [.png, .jpeg, .gif, .bmp, .tiff, .webP]
+        panel.prompt = "导入"
+
+        guard panel.runModal() == .OK else {
+            store.statusMessage = "已取消谷歌验证器二维码导入"
+            return
+        }
+
+        store.importGoogleAuthenticatorExportQRCodes(from: panel.urls)
     }
 
     private func exportBrowserPasswordCsvWithPanel(format: BrowserPasswordExportFormat) {

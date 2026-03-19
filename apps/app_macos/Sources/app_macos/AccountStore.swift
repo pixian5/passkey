@@ -839,7 +839,19 @@ final class AccountStore: ObservableObject {
             statusMessage = "剪贴板里没有可识别的谷歌验证器导出二维码"
             return
         }
+        importGoogleAuthenticatorMigration(migration)
+    }
 
+    func importGoogleAuthenticatorExportQRCodes(from fileURLs: [URL]) {
+        let migrations = fileURLs.compactMap(parseGoogleAuthenticatorMigrationFromImageFile)
+        guard !migrations.isEmpty else {
+            statusMessage = "未从所选图片中识别到谷歌验证器导出二维码"
+            return
+        }
+        importGoogleAuthenticatorMigration(mergedGoogleAuthenticatorMigrations(migrations))
+    }
+
+    private func importGoogleAuthenticatorMigration(_ migration: ParsedGoogleAuthenticatorMigration) {
         let previousAccounts = accounts
         let startedAtMs = nowMs()
         var nextAccounts = accounts
@@ -3761,6 +3773,16 @@ final class AccountStore: ObservableObject {
         return nil
     }
 
+    private func parseGoogleAuthenticatorMigrationFromImageFile(_ fileURL: URL) -> ParsedGoogleAuthenticatorMigration? {
+        guard let image = NSImage(contentsOf: fileURL),
+              let cgImage = cgImage(from: image),
+              let qrPayload = parseQRCodePayload(from: cgImage)
+        else {
+            return nil
+        }
+        return parseGoogleAuthenticatorMigrationURI(qrPayload)
+    }
+
     private func readGoogleAuthenticatorMigrationFromPasteboard() -> ParsedGoogleAuthenticatorMigration? {
         if let rawText = NSPasteboard.general.string(forType: .string),
            let payload = parseGoogleAuthenticatorMigrationURI(rawText)
@@ -3771,6 +3793,37 @@ final class AccountStore: ObservableObject {
             return nil
         }
         return parseGoogleAuthenticatorMigrationURI(qrPayload)
+    }
+
+    private func mergedGoogleAuthenticatorMigrations(
+        _ migrations: [ParsedGoogleAuthenticatorMigration]
+    ) -> ParsedGoogleAuthenticatorMigration {
+        var seen: Set<String> = []
+        var entries: [ParsedGoogleAuthenticatorEntry] = []
+        var skippedCount = 0
+        var batchSize = 0
+
+        for migration in migrations {
+            skippedCount += migration.skippedCount
+            batchSize += max(migration.batchSize, migration.entries.isEmpty ? 0 : 1)
+            for entry in migration.entries {
+                let key = [
+                    entry.siteAlias ?? "",
+                    entry.username ?? "",
+                    entry.secret,
+                ].joined(separator: "|")
+                if seen.insert(key).inserted {
+                    entries.append(entry)
+                }
+            }
+        }
+
+        return ParsedGoogleAuthenticatorMigration(
+            entries: entries,
+            skippedCount: skippedCount,
+            batchSize: max(batchSize, migrations.count),
+            batchIndex: 0
+        )
     }
 
     private func parseGoogleAuthenticatorMigrationURI(_ raw: String) -> ParsedGoogleAuthenticatorMigration? {
