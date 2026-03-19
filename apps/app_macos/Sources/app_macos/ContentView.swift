@@ -1031,11 +1031,27 @@ struct ContentView: View {
     private func dedupGroupCard(_ group: FolderDuplicateAccountGroup) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(group.siteAliases.joined(separator: ", "))
-                    .font(store.textFont(size: store.scaledTextSize(15), weight: .semibold))
-                Text("用户名：\(group.usernameDisplay) · \(group.accounts.count) 个账号")
-                    .font(store.textFont(size: store.scaledTextSize(12)))
-                    .foregroundStyle(.secondary)
+                Button {
+                    copyToPasteboard(group.siteAliases.joined(separator: "\n"), successMessage: "站点别名已复制")
+                } label: {
+                    Text(group.siteAliases.joined(separator: ", "))
+                        .font(store.textFont(size: store.scaledTextSize(15), weight: .semibold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+
+                HStack(spacing: 4) {
+                    Text("用户名：")
+                    Button {
+                        copyToPasteboard(group.usernameDisplay, successMessage: "用户名已复制")
+                    } label: {
+                        Text(group.usernameDisplay)
+                    }
+                    .buttonStyle(.plain)
+                    Text("· \(group.accounts.count) 个账号")
+                }
+                .font(store.textFont(size: store.scaledTextSize(12)))
+                .foregroundStyle(.secondary)
             }
 
             ForEach(Array(group.accounts.enumerated()), id: \.element.id) { index, account in
@@ -1046,7 +1062,13 @@ struct ContentView: View {
 
     @ViewBuilder
     private func dedupAccountCard(group: FolderDuplicateAccountGroup, index: Int, account: PasswordAccount) -> some View {
-        let passwordText = "密码：\(dedupDisplayValue(account.password))"
+        let usernameValue = dedupCopyValue(account.username)
+        let passwordValue = dedupCopyValue(account.password)
+        let totpCode = store.currentTotpCode(for: account)
+        let siteAliasesCopyValue = account.sites
+            .map(DomainUtils.normalize)
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
         let siteAliasesText = account.sites.joined(separator: ", ")
 
         HStack(alignment: .top, spacing: 12) {
@@ -1058,14 +1080,38 @@ struct ContentView: View {
                         Text(account.accountId)
                             .font(store.textFont(size: store.scaledTextSize(13), weight: .medium))
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        Text(passwordText)
-                            .font(store.textFont(size: store.scaledTextSize(12)))
-                            .foregroundStyle(.primary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+
+                if let usernameValue {
+                    dedupCopyLine(
+                        label: "用户名",
+                        value: usernameValue,
+                        successMessage: "用户名已复制",
+                        primary: true
+                    )
+                }
+
+                if let passwordValue {
+                    dedupCopyLine(
+                        label: "密码",
+                        value: passwordValue,
+                        successMessage: "密码已复制",
+                        primary: true
+                    )
+                }
+
+                if let totpCode {
+                    dedupCopyLine(
+                        label: "TOTP",
+                        value: formattedTotpCode(totpCode),
+                        copyValue: totpCode,
+                        successMessage: "验证码已复制",
+                        primary: true
+                    )
+                }
 
                 Text("更新时间：\(store.displayTime(account.updatedAtMs))")
                     .font(store.textFont(size: store.scaledTextSize(12)))
@@ -1073,10 +1119,15 @@ struct ContentView: View {
                 Text("创建时间：\(store.displayTime(account.createdAtMs))")
                     .font(store.textFont(size: store.scaledTextSize(12)))
                     .foregroundStyle(.secondary)
-                Text("站点别名：\(siteAliasesText)")
-                    .font(store.textFont(size: store.scaledTextSize(12)))
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
+                if !siteAliasesCopyValue.isEmpty {
+                    dedupCopyLine(
+                        label: "站点别名",
+                        value: siteAliasesText,
+                        copyValue: siteAliasesCopyValue,
+                        successMessage: "站点别名已复制",
+                        primary: false
+                    )
+                }
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 8) {
@@ -1113,12 +1164,34 @@ struct ContentView: View {
         }
     }
 
-    private func dedupDisplayValue(_ value: String) -> String {
+    @ViewBuilder
+    private func dedupCopyLine(
+        label: String,
+        value: String,
+        copyValue: String? = nil,
+        successMessage: String,
+        primary: Bool
+    ) -> some View {
+        HStack(spacing: 4) {
+            Text("\(label)：")
+            Button {
+                copyToPasteboard(copyValue ?? value, successMessage: successMessage)
+            } label: {
+                Text(value)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+        }
+        .font(store.textFont(size: store.scaledTextSize(12)))
+        .foregroundStyle(primary ? Color.primary : Color.secondary)
+    }
+
+    private func dedupCopyValue(_ value: String) -> String? {
         let normalized = value
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return normalized.isEmpty ? "(空)" : normalized
+        return normalized.isEmpty ? nil : normalized
     }
 
     private func activeFolderAccountCount(_ folderId: UUID) -> Int {
