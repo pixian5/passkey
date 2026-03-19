@@ -74,7 +74,9 @@ struct ContentView: View {
     @State private var newFolderName: String = ""
     @State private var showMoveToFolderSheet: Bool = false
     @State private var showAddSitesToFolderSheet: Bool = false
+    @State private var showFolderDedupSheet: Bool = false
     @State private var addSitesTargetFolderId: UUID?
+    @State private var dedupTargetFolderId: UUID?
     @State private var addSitesText: String = ""
     @State private var addSitesAutoAddEnabled: Bool = true
     @State private var pendingMoveAccountIds: [UUID] = []
@@ -292,6 +294,17 @@ struct ContentView: View {
                     .padding(26)
             }
 
+            if showFolderDedupSheet {
+                Color.black.opacity(0.16)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        showFolderDedupSheet = false
+                    }
+
+                folderDedupSheet
+                    .padding(26)
+            }
+
             if showHistoryPopup {
                 Color.black.opacity(0.16)
                     .ignoresSafeArea()
@@ -422,6 +435,11 @@ struct ContentView: View {
                                         ? true
                                         : store.folderRuleAutoAddEnabled(for: folder.id)
                                     showAddSitesToFolderSheet = true
+                                }
+
+                                Button("文件夹去重") {
+                                    dedupTargetFolderId = folder.id
+                                    showFolderDedupSheet = true
                                 }
 
                                 if folder.id == AccountStore.fixedNewAccountFolderId {
@@ -915,6 +933,160 @@ struct ContentView: View {
         .shadow(radius: 18)
     }
 
+    private var folderDedupGroups: [FolderDuplicateAccountGroup] {
+        guard let dedupTargetFolderId else { return [] }
+        return store.duplicateAccountGroups(inFolder: dedupTargetFolderId)
+    }
+
+    private var folderDedupSheet: some View {
+        let folderName = dedupTargetFolderId.map(store.folderName(for:)) ?? "文件夹"
+        let groups = folderDedupGroups
+
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("文件夹去重")
+                        .font(store.textFont(size: store.scaledTextSize(18), weight: .semibold))
+                    Text(folderName)
+                        .font(store.textFont(size: store.scaledTextSize(13)))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("关闭") {
+                    showFolderDedupSheet = false
+                }
+                .font(store.buttonFont())
+                .buttonStyle(.bordered)
+            }
+
+            Text("按站点别名和用户名分组，组内已按最新账号在上方排序。")
+                .font(store.textFont(size: store.scaledTextSize(12)))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                Button("保留全部最新账号") {
+                    guard let dedupTargetFolderId else { return }
+                    store.keepLatestDuplicateAccounts(inFolder: dedupTargetFolderId)
+                }
+                .font(store.buttonFont())
+                .buttonStyle(.borderedProminent)
+                .disabled(groups.isEmpty)
+
+                Button("保留全部最早账号") {
+                    guard let dedupTargetFolderId else { return }
+                    store.keepEarliestDuplicateAccounts(inFolder: dedupTargetFolderId)
+                }
+                .font(store.buttonFont())
+                .buttonStyle(.bordered)
+                .disabled(groups.isEmpty)
+
+                Spacer()
+
+                Text("重复组: \(groups.count)")
+                    .font(store.textFont(size: store.scaledTextSize(12)))
+                    .foregroundStyle(.secondary)
+            }
+
+            if groups.isEmpty {
+                VStack(alignment: .center, spacing: 10) {
+                    Text("当前文件夹暂无重复账号")
+                        .font(store.textFont(size: store.scaledTextSize(16), weight: .semibold))
+                    Text("这里会把站点别名和用户名都相同的账号放在同一组。")
+                        .font(store.textFont(size: store.scaledTextSize(12)))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 260)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(groups) { group in
+                            VStack(alignment: .leading, spacing: 10) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(group.siteAliases.joined(separator: ", "))
+                                        .font(store.textFont(size: store.scaledTextSize(15), weight: .semibold))
+                                    Text("用户名：\(group.usernameDisplay) · \(group.accounts.count) 个账号")
+                                        .font(store.textFont(size: store.scaledTextSize(12)))
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                ForEach(Array(group.accounts.enumerated()), id: \.element.id) { index, account in
+                                    HStack(alignment: .top, spacing: 12) {
+                                        VStack(alignment: .leading, spacing: 5) {
+                                            Text(account.accountId)
+                                                .font(store.textFont(size: store.scaledTextSize(13), weight: .medium))
+                                                .textSelection(.enabled)
+                                            Text("更新时间：\(store.displayTime(account.updatedAtMs))")
+                                                .font(store.textFont(size: store.scaledTextSize(12)))
+                                                .foregroundStyle(.secondary)
+                                            Text("创建时间：\(store.displayTime(account.createdAtMs))")
+                                                .font(store.textFont(size: store.scaledTextSize(12)))
+                                                .foregroundStyle(.secondary)
+                                            Text("站点别名：\(account.sites.joined(separator: ", "))")
+                                                .font(store.textFont(size: store.scaledTextSize(12)))
+                                                .foregroundStyle(.secondary)
+                                                .textSelection(.enabled)
+                                        }
+                                        Spacer()
+                                        VStack(alignment: .trailing, spacing: 8) {
+                                            if index == 0 {
+                                                Text("最新")
+                                                    .font(store.textFont(size: store.scaledTextSize(11), weight: .semibold))
+                                                    .padding(.horizontal, 8)
+                                                    .padding(.vertical, 4)
+                                                    .background(Color.accentColor.opacity(0.14))
+                                                    .clipShape(Capsule())
+                                            } else if index == group.accounts.count - 1 {
+                                                Text("最早")
+                                                    .font(store.textFont(size: store.scaledTextSize(11), weight: .semibold))
+                                                    .padding(.horizontal, 8)
+                                                    .padding(.vertical, 4)
+                                                    .background(Color.secondary.opacity(0.14))
+                                                    .clipShape(Capsule())
+                                            }
+
+                                            Button("仅保留此账号") {
+                                                guard let dedupTargetFolderId else { return }
+                                                store.keepOnlyDuplicateAccount(inFolder: dedupTargetFolderId, accountIdToKeep: account.id)
+                                            }
+                                            .font(store.buttonFont(size: max(12, CGFloat(store.uiButtonFontSize - 3))))
+                                            .buttonStyle(.borderedProminent)
+                                        }
+                                    }
+                                    .padding(12)
+                                    .background(Color.white)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                                    }
+                                }
+                            }
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.regularMaterial)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .frame(minHeight: 360)
+            }
+        }
+        .padding(18)
+        .frame(width: 860)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+        }
+        .shadow(radius: 18)
+    }
+
     private func activeFolderAccountCount(_ folderId: UUID) -> Int {
         store.accounts.filter { !$0.isDeleted && $0.isInFolder(folderId) }.count
     }
@@ -1010,7 +1182,7 @@ struct ContentView: View {
 
             // In main list, Cmd+A always selects all visible accounts (all/folder/recycle/current filter).
             // Keep text select-all behavior only in popup/forms.
-            if showCreateFolderSheet || showMoveToFolderSheet || store.accountForEditing() != nil {
+            if showCreateFolderSheet || showMoveToFolderSheet || showFolderDedupSheet || store.accountForEditing() != nil {
                 return event
             }
 

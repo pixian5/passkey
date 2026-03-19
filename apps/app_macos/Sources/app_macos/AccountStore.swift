@@ -689,6 +689,134 @@ final class AccountStore: ObservableObject {
         addAccountsToFolder(accountIds: matchingIds, folderId: folderId)
     }
 
+    func duplicateAccountGroups(inFolder folderId: UUID) -> [FolderDuplicateAccountGroup] {
+        let grouped = Dictionary(grouping: accounts.filter { !$0.isDeleted && $0.isInFolder(folderId) }) { account in
+            let normalizedSites = Array(
+                Set(account.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
+            ).sorted()
+            let fallbackSites = normalizedSites.isEmpty
+                ? [DomainUtils.normalize(account.canonicalSite)].filter { !$0.isEmpty }
+                : normalizedSites
+            let usernameKey = account.username
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            return "\(fallbackSites.joined(separator: "|"))\n\(usernameKey)"
+        }
+
+        return grouped.compactMap { key, groupedAccounts in
+            guard groupedAccounts.count > 1 else { return nil }
+
+            let sortedAccounts = groupedAccounts.sorted { lhs, rhs in
+                if lhs.updatedAtMs != rhs.updatedAtMs {
+                    return lhs.updatedAtMs > rhs.updatedAtMs
+                }
+                if lhs.createdAtMs != rhs.createdAtMs {
+                    return lhs.createdAtMs > rhs.createdAtMs
+                }
+                return lhs.accountId < rhs.accountId
+            }
+
+            let first = sortedAccounts[0]
+            let siteAliases = Array(
+                Set(first.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
+            ).sorted()
+            let usernameDisplay = first.username.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            return FolderDuplicateAccountGroup(
+                id: key,
+                folderId: folderId,
+                usernameKey: usernameDisplay.lowercased(),
+                usernameDisplay: usernameDisplay.isEmpty ? "(空用户名)" : usernameDisplay,
+                siteAliases: siteAliases.isEmpty ? [first.canonicalSite] : siteAliases,
+                accounts: sortedAccounts
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.newestUpdatedAtMs != rhs.newestUpdatedAtMs {
+                return lhs.newestUpdatedAtMs > rhs.newestUpdatedAtMs
+            }
+            return lhs.id < rhs.id
+        }
+    }
+
+    func keepOnlyDuplicateAccount(inFolder folderId: UUID, accountIdToKeep: UUID) {
+        guard duplicateAccountGroups(inFolder: folderId).contains(where: { group in
+            group.accounts.contains(where: { $0.id == accountIdToKeep })
+        }) else {
+            statusMessage = "当前文件夹里未找到可去重分组"
+            return
+        }
+
+        performFolderDuplicateKeep(
+            inFolder: folderId,
+            keepAccountIds: [accountIdToKeep],
+            keptGroupCount: 1,
+            operationLabel: "仅保留 1 个账号"
+        )
+    }
+
+    func keepLatestDuplicateAccounts(inFolder folderId: UUID) {
+        let groups = duplicateAccountGroups(inFolder: folderId)
+        guard !groups.isEmpty else {
+            statusMessage = "当前文件夹暂无重复账号"
+            return
+        }
+
+        performFolderDuplicateKeep(
+            inFolder: folderId,
+            keepAccountIds: Set(groups.compactMap { $0.accounts.first?.id }),
+            keptGroupCount: groups.count,
+            operationLabel: "保留全部最新账号"
+        )
+    }
+
+    func keepEarliestDuplicateAccounts(inFolder folderId: UUID) {
+        let groups = duplicateAccountGroups(inFolder: folderId)
+        guard !groups.isEmpty else {
+            statusMessage = "当前文件夹暂无重复账号"
+            return
+        }
+
+        performFolderDuplicateKeep(
+            inFolder: folderId,
+            keepAccountIds: Set(groups.compactMap { $0.accounts.last?.id }),
+            keptGroupCount: groups.count,
+            operationLabel: "保留全部最早账号"
+        )
+    }
+
+    private func performFolderDuplicateKeep(
+        inFolder folderId: UUID,
+        keepAccountIds: Set<UUID>,
+        keptGroupCount: Int,
+        operationLabel: String
+    ) {
+        guard folders.contains(where: { $0.id == folderId }) else {
+            statusMessage = "目标文件夹不存在"
+            return
+        }
+
+        let groups = duplicateAccountGroups(inFolder: folderId)
+        guard !groups.isEmpty else {
+            statusMessage = "当前文件夹暂无重复账号"
+            return
+        }
+
+        let duplicateAccountIds = Set(groups.flatMap { $0.accounts.map(\.id) })
+        let targetIds = duplicateAccountIds.subtracting(keepAccountIds)
+        guard !targetIds.isEmpty else {
+            statusMessage = "当前文件夹重复账号无需处理"
+            return
+        }
+
+        let folderTitle = folderName(for: folderId)
+        moveAccountsToRecycleBin(
+            accountIds: targetIds,
+            historyTitle: "文件夹去重：\(folderTitle) · \(operationLabel)",
+            statusMessage: "文件夹去重完成：\(folderTitle)，已移入回收站 \(targetIds.count) 个重复账号，保留 \(keptGroupCount) 组目标账号"
+        )
+    }
+
     func undoLastMoveOperation() {
         guard let operation = lastMoveOperation else {
             statusMessage = "没有可撤销的移动操作"
@@ -1049,6 +1177,14 @@ final class AccountStore: ObservableObject {
     }
 
     func moveToRecycleBin(accountIds: Set<UUID>) {
+        moveAccountsToRecycleBin(accountIds: accountIds)
+    }
+
+    private func moveAccountsToRecycleBin(
+        accountIds: Set<UUID>,
+        historyTitle: String? = nil,
+        statusMessage customStatusMessage: String? = nil
+    ) {
         let targetIndexes = accounts.indices.filter { accountIds.contains(accounts[$0].id) && !accounts[$0].isDeleted }
         guard !targetIndexes.isEmpty else {
             statusMessage = "未找到可删除账号"
@@ -1063,17 +1199,20 @@ final class AccountStore: ObservableObject {
             accounts[index].deletedAtMs = now
             accounts[index].touchUpdatedAt(now, deviceName: device)
         }
+        if let editingAccountId, targetIndexes.contains(where: { accounts[$0].id == editingAccountId }) {
+            cancelEditing()
+        }
         saveAccounts()
         let changedIds = Set(beforeAccounts.map(\.accountId))
         let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
         appendAccountHistoryBatch(
             category: .local,
-            title: "批量移入回收站：\(targetIndexes.count) 条账号",
+            title: historyTitle ?? "批量移入回收站：\(targetIndexes.count) 条账号",
             timestampMs: now,
             beforeAccounts: beforeAccounts,
             afterAccounts: afterAccounts
         )
-        statusMessage = "已将 \(targetIndexes.count) 条账号移入回收站"
+        statusMessage = customStatusMessage ?? "已将 \(targetIndexes.count) 条账号移入回收站"
     }
 
     func restoreFromRecycleBin(for account: PasswordAccount) {

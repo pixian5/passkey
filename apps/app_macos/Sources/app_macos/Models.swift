@@ -258,6 +258,23 @@ struct AccountFolder: Codable, Identifiable, Hashable {
     var updatedAtMs: Int64
 }
 
+struct FolderDuplicateAccountGroup: Identifiable, Hashable {
+    let id: String
+    let folderId: UUID
+    let usernameKey: String
+    let usernameDisplay: String
+    let siteAliases: [String]
+    let accounts: [PasswordAccount]
+
+    var newestUpdatedAtMs: Int64 {
+        accounts.first?.updatedAtMs ?? 0
+    }
+
+    var oldestUpdatedAtMs: Int64 {
+        accounts.last?.updatedAtMs ?? 0
+    }
+}
+
 extension AccountFolder {
     private enum CodingKeys: String, CodingKey {
         case id
