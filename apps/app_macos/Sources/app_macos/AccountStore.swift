@@ -2542,6 +2542,10 @@ final class AccountStore: ObservableObject {
         return entry.fieldKey == "note" && entry.accountId != nil && entry.oldValue != nil
     }
 
+    func canRevertHistoryOperation(_ entries: [OperationHistoryEntry]) -> Bool {
+        !entries.isEmpty && entries.allSatisfy(canRevertHistoryEntry)
+    }
+
     func clearHistoryEntries(forAccountId accountId: String) {
         let prefix = "\(accountId)："
         historyEntries.removeAll { entry in
@@ -2594,6 +2598,104 @@ final class AccountStore: ObservableObject {
             newValue: restoredNote
         )
         statusMessage = "已回退到该次修改前的备注"
+    }
+
+    func revertHistoryOperation(_ entries: [OperationHistoryEntry]) {
+        guard canRevertHistoryOperation(entries) else {
+            statusMessage = "该历史记录暂不支持整次撤销"
+            return
+        }
+
+        let sortedEntries = entries.sorted { lhs, rhs in
+            let lhsAccountId = historyAccountId(for: lhs) ?? lhs.accountId ?? ""
+            let rhsAccountId = historyAccountId(for: rhs) ?? rhs.accountId ?? ""
+            if lhsAccountId != rhsAccountId {
+                return lhsAccountId < rhsAccountId
+            }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+
+        var nextAccounts = accounts
+        var beforeByAccountId: [String: PasswordAccount] = [:]
+        var afterByAccountId: [String: PasswordAccount?] = [:]
+
+        for entry in sortedEntries {
+            if entry.accountBefore != nil || entry.accountAfter != nil {
+                guard let accountId = historyAccountId(for: entry) else {
+                    statusMessage = "未找到历史记录对应的账号"
+                    return
+                }
+
+                let currentIndex = nextAccounts.firstIndex(where: { $0.accountId == accountId })
+                let currentAccount = currentIndex.map { nextAccounts[$0] }
+                let restoredAccount = entry.accountBefore
+
+                if beforeByAccountId[accountId] == nil, let currentAccount {
+                    beforeByAccountId[accountId] = currentAccount
+                }
+
+                if let currentIndex {
+                    if let restoredAccount {
+                        nextAccounts[currentIndex] = restoredAccount
+                    } else {
+                        nextAccounts.remove(at: currentIndex)
+                    }
+                } else if let restoredAccount {
+                    nextAccounts.append(restoredAccount)
+                }
+
+                afterByAccountId[accountId] = restoredAccount
+                continue
+            }
+
+            guard entry.fieldKey == "note",
+                  let accountId = entry.accountId,
+                  let restoredNote = entry.oldValue,
+                  let currentIndex = nextAccounts.firstIndex(where: { $0.accountId == accountId })
+            else {
+                statusMessage = "未找到历史记录对应的账号"
+                return
+            }
+
+            if beforeByAccountId[accountId] == nil {
+                beforeByAccountId[accountId] = nextAccounts[currentIndex]
+            }
+
+            let now = nowMs()
+            let device = currentDeviceName()
+            nextAccounts[currentIndex].note = restoredNote
+            nextAccounts[currentIndex].noteUpdatedAtMs = now
+            nextAccounts[currentIndex].touchUpdatedAt(now, deviceName: device)
+            afterByAccountId[accountId] = nextAccounts[currentIndex]
+        }
+
+        let changedAccountIds = Set(beforeByAccountId.keys).union(afterByAccountId.keys)
+        guard !changedAccountIds.isEmpty else {
+            statusMessage = "这次操作已经是历史版本"
+            return
+        }
+
+        accounts = nextAccounts
+        syncAliasGroups()
+        saveAccounts()
+
+        if let editingAccountId {
+            if let editingIndex = accounts.firstIndex(where: { $0.id == editingAccountId }) {
+                beginEditing(accounts[editingIndex])
+            } else {
+                cancelEditing()
+            }
+        }
+
+        let now = nowMs()
+        appendAccountHistoryBatch(
+            category: .local,
+            title: "从\(sortedEntries.first?.category.operationPrefix ?? HistoryEntryCategory.local.operationPrefix)历史撤回 \(changedAccountIds.count) 个账号",
+            timestampMs: now,
+            beforeAccounts: changedAccountIds.compactMap { beforeByAccountId[$0] },
+            afterAccounts: changedAccountIds.compactMap { afterByAccountId[$0] ?? nil }
+        )
+        statusMessage = "已撤销此次操作：\(changedAccountIds.count) 个账号"
     }
 
     private func revertAccountSnapshotHistoryEntry(_ entry: OperationHistoryEntry) {

@@ -56,6 +56,12 @@ struct HistoryWindowView: View {
                                             .foregroundStyle(.secondary)
                                     }
                                     Spacer()
+                                    Button("撤销此次操作") {
+                                        store.revertHistoryOperation(group.entries)
+                                    }
+                                    .font(store.buttonFont(size: max(12, CGFloat(store.uiButtonFontSize - 2))))
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(!store.canRevertHistoryOperation(group.entries))
                                 }
 
                                 ForEach(group.entries) { entry in
@@ -95,8 +101,12 @@ struct HistoryWindowView: View {
                                         }
                                     }
                                     .padding(10)
-                                    .background(Color.secondary.opacity(0.06))
+                                    .background(Color.white)
                                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                                    }
                                 }
                             }
                             .padding(14)
