@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State private var confirmMasterPassword: String = ""
     @State private var disableUnlockPassword: String = ""
     @State private var didConfigureWindow: Bool = false
+    private let labelColumnWidth: CGFloat = 124
     private let idleMinuteChoices: [Int] = [1, 3, 5, 10, 15, 30, 60]
 
     var body: some View {
@@ -16,7 +17,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
                     Text("设备名称")
-                        .frame(width: 80, alignment: .leading)
+                        .frame(width: labelColumnWidth, alignment: .leading)
                     TextField("例如 ChromeMac", text: $store.deviceName)
                         .textFieldStyle(.roundedBorder)
                     Button("保存") {
@@ -34,7 +35,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
                             Text("字体")
-                                .frame(width: 80, alignment: .leading)
+                                .frame(width: labelColumnWidth, alignment: .leading)
                             Picker("字体", selection: $store.uiFontFamily) {
                                 ForEach(store.uiFontFamilyOptions, id: \.self) { family in
                                     Text(family).tag(family)
@@ -46,7 +47,7 @@ struct SettingsView: View {
 
                         HStack(spacing: 8) {
                             Text("文本字号")
-                                .frame(width: 80, alignment: .leading)
+                                .frame(width: labelColumnWidth, alignment: .leading)
                             Slider(value: $store.uiTextFontSize, in: 12 ... 40, step: 1)
                             Text("\(Int(store.uiTextFontSize))")
                                 .frame(width: 40, alignment: .trailing)
@@ -55,7 +56,7 @@ struct SettingsView: View {
 
                         HStack(spacing: 8) {
                             Text("按钮字号")
-                                .frame(width: 80, alignment: .leading)
+                                .frame(width: labelColumnWidth, alignment: .leading)
                             Slider(value: $store.uiButtonFontSize, in: 12 ... 52, step: 1)
                             Text("\(Int(store.uiButtonFontSize))")
                                 .frame(width: 40, alignment: .trailing)
@@ -64,7 +65,7 @@ struct SettingsView: View {
 
                         HStack(spacing: 8) {
                             Text("提示时长")
-                                .frame(width: 80, alignment: .leading)
+                                .frame(width: labelColumnWidth, alignment: .leading)
                             Slider(value: $store.uiToastDurationSeconds, in: 1 ... 10, step: 0.5)
                             Text("\(store.uiToastDurationSeconds, specifier: "%.1f")s")
                                 .frame(width: 58, alignment: .trailing)
@@ -96,7 +97,7 @@ struct SettingsView: View {
 
                         HStack(alignment: .top, spacing: 8) {
                             Text("同步操作")
-                                .frame(width: 80, alignment: .leading)
+                                .frame(width: labelColumnWidth, alignment: .leading)
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack(spacing: 8) {
                                     Button("合并已启用源") {
@@ -127,25 +128,25 @@ struct SettingsView: View {
                         if store.syncEnableWebDAV {
                             HStack(spacing: 8) {
                                 Text("WebDAV 地址")
-                                    .frame(width: 80, alignment: .leading)
+                                    .frame(width: labelColumnWidth, alignment: .leading)
                                 TextField("https://dav.example.com/remote.php/dav/files/<user>/", text: $store.webdavBaseURL)
                                     .textFieldStyle(.roundedBorder)
                             }
                             HStack(spacing: 8) {
                                 Text("远端路径")
-                                    .frame(width: 80, alignment: .leading)
+                                    .frame(width: labelColumnWidth, alignment: .leading)
                                 TextField("pass-sync-bundle-v2.json", text: $store.webdavRemotePath)
                                     .textFieldStyle(.roundedBorder)
                             }
                             HStack(spacing: 8) {
                                 Text("用户名")
-                                    .frame(width: 80, alignment: .leading)
+                                    .frame(width: labelColumnWidth, alignment: .leading)
                                 TextField("可选", text: $store.webdavUsername)
                                     .textFieldStyle(.roundedBorder)
                             }
                             HStack(spacing: 8) {
                                 Text("密码")
-                                    .frame(width: 80, alignment: .leading)
+                                    .frame(width: labelColumnWidth, alignment: .leading)
                                 SecureField("可选（写入本机 Keychain）", text: $store.webdavPassword)
                                     .textFieldStyle(.roundedBorder)
                             }
@@ -154,13 +155,13 @@ struct SettingsView: View {
                         if store.syncEnableSelfHostedServer {
                             HStack(spacing: 8) {
                                 Text("服务地址")
-                                    .frame(width: 80, alignment: .leading)
+                                    .frame(width: labelColumnWidth, alignment: .leading)
                                 TextField(AccountStore.defaultSelfHostedServerBaseURL, text: $store.serverBaseURL)
                                     .textFieldStyle(.roundedBorder)
                             }
                             HStack(spacing: 8) {
                                 Text("访问令牌")
-                                    .frame(width: 80, alignment: .leading)
+                                    .frame(width: labelColumnWidth, alignment: .leading)
                                 SecureField("可选（Bearer Token，写入本机 Keychain）", text: $store.serverAuthToken)
                                     .textFieldStyle(.roundedBorder)
                             }
@@ -190,7 +191,8 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
                             Text("导出账号目录")
-                                .frame(width: 80, alignment: .leading)
+                                .frame(width: labelColumnWidth, alignment: .leading)
+                                .fixedSize(horizontal: true, vertical: false)
                             TextField("为空时点击导出后选择目录", text: $store.exportDirectoryPath)
                                 .textFieldStyle(.roundedBorder)
                                 .onChange(of: store.exportDirectoryPath) { _ in
@@ -205,7 +207,8 @@ struct SettingsView: View {
 
                         HStack(spacing: 8) {
                             Text("浏览器导入")
-                                .frame(width: 80, alignment: .leading)
+                                .frame(width: labelColumnWidth, alignment: .leading)
+                                .fixedSize(horizontal: true, vertical: false)
                             Button("导入 Chrome/Firefox/Safari 密码 CSV") {
                                 importBrowserPasswordCsvWithPanel()
                             }
@@ -215,7 +218,8 @@ struct SettingsView: View {
 
                         HStack(spacing: 8) {
                             Text("验证器导入")
-                                .frame(width: 80, alignment: .leading)
+                                .frame(width: labelColumnWidth, alignment: .leading)
+                                .fixedSize(horizontal: true, vertical: false)
                             Button("导入谷歌验证器导出二维码（剪贴板）") {
                                 store.importGoogleAuthenticatorExportQRCodeFromClipboard()
                             }
@@ -231,7 +235,8 @@ struct SettingsView: View {
 
                         HStack(spacing: 8) {
                             Text("浏览器导出")
-                                .frame(width: 80, alignment: .leading)
+                                .frame(width: labelColumnWidth, alignment: .leading)
+                                .fixedSize(horizontal: true, vertical: false)
                             Button("导出 Chrome 密码 CSV") {
                                 exportBrowserPasswordCsvWithPanel(format: .chrome)
                             }
@@ -301,14 +306,14 @@ struct SettingsView: View {
                         } else {
                             HStack(spacing: 8) {
                                 Text("主密码")
-                                    .frame(width: 80, alignment: .leading)
+                                    .frame(width: labelColumnWidth, alignment: .leading)
                                 SecureField("至少 4 位", text: $newMasterPassword)
                                     .textFieldStyle(.roundedBorder)
                             }
 
                             HStack(spacing: 8) {
                                 Text("确认密码")
-                                    .frame(width: 80, alignment: .leading)
+                                    .frame(width: labelColumnWidth, alignment: .leading)
                                 SecureField("再次输入主密码", text: $confirmMasterPassword)
                                     .textFieldStyle(.roundedBorder)
                             }
@@ -340,7 +345,7 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .frame(
-            minWidth: 760,
+            minWidth: 980,
             maxWidth: .infinity,
             minHeight: 520,
             maxHeight: .infinity,
@@ -356,10 +361,10 @@ struct SettingsView: View {
         didConfigureWindow = true
 
         window.styleMask.insert(.resizable)
-        window.minSize = NSSize(width: 760, height: 520)
+        window.minSize = NSSize(width: 980, height: 520)
 
         var frame = window.frame
-        let targetWidth = max(frame.width, 760)
+        let targetWidth = max(frame.width, 1100)
         let targetHeight = max(frame.height, 520)
         if frame.width != targetWidth || frame.height != targetHeight {
             frame.size = NSSize(width: targetWidth, height: targetHeight)
