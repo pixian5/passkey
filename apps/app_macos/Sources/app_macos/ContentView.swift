@@ -1062,7 +1062,6 @@ struct ContentView: View {
 
     @ViewBuilder
     private func dedupAccountCard(group: FolderDuplicateAccountGroup, index: Int, account: PasswordAccount) -> some View {
-        let usernameValue = dedupCopyValue(account.username)
         let passwordValue = dedupCopyValue(account.password)
         let totpCode = store.currentTotpCode(for: account)
         let siteAliasesCopyValue = account.sites
@@ -1084,15 +1083,6 @@ struct ContentView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-
-                if let usernameValue {
-                    dedupCopyLine(
-                        label: "用户名",
-                        value: usernameValue,
-                        successMessage: "用户名已复制",
-                        primary: true
-                    )
-                }
 
                 if let passwordValue {
                     dedupCopyLine(
