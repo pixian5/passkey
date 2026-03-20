@@ -90,6 +90,24 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
+                        if store.syncEnableSelfHostedServer {
+                            HStack(spacing: 8) {
+                                Text("服务地址")
+                                    .frame(width: labelColumnWidth, alignment: .leading)
+                                TextField(AccountStore.defaultSelfHostedServerBaseURL, text: $store.serverBaseURL)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                            HStack(spacing: 8) {
+                                Text("访问令牌")
+                                    .frame(width: labelColumnWidth, alignment: .leading)
+                                SecureField(AccountStore.defaultSelfHostedServerAuthToken, text: $store.serverAuthToken)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                            Text("服务端接口固定为 /v1/sync/payload，使用 GET/PUT 交换 pass.sync.bundle.v2。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
                         HStack(spacing: 8) {
                             Text("自动同步")
                                 .frame(width: labelColumnWidth, alignment: .leading)
@@ -161,24 +179,6 @@ struct SettingsView: View {
                                 SecureField("可选（写入本机 Keychain）", text: $store.webdavPassword)
                                     .textFieldStyle(.roundedBorder)
                             }
-                        }
-
-                        if store.syncEnableSelfHostedServer {
-                            HStack(spacing: 8) {
-                                Text("服务地址")
-                                    .frame(width: labelColumnWidth, alignment: .leading)
-                                TextField(AccountStore.defaultSelfHostedServerBaseURL, text: $store.serverBaseURL)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                            HStack(spacing: 8) {
-                                Text("访问令牌")
-                                    .frame(width: labelColumnWidth, alignment: .leading)
-                                SecureField(AccountStore.defaultSelfHostedServerAuthToken, text: $store.serverAuthToken)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                            Text("服务端接口固定为 /v1/sync/payload，使用 GET/PUT 交换 pass.sync.bundle.v2。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
                         }
 
                         HStack(spacing: 8) {
