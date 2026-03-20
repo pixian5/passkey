@@ -245,6 +245,15 @@ final class AccountStore: ObservableObject {
         let changedLocalData: Bool
     }
 
+    struct RemoteOverwritePreflightResult {
+        let unreachableSources: [String]
+        let emptySources: [String]
+
+        var needsWarning: Bool {
+            !unreachableSources.isEmpty || !emptySources.isEmpty
+        }
+    }
+
     private enum SyncRemoteError: LocalizedError {
         case preconditionFailed
 
@@ -2311,6 +2320,67 @@ final class AccountStore: ObservableObject {
             accounts: accounts,
             folders: folders,
             passkeys: passkeys
+        )
+    }
+
+    func remoteOverwritePreflight() async -> RemoteOverwritePreflightResult {
+        var unreachableSources: [String] = []
+        var emptySources: [String] = []
+
+        if syncEnableICloud {
+            do {
+                if try fetchRemotePayloadFromICloud() == nil {
+                    emptySources.append("iCloud")
+                }
+            } catch {
+                unreachableSources.append("iCloud（\(error.localizedDescription)）")
+            }
+        }
+
+        if syncEnableWebDAV {
+            guard let resourceURL = buildWebDAVResourceURL() else {
+                unreachableSources.append("WebDAV（配置不完整）")
+                return RemoteOverwritePreflightResult(unreachableSources: unreachableSources, emptySources: emptySources)
+            }
+            do {
+                let authorization = buildBasicAuthorization(
+                    username: webdavUsername,
+                    password: webdavPassword
+                )
+                let remoteResponse = try await fetchRemotePayload(
+                    from: resourceURL,
+                    authorization: authorization
+                )
+                if remoteResponse.payload == nil {
+                    emptySources.append("WebDAV")
+                }
+            } catch {
+                unreachableSources.append("WebDAV（\(error.localizedDescription)）")
+            }
+        }
+
+        if syncEnableSelfHostedServer {
+            guard let resourceURL = buildSelfHostedPayloadURL() else {
+                unreachableSources.append("服务器（配置不完整）")
+                return RemoteOverwritePreflightResult(unreachableSources: unreachableSources, emptySources: emptySources)
+            }
+            do {
+                let authorization = buildBearerAuthorization(serverAuthToken)
+                let remoteResponse = try await fetchRemotePayload(
+                    from: resourceURL,
+                    authorization: authorization
+                )
+                if remoteResponse.payload == nil {
+                    emptySources.append("服务器")
+                }
+            } catch {
+                unreachableSources.append("服务器（\(error.localizedDescription)）")
+            }
+        }
+
+        return RemoteOverwritePreflightResult(
+            unreachableSources: unreachableSources,
+            emptySources: emptySources
         )
     }
 

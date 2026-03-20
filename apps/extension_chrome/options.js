@@ -178,7 +178,11 @@ async function init() {
   startTotpRefreshTicker();
 
   dom.syncMergeBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE));
-  dom.syncRemoteOverwriteLocalBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_REMOTE_OVERWRITE_LOCAL));
+  dom.syncRemoteOverwriteLocalBtn.addEventListener("click", async () => {
+    const shouldContinue = await confirmRemoteOverwriteLocalIfNeeded();
+    if (!shouldContinue) return;
+    await syncNowWithRemote(SYNC_MODE_REMOTE_OVERWRITE_LOCAL);
+  });
   dom.syncLocalOverwriteRemoteBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_LOCAL_OVERWRITE_REMOTE));
   dom.deviceName.addEventListener("input", () => {
     scheduleDeviceNameSave();
@@ -1233,6 +1237,38 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
     `${getSyncModeStatusLabel(normalizedSyncMode)}（${sourceSummary}）：账号 ${localAccounts.length}->${mergedAccounts.length}，` +
       `通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}，文件夹 ${localFolders.length}->${mergedFolders.length}`
   );
+}
+
+async function confirmRemoteOverwriteLocalIfNeeded() {
+  const targets = buildRemoteSyncTargetsFromDom();
+  if (!targets || targets.length === 0) return false;
+
+  const unreachableTargets = [];
+  const emptyTargets = [];
+  for (const target of targets) {
+    try {
+      const remoteResponse = await pullRemotePayload(target);
+      if (!remoteResponse.payload) {
+        emptyTargets.push(target.label);
+      }
+    } catch (error) {
+      unreachableTargets.push(`${target.label}（${error.message}）`);
+    }
+  }
+
+  if (unreachableTargets.length === 0 && emptyTargets.length === 0) {
+    return true;
+  }
+
+  const messages = [];
+  if (unreachableTargets.length > 0) {
+    messages.push(`以下远端当前不可达：${unreachableTargets.join("；")}。继续执行后，本次操作很可能直接失败。`);
+  }
+  if (emptyTargets.length > 0) {
+    messages.push(`以下远端当前为空：${emptyTargets.join("、")}。如果所有可用远端都为空，继续执行可能把本地数据覆盖成空。`);
+  }
+  messages.push("确定仍要继续执行“云端覆盖本地”吗？");
+  return window.confirm(messages.join("\n\n"));
 }
 
 function buildRemoteSyncTargetsFromDom() {

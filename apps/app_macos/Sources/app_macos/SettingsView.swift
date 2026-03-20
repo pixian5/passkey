@@ -118,7 +118,7 @@ struct SettingsView: View {
                                     .buttonStyle(.bordered)
 
                                     Button("云端覆盖本地") {
-                                        store.syncNow(modeOverride: .remoteOverwriteLocal)
+                                        confirmRemoteOverwriteLocal()
                                     }
                                     .font(store.buttonFont())
                                     .buttonStyle(.bordered)
@@ -381,6 +381,35 @@ struct SettingsView: View {
             frame.size = NSSize(width: targetWidth, height: targetHeight)
             window.setFrame(frame, display: true)
         }
+    }
+
+    private func confirmRemoteOverwriteLocal() {
+        Task { @MainActor in
+            let preflight = await store.remoteOverwritePreflight()
+            guard !preflight.needsWarning || presentRemoteOverwriteWarning(preflight) else {
+                return
+            }
+            store.syncNow(modeOverride: .remoteOverwriteLocal)
+        }
+    }
+
+    private func presentRemoteOverwriteWarning(_ preflight: AccountStore.RemoteOverwritePreflightResult) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "云端覆盖本地前发现风险"
+
+        var messages: [String] = []
+        if !preflight.unreachableSources.isEmpty {
+            messages.append("以下远端当前不可达：\(preflight.unreachableSources.joined(separator: "；"))。继续执行后，本次操作很可能直接失败。")
+        }
+        if !preflight.emptySources.isEmpty {
+            messages.append("以下远端当前为空：\(preflight.emptySources.joined(separator: "、"))。如果所有可用远端都为空，继续执行可能把本地数据覆盖成空。")
+        }
+        messages.append("确定仍要继续执行“云端覆盖本地”吗？")
+        alert.informativeText = messages.joined(separator: "\n\n")
+        alert.addButton(withTitle: "继续")
+        alert.addButton(withTitle: "取消")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     @ViewBuilder
