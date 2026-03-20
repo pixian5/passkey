@@ -184,13 +184,22 @@ async function init() {
   dom.syncLocalOverwriteRemoteBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_LOCAL_OVERWRITE_REMOTE));
   dom.syncEnableWebdav.addEventListener("change", () => {
     renderSyncBackendFields();
+    void persistSyncSettings({ showStatus: false });
   });
   dom.syncEnableServer.addEventListener("change", () => {
     renderSyncBackendFields();
+    void persistSyncSettings({ showStatus: false });
   });
   dom.syncAutoInterval.addEventListener("change", () => {
     renderAutoSyncStatus();
+    void persistSyncSettings({ showStatus: false });
   });
+  dom.syncWebdavBaseUrl.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
+  dom.syncWebdavPath.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
+  dom.syncWebdavUsername.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
+  dom.syncWebdavPassword.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
+  dom.syncServerBaseUrl.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
+  dom.syncServerToken.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.lockEnabled.addEventListener("change", renderLockSettingsFields);
   dom.lockPolicyOnceRadio.addEventListener("change", renderLockSettingsFields);
   dom.lockPolicyIdleRadio.addEventListener("change", renderLockSettingsFields);
@@ -559,11 +568,11 @@ async function saveLockSettings() {
   setDeviceStatus("解锁策略已保存");
 }
 
-async function saveSyncSettings() {
+async function persistSyncSettings({ showStatus = true } = {}) {
   const enableWebdav = Boolean(dom.syncEnableWebdav.checked);
   const enableServer = Boolean(dom.syncEnableServer.checked);
   const autoSyncIntervalMinutes = normalizeAutoSyncIntervalMinutes(dom.syncAutoInterval.value);
-  await chrome.storage.local.set({
+  const nextSettings = {
     [STORAGE_KEY_SYNC_ENABLE_WEBDAV]: enableWebdav,
     [STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]: enableServer,
     [STORAGE_KEY_SYNC_WEBDAV_BASE_URL]: String(dom.syncWebdavBaseUrl.value || "").trim(),
@@ -573,8 +582,27 @@ async function saveSyncSettings() {
     [STORAGE_KEY_SYNC_SERVER_BASE_URL]: String(dom.syncServerBaseUrl.value || "").trim(),
     [STORAGE_KEY_SYNC_SERVER_TOKEN]: String(dom.syncServerToken.value || "").trim(),
     [STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]: Number(autoSyncIntervalMinutes),
-  });
+  };
+  await chrome.storage.local.set(nextSettings);
+
+  const persisted = await chrome.storage.local.get([
+    STORAGE_KEY_SYNC_SERVER_BASE_URL,
+    STORAGE_KEY_SYNC_SERVER_TOKEN,
+    STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES,
+  ]);
+  dom.syncServerBaseUrl.value = String(
+    persisted[STORAGE_KEY_SYNC_SERVER_BASE_URL] || nextSettings[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL
+  );
+  dom.syncServerToken.value = String(
+    persisted[STORAGE_KEY_SYNC_SERVER_TOKEN] || nextSettings[STORAGE_KEY_SYNC_SERVER_TOKEN] || DEFAULT_SELF_HOSTED_SERVER_TOKEN
+  );
+  dom.syncAutoInterval.value = normalizeAutoSyncIntervalMinutes(
+    persisted[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES] ?? nextSettings[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]
+  );
+
   renderSyncBackendFields();
+  if (!showStatus) return;
+
   const enabledLabels = [];
   if (enableWebdav) enabledLabels.push("WebDAV");
   if (enableServer) enabledLabels.push("服务器");
@@ -584,6 +612,10 @@ async function saveSyncSettings() {
       ? `同步源配置已保存（已启用：${enabledLabels.join(" + ")}；${autoSyncLabel}）`
       : `同步源配置已保存（当前未启用任何远端源；${autoSyncLabel}）`
   );
+}
+
+async function saveSyncSettings() {
+  await persistSyncSettings({ showStatus: true });
 }
 
 async function refresh({ silent = false } = {}) {
