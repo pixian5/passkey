@@ -75,7 +75,7 @@ struct SettingsView: View {
 
                 GroupBox("数据同步") {
                     VStack(alignment: .leading, spacing: 8) {
-                        VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 16) {
                             leadingToggle("iCloud（仅 Apple）", isOn: $store.syncEnableICloud)
                             leadingToggle("WebDAV", isOn: $store.syncEnableWebDAV)
                             leadingToggle("自建服务器", isOn: $store.syncEnableSelfHostedServer)
