@@ -108,6 +108,33 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
 
+                        if store.syncEnableWebDAV {
+                            HStack(spacing: 8) {
+                                Text("WebDAV 地址")
+                                    .frame(width: labelColumnWidth, alignment: .leading)
+                                TextField("https://dav.example.com/remote.php/dav/files/<user>/", text: $store.webdavBaseURL)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                            HStack(spacing: 8) {
+                                Text("远端路径")
+                                    .frame(width: labelColumnWidth, alignment: .leading)
+                                TextField("pass-sync-bundle-v2.json", text: $store.webdavRemotePath)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                            HStack(spacing: 8) {
+                                Text("用户名")
+                                    .frame(width: labelColumnWidth, alignment: .leading)
+                                TextField("可选", text: $store.webdavUsername)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                            HStack(spacing: 8) {
+                                Text("密码")
+                                    .frame(width: labelColumnWidth, alignment: .leading)
+                                SecureField("可选（写入本机 Keychain）", text: $store.webdavPassword)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+
                         HStack(spacing: 8) {
                             Text("自动同步")
                                 .frame(width: labelColumnWidth, alignment: .leading)
@@ -153,33 +180,6 @@ struct SettingsView: View {
                         Text("合并：保留双方变更；云端覆盖本地：用所有已启用远端的汇总结果替换本机；本地覆盖云端：直接把本机数据推到所有已启用远端。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-
-                        if store.syncEnableWebDAV {
-                            HStack(spacing: 8) {
-                                Text("WebDAV 地址")
-                                    .frame(width: labelColumnWidth, alignment: .leading)
-                                TextField("https://dav.example.com/remote.php/dav/files/<user>/", text: $store.webdavBaseURL)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                            HStack(spacing: 8) {
-                                Text("远端路径")
-                                    .frame(width: labelColumnWidth, alignment: .leading)
-                                TextField("pass-sync-bundle-v2.json", text: $store.webdavRemotePath)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                            HStack(spacing: 8) {
-                                Text("用户名")
-                                    .frame(width: labelColumnWidth, alignment: .leading)
-                                TextField("可选", text: $store.webdavUsername)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                            HStack(spacing: 8) {
-                                Text("密码")
-                                    .frame(width: labelColumnWidth, alignment: .leading)
-                                SecureField("可选（写入本机 Keychain）", text: $store.webdavPassword)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                        }
 
                         HStack(spacing: 8) {
                             Button("导出同步包") {
