@@ -20,11 +20,9 @@ struct SettingsView: View {
                         .frame(width: labelColumnWidth, alignment: .leading)
                     TextField("例如 ChromeMac", text: $store.deviceName)
                         .textFieldStyle(.roundedBorder)
-                    Button("保存") {
-                        store.saveDeviceName()
-                    }
-                    .font(store.buttonFont())
-                    .buttonStyle(.borderedProminent)
+                        .onChange(of: store.deviceName) { _ in
+                            store.saveDeviceName(showStatus: false)
+                        }
                 }
 
                 Text("说明：设备名称会写入账号最后操作设备字段。")

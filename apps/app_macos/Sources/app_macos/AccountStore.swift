@@ -299,16 +299,20 @@ final class AccountStore: ObservableObject {
         handleSyncSourceSelectionChanged()
     }
 
-    func saveDeviceName() {
+    func saveDeviceName(showStatus: Bool = true) {
         let normalized = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else {
-            statusMessage = "设备名称不能为空"
+            if showStatus {
+                statusMessage = "设备名称不能为空"
+            }
             return
         }
 
         deviceName = normalized
         UserDefaults.standard.set(normalized, forKey: Keys.deviceName)
-        statusMessage = "设备名称已保存"
+        if showStatus {
+            statusMessage = "设备名称已保存"
+        }
     }
 
     func triggerSelectAllAccounts() {
