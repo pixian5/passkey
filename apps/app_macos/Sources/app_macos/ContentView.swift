@@ -1883,28 +1883,51 @@ private struct AccountEditPopup: View {
                     Divider()
 
                     VStack(alignment: .leading, spacing: 2) {
-                        let metadataLine: (String, String, String) -> String = { label, value, device in
-                            let targetWidth = 6
-                            let paddedLabel = label.count >= targetWidth
-                                ? label
-                                : label + String(repeating: " ", count: targetWidth - label.count)
-                            return "\(paddedLabel): \(value) | \(device)"
-                        }
-
-                        Text([
-                            metadataLine("创建时间", store.displayTime(editingAccount.createdAtMs), editingAccount.createdDeviceName.isEmpty ? "-" : editingAccount.createdDeviceName),
-                            metadataLine("最后更新时间", store.displayTime(editingAccount.updatedAtMs), editingAccount.lastOperatedDeviceName.isEmpty ? "-" : editingAccount.lastOperatedDeviceName),
-                            metadataLine("删除时间", store.displayTime(editingAccount.deletedAtMs), editingAccount.deletedAtMs == nil ? "-" : (editingAccount.deletedDeviceName.isEmpty ? "-" : editingAccount.deletedDeviceName)),
-                            metadataLine("用户名", store.displayTime(editingAccount.usernameUpdatedAtMs), editingAccount.usernameUpdatedDeviceName.isEmpty ? "-" : editingAccount.usernameUpdatedDeviceName),
-                            metadataLine("密码", store.displayTime(editingAccount.passwordUpdatedAtMs), editingAccount.passwordUpdatedDeviceName.isEmpty ? "-" : editingAccount.passwordUpdatedDeviceName),
-                            metadataLine("TOTP", store.displayTime(editingAccount.totpUpdatedAtMs), editingAccount.totpUpdatedDeviceName.isEmpty ? "-" : editingAccount.totpUpdatedDeviceName),
-                            metadataLine("恢复码", store.displayTime(editingAccount.recoveryCodesUpdatedAtMs), editingAccount.recoveryCodesUpdatedDeviceName.isEmpty ? "-" : editingAccount.recoveryCodesUpdatedDeviceName),
-                            metadataLine("备注", store.displayTime(editingAccount.noteUpdatedAtMs), editingAccount.noteUpdatedDeviceName.isEmpty ? "-" : editingAccount.noteUpdatedDeviceName),
-                            metadataLine("通行密钥", store.displayTime(editingAccount.passkeyUpdatedAtMs), editingAccount.passkeyUpdatedDeviceName.isEmpty ? "-" : editingAccount.passkeyUpdatedDeviceName)
-                        ].joined(separator: "\n"))
-                            .font(.system(size: store.scaledTextSize(11), weight: .regular, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        metadataRow(
+                            label: "创建时间",
+                            value: store.displayTime(editingAccount.createdAtMs),
+                            device: editingAccount.createdDeviceName.isEmpty ? "-" : editingAccount.createdDeviceName
+                        )
+                        metadataRow(
+                            label: "最后更新时间",
+                            value: store.displayTime(editingAccount.updatedAtMs),
+                            device: editingAccount.lastOperatedDeviceName.isEmpty ? "-" : editingAccount.lastOperatedDeviceName
+                        )
+                        metadataRow(
+                            label: "删除时间",
+                            value: store.displayTime(editingAccount.deletedAtMs),
+                            device: editingAccount.deletedAtMs == nil ? "-" : (editingAccount.deletedDeviceName.isEmpty ? "-" : editingAccount.deletedDeviceName)
+                        )
+                        metadataRow(
+                            label: "用户名",
+                            value: store.displayTime(editingAccount.usernameUpdatedAtMs),
+                            device: editingAccount.usernameUpdatedDeviceName.isEmpty ? "-" : editingAccount.usernameUpdatedDeviceName
+                        )
+                        metadataRow(
+                            label: "密码",
+                            value: store.displayTime(editingAccount.passwordUpdatedAtMs),
+                            device: editingAccount.passwordUpdatedDeviceName.isEmpty ? "-" : editingAccount.passwordUpdatedDeviceName
+                        )
+                        metadataRow(
+                            label: "TOTP",
+                            value: store.displayTime(editingAccount.totpUpdatedAtMs),
+                            device: editingAccount.totpUpdatedDeviceName.isEmpty ? "-" : editingAccount.totpUpdatedDeviceName
+                        )
+                        metadataRow(
+                            label: "恢复码",
+                            value: store.displayTime(editingAccount.recoveryCodesUpdatedAtMs),
+                            device: editingAccount.recoveryCodesUpdatedDeviceName.isEmpty ? "-" : editingAccount.recoveryCodesUpdatedDeviceName
+                        )
+                        metadataRow(
+                            label: "备注",
+                            value: store.displayTime(editingAccount.noteUpdatedAtMs),
+                            device: editingAccount.noteUpdatedDeviceName.isEmpty ? "-" : editingAccount.noteUpdatedDeviceName
+                        )
+                        metadataRow(
+                            label: "通行密钥",
+                            value: store.displayTime(editingAccount.passkeyUpdatedAtMs),
+                            device: editingAccount.passkeyUpdatedDeviceName.isEmpty ? "-" : editingAccount.passkeyUpdatedDeviceName
+                        )
                     }
                     .textSelection(.enabled)
                 }
@@ -1963,6 +1986,25 @@ private struct AccountEditPopup: View {
             }
             return lhs.credentialIdB64u < rhs.credentialIdB64u
         }
+    }
+
+    @ViewBuilder
+    private func metadataRow(label: String, value: String, device: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .frame(width: 92, alignment: .leading)
+            Text(":")
+                .frame(width: 10, alignment: .center)
+            Text(value)
+                .frame(width: 220, alignment: .leading)
+            Text("|")
+                .frame(width: 10, alignment: .center)
+            Text(device)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.system(size: store.scaledTextSize(11), weight: .regular, design: .monospaced))
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
 }
