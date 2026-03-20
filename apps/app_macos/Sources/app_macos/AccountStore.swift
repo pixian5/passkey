@@ -230,7 +230,8 @@ final class AccountStore: ObservableObject {
     static let fixedNewAccountFolderName = "新账号"
     static let fixedNewAccountFolderId = UUID(uuidString: "F16A2C4E-4A2A-43D5-A670-3F1767D41001")!
     static let syncBundleSchemaV2 = "pass.sync.bundle.v2"
-    static let defaultSelfHostedServerBaseURL = "http://127.0.0.1:53333/"
+    static let defaultSelfHostedServerBaseURL = "https://or.sbbz.tech:5443"
+    static let defaultSelfHostedServerAuthToken = "ClzgP2xsXHETVut9F6ddHVRdvvclz0QM0fDHveyOZFhGjs7l"
     private static let maxHistoryEntries = 500
     private static let installedFontFamilies: Set<String> = Set(NSFontManager.shared.availableFontFamilies)
 
@@ -2589,7 +2590,10 @@ final class AccountStore: ObservableObject {
         webdavUsername = defaults.string(forKey: Keys.webdavUsername) ?? ""
         webdavPassword = readSecret(account: SecretKeys.webdavPasswordAccount)
         serverBaseURL = defaults.string(forKey: Keys.serverBaseURL) ?? Self.defaultSelfHostedServerBaseURL
-        serverAuthToken = readSecret(account: SecretKeys.serverTokenAccount)
+        serverAuthToken = {
+            let saved = readSecret(account: SecretKeys.serverTokenAccount)
+            return saved.isEmpty ? Self.defaultSelfHostedServerAuthToken : saved
+        }()
         isLoadingSyncPreferences = false
 
         let foldersDataFromDatabase = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.folders)

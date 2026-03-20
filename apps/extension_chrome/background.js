@@ -36,7 +36,8 @@ const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
 const CONTEXT_MENU_ID_ALL_ACCOUNTS = "pass.context.all_accounts";
 const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
 const FIXED_NEW_ACCOUNT_FOLDER_NAME = "新账号";
-const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "http://127.0.0.1:53333/";
+const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "https://or.sbbz.tech:5443";
+const DEFAULT_SELF_HOSTED_SERVER_TOKEN = "ClzgP2xsXHETVut9F6ddHVRdvvclz0QM0fDHveyOZFhGjs7l";
 const SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
 const SYNC_MODE_MERGE = "merge";
 const AUTO_SYNC_ALARM_NAME = "pass.sync.auto";
@@ -268,7 +269,7 @@ async function buildRemoteSyncTargetsFromStorage() {
     if (!serverBaseUrl) return null;
     const normalizedBase = serverBaseUrl.endsWith("/") ? serverBaseUrl : `${serverBaseUrl}/`;
     const url = new URL("v1/sync/payload", normalizedBase).toString();
-    const token = String(result[STORAGE_KEY_SYNC_SERVER_TOKEN] || "").trim();
+    const token = String(result[STORAGE_KEY_SYNC_SERVER_TOKEN] || DEFAULT_SELF_HOSTED_SERVER_TOKEN).trim();
     const authHeader = token ? `Bearer ${token}` : null;
     targets.push({ label: "服务器", url, authHeader, supportsEtag: true, remoteEtag: null });
   }

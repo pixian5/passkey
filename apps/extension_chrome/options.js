@@ -36,7 +36,8 @@ const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
 const STORAGE_KEY_SYNC_SERVER_TOKEN = "pass.sync.server.token.v2";
 const STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
-const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "http://127.0.0.1:53333/";
+const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "https://or.sbbz.tech:5443";
+const DEFAULT_SELF_HOSTED_SERVER_TOKEN = "ClzgP2xsXHETVut9F6ddHVRdvvclz0QM0fDHveyOZFhGjs7l";
 const SYNC_MODE_MERGE = "merge";
 const SYNC_MODE_REMOTE_OVERWRITE_LOCAL = "remoteOverwriteLocal";
 const SYNC_MODE_LOCAL_OVERWRITE_REMOTE = "localOverwriteRemote";
@@ -403,7 +404,7 @@ async function loadSyncSettings() {
   dom.syncServerBaseUrl.value = String(
     result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL
   );
-  dom.syncServerToken.value = String(result[STORAGE_KEY_SYNC_SERVER_TOKEN] || "");
+  dom.syncServerToken.value = String(result[STORAGE_KEY_SYNC_SERVER_TOKEN] || DEFAULT_SELF_HOSTED_SERVER_TOKEN);
   dom.syncAutoInterval.value = normalizeAutoSyncIntervalMinutes(result[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]);
   renderSyncBackendFields();
 }

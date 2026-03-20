@@ -175,7 +175,7 @@ struct SettingsView: View {
                             HStack(spacing: 8) {
                                 Text("访问令牌")
                                     .frame(width: labelColumnWidth, alignment: .leading)
-                                SecureField("可选（Bearer Token，写入本机 Keychain）", text: $store.serverAuthToken)
+                                SecureField(AccountStore.defaultSelfHostedServerAuthToken, text: $store.serverAuthToken)
                                     .textFieldStyle(.roundedBorder)
                             }
                             Text("服务端接口固定为 /v1/sync/payload，使用 GET/PUT 交换 pass.sync.bundle.v2。")
