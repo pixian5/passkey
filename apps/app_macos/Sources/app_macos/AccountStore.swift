@@ -129,7 +129,7 @@ final class AccountStore: ObservableObject {
             UserDefaults.standard.set(clamped, forKey: Keys.uiButtonFontSize)
         }
     }
-    @Published var uiToastDurationSeconds: Double = 3 {
+    @Published var uiToastDurationSeconds: Double = 5 {
         didSet {
             let clamped = min(max(uiToastDurationSeconds, 1), 10)
             if clamped != uiToastDurationSeconds {
@@ -2742,7 +2742,7 @@ final class AccountStore: ObservableObject {
         uiButtonFontSize = savedButtonFontSize > 0 ? savedButtonFontSize : 20
 
         let savedToastDuration = defaults.double(forKey: Keys.uiToastDurationSeconds)
-        uiToastDurationSeconds = savedToastDuration > 0 ? savedToastDuration : 3
+        uiToastDurationSeconds = savedToastDuration > 0 ? savedToastDuration : 5
 
         passkeys = loadPasskeysFromLocalDisk()
         historyEntries = loadHistoryFromLocalDisk()
