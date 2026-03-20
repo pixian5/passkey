@@ -1902,7 +1902,7 @@ private struct AccountEditPopup: View {
                             metadataLine("备注", store.displayTime(editingAccount.noteUpdatedAtMs), editingAccount.noteUpdatedDeviceName.isEmpty ? "-" : editingAccount.noteUpdatedDeviceName),
                             metadataLine("通行密钥", store.displayTime(editingAccount.passkeyUpdatedAtMs), editingAccount.passkeyUpdatedDeviceName.isEmpty ? "-" : editingAccount.passkeyUpdatedDeviceName)
                         ].joined(separator: "\n"))
-                            .font(store.textFont(size: store.scaledTextSize(11)))
+                            .font(.system(size: store.scaledTextSize(11), weight: .regular, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
