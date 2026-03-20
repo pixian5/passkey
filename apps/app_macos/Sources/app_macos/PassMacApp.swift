@@ -12,6 +12,7 @@ struct PassMacApp: App {
                 .font(store.textFont())
                 .appToast(store)
                 .background(MainWindowCloseTerminator())
+                .background(WindowFrameAutosave(name: "pass.main"))
         }
         .commands {
             PassMacSettingsCommands()
@@ -24,6 +25,7 @@ struct PassMacApp: App {
             SettingsView(store: store, appLock: appLock)
                 .font(store.textFont())
                 .appToast(store)
+                .background(WindowFrameAutosave(name: "pass.settings"))
         }
         .defaultSize(width: 860, height: 620)
         .windowResizability(.automatic)
@@ -32,6 +34,7 @@ struct PassMacApp: App {
             CreateAccountWindowView(store: store)
                 .font(store.textFont())
                 .appToast(store)
+                .background(WindowFrameAutosave(name: "pass.create-account"))
         }
         .defaultSize(width: 760, height: 760)
         .windowResizability(.automatic)
@@ -40,6 +43,7 @@ struct PassMacApp: App {
             HistoryWindowView(store: store, category: .sync)
                 .font(store.textFont())
                 .appToast(store)
+                .background(WindowFrameAutosave(name: "pass.history-sync"))
         }
         .defaultSize(width: 980, height: 720)
         .windowResizability(.automatic)
@@ -48,6 +52,7 @@ struct PassMacApp: App {
             HistoryWindowView(store: store, category: .local)
                 .font(store.textFont())
                 .appToast(store)
+                .background(WindowFrameAutosave(name: "pass.history-local"))
         }
         .defaultSize(width: 980, height: 720)
         .windowResizability(.automatic)
@@ -169,6 +174,42 @@ private struct MainWindowCloseTerminator: NSViewRepresentable {
                     NSApp.terminate(nil)
                 }
             }
+        }
+    }
+}
+
+private struct WindowFrameAutosave: NSViewRepresentable {
+    let name: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            context.coordinator.bindIfNeeded(to: view.window, name: name)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            context.coordinator.bindIfNeeded(to: nsView.window, name: name)
+        }
+    }
+
+    final class Coordinator {
+        private weak var observedWindow: NSWindow?
+        private var appliedName: String = ""
+
+        @MainActor
+        func bindIfNeeded(to window: NSWindow?, name: String) {
+            guard let window else { return }
+            guard observedWindow !== window || appliedName != name else { return }
+            observedWindow = window
+            appliedName = name
+            window.setFrameAutosaveName(name)
         }
     }
 }
