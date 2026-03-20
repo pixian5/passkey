@@ -2188,6 +2188,8 @@ final class AccountStore: ObservableObject {
                 pushErrors.append("服务器: 配置不完整")
                 updateSyncStatusAfterSync(
                     changed: changed,
+                    localPayload: localPayload,
+                    finalPayload: mergedPayload,
                     enabledSourceNames: enabledSourceNames,
                     pushErrors: pushErrors,
                     mode: mode
@@ -2242,6 +2244,8 @@ final class AccountStore: ObservableObject {
                 pushErrors.append("WebDAV: 配置不完整")
                 updateSyncStatusAfterSync(
                     changed: changed,
+                    localPayload: localPayload,
+                    finalPayload: mergedPayload,
                     enabledSourceNames: enabledSourceNames,
                     pushErrors: pushErrors,
                     mode: mode
@@ -2265,6 +2269,8 @@ final class AccountStore: ObservableObject {
 
         updateSyncStatusAfterSync(
             changed: changed,
+            localPayload: localPayload,
+            finalPayload: mergedPayload,
             enabledSourceNames: enabledSourceNames,
             pushErrors: pushErrors,
             mode: mode
@@ -2273,22 +2279,29 @@ final class AccountStore: ObservableObject {
 
     private func updateSyncStatusAfterSync(
         changed: Bool,
+        localPayload: SyncBundlePayload,
+        finalPayload: SyncBundlePayload,
         enabledSourceNames: [String],
         pushErrors: [String],
         mode: SyncMode
     ) {
         let sourceSummary = enabledSourceNames.joined(separator: " + ")
+        let payloadSummary = syncPayloadSummary(before: localPayload, after: finalPayload)
         if pushErrors.isEmpty {
             cloudSyncStatus = changed
-                ? "\(sourceSummary) \(mode.completionVerb): \(displayTime(nowMs()))"
-                : "\(sourceSummary) 已同步: \(displayTime(nowMs()))"
+                ? "\(mode.completionVerb)（\(sourceSummary)）：\(payloadSummary) | \(displayTime(nowMs()))"
+                : "\(mode.label)后无字段变化，已跳过本地写入（\(sourceSummary)）：\(payloadSummary) | \(displayTime(nowMs()))"
             statusMessage = changed
-                ? "已与 \(sourceSummary) \(mode.completionVerb)"
-                : "\(sourceSummary) 已同步"
+                ? "\(sourceSummary) \(mode.completionVerb)：\(payloadSummary)"
+                : "\(sourceSummary) 无字段变化，已跳过本地写入：\(payloadSummary)"
         } else {
-            cloudSyncStatus = "同步部分失败: \(pushErrors.joined(separator: "；"))"
-            statusMessage = "同步完成但部分源失败：\(pushErrors.joined(separator: "；"))"
+            cloudSyncStatus = "同步部分失败（\(sourceSummary)）：\(pushErrors.joined(separator: "；")) | \(payloadSummary)"
+            statusMessage = "同步完成但部分源失败：\(pushErrors.joined(separator: "；")) | \(payloadSummary)"
         }
+    }
+
+    private func syncPayloadSummary(before: SyncBundlePayload, after: SyncBundlePayload) -> String {
+        "账号 \(before.accounts.count)->\(after.accounts.count)，通行密钥 \(before.passkeys.count)->\(after.passkeys.count)，文件夹 \(before.folders.count)->\(after.folders.count)"
     }
 
     private func activeSyncSourceNames() -> [String] {
@@ -3316,11 +3329,12 @@ final class AccountStore: ObservableObject {
             mergedPayload,
             historyTitle: "iCloud 自动合并并更新本地"
         )
+        let payloadSummary = syncPayloadSummary(before: localPayload, after: mergedPayload)
         guard changed else {
             if trigger == "manual" {
-                cloudSyncStatus = "iCloud 已是最新"
+                cloudSyncStatus = "iCloud 合并后无字段变化，已跳过本地写入：\(payloadSummary)"
             } else {
-                cloudSyncStatus = "iCloud 已连接（无新变更）"
+                cloudSyncStatus = "iCloud 已连接（无字段变化，已跳过本地写入）：\(payloadSummary)"
             }
             return false
         }
@@ -3331,7 +3345,7 @@ final class AccountStore: ObservableObject {
             cloudSyncStatus = "iCloud 合并后回写失败: \(error.localizedDescription)"
             return false
         }
-        cloudSyncStatus = "iCloud 已合并同步: \(displayTime(nowMs()))"
+        cloudSyncStatus = "iCloud 已合并同步：\(payloadSummary) | \(displayTime(nowMs()))"
         return true
     }
 
