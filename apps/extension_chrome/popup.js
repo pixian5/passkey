@@ -1345,6 +1345,7 @@ function buildEditor(account) {
   details.innerHTML =
     `通行密钥: ${(account.passkeyCredentialIds || []).length} 个 | 通行密钥更新时间：${formatTime(account.passkeyUpdatedAtMs)}<br/>` +
     `创建: ${formatTime(account.createdAtMs)} | 更新: ${formatTime(account.updatedAtMs)}<br/>` +
+    `最后操作设备: ${String(account.lastOperatedDeviceName || "").trim() || "-"}<br/>` +
     `删除: ${formatTime(account.deletedAtMs)}<br/>` +
     `用户名更新时间：${formatTime(account.usernameUpdatedAtMs)} | 密码更新时间：${formatTime(account.passwordUpdatedAtMs)}<br/>` +
     `TOTP更新时间：${formatTime(account.totpUpdatedAtMs)} | 恢复码更新时间：${formatTime(account.recoveryCodesUpdatedAtMs)} | 备注更新时间：${formatTime(account.noteUpdatedAtMs)}<br/>`;

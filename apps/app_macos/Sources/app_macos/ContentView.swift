@@ -1892,6 +1892,11 @@ private struct AccountEditPopup: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
+                        Text("最后操作设备: \(editingAccount.lastOperatedDeviceName.isEmpty ? "-" : editingAccount.lastOperatedDeviceName)")
+                            .font(store.textFont(size: store.scaledTextSize(11)))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
                         Text("用户名更新时间: \(store.displayTime(editingAccount.usernameUpdatedAtMs)) | 密码更新时间: \(store.displayTime(editingAccount.passwordUpdatedAtMs))")
                             .font(store.textFont(size: store.scaledTextSize(11)))
                             .foregroundStyle(.secondary)

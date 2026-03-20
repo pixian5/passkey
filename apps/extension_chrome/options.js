@@ -400,12 +400,35 @@ async function readBusinessDataFromStore() {
   };
 }
 
+function normalizeSyncPayloadShape(payload) {
+  const accounts = Array.isArray(payload?.accounts)
+    ? payload.accounts.map(normalizeAccountShape)
+    : [];
+  const rawPasskeys = Array.isArray(payload?.passkeys)
+    ? payload.passkeys.map(normalizePasskeyShape)
+    : [];
+  const folders = Array.isArray(payload?.folders)
+    ? payload.folders.map(normalizeFolderShape)
+    : [];
+  return {
+    accounts,
+    passkeys: buildUnifiedPasskeys(accounts, rawPasskeys),
+    folders,
+  };
+}
+
+function syncPayloadEquals(lhs, rhs) {
+  return JSON.stringify(normalizeSyncPayloadShape(lhs)) === JSON.stringify(normalizeSyncPayloadShape(rhs));
+}
+
 async function writeBusinessDataToStore({ accounts, passkeys, folders }) {
-  await setAllDataToDataStore({
-    accounts: Array.isArray(accounts) ? accounts : [],
-    passkeys: Array.isArray(passkeys) ? passkeys : [],
-    folders: Array.isArray(folders) ? folders : [],
-  });
+  const nextPayload = normalizeSyncPayloadShape({ accounts, passkeys, folders });
+  const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+  if (syncPayloadEquals(currentPayload, nextPayload)) {
+    return false;
+  }
+  await setAllDataToDataStore(nextPayload);
+  return true;
 }
 
 async function loadHistory() {
@@ -3468,6 +3491,7 @@ function buildAccountEditor(account) {
   details.className = "meta";
   details.innerHTML =
     `创建: ${formatTime(account.createdAtMs)} | 更新: ${formatTime(account.updatedAtMs)}<br/>` +
+    `最后操作设备: ${String(account.lastOperatedDeviceName || "").trim() || "-"}<br/>` +
     `删除: ${formatTime(account.deletedAtMs)}<br/>`;
   editor.appendChild(details);
 

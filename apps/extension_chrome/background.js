@@ -228,12 +228,35 @@ async function readBusinessDataFromStore() {
   };
 }
 
+function normalizeSyncPayloadShape(payload) {
+  const accounts = Array.isArray(payload?.accounts)
+    ? payload.accounts.map(normalizeAccountShape)
+    : [];
+  const rawPasskeys = Array.isArray(payload?.passkeys)
+    ? payload.passkeys.map(normalizePasskeyShape)
+    : [];
+  const folders = Array.isArray(payload?.folders)
+    ? payload.folders.map(normalizeFolderShape)
+    : [];
+  return {
+    accounts,
+    passkeys: buildUnifiedPasskeys(accounts, rawPasskeys),
+    folders,
+  };
+}
+
+function syncPayloadEquals(lhs, rhs) {
+  return JSON.stringify(normalizeSyncPayloadShape(lhs)) === JSON.stringify(normalizeSyncPayloadShape(rhs));
+}
+
 async function writeBusinessDataToStore({ accounts, passkeys, folders }) {
-  await setAllDataToDataStore({
-    accounts: Array.isArray(accounts) ? accounts : [],
-    passkeys: Array.isArray(passkeys) ? passkeys : [],
-    folders: Array.isArray(folders) ? folders : [],
-  });
+  const nextPayload = normalizeSyncPayloadShape({ accounts, passkeys, folders });
+  const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+  if (syncPayloadEquals(currentPayload, nextPayload)) {
+    return false;
+  }
+  await setAllDataToDataStore(nextPayload);
+  return true;
 }
 
 async function buildRemoteSyncTargetsFromStorage() {
