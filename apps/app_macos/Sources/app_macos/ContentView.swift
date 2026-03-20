@@ -1889,7 +1889,7 @@ private struct AccountEditPopup: View {
                             device: editingAccount.createdDeviceName.isEmpty ? "-" : editingAccount.createdDeviceName
                         )
                         metadataRow(
-                            label: "最后更新时间",
+                            label: "最后更新",
                             value: store.displayTime(editingAccount.updatedAtMs),
                             device: editingAccount.lastOperatedDeviceName.isEmpty ? "-" : editingAccount.lastOperatedDeviceName
                         )
