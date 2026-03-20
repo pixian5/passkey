@@ -183,7 +183,11 @@ async function init() {
     if (!shouldContinue) return;
     await syncNowWithRemote(SYNC_MODE_REMOTE_OVERWRITE_LOCAL);
   });
-  dom.syncLocalOverwriteRemoteBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_LOCAL_OVERWRITE_REMOTE));
+  dom.syncLocalOverwriteRemoteBtn.addEventListener("click", async () => {
+    const shouldContinue = await confirmLocalOverwriteRemoteIfNeeded();
+    if (!shouldContinue) return;
+    await syncNowWithRemote(SYNC_MODE_LOCAL_OVERWRITE_REMOTE);
+  });
   dom.deviceName.addEventListener("input", () => {
     scheduleDeviceNameSave();
   });
@@ -1269,6 +1273,18 @@ async function confirmRemoteOverwriteLocalIfNeeded() {
   }
   messages.push("确定仍要继续执行“云端覆盖本地”吗？");
   return window.confirm(messages.join("\n\n"));
+}
+
+async function confirmLocalOverwriteRemoteIfNeeded() {
+  const localStored = await readBusinessDataFromStore();
+  const localAccounts = Array.isArray(localStored.accounts) ? localStored.accounts : [];
+  const localPasskeys = Array.isArray(localStored.passkeys) ? localStored.passkeys : [];
+  const localFolders = Array.isArray(localStored.folders) ? localStored.folders : [];
+  const isEmpty = localAccounts.length === 0 && localPasskeys.length === 0 && localFolders.length === 0;
+  if (!isEmpty) {
+    return true;
+  }
+  return window.confirm("本地数据当前为空。\n\n继续执行“本地覆盖云端”会把所有已启用远端同步源覆盖成空数据。\n\n确定继续吗？");
 }
 
 function buildRemoteSyncTargetsFromDom() {

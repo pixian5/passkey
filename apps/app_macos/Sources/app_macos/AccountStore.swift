@@ -2384,6 +2384,11 @@ final class AccountStore: ObservableObject {
         )
     }
 
+    func isCurrentLocalPayloadEmpty() -> Bool {
+        let payload = buildCurrentSyncPayload()
+        return payload.accounts.isEmpty && payload.folders.isEmpty && payload.passkeys.isEmpty
+    }
+
     private func emptySyncPayload() -> SyncBundlePayload {
         SyncBundlePayload(accounts: [], folders: [], passkeys: [])
     }

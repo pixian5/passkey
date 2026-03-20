@@ -124,7 +124,7 @@ struct SettingsView: View {
                                     .buttonStyle(.bordered)
 
                                     Button("本地覆盖云端") {
-                                        store.syncNow(modeOverride: .localOverwriteRemote)
+                                        confirmLocalOverwriteRemote()
                                     }
                                     .font(store.buttonFont())
                                     .buttonStyle(.bordered)
@@ -410,6 +410,21 @@ struct SettingsView: View {
         alert.addButton(withTitle: "继续")
         alert.addButton(withTitle: "取消")
         return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func confirmLocalOverwriteRemote() {
+        if store.isCurrentLocalPayloadEmpty() {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "本地数据当前为空"
+            alert.informativeText = "继续执行“本地覆盖云端”会把所有已启用远端同步源覆盖成空数据。确定继续吗？"
+            alert.addButton(withTitle: "继续")
+            alert.addButton(withTitle: "取消")
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                return
+            }
+        }
+        store.syncNow(modeOverride: .localOverwriteRemote)
     }
 
     @ViewBuilder
