@@ -740,18 +740,24 @@ final class AccountStore: ObservableObject {
     }
 
     func keepOnlyDuplicateAccount(inFolder folderId: UUID, accountIdToKeep: UUID) {
-        guard duplicateAccountGroups(inFolder: folderId).contains(where: { group in
+        guard let targetGroup = duplicateAccountGroups(inFolder: folderId).first(where: { group in
             group.accounts.contains(where: { $0.id == accountIdToKeep })
         }) else {
             statusMessage = "当前文件夹里未找到可去重分组"
             return
         }
 
-        performFolderDuplicateKeep(
-            inFolder: folderId,
-            keepAccountIds: [accountIdToKeep],
-            keptGroupCount: 1,
-            operationLabel: "仅保留 1 个账号"
+        let targetIds = Set(targetGroup.accounts.map(\.id)).subtracting([accountIdToKeep])
+        guard !targetIds.isEmpty else {
+            statusMessage = "当前分组无需处理"
+            return
+        }
+
+        let folderTitle = folderName(for: folderId)
+        moveAccountsToRecycleBin(
+            accountIds: targetIds,
+            historyTitle: "文件夹去重：\(folderTitle) · 仅保留此账号",
+            statusMessage: "文件夹去重完成：\(folderTitle)，当前分组已移入回收站 \(targetIds.count) 个重复账号，保留 1 个账号"
         )
     }
 
