@@ -3465,9 +3465,6 @@ async function deleteAccountFromAll(accountId) {
 
   const target = next[index];
   if (target.isDeleted) {
-    const confirmed = window.confirm(`将永久删除账号：${target.accountId}\n此操作不可恢复，是否继续？`);
-    if (!confirmed) return;
-
     next.splice(index, 1);
     if (editingAccountId === target.accountId) {
       editingAccountId = null;
@@ -3478,9 +3475,6 @@ async function deleteAccountFromAll(accountId) {
     setStatus(`已永久删除账号: ${target.accountId}`);
     return;
   }
-
-  const confirmed = window.confirm(`将把账号移入回收站：${target.accountId}\n是否继续？`);
-  if (!confirmed) return;
 
   const now = Date.now();
   const deviceName = await getDeviceName();
@@ -3541,9 +3535,6 @@ async function permanentlyDeleteAccount(accountId) {
     setStatus("仅支持在回收站中永久删除");
     return;
   }
-
-  const confirmed = window.confirm(`将永久删除账号：${target.accountId}\n此操作不可恢复，是否继续？`);
-  if (!confirmed) return;
 
   next.splice(index, 1);
   if (editingAccountId === target.accountId) {
