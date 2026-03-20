@@ -63,7 +63,6 @@ const OPTIONS_TOAST_DURATION_MS = 3000;
 
 const dom = {
   deviceName: document.getElementById("deviceName"),
-  saveDeviceNameBtn: document.getElementById("saveDeviceName"),
   syncEnableWebdav: document.getElementById("syncEnableWebdav"),
   syncEnableServer: document.getElementById("syncEnableServer"),
   syncMergeBtn: document.getElementById("syncMergeBtn"),
@@ -79,7 +78,6 @@ const dom = {
   syncServerToken: document.getElementById("syncServerToken"),
   syncAutoInterval: document.getElementById("syncAutoInterval"),
   syncAutoStatus: document.getElementById("syncAutoStatus"),
-  saveSyncSettingsBtn: document.getElementById("saveSyncSettings"),
   deviceStatus: document.getElementById("deviceStatus"),
   lockEnabled: document.getElementById("lockEnabled"),
   lockAdvancedFields: document.getElementById("lockAdvancedFields"),
@@ -90,7 +88,6 @@ const dom = {
   lockIdleMinutes: document.getElementById("lockIdleMinutes"),
   lockMasterPassword: document.getElementById("lockMasterPassword"),
   lockMasterPasswordConfirm: document.getElementById("lockMasterPasswordConfirm"),
-  saveLockSettingsBtn: document.getElementById("saveLockSettings"),
   lockCredentialHint: document.getElementById("lockCredentialHint"),
   allAccountsCount: document.getElementById("allAccountsCount"),
   passkeyAccountsCount: document.getElementById("passkeyAccountsCount"),
@@ -162,6 +159,9 @@ let sortModalDraggingAccountId = "";
 let historyEntries = [];
 let optionsToastTimer = null;
 let addSitesTargetFolderId = null;
+let deviceNameSaveTimer = null;
+let syncSettingsSaveTimer = null;
+let lockSettingsSaveTimer = null;
 
 const AUTO_SYNC_INTERVAL_OPTIONS = new Set(["0", "1", "3", "5", "10", "15", "30", "60"]);
 
@@ -177,11 +177,15 @@ async function init() {
   await refresh();
   startTotpRefreshTicker();
 
-  dom.saveDeviceNameBtn.addEventListener("click", saveDeviceName);
-  dom.saveSyncSettingsBtn.addEventListener("click", saveSyncSettings);
   dom.syncMergeBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE));
   dom.syncRemoteOverwriteLocalBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_REMOTE_OVERWRITE_LOCAL));
   dom.syncLocalOverwriteRemoteBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_LOCAL_OVERWRITE_REMOTE));
+  dom.deviceName.addEventListener("input", () => {
+    scheduleDeviceNameSave();
+  });
+  dom.deviceName.addEventListener("change", () => {
+    void saveDeviceName({ showStatus: false });
+  });
   dom.syncEnableWebdav.addEventListener("change", () => {
     renderSyncBackendFields();
     void persistSyncSettings({ showStatus: false });
@@ -194,17 +198,40 @@ async function init() {
     renderAutoSyncStatus();
     void persistSyncSettings({ showStatus: false });
   });
+  dom.syncWebdavBaseUrl.addEventListener("input", scheduleSyncSettingsSave);
+  dom.syncWebdavPath.addEventListener("input", scheduleSyncSettingsSave);
+  dom.syncWebdavUsername.addEventListener("input", scheduleSyncSettingsSave);
+  dom.syncWebdavPassword.addEventListener("input", scheduleSyncSettingsSave);
+  dom.syncServerBaseUrl.addEventListener("input", scheduleSyncSettingsSave);
+  dom.syncServerToken.addEventListener("input", scheduleSyncSettingsSave);
   dom.syncWebdavBaseUrl.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.syncWebdavPath.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.syncWebdavUsername.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.syncWebdavPassword.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.syncServerBaseUrl.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.syncServerToken.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
-  dom.lockEnabled.addEventListener("change", renderLockSettingsFields);
-  dom.lockPolicyOnceRadio.addEventListener("change", renderLockSettingsFields);
-  dom.lockPolicyIdleRadio.addEventListener("change", renderLockSettingsFields);
-  dom.lockPolicyBackgroundRadio.addEventListener("change", renderLockSettingsFields);
-  dom.saveLockSettingsBtn.addEventListener("click", saveLockSettings);
+  dom.lockEnabled.addEventListener("change", () => {
+    renderLockSettingsFields();
+    void saveLockSettings({ showStatus: false });
+  });
+  dom.lockPolicyOnceRadio.addEventListener("change", () => {
+    renderLockSettingsFields();
+    void saveLockSettings({ showStatus: false });
+  });
+  dom.lockPolicyIdleRadio.addEventListener("change", () => {
+    renderLockSettingsFields();
+    void saveLockSettings({ showStatus: false });
+  });
+  dom.lockPolicyBackgroundRadio.addEventListener("change", () => {
+    renderLockSettingsFields();
+    void saveLockSettings({ showStatus: false });
+  });
+  dom.lockIdleMinutes.addEventListener("input", scheduleLockSettingsSave);
+  dom.lockIdleMinutes.addEventListener("change", () => void saveLockSettings({ showStatus: false }));
+  dom.lockMasterPassword.addEventListener("input", scheduleLockSettingsSave);
+  dom.lockMasterPasswordConfirm.addEventListener("input", scheduleLockSettingsSave);
+  dom.lockMasterPassword.addEventListener("change", () => void saveLockSettings({ showStatus: false }));
+  dom.lockMasterPasswordConfirm.addEventListener("change", () => void saveLockSettings({ showStatus: false }));
   dom.createFolderBtn.addEventListener("click", createFolderFromPrompt);
   dom.accountsFolderList.addEventListener("contextmenu", (event) => {
     if (event.target.closest(".account-view-tab")) return;
@@ -321,14 +348,39 @@ async function loadDeviceName() {
   dom.deviceName.value = String(result[STORAGE_KEY_DEVICE_NAME] || "ChromeMac");
 }
 
-async function saveDeviceName() {
+function scheduleDeviceNameSave() {
+  window.clearTimeout(deviceNameSaveTimer);
+  deviceNameSaveTimer = window.setTimeout(() => {
+    void saveDeviceName({ showStatus: false });
+  }, 250);
+}
+
+function scheduleSyncSettingsSave() {
+  window.clearTimeout(syncSettingsSaveTimer);
+  syncSettingsSaveTimer = window.setTimeout(() => {
+    void persistSyncSettings({ showStatus: false });
+  }, 250);
+}
+
+function scheduleLockSettingsSave() {
+  window.clearTimeout(lockSettingsSaveTimer);
+  lockSettingsSaveTimer = window.setTimeout(() => {
+    void saveLockSettings({ showStatus: false });
+  }, 350);
+}
+
+async function saveDeviceName({ showStatus = true } = {}) {
   const next = String(dom.deviceName.value || "").trim();
   if (!next) {
-    setDeviceStatus("设备名称不能为空");
+    if (showStatus) {
+      setDeviceStatus("设备名称不能为空");
+    }
     return;
   }
   await chrome.storage.local.set({ [STORAGE_KEY_DEVICE_NAME]: next });
-  setDeviceStatus(`设备名称已保存为 ${next}`);
+  if (showStatus) {
+    setDeviceStatus(`设备名称已保存为 ${next}`);
+  }
 }
 
 async function readBusinessDataFromStore() {
@@ -491,7 +543,7 @@ function setLockPolicySelection(policy) {
   dom.lockPolicyBackgroundRadio.checked = normalized === LOCK_POLICY_ON_BACKGROUND;
 }
 
-async function saveLockSettings() {
+async function saveLockSettings({ showStatus = true } = {}) {
   const lockEnabled = Boolean(dom.lockEnabled.checked);
   const policy = getSelectedLockPolicy();
   const idleMinutes = clampLockIdleMinutes(dom.lockIdleMinutes.value);
@@ -506,17 +558,23 @@ async function saveLockSettings() {
     const shouldSetOrUpdatePassword = !existingCredential || password || confirm;
     if (shouldSetOrUpdatePassword) {
       if (!password) {
-        setDeviceStatus("主密码不能为空");
+        if (showStatus) {
+          setDeviceStatus("主密码不能为空");
+        }
         return;
       }
       if (password !== confirm) {
-        setDeviceStatus("两次输入的主密码不一致");
+        if (showStatus) {
+          setDeviceStatus("两次输入的主密码不一致");
+        }
         return;
       }
       nextCredential = await createLockMasterCredential(password);
     }
     if (!nextCredential) {
-      setDeviceStatus("缺少主密码，无法启用解锁");
+      if (showStatus) {
+        setDeviceStatus("缺少主密码，无法启用解锁");
+      }
       return;
     }
   } else if (existingCredential) {
@@ -528,14 +586,18 @@ async function saveLockSettings() {
     if (!disablePassword) {
       dom.lockEnabled.checked = true;
       renderLockSettingsFields();
-      setDeviceStatus("未输入当前主密码，已取消关闭");
+      if (showStatus) {
+        setDeviceStatus("未输入当前主密码，已取消关闭");
+      }
       return;
     }
     const verified = await verifyLockMasterPassword(existingCredential, disablePassword);
     if (!verified) {
       dom.lockEnabled.checked = true;
       renderLockSettingsFields();
-      setDeviceStatus("当前主密码错误，无法关闭解锁");
+      if (showStatus) {
+        setDeviceStatus("当前主密码错误，无法关闭解锁");
+      }
       return;
     }
   }
@@ -553,6 +615,9 @@ async function saveLockSettings() {
   dom.lockCredentialHint.textContent = lockCredentialExists ? "已设置主密码" : "";
   renderLockSettingsFields();
 
+  if (!showStatus) {
+    return;
+  }
   if (!lockEnabled) {
     setDeviceStatus("主密码锁已关闭");
     return;
@@ -3290,26 +3355,6 @@ function isMultilineInputTarget(target) {
 function findDefaultActionButtonForOptions(target) {
   if (!dom.addSitesToFolderModal.classList.contains("hidden")) {
     return dom.confirmAddSitesToFolderBtn;
-  }
-  if (target === dom.deviceName) {
-    return dom.saveDeviceNameBtn;
-  }
-  if (
-    target === dom.syncWebdavBaseUrl
-    || target === dom.syncWebdavPath
-    || target === dom.syncWebdavUsername
-    || target === dom.syncWebdavPassword
-    || target === dom.syncServerBaseUrl
-    || target === dom.syncServerToken
-  ) {
-    return dom.saveSyncSettingsBtn;
-  }
-  if (
-    target === dom.lockMasterPassword
-    || target === dom.lockMasterPasswordConfirm
-    || target === dom.lockIdleMinutes
-  ) {
-    return dom.saveLockSettingsBtn;
   }
   return null;
 }
