@@ -2289,19 +2289,23 @@ final class AccountStore: ObservableObject {
         let payloadSummary = syncPayloadSummary(before: localPayload, after: finalPayload)
         if pushErrors.isEmpty {
             cloudSyncStatus = changed
-                ? "\(mode.completionVerb)（\(sourceSummary)）：\(payloadSummary) | \(displayTime(nowMs()))"
-                : "\(mode.label)后无字段变化，已跳过本地写入（\(sourceSummary)）：\(payloadSummary) | \(displayTime(nowMs()))"
+                ? "\(mode.completionVerb)（\(sourceSummary)）\n\(payloadSummary)\n时间：\(displayTime(nowMs()))"
+                : "\(mode.label)后无字段变化，已跳过本地写入（\(sourceSummary)）\n\(payloadSummary)\n时间：\(displayTime(nowMs()))"
             statusMessage = changed
-                ? "\(sourceSummary) \(mode.completionVerb)：\(payloadSummary)"
-                : "\(sourceSummary) 无字段变化，已跳过本地写入：\(payloadSummary)"
+                ? "\(sourceSummary) \(mode.completionVerb)\n\(payloadSummary)"
+                : "\(sourceSummary) 无字段变化，已跳过本地写入\n\(payloadSummary)"
         } else {
-            cloudSyncStatus = "同步部分失败（\(sourceSummary)）：\(pushErrors.joined(separator: "；")) | \(payloadSummary)"
-            statusMessage = "同步完成但部分源失败：\(pushErrors.joined(separator: "；")) | \(payloadSummary)"
+            cloudSyncStatus = "同步部分失败（\(sourceSummary)）\n\(pushErrors.joined(separator: "；"))\n\(payloadSummary)"
+            statusMessage = "同步完成但部分源失败\n\(pushErrors.joined(separator: "；"))\n\(payloadSummary)"
         }
     }
 
     private func syncPayloadSummary(before: SyncBundlePayload, after: SyncBundlePayload) -> String {
-        "账号 \(before.accounts.count)->\(after.accounts.count)，通行密钥 \(before.passkeys.count)->\(after.passkeys.count)，文件夹 \(before.folders.count)->\(after.folders.count)"
+        [
+            "账号 \(before.accounts.count)->\(after.accounts.count)",
+            "通行密钥 \(before.passkeys.count)->\(after.passkeys.count)",
+            "文件夹 \(before.folders.count)->\(after.folders.count)"
+        ].joined(separator: "\n")
     }
 
     private func activeSyncSourceNames() -> [String] {
@@ -3332,9 +3336,9 @@ final class AccountStore: ObservableObject {
         let payloadSummary = syncPayloadSummary(before: localPayload, after: mergedPayload)
         guard changed else {
             if trigger == "manual" {
-                cloudSyncStatus = "iCloud 合并后无字段变化，已跳过本地写入：\(payloadSummary)"
+                cloudSyncStatus = "iCloud 合并后无字段变化，已跳过本地写入\n\(payloadSummary)"
             } else {
-                cloudSyncStatus = "iCloud 已连接（无字段变化，已跳过本地写入）：\(payloadSummary)"
+                cloudSyncStatus = "iCloud 已连接（无字段变化，已跳过本地写入）\n\(payloadSummary)"
             }
             return false
         }
@@ -3345,7 +3349,7 @@ final class AccountStore: ObservableObject {
             cloudSyncStatus = "iCloud 合并后回写失败: \(error.localizedDescription)"
             return false
         }
-        cloudSyncStatus = "iCloud 已合并同步：\(payloadSummary) | \(displayTime(nowMs()))"
+        cloudSyncStatus = "iCloud 已合并同步\n\(payloadSummary)\n时间：\(displayTime(nowMs()))"
         return true
     }
 
