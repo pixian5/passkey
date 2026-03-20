@@ -11,6 +11,7 @@ struct PassMacApp: App {
             AppLockGateView(store: store, appLock: appLock)
                 .font(store.textFont())
                 .appToast(store)
+                .background(MainWindowCloseTerminator())
         }
         .commands {
             PassMacSettingsCommands()
@@ -119,6 +120,54 @@ private struct PassMacHistoryCommands: Commands {
 
             Button(HistoryEntryCategory.local.menuTitle) {
                 openWindow(id: "history-local")
+            }
+        }
+    }
+}
+
+private struct MainWindowCloseTerminator: NSViewRepresentable {
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            context.coordinator.bindIfNeeded(to: view.window)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            context.coordinator.bindIfNeeded(to: nsView.window)
+        }
+    }
+
+    final class Coordinator {
+        private weak var observedWindow: NSWindow?
+        private var closeObserver: NSObjectProtocol?
+
+        deinit {
+            if let closeObserver {
+                NotificationCenter.default.removeObserver(closeObserver)
+            }
+        }
+
+        func bindIfNeeded(to window: NSWindow?) {
+            guard let window, observedWindow !== window else { return }
+            observedWindow = window
+            if let closeObserver {
+                NotificationCenter.default.removeObserver(closeObserver)
+            }
+            closeObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: window,
+                queue: .main
+            ) { _ in
+                Task { @MainActor in
+                    NSApp.terminate(nil)
+                }
             }
         }
     }

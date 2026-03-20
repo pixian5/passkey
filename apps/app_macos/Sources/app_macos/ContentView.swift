@@ -1739,6 +1739,7 @@ private struct AccountEditPopup: View {
                     .font(store.textFont(size: store.scaledTextSize(17), weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .help(accountLevelHelpText)
                 Spacer()
                 Button("历史记录") {
                     showHistoryPopup = true
@@ -1765,6 +1766,7 @@ private struct AccountEditPopup: View {
                         Text("站点别名（每行一个站点，共用同一套账号密码）")
                             .font(store.textFont(size: store.scaledTextSize(11)))
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .help(accountLevelHelpText)
                         TextEditor(text: $store.editSitesText)
                             .font(store.textFont(size: store.scaledTextSize(17)))
                             .frame(minHeight: 84, maxHeight: 130)
@@ -1777,6 +1779,7 @@ private struct AccountEditPopup: View {
                     HStack {
                         Text("用户名")
                             .frame(width: 80, alignment: .leading)
+                            .help(fieldHelpText(editingAccount.usernameUpdatedAtMs, editingAccount.usernameUpdatedDeviceName))
                         TextField("用户名", text: $store.editUsername)
                             .textFieldStyle(.roundedBorder)
                             .frame(maxWidth: .infinity)
@@ -1786,6 +1789,7 @@ private struct AccountEditPopup: View {
                     HStack {
                         Text("密码")
                             .frame(width: 80, alignment: .leading)
+                            .help(fieldHelpText(editingAccount.passwordUpdatedAtMs, editingAccount.passwordUpdatedDeviceName))
                         TextField("密码", text: $store.editPassword)
                             .textFieldStyle(.roundedBorder)
                             .frame(maxWidth: .infinity)
@@ -1796,6 +1800,7 @@ private struct AccountEditPopup: View {
                         HStack {
                             Text("TOTP")
                                 .frame(width: 80, alignment: .leading)
+                                .help(fieldHelpText(editingAccount.totpUpdatedAtMs, editingAccount.totpUpdatedDeviceName))
                             TextField("TOTP 种子密钥", text: $store.editTotpSecret)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(maxWidth: .infinity)
@@ -1831,6 +1836,7 @@ private struct AccountEditPopup: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("恢复码")
                             .frame(width: 80, alignment: .leading)
+                            .help(fieldHelpText(editingAccount.recoveryCodesUpdatedAtMs, editingAccount.recoveryCodesUpdatedDeviceName))
                         TextEditor(text: $store.editRecoveryCodes)
                             .font(store.textFont(size: store.scaledTextSize(17)))
                             .frame(minHeight: 84, maxHeight: 120)
@@ -1843,6 +1849,7 @@ private struct AccountEditPopup: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("备注")
                             .frame(width: 80, alignment: .leading)
+                            .help(fieldHelpText(editingAccount.noteUpdatedAtMs, editingAccount.noteUpdatedDeviceName))
                         TextEditor(text: $store.editNote)
                             .font(store.textFont(size: store.scaledTextSize(17)))
                             .frame(minHeight: 100, maxHeight: 150)
@@ -1986,6 +1993,14 @@ private struct AccountEditPopup: View {
             }
             return lhs.credentialIdB64u < rhs.credentialIdB64u
         }
+    }
+
+    private var accountLevelHelpText: String {
+        fieldHelpText(editingAccount.updatedAtMs, editingAccount.lastOperatedDeviceName)
+    }
+
+    private func fieldHelpText(_ updatedAtMs: Int64?, _ deviceName: String) -> String {
+        "更新时间: \(store.displayTime(updatedAtMs))\n设备: \(deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "-" : deviceName)"
     }
 
     @ViewBuilder
