@@ -1897,12 +1897,32 @@ private struct AccountEditPopup: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
-                        Text("用户名更新时间: \(store.displayTime(editingAccount.usernameUpdatedAtMs)) | 密码更新时间: \(store.displayTime(editingAccount.passwordUpdatedAtMs))")
+                        Text("用户名: \(store.displayTime(editingAccount.usernameUpdatedAtMs)) | \(editingAccount.usernameUpdatedDeviceName.isEmpty ? "-" : editingAccount.usernameUpdatedDeviceName)")
                             .font(store.textFont(size: store.scaledTextSize(11)))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
-                        Text("TOTP 更新时间: \(store.displayTime(editingAccount.totpUpdatedAtMs)) | 恢复码更新时间: \(store.displayTime(editingAccount.recoveryCodesUpdatedAtMs)) | 备注更新时间: \(store.displayTime(editingAccount.noteUpdatedAtMs))")
+                        Text("密码: \(store.displayTime(editingAccount.passwordUpdatedAtMs)) | \(editingAccount.passwordUpdatedDeviceName.isEmpty ? "-" : editingAccount.passwordUpdatedDeviceName)")
+                            .font(store.textFont(size: store.scaledTextSize(11)))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("TOTP: \(store.displayTime(editingAccount.totpUpdatedAtMs)) | \(editingAccount.totpUpdatedDeviceName.isEmpty ? "-" : editingAccount.totpUpdatedDeviceName)")
+                            .font(store.textFont(size: store.scaledTextSize(11)))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("恢复码: \(store.displayTime(editingAccount.recoveryCodesUpdatedAtMs)) | \(editingAccount.recoveryCodesUpdatedDeviceName.isEmpty ? "-" : editingAccount.recoveryCodesUpdatedDeviceName)")
+                            .font(store.textFont(size: store.scaledTextSize(11)))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("备注: \(store.displayTime(editingAccount.noteUpdatedAtMs)) | \(editingAccount.noteUpdatedDeviceName.isEmpty ? "-" : editingAccount.noteUpdatedDeviceName)")
+                            .font(store.textFont(size: store.scaledTextSize(11)))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text("通行密钥: \(store.displayTime(editingAccount.passkeyUpdatedAtMs)) | \(editingAccount.passkeyUpdatedDeviceName.isEmpty ? "-" : editingAccount.passkeyUpdatedDeviceName)")
                             .font(store.textFont(size: store.scaledTextSize(11)))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)

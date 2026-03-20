@@ -931,8 +931,11 @@ async function importBrowserPasswordCsv() {
       createdAtMs,
       updatedAtMs: createdAtMs,
       usernameUpdatedAtMs: createdAtMs,
+      usernameUpdatedDeviceName: currentImportDeviceName(),
       passwordUpdatedAtMs: createdAtMs,
+      passwordUpdatedDeviceName: currentImportDeviceName(),
       noteUpdatedAtMs: entry.note ? createdAtMs : 0,
+      noteUpdatedDeviceName: currentImportDeviceName(),
       lastOperatedDeviceName: currentImportDeviceName(),
       isDeleted: false,
       deletedAtMs: null,
@@ -1080,8 +1083,11 @@ async function importGoogleAuthenticatorMigration(migration, folderPlan = null) 
       createdAtMs,
       updatedAtMs: createdAtMs,
       usernameUpdatedAtMs: createdAtMs,
+      usernameUpdatedDeviceName: currentImportDeviceName(),
       passwordUpdatedAtMs: createdAtMs,
+      passwordUpdatedDeviceName: currentImportDeviceName(),
       totpUpdatedAtMs: createdAtMs,
+      totpUpdatedDeviceName: currentImportDeviceName(),
       lastOperatedDeviceName: currentImportDeviceName(),
       isDeleted: false,
       deletedAtMs: null,
@@ -3492,7 +3498,13 @@ function buildAccountEditor(account) {
   details.innerHTML =
     `创建: ${formatTime(account.createdAtMs)} | 更新: ${formatTime(account.updatedAtMs)}<br/>` +
     `最后操作设备: ${String(account.lastOperatedDeviceName || "").trim() || "-"}<br/>` +
-    `删除: ${formatTime(account.deletedAtMs)}<br/>`;
+    `删除: ${formatTime(account.deletedAtMs)}<br/>` +
+    `用户名：${formatTime(account.usernameUpdatedAtMs)} | ${String(account.usernameUpdatedDeviceName || "").trim() || "-"}<br/>` +
+    `密码：${formatTime(account.passwordUpdatedAtMs)} | ${String(account.passwordUpdatedDeviceName || "").trim() || "-"}<br/>` +
+    `TOTP：${formatTime(account.totpUpdatedAtMs)} | ${String(account.totpUpdatedDeviceName || "").trim() || "-"}<br/>` +
+    `恢复码：${formatTime(account.recoveryCodesUpdatedAtMs)} | ${String(account.recoveryCodesUpdatedDeviceName || "").trim() || "-"}<br/>` +
+    `备注：${formatTime(account.noteUpdatedAtMs)} | ${String(account.noteUpdatedDeviceName || "").trim() || "-"}<br/>` +
+    `通行密钥：${formatTime(account.passkeyUpdatedAtMs)} | ${String(account.passkeyUpdatedDeviceName || "").trim() || "-"}<br/>`;
   editor.appendChild(details);
 
   const actions = document.createElement("div");
@@ -3549,6 +3561,7 @@ async function saveAccountEdit(accountId, draft) {
   if (nextUsername && nextUsername !== String(target.username || "")) {
     target.username = nextUsername;
     target.usernameUpdatedAtMs = now;
+    target.usernameUpdatedDeviceName = deviceName;
     changed = true;
     historyMessages.push(`用户名改为${historyValueSnippet(nextUsername)}`);
   }
@@ -3556,6 +3569,7 @@ async function saveAccountEdit(accountId, draft) {
   if (String(draft.password || "") !== String(target.password || "")) {
     target.password = String(draft.password || "");
     target.passwordUpdatedAtMs = now;
+    target.passwordUpdatedDeviceName = deviceName;
     changed = true;
     historyMessages.push(`密码改为${historyValueSnippet(draft.password)}`);
   }
@@ -3569,6 +3583,7 @@ async function saveAccountEdit(accountId, draft) {
   if (nextTotpSecret !== normalizeTotpSecret(String(target.totpSecret || ""))) {
     target.totpSecret = nextTotpSecret;
     target.totpUpdatedAtMs = now;
+    target.totpUpdatedDeviceName = deviceName;
     changed = true;
     historyMessages.push(`TOTP 改为${historyValueSnippet(nextTotpSecret)}`);
   }
@@ -3576,6 +3591,7 @@ async function saveAccountEdit(accountId, draft) {
   if (String(draft.recoveryCodes || "") !== String(target.recoveryCodes || "")) {
     target.recoveryCodes = String(draft.recoveryCodes || "");
     target.recoveryCodesUpdatedAtMs = now;
+    target.recoveryCodesUpdatedDeviceName = deviceName;
     changed = true;
     historyMessages.push(`恢复码改为${historyValueSnippet(draft.recoveryCodes)}`);
   }
@@ -3583,6 +3599,7 @@ async function saveAccountEdit(accountId, draft) {
   if (String(draft.note || "") !== String(target.note || "")) {
     target.note = String(draft.note || "");
     target.noteUpdatedAtMs = now;
+    target.noteUpdatedDeviceName = deviceName;
     changed = true;
     historyMessages.push(`备注改为${historyValueSnippet(draft.note)}`);
   }
@@ -3903,11 +3920,17 @@ function normalizeAccountShape(account) {
     note: String(account?.note || ""),
     passkeyCredentialIds,
     usernameUpdatedAtMs: Number(account?.usernameUpdatedAtMs || createdAtMs),
+    usernameUpdatedDeviceName: String(account?.usernameUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
     passwordUpdatedAtMs: Number(account?.passwordUpdatedAtMs || createdAtMs),
+    passwordUpdatedDeviceName: String(account?.passwordUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
     totpUpdatedAtMs: Number(account?.totpUpdatedAtMs || createdAtMs),
+    totpUpdatedDeviceName: String(account?.totpUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
     recoveryCodesUpdatedAtMs: Number(account?.recoveryCodesUpdatedAtMs || createdAtMs),
+    recoveryCodesUpdatedDeviceName: String(account?.recoveryCodesUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
     noteUpdatedAtMs: Number(account?.noteUpdatedAtMs || createdAtMs),
+    noteUpdatedDeviceName: String(account?.noteUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
     passkeyUpdatedAtMs: Number(account?.passkeyUpdatedAtMs || createdAtMs),
+    passkeyUpdatedDeviceName: String(account?.passkeyUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
     isDeleted: Boolean(account?.isDeleted),
     deletedAtMs: account?.deletedAtMs == null ? null : Number(account.deletedAtMs),
     lastOperatedDeviceName: String(account?.lastOperatedDeviceName || "").trim() || "ChromeMac",

@@ -37,35 +37,41 @@ function resolveHelpers(helpers) {
 function newerField(
   lhsValue,
   lhsUpdatedAt,
+  lhsDeviceName,
   lhsAccountUpdatedAt,
   rhsValue,
   rhsUpdatedAt,
+  rhsDeviceName,
   rhsAccountUpdatedAt
 ) {
   const leftUpdated = asNumber(lhsUpdatedAt);
   const rightUpdated = asNumber(rhsUpdatedAt);
-  if (leftUpdated > rightUpdated) return { value: asString(lhsValue), updatedAtMs: leftUpdated };
-  if (rightUpdated > leftUpdated) return { value: asString(rhsValue), updatedAtMs: rightUpdated };
+  if (leftUpdated > rightUpdated) return { value: asString(lhsValue), updatedAtMs: leftUpdated, deviceName: asString(lhsDeviceName) };
+  if (rightUpdated > leftUpdated) return { value: asString(rhsValue), updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
 
   const leftValue = asString(lhsValue);
   const rightValue = asString(rhsValue);
   if (leftValue === rightValue) {
-    return { value: leftValue, updatedAtMs: leftUpdated };
+    return {
+      value: leftValue,
+      updatedAtMs: leftUpdated,
+      deviceName: asString(lhsDeviceName).trim() || asString(rhsDeviceName).trim() || "ChromeMac",
+    };
   }
 
   const leftAccountUpdated = asNumber(lhsAccountUpdatedAt);
   const rightAccountUpdated = asNumber(rhsAccountUpdatedAt);
   if (leftAccountUpdated > rightAccountUpdated) {
-    return { value: leftValue, updatedAtMs: leftUpdated };
+    return { value: leftValue, updatedAtMs: leftUpdated, deviceName: asString(lhsDeviceName) };
   }
   if (rightAccountUpdated > leftAccountUpdated) {
-    return { value: rightValue, updatedAtMs: rightUpdated };
+    return { value: rightValue, updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
   }
 
   if (!leftValue && rightValue) {
-    return { value: rightValue, updatedAtMs: rightUpdated };
+    return { value: rightValue, updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
   }
-  return { value: leftValue, updatedAtMs: leftUpdated };
+  return { value: leftValue, updatedAtMs: leftUpdated, deviceName: asString(lhsDeviceName) };
 }
 
 function mergeSameAccount(lhs, rhs, h) {
@@ -85,41 +91,51 @@ function mergeSameAccount(lhs, rhs, h) {
   const usernameField = newerField(
     left.username,
     left.usernameUpdatedAtMs,
+    left.usernameUpdatedDeviceName,
     left.updatedAtMs,
     right.username,
     right.usernameUpdatedAtMs,
+    right.usernameUpdatedDeviceName,
     right.updatedAtMs
   );
   const passwordField = newerField(
     left.password,
     left.passwordUpdatedAtMs,
+    left.passwordUpdatedDeviceName,
     left.updatedAtMs,
     right.password,
     right.passwordUpdatedAtMs,
+    right.passwordUpdatedDeviceName,
     right.updatedAtMs
   );
   const totpField = newerField(
     left.totpSecret,
     left.totpUpdatedAtMs,
+    left.totpUpdatedDeviceName,
     left.updatedAtMs,
     right.totpSecret,
     right.totpUpdatedAtMs,
+    right.totpUpdatedDeviceName,
     right.updatedAtMs
   );
   const recoveryField = newerField(
     left.recoveryCodes,
     left.recoveryCodesUpdatedAtMs,
+    left.recoveryCodesUpdatedDeviceName,
     left.updatedAtMs,
     right.recoveryCodes,
     right.recoveryCodesUpdatedAtMs,
+    right.recoveryCodesUpdatedDeviceName,
     right.updatedAtMs
   );
   const noteField = newerField(
     left.note,
     left.noteUpdatedAtMs,
+    left.noteUpdatedDeviceName,
     left.updatedAtMs,
     right.note,
     right.noteUpdatedAtMs,
+    right.noteUpdatedDeviceName,
     right.updatedAtMs
   );
 
@@ -130,6 +146,10 @@ function mergeSameAccount(lhs, rhs, h) {
     asNumber(left.passkeyUpdatedAtMs || left.updatedAtMs || left.createdAtMs),
     asNumber(right.passkeyUpdatedAtMs || right.updatedAtMs || right.createdAtMs)
   );
+  const passkeyUpdatedDeviceName = asNumber(left.passkeyUpdatedAtMs || left.updatedAtMs || left.createdAtMs)
+    >= asNumber(right.passkeyUpdatedAtMs || right.updatedAtMs || right.createdAtMs)
+    ? asString(left.passkeyUpdatedDeviceName).trim() || asString(left.lastOperatedDeviceName).trim() || "ChromeMac"
+    : asString(right.passkeyUpdatedDeviceName).trim() || asString(right.lastOperatedDeviceName).trim() || "ChromeMac";
 
   const latestContentUpdatedAt = Math.max(
     usernameField.updatedAtMs,
@@ -189,11 +209,17 @@ function mergeSameAccount(lhs, rhs, h) {
     note: noteField.value,
     passkeyCredentialIds: mergedPasskeyIds,
     usernameUpdatedAtMs: usernameField.updatedAtMs,
+    usernameUpdatedDeviceName: usernameField.deviceName,
     passwordUpdatedAtMs: passwordField.updatedAtMs,
+    passwordUpdatedDeviceName: passwordField.deviceName,
     totpUpdatedAtMs: totpField.updatedAtMs,
+    totpUpdatedDeviceName: totpField.deviceName,
     recoveryCodesUpdatedAtMs: recoveryField.updatedAtMs,
+    recoveryCodesUpdatedDeviceName: recoveryField.deviceName,
     noteUpdatedAtMs: noteField.updatedAtMs,
+    noteUpdatedDeviceName: noteField.deviceName,
     passkeyUpdatedAtMs,
+    passkeyUpdatedDeviceName,
     isDeleted: keepDeleted,
     deletedAtMs: keepDeleted ? latestDeletedAt : null,
     createdAtMs,

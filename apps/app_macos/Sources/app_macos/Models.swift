@@ -25,11 +25,17 @@ struct PasswordAccount: Codable, Identifiable, Hashable {
     var note: String
     var passkeyCredentialIds: [String]
     var usernameUpdatedAtMs: Int64
+    var usernameUpdatedDeviceName: String
     var passwordUpdatedAtMs: Int64
+    var passwordUpdatedDeviceName: String
     var totpUpdatedAtMs: Int64
+    var totpUpdatedDeviceName: String
     var recoveryCodesUpdatedAtMs: Int64
+    var recoveryCodesUpdatedDeviceName: String
     var noteUpdatedAtMs: Int64
+    var noteUpdatedDeviceName: String
     var passkeyUpdatedAtMs: Int64
+    var passkeyUpdatedDeviceName: String
     var updatedAtMs: Int64
     var isDeleted: Bool
     var deletedAtMs: Int64?
@@ -85,11 +91,17 @@ extension PasswordAccount {
         case note
         case passkeyCredentialIds
         case usernameUpdatedAtMs
+        case usernameUpdatedDeviceName
         case passwordUpdatedAtMs
+        case passwordUpdatedDeviceName
         case totpUpdatedAtMs
+        case totpUpdatedDeviceName
         case recoveryCodesUpdatedAtMs
+        case recoveryCodesUpdatedDeviceName
         case noteUpdatedAtMs
+        case noteUpdatedDeviceName
         case passkeyUpdatedAtMs
+        case passkeyUpdatedDeviceName
         case updatedAtMs
         case isDeleted
         case deletedAtMs
@@ -146,17 +158,30 @@ extension PasswordAccount {
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty })
         ).sorted()
+        let fallbackDeviceName = try container.decodeIfPresent(String.self, forKey: .lastOperatedDeviceName)
+            ?? "MacDevice"
         usernameUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .usernameUpdatedAtMs) ?? createdAt
+        usernameUpdatedDeviceName = try container.decodeIfPresent(String.self, forKey: .usernameUpdatedDeviceName)
+            ?? fallbackDeviceName
         passwordUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .passwordUpdatedAtMs) ?? createdAt
+        passwordUpdatedDeviceName = try container.decodeIfPresent(String.self, forKey: .passwordUpdatedDeviceName)
+            ?? fallbackDeviceName
         totpUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .totpUpdatedAtMs) ?? createdAt
+        totpUpdatedDeviceName = try container.decodeIfPresent(String.self, forKey: .totpUpdatedDeviceName)
+            ?? fallbackDeviceName
         recoveryCodesUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .recoveryCodesUpdatedAtMs) ?? createdAt
+        recoveryCodesUpdatedDeviceName = try container.decodeIfPresent(String.self, forKey: .recoveryCodesUpdatedDeviceName)
+            ?? fallbackDeviceName
         noteUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .noteUpdatedAtMs) ?? createdAt
+        noteUpdatedDeviceName = try container.decodeIfPresent(String.self, forKey: .noteUpdatedDeviceName)
+            ?? fallbackDeviceName
         passkeyUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .passkeyUpdatedAtMs) ?? createdAt
+        passkeyUpdatedDeviceName = try container.decodeIfPresent(String.self, forKey: .passkeyUpdatedDeviceName)
+            ?? fallbackDeviceName
         updatedAtMs = updatedAt
         isDeleted = try container.decodeIfPresent(Bool.self, forKey: .isDeleted) ?? false
         deletedAtMs = try container.decodeIfPresent(Int64.self, forKey: .deletedAtMs)
-        lastOperatedDeviceName = try container.decodeIfPresent(String.self, forKey: .lastOperatedDeviceName)
-            ?? "MacDevice"
+        lastOperatedDeviceName = fallbackDeviceName
         createdAtMs = createdAt
     }
 
@@ -181,11 +206,17 @@ extension PasswordAccount {
         try container.encode(note, forKey: .note)
         try container.encode(passkeyCredentialIds, forKey: .passkeyCredentialIds)
         try container.encode(usernameUpdatedAtMs, forKey: .usernameUpdatedAtMs)
+        try container.encode(usernameUpdatedDeviceName, forKey: .usernameUpdatedDeviceName)
         try container.encode(passwordUpdatedAtMs, forKey: .passwordUpdatedAtMs)
+        try container.encode(passwordUpdatedDeviceName, forKey: .passwordUpdatedDeviceName)
         try container.encode(totpUpdatedAtMs, forKey: .totpUpdatedAtMs)
+        try container.encode(totpUpdatedDeviceName, forKey: .totpUpdatedDeviceName)
         try container.encode(recoveryCodesUpdatedAtMs, forKey: .recoveryCodesUpdatedAtMs)
+        try container.encode(recoveryCodesUpdatedDeviceName, forKey: .recoveryCodesUpdatedDeviceName)
         try container.encode(noteUpdatedAtMs, forKey: .noteUpdatedAtMs)
+        try container.encode(noteUpdatedDeviceName, forKey: .noteUpdatedDeviceName)
         try container.encode(passkeyUpdatedAtMs, forKey: .passkeyUpdatedAtMs)
+        try container.encode(passkeyUpdatedDeviceName, forKey: .passkeyUpdatedDeviceName)
         try container.encode(updatedAtMs, forKey: .updatedAtMs)
         try container.encode(isDeleted, forKey: .isDeleted)
         try container.encode(deletedAtMs, forKey: .deletedAtMs)
@@ -228,11 +259,17 @@ enum AccountFactory {
             note: "",
             passkeyCredentialIds: [],
             usernameUpdatedAtMs: nowMs,
+            usernameUpdatedDeviceName: deviceName,
             passwordUpdatedAtMs: nowMs,
+            passwordUpdatedDeviceName: deviceName,
             totpUpdatedAtMs: nowMs,
+            totpUpdatedDeviceName: deviceName,
             recoveryCodesUpdatedAtMs: nowMs,
+            recoveryCodesUpdatedDeviceName: deviceName,
             noteUpdatedAtMs: nowMs,
+            noteUpdatedDeviceName: deviceName,
             passkeyUpdatedAtMs: nowMs,
+            passkeyUpdatedDeviceName: deviceName,
             updatedAtMs: nowMs,
             isDeleted: false,
             deletedAtMs: nil,

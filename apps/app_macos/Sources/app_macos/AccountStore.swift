@@ -1167,6 +1167,7 @@ final class AccountStore: ObservableObject {
             created.sites = [siteAlias]
             created.totpSecret = entry.secret
             created.totpUpdatedAtMs = createdAtMs
+            created.totpUpdatedDeviceName = currentDeviceName()
             created.updatedAtMs = createdAtMs
             created.lastOperatedDeviceName = currentDeviceName()
             if let normalizedTargetFolderId {
@@ -1663,6 +1664,7 @@ final class AccountStore: ObservableObject {
                 created.sites = entry.sites
                 created.note = entry.note
                 created.noteUpdatedAtMs = entry.note.isEmpty ? created.noteUpdatedAtMs : createdAtMs
+                created.noteUpdatedDeviceName = currentDeviceName()
                 created.updatedAtMs = createdAtMs
                 created.lastOperatedDeviceName = currentDeviceName()
                 nextAccounts.append(created)
@@ -1821,6 +1823,7 @@ final class AccountStore: ObservableObject {
         if !newUsername.isEmpty, newUsername != accounts[index].username {
             accounts[index].username = newUsername
             accounts[index].usernameUpdatedAtMs = now
+            accounts[index].usernameUpdatedDeviceName = device
             changed = true
             changedLabels.append("用户名")
         }
@@ -1828,6 +1831,7 @@ final class AccountStore: ObservableObject {
         if editPassword != accounts[index].password {
             accounts[index].password = editPassword
             accounts[index].passwordUpdatedAtMs = now
+            accounts[index].passwordUpdatedDeviceName = device
             changed = true
             changedLabels.append("密码")
         }
@@ -1835,6 +1839,7 @@ final class AccountStore: ObservableObject {
         if editTotpSecret != accounts[index].totpSecret {
             accounts[index].totpSecret = editTotpSecret
             accounts[index].totpUpdatedAtMs = now
+            accounts[index].totpUpdatedDeviceName = device
             changed = true
             changedLabels.append("TOTP")
         }
@@ -1842,6 +1847,7 @@ final class AccountStore: ObservableObject {
         if editRecoveryCodes != accounts[index].recoveryCodes {
             accounts[index].recoveryCodes = editRecoveryCodes
             accounts[index].recoveryCodesUpdatedAtMs = now
+            accounts[index].recoveryCodesUpdatedDeviceName = device
             changed = true
             changedLabels.append("恢复码")
         }
@@ -1849,6 +1855,7 @@ final class AccountStore: ObservableObject {
         if editNote != accounts[index].note {
             accounts[index].note = editNote
             accounts[index].noteUpdatedAtMs = now
+            accounts[index].noteUpdatedDeviceName = device
             changed = true
             changedLabels.append("备注")
         }
@@ -2914,6 +2921,7 @@ final class AccountStore: ObservableObject {
         let device = currentDeviceName()
         accounts[index].note = restoredNote
         accounts[index].noteUpdatedAtMs = now
+        accounts[index].noteUpdatedDeviceName = device
         accounts[index].touchUpdatedAt(now, deviceName: device)
         saveAccounts()
 
@@ -2997,6 +3005,7 @@ final class AccountStore: ObservableObject {
             let device = currentDeviceName()
             nextAccounts[currentIndex].note = restoredNote
             nextAccounts[currentIndex].noteUpdatedAtMs = now
+            nextAccounts[currentIndex].noteUpdatedDeviceName = device
             nextAccounts[currentIndex].touchUpdatedAt(now, deviceName: device)
             afterByAccountId[accountId] = nextAccounts[currentIndex]
         }
@@ -3465,41 +3474,51 @@ final class AccountStore: ObservableObject {
         let usernameField = newerField(
             lhs.username,
             lhs.usernameUpdatedAtMs,
+            lhs.usernameUpdatedDeviceName,
             lhs.updatedAtMs,
             rhs.username,
             rhs.usernameUpdatedAtMs,
+            rhs.usernameUpdatedDeviceName,
             rhs.updatedAtMs
         )
         let passwordField = newerField(
             lhs.password,
             lhs.passwordUpdatedAtMs,
+            lhs.passwordUpdatedDeviceName,
             lhs.updatedAtMs,
             rhs.password,
             rhs.passwordUpdatedAtMs,
+            rhs.passwordUpdatedDeviceName,
             rhs.updatedAtMs
         )
         let totpField = newerField(
             lhs.totpSecret,
             lhs.totpUpdatedAtMs,
+            lhs.totpUpdatedDeviceName,
             lhs.updatedAtMs,
             rhs.totpSecret,
             rhs.totpUpdatedAtMs,
+            rhs.totpUpdatedDeviceName,
             rhs.updatedAtMs
         )
         let recoveryField = newerField(
             lhs.recoveryCodes,
             lhs.recoveryCodesUpdatedAtMs,
+            lhs.recoveryCodesUpdatedDeviceName,
             lhs.updatedAtMs,
             rhs.recoveryCodes,
             rhs.recoveryCodesUpdatedAtMs,
+            rhs.recoveryCodesUpdatedDeviceName,
             rhs.updatedAtMs
         )
         let noteField = newerField(
             lhs.note,
             lhs.noteUpdatedAtMs,
+            lhs.noteUpdatedDeviceName,
             lhs.updatedAtMs,
             rhs.note,
             rhs.noteUpdatedAtMs,
+            rhs.noteUpdatedDeviceName,
             rhs.updatedAtMs
         )
         let mergedPasskeyCredentialIds = Array(
@@ -3508,6 +3527,9 @@ final class AccountStore: ObservableObject {
                 .filter { !$0.isEmpty })
         ).sorted()
         let passkeyUpdatedAtMs = max(lhs.passkeyUpdatedAtMs, rhs.passkeyUpdatedAtMs)
+        let passkeyUpdatedDeviceName = lhs.passkeyUpdatedAtMs >= rhs.passkeyUpdatedAtMs
+            ? lhs.passkeyUpdatedDeviceName
+            : rhs.passkeyUpdatedDeviceName
 
         let latestContentUpdatedAt = max(
             usernameField.updatedAtMs,
@@ -3557,11 +3579,17 @@ final class AccountStore: ObservableObject {
             note: noteField.value,
             passkeyCredentialIds: mergedPasskeyCredentialIds,
             usernameUpdatedAtMs: usernameField.updatedAtMs,
+            usernameUpdatedDeviceName: usernameField.deviceName,
             passwordUpdatedAtMs: passwordField.updatedAtMs,
+            passwordUpdatedDeviceName: passwordField.deviceName,
             totpUpdatedAtMs: totpField.updatedAtMs,
+            totpUpdatedDeviceName: totpField.deviceName,
             recoveryCodesUpdatedAtMs: recoveryField.updatedAtMs,
+            recoveryCodesUpdatedDeviceName: recoveryField.deviceName,
             noteUpdatedAtMs: noteField.updatedAtMs,
+            noteUpdatedDeviceName: noteField.deviceName,
             passkeyUpdatedAtMs: passkeyUpdatedAtMs,
+            passkeyUpdatedDeviceName: passkeyUpdatedDeviceName,
             updatedAtMs: latestUpdatedAt,
             isDeleted: keepDeleted,
             deletedAtMs: keepDeleted ? latestDeletedAt : nil,
@@ -3776,30 +3804,35 @@ final class AccountStore: ObservableObject {
     private func newerField(
         _ lhsValue: String,
         _ lhsUpdatedAt: Int64,
+        _ lhsDeviceName: String,
         _ lhsAccountUpdatedAt: Int64,
         _ rhsValue: String,
         _ rhsUpdatedAt: Int64,
+        _ rhsDeviceName: String,
         _ rhsAccountUpdatedAt: Int64
-    ) -> (value: String, updatedAtMs: Int64) {
+    ) -> (value: String, updatedAtMs: Int64, deviceName: String) {
         if lhsUpdatedAt > rhsUpdatedAt {
-            return (lhsValue, lhsUpdatedAt)
+            return (lhsValue, lhsUpdatedAt, lhsDeviceName)
         }
         if rhsUpdatedAt > lhsUpdatedAt {
-            return (rhsValue, rhsUpdatedAt)
+            return (rhsValue, rhsUpdatedAt, rhsDeviceName)
         }
         if lhsValue == rhsValue {
-            return (lhsValue, lhsUpdatedAt)
+            let device = lhsDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? rhsDeviceName
+                : lhsDeviceName
+            return (lhsValue, lhsUpdatedAt, device)
         }
         if lhsAccountUpdatedAt > rhsAccountUpdatedAt {
-            return (lhsValue, lhsUpdatedAt)
+            return (lhsValue, lhsUpdatedAt, lhsDeviceName)
         }
         if rhsAccountUpdatedAt > lhsAccountUpdatedAt {
-            return (rhsValue, rhsUpdatedAt)
+            return (rhsValue, rhsUpdatedAt, rhsDeviceName)
         }
         if lhsValue.isEmpty, !rhsValue.isEmpty {
-            return (rhsValue, rhsUpdatedAt)
+            return (rhsValue, rhsUpdatedAt, rhsDeviceName)
         }
-        return (lhsValue, lhsUpdatedAt)
+        return (lhsValue, lhsUpdatedAt, lhsDeviceName)
     }
 
     // 对所有账号做连通分量并集同步：
@@ -4030,12 +4063,14 @@ final class AccountStore: ObservableObject {
         if !entry.username.isEmpty, entry.username != updated.username {
             updated.username = entry.username
             updated.usernameUpdatedAtMs = nowMs
+            updated.usernameUpdatedDeviceName = currentDeviceName()
             changed = true
         }
 
         if !entry.password.isEmpty, entry.password != updated.password {
             updated.password = entry.password
             updated.passwordUpdatedAtMs = nowMs
+            updated.passwordUpdatedDeviceName = currentDeviceName()
             changed = true
         }
 
@@ -4043,6 +4078,7 @@ final class AccountStore: ObservableObject {
         if mergedNote != updated.note {
             updated.note = mergedNote
             updated.noteUpdatedAtMs = nowMs
+            updated.noteUpdatedDeviceName = currentDeviceName()
             changed = true
         }
 
@@ -4647,12 +4683,14 @@ final class AccountStore: ObservableObject {
         if let username = entry.username, !username.isEmpty, username != updated.username {
             updated.username = username
             updated.usernameUpdatedAtMs = nowMs
+            updated.usernameUpdatedDeviceName = currentDeviceName()
             changed = true
         }
 
         if !entry.secret.isEmpty, entry.secret != updated.totpSecret {
             updated.totpSecret = entry.secret
             updated.totpUpdatedAtMs = nowMs
+            updated.totpUpdatedDeviceName = currentDeviceName()
             changed = true
         }
 
@@ -5040,11 +5078,17 @@ private extension LegacyPasswordAccount {
             note: "",
             passkeyCredentialIds: [],
             usernameUpdatedAtMs: updatedAtMs,
+            usernameUpdatedDeviceName: deviceName,
             passwordUpdatedAtMs: updatedAtMs,
+            passwordUpdatedDeviceName: deviceName,
             totpUpdatedAtMs: updatedAtMs,
+            totpUpdatedDeviceName: deviceName,
             recoveryCodesUpdatedAtMs: updatedAtMs,
+            recoveryCodesUpdatedDeviceName: deviceName,
             noteUpdatedAtMs: updatedAtMs,
+            noteUpdatedDeviceName: deviceName,
             passkeyUpdatedAtMs: updatedAtMs,
+            passkeyUpdatedDeviceName: deviceName,
             updatedAtMs: updatedAtMs,
             isDeleted: isDeleted,
             deletedAtMs: isDeleted ? updatedAtMs : nil,
