@@ -100,6 +100,7 @@ struct SettingsView: View {
                                     Text(option.label).tag(option.rawValue)
                                 }
                             }
+                            .labelsHidden()
                             .pickerStyle(.menu)
                         }
 
