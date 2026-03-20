@@ -136,16 +136,18 @@ private struct MainWindowCloseTerminator: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSView {
-        let view = NSView(frame: .zero)
-        DispatchQueue.main.async {
-            context.coordinator.bindIfNeeded(to: view.window)
+        let view = WindowBindingView()
+        view.onWindowChange = { window in
+            context.coordinator.bindIfNeeded(to: window)
         }
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            context.coordinator.bindIfNeeded(to: nsView.window)
+        if let view = nsView as? WindowBindingView {
+            view.onWindowChange = { window in
+                context.coordinator.bindIfNeeded(to: window)
+            }
         }
     }
 
@@ -186,30 +188,99 @@ private struct WindowFrameAutosave: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSView {
-        let view = NSView(frame: .zero)
-        DispatchQueue.main.async {
-            context.coordinator.bindIfNeeded(to: view.window, name: name)
+        let view = WindowBindingView()
+        view.onWindowChange = { window in
+            context.coordinator.bindIfNeeded(to: window, name: name)
         }
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            context.coordinator.bindIfNeeded(to: nsView.window, name: name)
+        if let view = nsView as? WindowBindingView {
+            view.onWindowChange = { window in
+                context.coordinator.bindIfNeeded(to: window, name: name)
+            }
         }
     }
 
     final class Coordinator {
         private weak var observedWindow: NSWindow?
         private var appliedName: String = ""
+        private var didRestoreFrame = false
+        private var observers: [NSObjectProtocol] = []
+
+        deinit {
+            observers.forEach(NotificationCenter.default.removeObserver)
+        }
 
         @MainActor
         func bindIfNeeded(to window: NSWindow?, name: String) {
             guard let window else { return }
-            guard observedWindow !== window || appliedName != name else { return }
+            if observedWindow !== window || appliedName != name {
+                observers.forEach(NotificationCenter.default.removeObserver)
+                observers.removeAll()
+                didRestoreFrame = false
+            } else {
+                restoreFrameIfNeeded(for: window, name: name)
+                return
+            }
             observedWindow = window
             appliedName = name
-            window.setFrameAutosaveName(name)
+            restoreFrameIfNeeded(for: window, name: name)
+            Self.saveFrame(for: window, name: name)
+            let center = NotificationCenter.default
+            observers.append(
+                center.addObserver(forName: NSWindow.didMoveNotification, object: window, queue: .main) { _ in
+                    MainActor.assumeIsolated {
+                        Self.saveFrame(for: window, name: name)
+                    }
+                }
+            )
+            observers.append(
+                center.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { _ in
+                    MainActor.assumeIsolated {
+                        Self.saveFrame(for: window, name: name)
+                    }
+                }
+            )
+            observers.append(
+                center.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
+                    MainActor.assumeIsolated {
+                        Self.saveFrame(for: window, name: name)
+                    }
+                }
+            )
         }
+
+        @MainActor
+        private func restoreFrameIfNeeded(for window: NSWindow, name: String) {
+            guard !didRestoreFrame else { return }
+            didRestoreFrame = true
+            let key = Self.frameKey(for: name)
+            guard let frameString = UserDefaults.standard.string(forKey: key) else { return }
+            let restoredFrame = NSRectFromString(frameString)
+            guard restoredFrame.width > 0, restoredFrame.height > 0 else { return }
+            window.setFrame(restoredFrame, display: true)
+        }
+
+        @MainActor
+        private static func saveFrame(for window: NSWindow, name: String) {
+            let key = frameKey(for: name)
+            UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: key)
+            UserDefaults.standard.synchronize()
+        }
+
+        private static func frameKey(for name: String) -> String {
+            "pass.windowFrame.\(name)"
+        }
+    }
+}
+
+private final class WindowBindingView: NSView {
+    var onWindowChange: ((NSWindow?) -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        onWindowChange?(window)
     }
 }
