@@ -1883,20 +1883,24 @@ private struct AccountEditPopup: View {
                     Divider()
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("正在编辑: 网站 \(editingAccount.canonicalSite) | 用户名 \(editingAccount.username)")
-                            .font(store.textFont(size: store.scaledTextSize(12)))
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        let metadataLine: (String, String, String) -> String = { label, value, device in
+                            let targetWidth = 6
+                            let paddedLabel = label.count >= targetWidth
+                                ? label
+                                : label + String(repeating: " ", count: targetWidth - label.count)
+                            return "\(paddedLabel): \(value) | \(device)"
+                        }
 
                         Text([
-                            "创建时间: \(store.displayTime(editingAccount.createdAtMs)) | \(editingAccount.createdDeviceName.isEmpty ? "-" : editingAccount.createdDeviceName)",
-                            "最后更新时间: \(store.displayTime(editingAccount.updatedAtMs)) | \(editingAccount.lastOperatedDeviceName.isEmpty ? "-" : editingAccount.lastOperatedDeviceName)",
-                            "删除时间: \(store.displayTime(editingAccount.deletedAtMs)) | \(editingAccount.deletedAtMs == nil ? "-" : (editingAccount.deletedDeviceName.isEmpty ? "-" : editingAccount.deletedDeviceName))",
-                            "用户名: \(store.displayTime(editingAccount.usernameUpdatedAtMs)) | \(editingAccount.usernameUpdatedDeviceName.isEmpty ? "-" : editingAccount.usernameUpdatedDeviceName)",
-                            "密码: \(store.displayTime(editingAccount.passwordUpdatedAtMs)) | \(editingAccount.passwordUpdatedDeviceName.isEmpty ? "-" : editingAccount.passwordUpdatedDeviceName)",
-                            "TOTP: \(store.displayTime(editingAccount.totpUpdatedAtMs)) | \(editingAccount.totpUpdatedDeviceName.isEmpty ? "-" : editingAccount.totpUpdatedDeviceName)",
-                            "恢复码: \(store.displayTime(editingAccount.recoveryCodesUpdatedAtMs)) | \(editingAccount.recoveryCodesUpdatedDeviceName.isEmpty ? "-" : editingAccount.recoveryCodesUpdatedDeviceName)",
-                            "备注: \(store.displayTime(editingAccount.noteUpdatedAtMs)) | \(editingAccount.noteUpdatedDeviceName.isEmpty ? "-" : editingAccount.noteUpdatedDeviceName)",
-                            "通行密钥: \(store.displayTime(editingAccount.passkeyUpdatedAtMs)) | \(editingAccount.passkeyUpdatedDeviceName.isEmpty ? "-" : editingAccount.passkeyUpdatedDeviceName)"
+                            metadataLine("创建时间", store.displayTime(editingAccount.createdAtMs), editingAccount.createdDeviceName.isEmpty ? "-" : editingAccount.createdDeviceName),
+                            metadataLine("最后更新时间", store.displayTime(editingAccount.updatedAtMs), editingAccount.lastOperatedDeviceName.isEmpty ? "-" : editingAccount.lastOperatedDeviceName),
+                            metadataLine("删除时间", store.displayTime(editingAccount.deletedAtMs), editingAccount.deletedAtMs == nil ? "-" : (editingAccount.deletedDeviceName.isEmpty ? "-" : editingAccount.deletedDeviceName)),
+                            metadataLine("用户名", store.displayTime(editingAccount.usernameUpdatedAtMs), editingAccount.usernameUpdatedDeviceName.isEmpty ? "-" : editingAccount.usernameUpdatedDeviceName),
+                            metadataLine("密码", store.displayTime(editingAccount.passwordUpdatedAtMs), editingAccount.passwordUpdatedDeviceName.isEmpty ? "-" : editingAccount.passwordUpdatedDeviceName),
+                            metadataLine("TOTP", store.displayTime(editingAccount.totpUpdatedAtMs), editingAccount.totpUpdatedDeviceName.isEmpty ? "-" : editingAccount.totpUpdatedDeviceName),
+                            metadataLine("恢复码", store.displayTime(editingAccount.recoveryCodesUpdatedAtMs), editingAccount.recoveryCodesUpdatedDeviceName.isEmpty ? "-" : editingAccount.recoveryCodesUpdatedDeviceName),
+                            metadataLine("备注", store.displayTime(editingAccount.noteUpdatedAtMs), editingAccount.noteUpdatedDeviceName.isEmpty ? "-" : editingAccount.noteUpdatedDeviceName),
+                            metadataLine("通行密钥", store.displayTime(editingAccount.passkeyUpdatedAtMs), editingAccount.passkeyUpdatedDeviceName.isEmpty ? "-" : editingAccount.passkeyUpdatedDeviceName)
                         ].joined(separator: "\n"))
                             .font(store.textFont(size: store.scaledTextSize(11)))
                             .foregroundStyle(.secondary)
