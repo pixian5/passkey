@@ -798,7 +798,9 @@ function normalizeAccountShape(account) {
     passkeyUpdatedDeviceName: normalizeUsername(account?.passkeyUpdatedDeviceName || account?.lastOperatedDeviceName || "") || "ChromeMac",
     isDeleted: Boolean(account?.isDeleted),
     deletedAtMs: account?.deletedAtMs == null ? null : asTimestamp(account.deletedAtMs, 0),
+    deletedDeviceName: normalizeUsername(account?.deletedDeviceName || "") || "",
     lastOperatedDeviceName: normalizeUsername(account?.lastOperatedDeviceName || "") || "ChromeMac",
+    createdDeviceName: normalizeUsername(account?.createdDeviceName || account?.lastOperatedDeviceName || "") || "ChromeMac",
     createdAtMs,
     updatedAtMs: asTimestamp(account?.updatedAtMs, createdAtMs),
   };
@@ -1207,7 +1209,9 @@ function createAccount({ site, username, password, createdAtMs, deviceName }) {
     passkeyUpdatedDeviceName: deviceName,
     isDeleted: false,
     deletedAtMs: null,
+    deletedDeviceName: "",
     lastOperatedDeviceName: deviceName,
+    createdDeviceName: deviceName,
     createdAtMs,
     updatedAtMs: createdAtMs,
   };

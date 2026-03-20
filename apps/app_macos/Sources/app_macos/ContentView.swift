@@ -1887,7 +1887,7 @@ private struct AccountEditPopup: View {
                             .font(store.textFont(size: store.scaledTextSize(12)))
                             .frame(maxWidth: .infinity, alignment: .leading)
 
-                        Text("创建时间: \(store.displayTime(editingAccount.createdAtMs)) | 最后更新时间: \(store.displayTime(editingAccount.updatedAtMs)) | 删除时间: \(store.displayTime(editingAccount.deletedAtMs))")
+                        Text("创建时间: \(store.displayTime(editingAccount.createdAtMs)) | \(editingAccount.createdDeviceName.isEmpty ? "-" : editingAccount.createdDeviceName) | 最后更新时间: \(store.displayTime(editingAccount.updatedAtMs)) | \(editingAccount.lastOperatedDeviceName.isEmpty ? "-" : editingAccount.lastOperatedDeviceName) | 删除时间: \(store.displayTime(editingAccount.deletedAtMs)) | \(editingAccount.deletedAtMs == nil ? "-" : (editingAccount.deletedDeviceName.isEmpty ? "-" : editingAccount.deletedDeviceName))")
                             .font(store.textFont(size: store.scaledTextSize(11)))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)

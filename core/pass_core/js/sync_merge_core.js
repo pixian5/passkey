@@ -164,6 +164,9 @@ function mergeSameAccount(lhs, rhs, h) {
   const rightDeletedAt = right.isDeleted ? asNumber(right.deletedAtMs) : 0;
   const latestDeletedAt = Math.max(leftDeletedAt, rightDeletedAt);
   const keepDeleted = latestDeletedAt > 0 && latestDeletedAt >= latestContentUpdatedAt;
+  const deletedDeviceName = leftDeletedAt >= rightDeletedAt
+    ? asString(left.deletedDeviceName).trim()
+    : asString(right.deletedDeviceName).trim();
 
   const leftUpdatedAt = asNumber(left.updatedAtMs);
   const rightUpdatedAt = asNumber(right.updatedAtMs);
@@ -183,6 +186,11 @@ function mergeSameAccount(lhs, rhs, h) {
     || asString(secondary.usernameAtCreate).trim()
     || asString(primary.username).trim()
     || asString(secondary.username).trim();
+  const createdDeviceName = asString(primary.createdDeviceName).trim()
+    || asString(secondary.createdDeviceName).trim()
+    || asString(primary.lastOperatedDeviceName).trim()
+    || asString(secondary.lastOperatedDeviceName).trim()
+    || "ChromeMac";
   const lastOperatedDeviceName = asString(newerAccount.lastOperatedDeviceName).trim()
     || asString(olderAccount.lastOperatedDeviceName).trim()
     || "ChromeMac";
@@ -222,9 +230,11 @@ function mergeSameAccount(lhs, rhs, h) {
     passkeyUpdatedDeviceName,
     isDeleted: keepDeleted,
     deletedAtMs: keepDeleted ? latestDeletedAt : null,
+    deletedDeviceName: keepDeleted ? (deletedDeviceName || lastOperatedDeviceName) : "",
     createdAtMs,
     updatedAtMs,
     lastOperatedDeviceName,
+    createdDeviceName,
   };
 }
 

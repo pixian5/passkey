@@ -1233,6 +1233,7 @@ final class AccountStore: ObservableObject {
         let now = nowMs()
         accounts[index].isDeleted = true
         accounts[index].deletedAtMs = now
+        accounts[index].deletedDeviceName = currentDeviceName()
         statusMessage = "账号已移入回收站"
         accounts[index].touchUpdatedAt(now, deviceName: currentDeviceName())
         saveAccounts()
@@ -1266,6 +1267,7 @@ final class AccountStore: ObservableObject {
         for index in targetIndexes {
             accounts[index].isDeleted = true
             accounts[index].deletedAtMs = now
+            accounts[index].deletedDeviceName = device
             accounts[index].touchUpdatedAt(now, deviceName: device)
         }
         if let editingAccountId, targetIndexes.contains(where: { accounts[$0].id == editingAccountId }) {
@@ -1299,6 +1301,7 @@ final class AccountStore: ObservableObject {
         let now = nowMs()
         accounts[index].isDeleted = false
         accounts[index].deletedAtMs = nil
+        accounts[index].deletedDeviceName = ""
         statusMessage = "账号已从回收站恢复"
         accounts[index].touchUpdatedAt(now, deviceName: currentDeviceName())
         saveAccounts()
@@ -1324,6 +1327,7 @@ final class AccountStore: ObservableObject {
         for index in targetIndexes {
             accounts[index].isDeleted = false
             accounts[index].deletedAtMs = nil
+            accounts[index].deletedDeviceName = ""
             accounts[index].touchUpdatedAt(now, deviceName: device)
         }
         saveAccounts()
@@ -1409,6 +1413,7 @@ final class AccountStore: ObservableObject {
         for index in deletedIndexes {
             accounts[index].isDeleted = false
             accounts[index].deletedAtMs = nil
+            accounts[index].deletedDeviceName = ""
             accounts[index].touchUpdatedAt(now, deviceName: device)
         }
         saveAccounts()
@@ -1460,6 +1465,7 @@ final class AccountStore: ObservableObject {
         for index in activeIndexes {
             accounts[index].isDeleted = true
             accounts[index].deletedAtMs = now
+            accounts[index].deletedDeviceName = device
             accounts[index].touchUpdatedAt(now, deviceName: device)
         }
         cancelEditing()
@@ -3556,9 +3562,15 @@ final class AccountStore: ObservableObject {
         let usernameAtCreate = primary.usernameAtCreate.isEmpty
             ? secondary.usernameAtCreate
             : primary.usernameAtCreate
+        let createdDeviceName = primary.createdDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? secondary.createdDeviceName
+            : primary.createdDeviceName
         let lastOperatedDeviceName = newerAccount.lastOperatedDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? currentDeviceName()
             : newerAccount.lastOperatedDeviceName
+        let deletedDeviceName = lhsDeletedAt >= rhsDeletedAt
+            ? lhs.deletedDeviceName
+            : rhs.deletedDeviceName
 
         return PasswordAccount(
             id: primary.id,
@@ -3593,7 +3605,9 @@ final class AccountStore: ObservableObject {
             updatedAtMs: latestUpdatedAt,
             isDeleted: keepDeleted,
             deletedAtMs: keepDeleted ? latestDeletedAt : nil,
+            deletedDeviceName: keepDeleted ? deletedDeviceName : "",
             lastOperatedDeviceName: lastOperatedDeviceName,
+            createdDeviceName: createdDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? currentDeviceName() : createdDeviceName,
             createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs)
         )
     }
@@ -5092,7 +5106,9 @@ private extension LegacyPasswordAccount {
             updatedAtMs: updatedAtMs,
             isDeleted: isDeleted,
             deletedAtMs: isDeleted ? updatedAtMs : nil,
+            deletedDeviceName: isDeleted ? deviceName : "",
             lastOperatedDeviceName: deviceName,
+            createdDeviceName: deviceName,
             createdAtMs: updatedAtMs
         )
     }
