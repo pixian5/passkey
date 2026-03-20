@@ -2551,20 +2551,40 @@ final class AccountStore: ObservableObject {
     }
 
     private func saveSecret(_ secret: String, account: String) -> Bool {
-        if secret.isEmpty {
-            return LocalKeychain.delete(service: SecretKeys.service, account: account)
+        var secrets = readStoredSyncSecrets()
+        let normalized = secret.trimmingCharacters(in: .newlines)
+        if normalized.isEmpty {
+            secrets.removeValue(forKey: account)
+        } else {
+            secrets[account] = secret
         }
-        guard let data = secret.data(using: .utf8) else { return false }
-        return LocalKeychain.save(service: SecretKeys.service, account: account, data: data)
+        return writeStoredSyncSecrets(secrets)
     }
 
     private func readSecret(account: String) -> String {
-        guard let data = LocalKeychain.read(service: SecretKeys.service, account: account),
-              let value = String(data: data, encoding: .utf8)
+        readStoredSyncSecrets()[account] ?? ""
+    }
+
+    private func readStoredSyncSecrets() -> [String: String] {
+        let url = syncSecretsFileURL()
+        guard let data = try? Data(contentsOf: url),
+              let decoded = try? decoder.decode([String: String].self, from: data)
         else {
-            return ""
+            return [:]
         }
-        return value
+        return decoded
+    }
+
+    private func writeStoredSyncSecrets(_ secrets: [String: String]) -> Bool {
+        let url = syncSecretsFileURL()
+        do {
+            try FileManager.default.createDirectory(at: dataDirectoryURL(), withIntermediateDirectories: true)
+            let data = try encoder.encode(secrets)
+            try data.write(to: url, options: [.atomic])
+            return true
+        } catch {
+            return false
+        }
     }
 
     func currentTotpCode(for account: PasswordAccount, at date: Date = Date()) -> String? {
@@ -4697,6 +4717,10 @@ final class AccountStore: ObservableObject {
 
     private func passkeysFileURL() -> URL {
         dataDirectoryURL().appendingPathComponent("passkeys.json", isDirectory: false)
+    }
+
+    private func syncSecretsFileURL() -> URL {
+        dataDirectoryURL().appendingPathComponent("sync-secrets.json", isDirectory: false)
     }
 
     private func nowMs() -> Int64 {
