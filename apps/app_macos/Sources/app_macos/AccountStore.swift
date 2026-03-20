@@ -35,6 +35,40 @@ final class AccountStore: ObservableObject {
         }
     }
 
+    enum AutoSyncInterval: Int, CaseIterable, Identifiable {
+        case disabled = 0
+        case minute1 = 1
+        case minute3 = 3
+        case minute5 = 5
+        case minute10 = 10
+        case minute15 = 15
+        case minute30 = 30
+        case minute60 = 60
+
+        var id: Int { rawValue }
+
+        var label: String {
+            switch self {
+            case .disabled:
+                return "关闭"
+            case .minute1:
+                return "每 1 分钟"
+            case .minute3:
+                return "每 3 分钟"
+            case .minute5:
+                return "每 5 分钟"
+            case .minute10:
+                return "每 10 分钟"
+            case .minute15:
+                return "每 15 分钟"
+            case .minute30:
+                return "每 30 分钟"
+            case .minute60:
+                return "每 60 分钟"
+            }
+        }
+    }
+
     @Published var deviceName: String = ""
     @Published var statusMessage: String = "" {
         didSet {
@@ -179,6 +213,18 @@ final class AccountStore: ObservableObject {
             UserDefaults.standard.set(syncMode.rawValue, forKey: Keys.syncMode)
         }
     }
+    @Published var autoSyncIntervalMinutes: Int = AutoSyncInterval.disabled.rawValue {
+        didSet {
+            let resolved = AutoSyncInterval(rawValue: autoSyncIntervalMinutes) ?? .disabled
+            if resolved.rawValue != autoSyncIntervalMinutes {
+                autoSyncIntervalMinutes = resolved.rawValue
+                return
+            }
+            guard !isLoadingSyncPreferences else { return }
+            UserDefaults.standard.set(resolved.rawValue, forKey: Keys.autoSyncIntervalMinutes)
+            updateAutoSyncTimer()
+        }
+    }
 
     static let systemDefaultFontFamily = "系统默认"
     static let fixedNewAccountFolderName = "新账号"
@@ -229,6 +275,7 @@ final class AccountStore: ObservableObject {
     private var suppressCloudPush: Bool = false
     private var isLoadingSyncPreferences: Bool = false
     private var syncNowTask: Task<Void, Never>?
+    private var autoSyncTimer: Timer?
     private lazy var localSQLiteStore = LocalSQLiteStore(
         databaseURL: dataDirectoryURL().appendingPathComponent("pass.db", isDirectory: false)
     )
@@ -2022,9 +2069,11 @@ final class AccountStore: ObservableObject {
         syncNow()
     }
 
-    func syncNow(modeOverride: SyncMode? = nil) {
+    func syncNow(modeOverride: SyncMode? = nil, suppressBusyMessage: Bool = false) {
         if let syncNowTask, !syncNowTask.isCancelled {
-            statusMessage = "同步进行中，请稍候"
+            if !suppressBusyMessage {
+                statusMessage = "同步进行中，请稍候"
+            }
             return
         }
         syncNowTask = Task { [weak self] in
@@ -2234,6 +2283,22 @@ final class AccountStore: ObservableObject {
         if syncEnableWebDAV { names.append("WebDAV") }
         if syncEnableSelfHostedServer { names.append("服务器") }
         return names
+    }
+
+    var autoSyncIntervalOptions: [AutoSyncInterval] {
+        AutoSyncInterval.allCases
+    }
+
+    var autoSyncStatusDescription: String {
+        let interval = AutoSyncInterval(rawValue: autoSyncIntervalMinutes) ?? .disabled
+        let enabledSourceNames = activeSyncSourceNames()
+        if interval == .disabled {
+            return "自动同步已关闭"
+        }
+        if enabledSourceNames.isEmpty {
+            return "自动同步已开启，但当前没有可用同步源"
+        }
+        return "自动按“合并”模式执行 \(interval.label)，同步源：\(enabledSourceNames.joined(separator: " + "))"
     }
 
     private func buildCurrentSyncPayload() -> SyncBundlePayload {
@@ -2518,6 +2583,7 @@ final class AccountStore: ObservableObject {
         syncEnableWebDAV = defaults.object(forKey: Keys.syncEnableWebDAV) as? Bool ?? false
         syncEnableSelfHostedServer = defaults.object(forKey: Keys.syncEnableSelfHostedServer) as? Bool ?? false
         syncMode = SyncMode(rawValue: defaults.string(forKey: Keys.syncMode) ?? "") ?? .merge
+        autoSyncIntervalMinutes = AutoSyncInterval(rawValue: defaults.integer(forKey: Keys.autoSyncIntervalMinutes))?.rawValue ?? AutoSyncInterval.disabled.rawValue
         webdavBaseURL = defaults.string(forKey: Keys.webdavBaseURL) ?? ""
         webdavRemotePath = defaults.string(forKey: Keys.webdavRemotePath) ?? "pass-sync-bundle-v2.json"
         webdavUsername = defaults.string(forKey: Keys.webdavUsername) ?? ""
@@ -3064,6 +3130,7 @@ final class AccountStore: ObservableObject {
         if cloudObserver == nil {
             refreshSyncSourceStatusHint()
         }
+        updateAutoSyncTimer()
     }
 
     private func refreshSyncSourceStatusHint() {
@@ -3105,6 +3172,22 @@ final class AccountStore: ObservableObject {
             _ = pullSyncDataFromICloud(trigger: "startup")
             pushSyncDataToICloud(trigger: "startup")
         }
+    }
+
+    private func updateAutoSyncTimer() {
+        autoSyncTimer?.invalidate()
+        autoSyncTimer = nil
+
+        let interval = AutoSyncInterval(rawValue: autoSyncIntervalMinutes) ?? .disabled
+        guard interval != .disabled else { return }
+        guard !activeSyncSourceNames().isEmpty else { return }
+
+        autoSyncTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(interval.rawValue * 60), repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.syncNow(modeOverride: .merge, suppressBusyMessage: true)
+            }
+        }
+        autoSyncTimer?.tolerance = min(30, TimeInterval(interval.rawValue * 10))
     }
 
     @discardableResult
@@ -4777,6 +4860,7 @@ private enum Keys {
     static let syncEnableWebDAV = "pass.sync.enableWebDAV.v3"
     static let syncEnableSelfHostedServer = "pass.sync.enableSelfHostedServer.v3"
     static let syncMode = "pass.sync.mode.v1"
+    static let autoSyncIntervalMinutes = "pass.sync.autoIntervalMinutes.v1"
     static let webdavBaseURL = "pass.sync.webdav.baseURL.v2"
     static let webdavRemotePath = "pass.sync.webdav.remotePath.v2"
     static let webdavUsername = "pass.sync.webdav.username.v2"

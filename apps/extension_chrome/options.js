@@ -34,6 +34,7 @@ const STORAGE_KEY_SYNC_WEBDAV_USERNAME = "pass.sync.webdav.username.v2";
 const STORAGE_KEY_SYNC_WEBDAV_PASSWORD = "pass.sync.webdav.password.v2";
 const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
 const STORAGE_KEY_SYNC_SERVER_TOKEN = "pass.sync.server.token.v2";
+const STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
 const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "http://127.0.0.1:53333/";
 const SYNC_MODE_MERGE = "merge";
@@ -75,6 +76,8 @@ const dom = {
   syncWebdavPassword: document.getElementById("syncWebdavPassword"),
   syncServerBaseUrl: document.getElementById("syncServerBaseUrl"),
   syncServerToken: document.getElementById("syncServerToken"),
+  syncAutoInterval: document.getElementById("syncAutoInterval"),
+  syncAutoStatus: document.getElementById("syncAutoStatus"),
   saveSyncSettingsBtn: document.getElementById("saveSyncSettings"),
   deviceStatus: document.getElementById("deviceStatus"),
   lockEnabled: document.getElementById("lockEnabled"),
@@ -159,6 +162,8 @@ let historyEntries = [];
 let optionsToastTimer = null;
 let addSitesTargetFolderId = null;
 
+const AUTO_SYNC_INTERVAL_OPTIONS = new Set(["0", "1", "3", "5", "10", "15", "30", "60"]);
+
 init().catch((error) => {
   setStatus(`初始化失败: ${error.message}`);
 });
@@ -181,6 +186,9 @@ async function init() {
   });
   dom.syncEnableServer.addEventListener("change", () => {
     renderSyncBackendFields();
+  });
+  dom.syncAutoInterval.addEventListener("change", () => {
+    renderAutoSyncStatus();
   });
   dom.lockEnabled.addEventListener("change", renderLockSettingsFields);
   dom.lockPolicyOnceRadio.addEventListener("change", renderLockSettingsFields);
@@ -375,6 +383,7 @@ async function loadSyncSettings() {
     STORAGE_KEY_SYNC_WEBDAV_PASSWORD,
     STORAGE_KEY_SYNC_SERVER_BASE_URL,
     STORAGE_KEY_SYNC_SERVER_TOKEN,
+    STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES,
   ]);
   const hasEnableWebdav = typeof result[STORAGE_KEY_SYNC_ENABLE_WEBDAV] === "boolean";
   const hasEnableServer = typeof result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER] === "boolean";
@@ -395,12 +404,35 @@ async function loadSyncSettings() {
     result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL
   );
   dom.syncServerToken.value = String(result[STORAGE_KEY_SYNC_SERVER_TOKEN] || "");
+  dom.syncAutoInterval.value = normalizeAutoSyncIntervalMinutes(result[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]);
   renderSyncBackendFields();
 }
 
 function renderSyncBackendFields() {
   dom.syncWebdavFields.classList.toggle("hidden", !dom.syncEnableWebdav.checked);
   dom.syncServerFields.classList.toggle("hidden", !dom.syncEnableServer.checked);
+  renderAutoSyncStatus();
+}
+
+function normalizeAutoSyncIntervalMinutes(value) {
+  const normalized = String(value ?? "0").trim();
+  return AUTO_SYNC_INTERVAL_OPTIONS.has(normalized) ? normalized : "0";
+}
+
+function renderAutoSyncStatus() {
+  const interval = normalizeAutoSyncIntervalMinutes(dom.syncAutoInterval.value);
+  const enabledLabels = [];
+  if (dom.syncEnableWebdav.checked) enabledLabels.push("WebDAV");
+  if (dom.syncEnableServer.checked) enabledLabels.push("服务器");
+  if (interval === "0") {
+    dom.syncAutoStatus.textContent = "自动同步已关闭";
+    return;
+  }
+  if (enabledLabels.length === 0) {
+    dom.syncAutoStatus.textContent = "自动同步已开启，但当前没有可用远端同步源";
+    return;
+  }
+  dom.syncAutoStatus.textContent = `自动按“合并”模式执行，每 ${interval} 分钟同步一次（${enabledLabels.join(" + ")}）`;
 }
 
 async function loadLockSettings() {
@@ -529,6 +561,7 @@ async function saveLockSettings() {
 async function saveSyncSettings() {
   const enableWebdav = Boolean(dom.syncEnableWebdav.checked);
   const enableServer = Boolean(dom.syncEnableServer.checked);
+  const autoSyncIntervalMinutes = normalizeAutoSyncIntervalMinutes(dom.syncAutoInterval.value);
   await chrome.storage.local.set({
     [STORAGE_KEY_SYNC_ENABLE_WEBDAV]: enableWebdav,
     [STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]: enableServer,
@@ -538,15 +571,17 @@ async function saveSyncSettings() {
     [STORAGE_KEY_SYNC_WEBDAV_PASSWORD]: String(dom.syncWebdavPassword.value || ""),
     [STORAGE_KEY_SYNC_SERVER_BASE_URL]: String(dom.syncServerBaseUrl.value || "").trim(),
     [STORAGE_KEY_SYNC_SERVER_TOKEN]: String(dom.syncServerToken.value || "").trim(),
+    [STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]: Number(autoSyncIntervalMinutes),
   });
   renderSyncBackendFields();
   const enabledLabels = [];
   if (enableWebdav) enabledLabels.push("WebDAV");
   if (enableServer) enabledLabels.push("服务器");
+  const autoSyncLabel = autoSyncIntervalMinutes === "0" ? "自动同步关闭" : `自动同步每 ${autoSyncIntervalMinutes} 分钟`;
   setDeviceStatus(
     enabledLabels.length > 0
-      ? `同步源配置已保存（已启用：${enabledLabels.join(" + ")}）`
-      : "同步源配置已保存（当前未启用任何远端源）"
+      ? `同步源配置已保存（已启用：${enabledLabels.join(" + ")}；${autoSyncLabel}）`
+      : `同步源配置已保存（当前未启用任何远端源；${autoSyncLabel}）`
   );
 }
 

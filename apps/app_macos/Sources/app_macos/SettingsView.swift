@@ -92,6 +92,21 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
+                        HStack(spacing: 8) {
+                            Text("自动同步")
+                                .frame(width: labelColumnWidth, alignment: .leading)
+                            Picker("自动同步", selection: $store.autoSyncIntervalMinutes) {
+                                ForEach(store.autoSyncIntervalOptions) { option in
+                                    Text(option.label).tag(option.rawValue)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                        }
+
+                        Text(store.autoSyncStatusDescription)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
                         HStack(alignment: .top, spacing: 8) {
                             Text("同步操作")
                                 .frame(width: labelColumnWidth, alignment: .leading)

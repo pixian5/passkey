@@ -36,6 +36,20 @@
           <p class="hint">
             合并：保留双方变更；云端覆盖本地：用所有已启用远端的汇总结果替换本机；本地覆盖云端：直接把本机数据推到所有已启用远端。
           </p>
+          <div class="row">
+            <label for="syncAutoInterval">自动同步</label>
+            <select id="syncAutoInterval">
+              <option value="0">关闭</option>
+              <option value="1">每 1 分钟</option>
+              <option value="3">每 3 分钟</option>
+              <option value="5">每 5 分钟</option>
+              <option value="10">每 10 分钟</option>
+              <option value="15">每 15 分钟</option>
+              <option value="30">每 30 分钟</option>
+              <option value="60">每 60 分钟</option>
+            </select>
+            <span id="syncAutoStatus" class="hint"></span>
+          </div>
           <div id="syncWebdavFields">
             <div class="row">
               <label for="syncWebdavBaseUrl">WebDAV</label>

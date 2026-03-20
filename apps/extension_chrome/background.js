@@ -8,14 +8,38 @@ import {
   syncAliasGroups,
 } from "./account_core.js";
 import {
+  mergeAccountCollections as mergeAccountCollectionsCore,
+  mergeFolderCollections as mergeFolderCollectionsCore,
+  mergePasskeyCollections as mergePasskeyCollectionsCore,
+  reconcileAccountFolders as reconcileAccountFoldersCore,
+} from "../../core/pass_core/js/sync_merge_core.js";
+import {
+  appendHistoryEntry,
   ensureDataStorageReady,
+  getAllData as getAllDataFromDataStore,
   getAccounts as getAccountsFromDataStore,
+  setAllData as setAllDataToDataStore,
   setAccounts as setAccountsToDataStore,
 } from "./data_store.js";
 
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
+const STORAGE_KEY_SYNC_ENABLE_WEBDAV = "pass.sync.enableWebDAV.v3";
+const STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER = "pass.sync.enableSelfHostedServer.v3";
+const STORAGE_KEY_SYNC_WEBDAV_BASE_URL = "pass.sync.webdav.baseUrl.v2";
+const STORAGE_KEY_SYNC_WEBDAV_PATH = "pass.sync.webdav.path.v2";
+const STORAGE_KEY_SYNC_WEBDAV_USERNAME = "pass.sync.webdav.username.v2";
+const STORAGE_KEY_SYNC_WEBDAV_PASSWORD = "pass.sync.webdav.password.v2";
+const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
+const STORAGE_KEY_SYNC_SERVER_TOKEN = "pass.sync.server.token.v2";
+const STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
+const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
 const CONTEXT_MENU_ID_ALL_ACCOUNTS = "pass.context.all_accounts";
 const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
+const FIXED_NEW_ACCOUNT_FOLDER_NAME = "新账号";
+const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "http://127.0.0.1:53333/";
+const SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
+const SYNC_MODE_MERGE = "merge";
+const AUTO_SYNC_ALARM_NAME = "pass.sync.auto";
 
 chrome.runtime.onInstalled.addListener(async () => {
   const stored = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
@@ -27,14 +51,41 @@ chrome.runtime.onInstalled.addListener(async () => {
   await ensureDataStorageReady();
   await ensurePasskeyStorageShape();
   ensureActionContextMenu();
+  await scheduleAutoSyncAlarm();
 });
 
 void ensureDataStorageReady();
 void ensurePasskeyStorageShape();
 ensureActionContextMenu();
+void scheduleAutoSyncAlarm();
 
 chrome.runtime.onStartup.addListener(() => {
   ensureActionContextMenu();
+  void scheduleAutoSyncAlarm();
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local") return;
+  if (
+    changes[STORAGE_KEY_SYNC_ENABLE_WEBDAV] ||
+    changes[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER] ||
+    changes[STORAGE_KEY_SYNC_WEBDAV_BASE_URL] ||
+    changes[STORAGE_KEY_SYNC_WEBDAV_PATH] ||
+    changes[STORAGE_KEY_SYNC_WEBDAV_USERNAME] ||
+    changes[STORAGE_KEY_SYNC_WEBDAV_PASSWORD] ||
+    changes[STORAGE_KEY_SYNC_SERVER_BASE_URL] ||
+    changes[STORAGE_KEY_SYNC_SERVER_TOKEN] ||
+    changes[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]
+  ) {
+    void scheduleAutoSyncAlarm();
+  }
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm?.name !== AUTO_SYNC_ALARM_NAME) return;
+  void runAutoSync().catch((error) => {
+    console.error("pass auto sync failed", error);
+  });
 });
 
 chrome.contextMenus.onClicked.addListener((info) => {
@@ -55,6 +106,174 @@ function ensureActionContextMenu() {
       contexts: ["action"],
     });
   });
+}
+
+function normalizeAutoSyncIntervalMinutes(value) {
+  const normalized = Number(value);
+  const allowed = new Set([0, 1, 3, 5, 10, 15, 30, 60]);
+  return allowed.has(normalized) ? normalized : 0;
+}
+
+async function scheduleAutoSyncAlarm() {
+  const result = await chrome.storage.local.get([
+    STORAGE_KEY_SYNC_ENABLE_WEBDAV,
+    STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER,
+    STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES,
+  ]);
+  const hasRemoteSource = Boolean(result[STORAGE_KEY_SYNC_ENABLE_WEBDAV]) || Boolean(result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]);
+  const intervalMinutes = normalizeAutoSyncIntervalMinutes(result[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]);
+
+  await chrome.alarms.clear(AUTO_SYNC_ALARM_NAME);
+  if (!hasRemoteSource || intervalMinutes <= 0) {
+    return;
+  }
+
+  await chrome.alarms.create(AUTO_SYNC_ALARM_NAME, {
+    periodInMinutes: intervalMinutes,
+    delayInMinutes: intervalMinutes,
+  });
+}
+
+async function runAutoSync() {
+  const targets = await buildRemoteSyncTargetsFromStorage();
+  if (!targets || targets.length === 0) return;
+
+  const localStored = await readBusinessDataFromStore();
+  const localAccounts = Array.isArray(localStored.accounts)
+    ? localStored.accounts.map(normalizeAccountShape)
+    : [];
+  const localStoredPasskeys = Array.isArray(localStored.passkeys)
+    ? localStored.passkeys.map(normalizePasskeyShape)
+    : [];
+  const localPasskeys = buildUnifiedPasskeys(localAccounts, localStoredPasskeys);
+  const localFolders = Array.isArray(localStored.folders)
+    ? localStored.folders.map(normalizeFolderShape)
+    : [];
+
+  let mergedAccounts = localAccounts;
+  let mergedPasskeys = localPasskeys;
+  let mergedFolders = localFolders;
+  let remoteAggregate = null;
+
+  for (const target of targets) {
+    const remoteResponse = await pullRemotePayload(target);
+    target.remoteEtag = remoteResponse.etag;
+    const remotePayload = remoteResponse.payload;
+    const remoteAccounts = remotePayload ? remotePayload.accounts.map(normalizeAccountShape) : [];
+    const remotePasskeys = remotePayload ? buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys) : [];
+    const remoteFolders = remotePayload ? remotePayload.folders.map(normalizeFolderShape) : [];
+
+    if (!remoteAggregate) {
+      remoteAggregate = {
+        accounts: remoteAccounts,
+        passkeys: remotePasskeys,
+        folders: remoteFolders,
+      };
+      continue;
+    }
+
+    remoteAggregate.folders = mergeFolderCollections(remoteAggregate.folders, remoteFolders);
+    remoteAggregate.accounts = mergeAccountCollections(remoteAggregate.accounts, remoteAccounts);
+    remoteAggregate.accounts = syncAliasGroups(remoteAggregate.accounts);
+    remoteAggregate.accounts = reconcileAccountFolders(remoteAggregate.accounts, remoteAggregate.folders);
+    remoteAggregate.passkeys = mergePasskeyCollections(remoteAggregate.passkeys, remotePasskeys);
+    remoteAggregate.passkeys = buildUnifiedPasskeys(remoteAggregate.accounts, remoteAggregate.passkeys);
+  }
+
+  if (remoteAggregate) {
+    mergedFolders = mergeFolderCollections(localFolders, remoteAggregate.folders);
+    mergedAccounts = mergeAccountCollections(localAccounts, remoteAggregate.accounts);
+    mergedAccounts = syncAliasGroups(mergedAccounts);
+    mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
+    mergedPasskeys = mergePasskeyCollections(localPasskeys, remoteAggregate.passkeys);
+    mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
+  }
+
+  await writeBusinessDataToStore({
+    accounts: mergedAccounts,
+    passkeys: mergedPasskeys,
+    folders: mergedFolders,
+  });
+
+  const pushTargets = [...targets].sort((left, right) => Number(right.supportsEtag) - Number(left.supportsEtag));
+  for (const target of pushTargets) {
+    const result = await pushRemotePayloadWithMode(target, {
+      accounts: mergedAccounts,
+      passkeys: mergedPasskeys,
+      folders: mergedFolders,
+    }, SYNC_MODE_MERGE);
+    mergedAccounts = result.payload.accounts.map(normalizeAccountShape);
+    mergedFolders = result.payload.folders.map(normalizeFolderShape);
+    mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, result.payload.passkeys);
+  }
+
+  await writeBusinessDataToStore({
+    accounts: mergedAccounts,
+    passkeys: mergedPasskeys,
+    folders: mergedFolders,
+  });
+  await appendHistoryEntry({
+    action: `自动同步完成（${targets.map((item) => item.label).join(" + ")}）`,
+    timestampMs: Date.now(),
+  });
+}
+
+async function readBusinessDataFromStore() {
+  const stored = await getAllDataFromDataStore();
+  return {
+    accounts: Array.isArray(stored.accounts) ? stored.accounts : [],
+    passkeys: Array.isArray(stored.passkeys) ? stored.passkeys : [],
+    folders: Array.isArray(stored.folders) ? stored.folders : [],
+  };
+}
+
+async function writeBusinessDataToStore({ accounts, passkeys, folders }) {
+  await setAllDataToDataStore({
+    accounts: Array.isArray(accounts) ? accounts : [],
+    passkeys: Array.isArray(passkeys) ? passkeys : [],
+    folders: Array.isArray(folders) ? folders : [],
+  });
+}
+
+async function buildRemoteSyncTargetsFromStorage() {
+  const result = await chrome.storage.local.get([
+    STORAGE_KEY_SYNC_ENABLE_WEBDAV,
+    STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER,
+    STORAGE_KEY_SYNC_WEBDAV_BASE_URL,
+    STORAGE_KEY_SYNC_WEBDAV_PATH,
+    STORAGE_KEY_SYNC_WEBDAV_USERNAME,
+    STORAGE_KEY_SYNC_WEBDAV_PASSWORD,
+    STORAGE_KEY_SYNC_SERVER_BASE_URL,
+    STORAGE_KEY_SYNC_SERVER_TOKEN,
+  ]);
+
+  const targets = [];
+  if (Boolean(result[STORAGE_KEY_SYNC_ENABLE_WEBDAV])) {
+    const baseUrl = String(result[STORAGE_KEY_SYNC_WEBDAV_BASE_URL] || "").trim();
+    const remotePath = String(result[STORAGE_KEY_SYNC_WEBDAV_PATH] || "").trim() || "pass-sync-bundle-v2.json";
+    if (!baseUrl) return null;
+    const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+    const url = new URL(remotePath.replace(/^\/+/g, ""), normalizedBase).toString();
+    const username = String(result[STORAGE_KEY_SYNC_WEBDAV_USERNAME] || "");
+    const password = String(result[STORAGE_KEY_SYNC_WEBDAV_PASSWORD] || "");
+    let authHeader = null;
+    if (username || password) {
+      authHeader = `Basic ${base64EncodeUtf8(`${username}:${password}`)}`;
+    }
+    targets.push({ label: "WebDAV", url, authHeader, supportsEtag: false, remoteEtag: null });
+  }
+
+  if (Boolean(result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER])) {
+    const serverBaseUrl = String(result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL).trim();
+    if (!serverBaseUrl) return null;
+    const normalizedBase = serverBaseUrl.endsWith("/") ? serverBaseUrl : `${serverBaseUrl}/`;
+    const url = new URL("v1/sync/payload", normalizedBase).toString();
+    const token = String(result[STORAGE_KEY_SYNC_SERVER_TOKEN] || "").trim();
+    const authHeader = token ? `Bearer ${token}` : null;
+    targets.push({ label: "服务器", url, authHeader, supportsEtag: true, remoteEtag: null });
+  }
+
+  return targets.length > 0 ? targets : null;
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -546,6 +765,317 @@ function normalizeAccountShape(account) {
     createdAtMs,
     updatedAtMs: asTimestamp(account?.updatedAtMs, createdAtMs),
   };
+}
+
+function normalizePasskeyShape(item) {
+  const now = Date.now();
+  const normalizedCompat = normalizePasskeyCreateCompatMethod(item?.createCompatMethod, item?.alg);
+  return {
+    credentialIdB64u: String(item?.credentialIdB64u || item?.id || "").trim(),
+    rpId: normalizeDomain(item?.rpId || ""),
+    userName: normalizeUsername(item?.userName || item?.username || ""),
+    displayName: String(item?.displayName || "").trim(),
+    userHandleB64u: String(item?.userHandleB64u || ""),
+    alg: Number(item?.alg || -7),
+    signCount: Number(item?.signCount || 0),
+    privateJwk: item?.privateJwk || null,
+    publicJwk: item?.publicJwk || null,
+    createdAtMs: Number(item?.createdAtMs || now),
+    updatedAtMs: Number(item?.updatedAtMs || item?.createdAtMs || now),
+    lastUsedAtMs: item?.lastUsedAtMs == null ? null : Number(item.lastUsedAtMs),
+    mode: String(item?.mode || "managed"),
+    createCompatMethod: normalizedCompat,
+  };
+}
+
+function normalizePasskeyCreateCompatMethod(input, alg) {
+  const value = String(input || "").trim().toLowerCase();
+  if (
+    value === "standard" ||
+    value === "user_name_fallback" ||
+    value === "rs256" ||
+    value === "user_name_fallback+rs256" ||
+    value === "unknown_linked"
+  ) {
+    return value;
+  }
+  return Number(alg) === -257 ? "rs256" : "standard";
+}
+
+function normalizeFolderId(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeFolderIdList(values) {
+  const source = Array.isArray(values) ? values : [];
+  return [...new Set(source.map(normalizeFolderId).filter(Boolean))].sort();
+}
+
+function normalizeFolderShape(item) {
+  const now = Date.now();
+  const id = normalizeFolderId(item?.id || "");
+  const rawName = String(item?.name || "").trim();
+  const safeId = id || (globalThis.crypto?.randomUUID?.() || stableUuidFromText(`folder|${rawName}|${now}`)).toLowerCase();
+  const createdAtMs = Number(item?.createdAtMs || now);
+  const safeName = safeId === FIXED_NEW_ACCOUNT_FOLDER_ID
+    ? FIXED_NEW_ACCOUNT_FOLDER_NAME
+    : (rawName || `未命名文件夹 ${safeId.slice(0, 8)}`);
+  return {
+    id: safeId,
+    name: safeName,
+    matchedSites: normalizeSites(item?.matchedSites || []),
+    autoAddMatchingSites: Boolean(item?.autoAddMatchingSites),
+    createdAtMs,
+    updatedAtMs: Number(item?.updatedAtMs || createdAtMs),
+  };
+}
+
+function sortFoldersForDisplay(inputFolders) {
+  const folders = Array.isArray(inputFolders) ? inputFolders : [];
+  return [...folders].sort((lhs, rhs) => {
+    const lhsId = normalizeFolderId(lhs?.id);
+    const rhsId = normalizeFolderId(rhs?.id);
+    if (lhsId === FIXED_NEW_ACCOUNT_FOLDER_ID && rhsId !== FIXED_NEW_ACCOUNT_FOLDER_ID) return -1;
+    if (rhsId === FIXED_NEW_ACCOUNT_FOLDER_ID && lhsId !== FIXED_NEW_ACCOUNT_FOLDER_ID) return 1;
+    const lhsCreated = Number(lhs?.createdAtMs || 0);
+    const rhsCreated = Number(rhs?.createdAtMs || 0);
+    if (lhsCreated !== rhsCreated) return lhsCreated - rhsCreated;
+    return String(lhs?.name || "").localeCompare(String(rhs?.name || ""));
+  });
+}
+
+function extractAccountFolderIds(account) {
+  if (Array.isArray(account?.folderIds) && account.folderIds.length > 0) {
+    return account.folderIds.map((id) => String(id || ""));
+  }
+  if (account?.folderId != null) {
+    return [String(account.folderId)];
+  }
+  return [];
+}
+
+function buildUnifiedPasskeys(accountsInput, passkeysInput) {
+  const now = Date.now();
+  const accounts = Array.isArray(accountsInput) ? accountsInput.map(normalizeAccountShape) : [];
+  const storedPasskeys = Array.isArray(passkeysInput) ? passkeysInput.map(normalizePasskeyShape) : [];
+  const linkedById = new Map();
+
+  for (const account of accounts) {
+    const ids = normalizePasskeyCredentialIds(account?.passkeyCredentialIds || []);
+    if (ids.length === 0) continue;
+    const rpId = normalizeDomain((account?.sites && account.sites[0]) || account?.canonicalSite || "");
+    const userName = normalizeUsername(account?.username || account?.usernameAtCreate || "");
+    const createdAtMs = Number(account?.createdAtMs || now);
+
+    for (const rawId of ids) {
+      const credentialIdB64u = String(rawId || "").trim();
+      if (!credentialIdB64u) continue;
+      const existing = linkedById.get(credentialIdB64u);
+      if (existing) {
+        if (!existing.rpId && rpId) existing.rpId = rpId;
+        if (!existing.userName && userName) existing.userName = userName;
+        continue;
+      }
+      linkedById.set(credentialIdB64u, {
+        credentialIdB64u,
+        rpId,
+        userName,
+        displayName: "",
+        userHandleB64u: "",
+        alg: -7,
+        signCount: 0,
+        privateJwk: null,
+        publicJwk: null,
+        createdAtMs,
+        updatedAtMs: 0,
+        lastUsedAtMs: null,
+        mode: "linked-account",
+        createCompatMethod: "unknown_linked",
+      });
+    }
+  }
+
+  const linkedPasskeys = Array.from(linkedById.values()).filter((item) => String(item.rpId || "").trim().length > 0);
+  return mergePasskeyCollections(storedPasskeys, linkedPasskeys);
+}
+
+function mergeAccountCollections(local, remote) {
+  return mergeAccountCollectionsCore(local, remote, syncMergeHelpers());
+}
+
+function mergePasskeyCollections(local, remote) {
+  return mergePasskeyCollectionsCore(local, remote, syncMergeHelpers());
+}
+
+function mergeFolderCollections(local, remote) {
+  return mergeFolderCollectionsCore(local, remote, syncMergeHelpers());
+}
+
+function reconcileAccountFolders(accounts, folders) {
+  return reconcileAccountFoldersCore(accounts, folders, syncMergeHelpers());
+}
+
+function syncMergeHelpers() {
+  return {
+    normalizeAccountShape,
+    normalizeFolderIdList,
+    normalizeFolderId,
+    extractAccountFolderIds,
+    normalizeSites,
+    etldPlusOne,
+    normalizePasskeyCredentialIds,
+    stableUuidFromText,
+    normalizePasskeyShape,
+    normalizePasskeyCreateCompatMethod,
+    normalizeFolderShape,
+    sortFoldersForDisplay,
+    fixedNewAccountFolderId: FIXED_NEW_ACCOUNT_FOLDER_ID,
+    fixedNewAccountFolderName: FIXED_NEW_ACCOUNT_FOLDER_NAME,
+  };
+}
+
+function parseSyncBundlePayload(input, { requireBundleSchema = false } = {}) {
+  if (!input || typeof input !== "object") return null;
+  const schema = String(input?.schema || "");
+  const hasSchema = schema.length > 0;
+  if (hasSchema && schema !== SYNC_BUNDLE_SCHEMA_V2) return null;
+  if (requireBundleSchema && !hasSchema) return null;
+  const rawPayload = hasSchema ? input.payload : input;
+  if (!rawPayload || typeof rawPayload !== "object") return null;
+  return {
+    accounts: Array.isArray(rawPayload.accounts) ? rawPayload.accounts : [],
+    passkeys: Array.isArray(rawPayload.passkeys) ? rawPayload.passkeys : [],
+    folders: Array.isArray(rawPayload.folders) ? rawPayload.folders : [],
+  };
+}
+
+async function getDeviceName() {
+  const result = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
+  return String(result[STORAGE_KEY_DEVICE_NAME] || "").trim() || "ChromeMac";
+}
+
+async function getOrCreateSyncDeviceId() {
+  const result = await chrome.storage.local.get([STORAGE_KEY_SYNC_DEVICE_ID]);
+  const existing = String(result[STORAGE_KEY_SYNC_DEVICE_ID] || "").trim().toLowerCase();
+  if (isUuidLower(existing)) return existing;
+  const generated = String(
+    globalThis.crypto?.randomUUID?.() || stableUuidFromText(`sync-device|${Date.now()}|${Math.random()}`)
+  ).toLowerCase();
+  await chrome.storage.local.set({ [STORAGE_KEY_SYNC_DEVICE_ID]: generated });
+  return generated;
+}
+
+async function buildSyncBundleFromPayload(payload) {
+  const [deviceName, deviceId] = await Promise.all([getDeviceName(), getOrCreateSyncDeviceId()]);
+  const accounts = Array.isArray(payload?.accounts) ? payload.accounts.map(normalizeAccountShape) : [];
+  const rawPasskeys = Array.isArray(payload?.passkeys) ? payload.passkeys.map(normalizePasskeyShape) : [];
+  const passkeys = buildUnifiedPasskeys(accounts, rawPasskeys);
+  const folders = Array.isArray(payload?.folders) ? payload.folders.map(normalizeFolderShape) : [];
+  return {
+    schema: SYNC_BUNDLE_SCHEMA_V2,
+    exportedAtMs: Date.now(),
+    source: {
+      app: "pass-extension",
+      platform: "chrome-extension",
+      deviceName,
+      deviceId,
+      logicalClockMs: Date.now(),
+      formatVersion: 2,
+    },
+    payload: {
+      accounts,
+      passkeys,
+      folders,
+    },
+  };
+}
+
+function base64EncodeUtf8(input) {
+  const bytes = new TextEncoder().encode(String(input || ""));
+  let binary = "";
+  for (const value of bytes) {
+    binary += String.fromCharCode(value);
+  }
+  return btoa(binary);
+}
+
+async function pullRemotePayload(target) {
+  const headers = { Accept: "application/json" };
+  if (target.authHeader) headers.Authorization = target.authHeader;
+  const response = await fetch(target.url, { method: "GET", headers, cache: "no-store" });
+  if (response.status === 404) return { payload: null, etag: null };
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const text = await response.text();
+  if (!String(text || "").trim()) {
+    return { payload: null, etag: response.headers.get("ETag") };
+  }
+  const parsed = JSON.parse(text);
+  const payload = parseSyncBundlePayload(parsed, { requireBundleSchema: true });
+  if (!payload) throw new Error("远端数据格式错误，仅支持 pass.sync.bundle.v2");
+  return { payload, etag: response.headers.get("ETag") };
+}
+
+async function pushRemotePayload(target, payload, ifMatch = null) {
+  const bundle = await buildSyncBundleFromPayload(payload);
+  const headers = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  if (target.authHeader) headers.Authorization = target.authHeader;
+  if (ifMatch) headers["If-Match"] = ifMatch;
+  const response = await fetch(target.url, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(bundle, null, 2),
+  });
+  if (!response.ok) {
+    const error = new Error(`HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return { etag: response.headers.get("ETag") };
+}
+
+async function pushRemotePayloadWithRetry(target, payload) {
+  try {
+    const pushResult = await pushRemotePayload(target, payload, target.remoteEtag);
+    target.remoteEtag = pushResult.etag;
+    return { payload };
+  } catch (error) {
+    if (!target.supportsEtag || error?.status !== 412) throw error;
+  }
+
+  const latestResponse = await pullRemotePayload(target);
+  target.remoteEtag = latestResponse.etag;
+  const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
+  const localAccounts = Array.isArray(payload.accounts) ? payload.accounts.map(normalizeAccountShape) : [];
+  const localPasskeys = buildUnifiedPasskeys(localAccounts, Array.isArray(payload.passkeys) ? payload.passkeys.map(normalizePasskeyShape) : []);
+  const localFolders = Array.isArray(payload.folders) ? payload.folders.map(normalizeFolderShape) : [];
+  const remoteAccounts = remotePayload.accounts.map(normalizeAccountShape);
+  const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys);
+  const remoteFolders = remotePayload.folders.map(normalizeFolderShape);
+
+  let mergedFolders = mergeFolderCollections(localFolders, remoteFolders);
+  let mergedAccounts = mergeAccountCollections(localAccounts, remoteAccounts);
+  mergedAccounts = syncAliasGroups(mergedAccounts);
+  mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
+  let mergedPasskeys = mergePasskeyCollections(localPasskeys, remotePasskeys);
+  mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
+  const reconciledPayload = { accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders };
+
+  await writeBusinessDataToStore(reconciledPayload);
+  const retryResult = await pushRemotePayload(target, reconciledPayload, target.remoteEtag);
+  target.remoteEtag = retryResult.etag;
+  return { payload: reconciledPayload };
+}
+
+async function pushRemotePayloadWithMode(target, payload, syncMode) {
+  if (syncMode !== SYNC_MODE_MERGE) {
+    const pushResult = await pushRemotePayload(target, payload, null);
+    target.remoteEtag = pushResult.etag;
+    return { payload };
+  }
+  return pushRemotePayloadWithRetry(target, payload);
 }
 
 function fillCredentialInPage(username, password) {
