@@ -207,49 +207,56 @@ private struct WindowFrameAutosave: NSViewRepresentable {
         private weak var observedWindow: NSWindow?
         private var appliedName: String = ""
         private var didRestoreFrame = false
-        private var observers: [NSObjectProtocol] = []
+        private var closeObserver: NSObjectProtocol?
+        private var appTerminateObserver: NSObjectProtocol?
 
         deinit {
-            observers.forEach(NotificationCenter.default.removeObserver)
+            if let closeObserver {
+                NotificationCenter.default.removeObserver(closeObserver)
+            }
+            if let appTerminateObserver {
+                NotificationCenter.default.removeObserver(appTerminateObserver)
+            }
         }
 
         @MainActor
         func bindIfNeeded(to window: NSWindow?, name: String) {
             guard let window else { return }
             if observedWindow !== window || appliedName != name {
-                observers.forEach(NotificationCenter.default.removeObserver)
-                observers.removeAll()
                 didRestoreFrame = false
             } else {
-                restoreFrameIfNeeded(for: window, name: name)
                 return
             }
             observedWindow = window
             appliedName = name
-            restoreFrameIfNeeded(for: window, name: name)
-            Self.saveFrame(for: window, name: name)
-            let center = NotificationCenter.default
-            observers.append(
-                center.addObserver(forName: NSWindow.didMoveNotification, object: window, queue: .main) { _ in
-                    MainActor.assumeIsolated {
-                        Self.saveFrame(for: window, name: name)
-                    }
+            if let closeObserver {
+                NotificationCenter.default.removeObserver(closeObserver)
+            }
+            if let appTerminateObserver {
+                NotificationCenter.default.removeObserver(appTerminateObserver)
+            }
+            closeObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: window,
+                queue: .main
+            ) { _ in
+                MainActor.assumeIsolated {
+                    Self.saveFrame(for: window, name: name)
                 }
-            )
-            observers.append(
-                center.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { _ in
-                    MainActor.assumeIsolated {
-                        Self.saveFrame(for: window, name: name)
-                    }
+            }
+            appTerminateObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.willTerminateNotification,
+                object: nil,
+                queue: .main
+            ) { _ in
+                MainActor.assumeIsolated {
+                    Self.saveFrame(for: window, name: name)
                 }
-            )
-            observers.append(
-                center.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
-                    MainActor.assumeIsolated {
-                        Self.saveFrame(for: window, name: name)
-                    }
-                }
-            )
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self, weak window] in
+                guard let self, let window else { return }
+                self.restoreFrameIfNeeded(for: window, name: name)
+            }
         }
 
         @MainActor
