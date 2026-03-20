@@ -75,11 +75,6 @@ struct SettingsView: View {
 
                 GroupBox("数据同步") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(store.cloudSyncStatus)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
                         VStack(alignment: .leading, spacing: 6) {
                             leadingToggle("iCloud（仅 Apple）", isOn: $store.syncEnableICloud)
                             leadingToggle("WebDAV", isOn: $store.syncEnableWebDAV)
@@ -89,6 +84,11 @@ struct SettingsView: View {
                         Text("可同时启用多个同步源；点击“同步已启用源”会依次拉取并回写所有已启用源。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+
+                        Text(store.cloudSyncStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
                         HStack(spacing: 8) {
                             Text("自动同步")
