@@ -20,13 +20,24 @@
     ],
     "security": {
       "csp": null,
-      "capabilities": ["default"]
+      "capabilities": [
+        "default"
+      ]
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "appimage", "deb", "dmg", "msi", "nsis"],
-    "icon": [],
+    "targets": [
+      "app",
+      "appimage",
+      "deb",
+      "dmg",
+      "msi",
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon-512.png"
+    ],
     "category": "Productivity",
     "shortDescription": "pass 桌面端 Tauri 版本",
     "longDescription": "用于 Windows、Ubuntu 和 macOS 的 pass 桌面端。",
