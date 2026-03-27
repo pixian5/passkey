@@ -124,7 +124,6 @@ const dom = {
   addSitesToFolderAutoAdd: document.getElementById("addSitesToFolderAutoAdd"),
   cancelAddSitesToFolderBtn: document.getElementById("cancelAddSitesToFolder"),
   confirmAddSitesToFolderBtn: document.getElementById("confirmAddSitesToFolder"),
-  payload: document.getElementById("payload"),
   refreshBtn: document.getElementById("refreshBtn"),
   exportSyncBundleBtn: document.getElementById("exportSyncBundleBtn"),
   exportChromeCsvBtn: document.getElementById("exportChromeCsvBtn"),
@@ -136,8 +135,6 @@ const dom = {
   importGoogleAuthQrFilesBtn: document.getElementById("importGoogleAuthQrFilesBtn"),
   importGoogleAuthFolderSelect: document.getElementById("importGoogleAuthFolderSelect"),
   importGoogleAuthNewFolderName: document.getElementById("importGoogleAuthNewFolderName"),
-  exportBtn: document.getElementById("exportBtn"),
-  importBtn: document.getElementById("importBtn"),
   clearBtn: document.getElementById("clearBtn"),
   status: document.getElementById("status"),
 };
@@ -346,8 +343,6 @@ async function init() {
   dom.importBrowserCsvBtn.addEventListener("click", importBrowserPasswordCsv);
   dom.importGoogleAuthQrBtn.addEventListener("click", importGoogleAuthenticatorExportQrFromClipboard);
   dom.importGoogleAuthQrFilesBtn.addEventListener("click", importGoogleAuthenticatorExportQrFromFiles);
-  dom.exportBtn.addEventListener("click", exportJson);
-  dom.importBtn.addEventListener("click", importJson);
   dom.clearBtn.addEventListener("click", clearAll);
 }
 
@@ -723,11 +718,6 @@ async function refresh({ silent = false } = {}) {
   foldersRaw = sortFoldersForDisplay(withFixedFolder(folders.map(normalizeFolderShape)));
   closeContextMenu();
 
-  dom.payload.value = JSON.stringify(
-    { accounts: accountsRaw, passkeys: passkeysRaw, folders: foldersRaw },
-    null,
-    2
-  );
   renderGoogleAuthenticatorImportFolderOptions();
   renderSidebar(accountsRaw);
   renderCurrentView(accountsRaw);
@@ -739,43 +729,6 @@ async function refresh({ silent = false } = {}) {
   if (!silent) {
     setStatus(`已加载 ${accountsRaw.length} 条账号，${passkeysRaw.length} 条通行密钥，${foldersRaw.length} 个文件夹`);
   }
-}
-
-async function exportJson() {
-  const text = dom.payload.value;
-  const blob = new Blob([text], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "pass-extension-data.json";
-  a.click();
-  URL.revokeObjectURL(url);
-  setStatus("已导出 JSON");
-}
-
-async function importJson() {
-  let parsed;
-  try {
-    parsed = JSON.parse(dom.payload.value);
-  } catch (error) {
-    setStatus(`JSON 格式错误: ${error.message}`);
-    return;
-  }
-
-  const payload = parseSyncBundlePayload(parsed);
-  if (!payload) {
-    setStatus("JSON 格式错误：缺少 accounts/folders/payload");
-    return;
-  }
-  const accounts = payload.accounts.map(normalizeAccountShape);
-  const passkeys = buildUnifiedPasskeys(accounts, payload.passkeys);
-  const folders = payload.folders.map(normalizeFolderShape);
-  await writeBusinessDataToStore({ accounts, passkeys, folders });
-  await appendHistory(`导入 JSON：账号 ${accounts.length} 条，通行密钥 ${passkeys.length} 条，文件夹 ${folders.length} 个`);
-
-  editingAccountId = null;
-  await refresh({ silent: true });
-  setStatus(`导入完成，共 ${accounts.length} 条账号，${passkeys.length} 条通行密钥，${folders.length} 个文件夹`);
 }
 
 async function clearAll() {
@@ -2832,11 +2785,6 @@ async function persistSortOrderFromModal(orderedIds) {
   if (!changed) return;
   accountsRaw = cloneAccounts(next);
   await setAccountsToDataStore(next);
-  dom.payload.value = JSON.stringify(
-    { accounts: accountsRaw, passkeys: passkeysRaw, folders: foldersRaw },
-    null,
-    2
-  );
   renderSidebar(accountsRaw);
   renderCurrentView(accountsRaw);
 }
