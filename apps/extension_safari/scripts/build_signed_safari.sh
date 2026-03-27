@@ -8,6 +8,8 @@ APP_NAME="PassSafari"
 DERIVED_DATA="${PROJECT_DIR}/build"
 APP_PATH="${DERIVED_DATA}/Build/Products/Debug/${APP_NAME}.app"
 APPEX_PATH="${DERIVED_DATA}/Build/Products/Debug/${APP_NAME} Extension.appex"
+APP_ENTITLEMENTS="${PROJECT_DIR}/PassSafari/PassSafari.entitlements"
+APPEX_ENTITLEMENTS="${PROJECT_DIR}/PassSafari Extension/PassSafariExtension.entitlements"
 
 "${ROOT_DIR}/scripts/create_self_signed_cert.sh" "${CERT_NAME}"
 
@@ -38,8 +40,8 @@ if [[ ! -d "${APP_PATH}" || ! -d "${APPEX_PATH}" ]]; then
   exit 1
 fi
 
-codesign --force --deep --sign "${CERT_HASH}" --timestamp=none "${APPEX_PATH}"
-codesign --force --deep --sign "${CERT_HASH}" --timestamp=none "${APP_PATH}"
+codesign --force --deep --sign "${CERT_HASH}" --entitlements "${APPEX_ENTITLEMENTS}" --timestamp=none "${APPEX_PATH}"
+codesign --force --deep --sign "${CERT_HASH}" --entitlements "${APP_ENTITLEMENTS}" --timestamp=none "${APP_PATH}"
 codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
 
 open -a "${APP_PATH}"
