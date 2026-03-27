@@ -8,8 +8,10 @@ DERIVED_DATA="${PROJECT_DIR}/build_apple"
 APP_PATH="${DERIVED_DATA}/Build/Products/Debug/${APP_NAME}.app"
 INSTALL_PATH="/Applications/${APP_NAME}.app"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+BUILD_APPEX_PATH="${DERIVED_DATA}/Build/Products/Debug/${APP_NAME} Extension.appex"
 
 pkill -9 -x "${APP_NAME}" >/dev/null 2>&1 || true
+pkill -9 -x "Safari" >/dev/null 2>&1 || true
 chmod -R u+w "${DERIVED_DATA}" 2>/dev/null || true
 find "${DERIVED_DATA}" -depth -exec rm -rf {} + 2>/dev/null || true
 rm -rf "${DERIVED_DATA}"
@@ -30,6 +32,8 @@ fi
 rm -rf "${INSTALL_PATH}"
 cp -R "${APP_PATH}" "${INSTALL_PATH}"
 "${LSREGISTER}" -f -R -trusted "${INSTALL_PATH}"
+"${LSREGISTER}" -u "${APP_PATH}" >/dev/null 2>&1 || true
+rm -rf "${APP_PATH}" "${BUILD_APPEX_PATH}"
 
 open "${INSTALL_PATH}"
 
