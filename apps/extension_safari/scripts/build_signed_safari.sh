@@ -11,6 +11,8 @@ INSTALL_PATH="/Applications/${APP_NAME}.app"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 BUILD_APPEX_PATH="${DERIVED_DATA}/Build/Products/Debug/${APP_NAME} Extension.appex"
 
+"${ROOT_DIR}/../../scripts/sync-pass-icons.sh"
+
 pkill -9 -x "${APP_NAME}" >/dev/null 2>&1 || true
 pkill -9 -x "Safari" >/dev/null 2>&1 || true
 chmod -R u+w "${DERIVED_DATA}" 2>/dev/null || true

@@ -11,6 +11,8 @@
   <string>com.pass.desktop</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
+  <key>CFBundleIconFile</key>
+  <string>PassMac</string>
   <key>CFBundleName</key>
   <string>PassMac</string>
   <key>CFBundlePackageType</key>

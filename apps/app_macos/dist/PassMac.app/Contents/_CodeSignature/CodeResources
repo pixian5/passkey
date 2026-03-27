@@ -3,9 +3,22 @@
 <plist version="1.0">
 <dict>
 	<key>files</key>
-	<dict/>
+	<dict>
+		<key>Resources/PassMac.icns</key>
+		<data>
+		XaQI5HgLooKjeVVY8dZb9mFcxw4=
+		</data>
+	</dict>
 	<key>files2</key>
-	<dict/>
+	<dict>
+		<key>Resources/PassMac.icns</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			47sF5kdbk3SMZtWgs+h4tx2fD0pd6uJOj81ujIx0aVA=
+			</data>
+		</dict>
+	</dict>
 	<key>rules</key>
 	<dict>
 		<key>^Resources/</key>

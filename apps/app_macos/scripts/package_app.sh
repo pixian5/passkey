@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ROOT_DIR="$(cd "${APP_ROOT}/../.." && pwd)"
 APP_NAME="PassMac"
 DIST_DIR="${APP_ROOT}/dist"
 APP_BUNDLE="${DIST_DIR}/${APP_NAME}.app"
@@ -10,6 +11,8 @@ INSTALL_DIR="/Applications"
 INSTALL_BUNDLE="${INSTALL_DIR}/${APP_NAME}.app"
 SKIP_INSTALL="${SKIP_INSTALL:-0}"
 RUN_AFTER_INSTALL="${RUN_AFTER_INSTALL:-1}"
+
+"${ROOT_DIR}/scripts/sync-pass-icons.sh"
 
 echo "[1/7] Building release binary..."
 cd "${APP_ROOT}"
@@ -27,6 +30,9 @@ mkdir -p "${APP_BUNDLE}/Contents/MacOS"
 mkdir -p "${APP_BUNDLE}/Contents/Resources"
 cp -f "${BIN_PATH}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
+if [[ -f "${APP_ROOT}/Resources/PassMac.icns" ]]; then
+  cp -f "${APP_ROOT}/Resources/PassMac.icns" "${APP_BUNDLE}/Contents/Resources/PassMac.icns"
+fi
 
 cat > "${APP_BUNDLE}/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -42,6 +48,8 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" <<'PLIST'
   <string>com.pass.desktop</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
+  <key>CFBundleIconFile</key>
+  <string>PassMac</string>
   <key>CFBundleName</key>
   <string>PassMac</string>
   <key>CFBundlePackageType</key>

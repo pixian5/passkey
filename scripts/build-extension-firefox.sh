@@ -6,6 +6,8 @@ OUT_DIR="${ROOT_DIR}/apps/extension_firefox/build"
 XPI_PATH="${OUT_DIR}/pass-firefox.xpi"
 STAGE_DIR="${OUT_DIR}/stage"
 
+"${ROOT_DIR}/scripts/sync-pass-icons.sh"
+
 cd "${ROOT_DIR}/apps/extension_shared"
 npm install
 npm run build
