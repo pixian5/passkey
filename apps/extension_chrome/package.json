@@ -1,13 +1,10 @@
 {
-  "name": "pass-extension-chrome",
+  "name": "pass-extension-chrome-shell",
   "version": "0.1.0",
   "private": true,
-  "description": "Build pipeline for Pass Chrome extension scripts.",
+  "description": "Chrome shell for the shared Pass browser extension.",
   "scripts": {
-    "build": "node ./scripts/build.mjs",
-    "build:watch": "node ./scripts/build.mjs --watch"
-  },
-  "devDependencies": {
-    "esbuild": "^0.25.0"
+    "build": "cd ../extension_shared && npm install && npm run build",
+    "build:watch": "cd ../extension_shared && npm install && npm run build:watch"
   }
 }

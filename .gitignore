@@ -1,6 +1,9 @@
 # Build outputs
 target/
+apps/extension_shared/node_modules/
+apps/extension_shared/dist/
+apps/extension_firefox/build/
+apps/extension_safari/PassSafari/build_apple/
 
 # OS noise
 .DS_Store
-

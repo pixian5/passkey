@@ -76,25 +76,25 @@
 		17B4E9932F7689D900EB61C1 /* PassSafari Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "PassSafari Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 		17B4E9982F7689D900EB61C1 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
 		17B4E99A2F7689D900EB61C1 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		17B4E9A52F7689DA00EB61C1 /* webauthn_injected.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = webauthn_injected.js; path = ../../../extension_chrome/webauthn_injected.js; sourceTree = "<group>"; };
-		17B4E9A62F7689DA00EB61C1 /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = popup.js; path = ../../../extension_chrome/popup.js; sourceTree = "<group>"; };
-		17B4E9A72F7689DA00EB61C1 /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = background.js; path = ../../../extension_chrome/background.js; sourceTree = "<group>"; };
-		17B4E9A82F7689DA00EB61C1 /* dist */ = {isa = PBXFileReference; lastKnownFileType = folder; name = dist; path = ../../../extension_chrome/dist; sourceTree = "<group>"; };
-		17B4E9A92F7689DA00EB61C1 /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = popup.html; path = ../../../extension_chrome/popup.html; sourceTree = "<group>"; };
-		17B4E9AA2F7689DA00EB61C1 /* options.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = options.js; path = ../../../extension_chrome/options.js; sourceTree = "<group>"; };
-		17B4E9AB2F7689DA00EB61C1 /* node_modules */ = {isa = PBXFileReference; lastKnownFileType = folder; name = node_modules; path = ../../../extension_chrome/node_modules; sourceTree = "<group>"; };
-		17B4E9AC2F7689DA00EB61C1 /* data_store.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = data_store.js; path = ../../../extension_chrome/data_store.js; sourceTree = "<group>"; };
-		17B4E9AD2F7689DA00EB61C1 /* passkey_store.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = passkey_store.js; path = ../../../extension_chrome/passkey_store.js; sourceTree = "<group>"; };
-		17B4E9AE2F7689DA00EB61C1 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = README.md; path = ../../../extension_chrome/README.md; sourceTree = "<group>"; };
-		17B4E9AF2F7689DA00EB61C1 /* package-lock.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "package-lock.json"; path = "../../../extension_chrome/package-lock.json"; sourceTree = "<group>"; };
-		17B4E9B02F7689DA00EB61C1 /* package.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = package.json; path = ../../../extension_chrome/package.json; sourceTree = "<group>"; };
-		17B4E9B12F7689DA00EB61C1 /* account_core.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = account_core.js; path = ../../../extension_chrome/account_core.js; sourceTree = "<group>"; };
-		17B4E9B22F7689DA00EB61C1 /* scripts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = scripts; path = ../../../extension_chrome/scripts; sourceTree = "<group>"; };
-		17B4E9B32F7689DA00EB61C1 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = ../../../extension_chrome/manifest.json; sourceTree = "<group>"; };
-		17B4E9B42F7689DA00EB61C1 /* options.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = options.html; path = ../../../extension_chrome/options.html; sourceTree = "<group>"; };
-		17B4E9B52F7689DA00EB61C1 /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = popup.css; path = ../../../extension_chrome/popup.css; sourceTree = "<group>"; };
-		17B4E9B62F7689DA00EB61C1 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = content.js; path = ../../../extension_chrome/content.js; sourceTree = "<group>"; };
-		17B4E9B72F7689DA00EB61C1 /* options.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = options.css; path = ../../../extension_chrome/options.css; sourceTree = "<group>"; };
+		17B4E9A52F7689DA00EB61C1 /* webauthn_injected.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = webauthn_injected.js; path = ../../../extension_shared/webauthn_injected.js; sourceTree = "<group>"; };
+		17B4E9A62F7689DA00EB61C1 /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = popup.js; path = ../../../extension_shared/popup.js; sourceTree = "<group>"; };
+		17B4E9A72F7689DA00EB61C1 /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = background.js; path = ../../../extension_shared/background.js; sourceTree = "<group>"; };
+		17B4E9A82F7689DA00EB61C1 /* dist */ = {isa = PBXFileReference; lastKnownFileType = folder; name = dist; path = ../../../extension_shared/dist; sourceTree = "<group>"; };
+		17B4E9A92F7689DA00EB61C1 /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = popup.html; path = ../../../extension_shared/popup.html; sourceTree = "<group>"; };
+		17B4E9AA2F7689DA00EB61C1 /* options.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = options.js; path = ../../../extension_shared/options.js; sourceTree = "<group>"; };
+		17B4E9AB2F7689DA00EB61C1 /* node_modules */ = {isa = PBXFileReference; lastKnownFileType = folder; name = node_modules; path = ../../../extension_shared/node_modules; sourceTree = "<group>"; };
+		17B4E9AC2F7689DA00EB61C1 /* data_store.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = data_store.js; path = ../../../extension_shared/data_store.js; sourceTree = "<group>"; };
+		17B4E9AD2F7689DA00EB61C1 /* passkey_store.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = passkey_store.js; path = ../../../extension_shared/passkey_store.js; sourceTree = "<group>"; };
+		17B4E9AE2F7689DA00EB61C1 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = README.md; path = ../../../extension_shared/README.md; sourceTree = "<group>"; };
+		17B4E9AF2F7689DA00EB61C1 /* package-lock.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "package-lock.json"; path = "../../../extension_shared/package-lock.json"; sourceTree = "<group>"; };
+		17B4E9B02F7689DA00EB61C1 /* package.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = package.json; path = ../../../extension_shared/package.json; sourceTree = "<group>"; };
+		17B4E9B12F7689DA00EB61C1 /* account_core.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = account_core.js; path = ../../../extension_shared/account_core.js; sourceTree = "<group>"; };
+		17B4E9B22F7689DA00EB61C1 /* scripts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = scripts; path = ../../../extension_shared/scripts; sourceTree = "<group>"; };
+		17B4E9B32F7689DA00EB61C1 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = ../../../extension_shared/manifest.json; sourceTree = "<group>"; };
+		17B4E9B42F7689DA00EB61C1 /* options.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = options.html; path = ../../../extension_shared/options.html; sourceTree = "<group>"; };
+		17B4E9B52F7689DA00EB61C1 /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = popup.css; path = ../../../extension_shared/popup.css; sourceTree = "<group>"; };
+		17B4E9B62F7689DA00EB61C1 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = content.js; path = ../../../extension_shared/content.js; sourceTree = "<group>"; };
+		17B4E9B72F7689DA00EB61C1 /* options.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = options.css; path = ../../../extension_shared/options.css; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */

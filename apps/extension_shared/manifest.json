@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Pass - Chrome Extension",
+  "description": "Password manager extension scaffold with device name, domain alias group, and local account storage.",
+  "version": "0.1.0",
+  "permissions": [
+    "storage",
+    "alarms",
+    "tabs",
+    "activeTab",
+    "clipboardRead",
+    "clipboardWrite",
+    "scripting",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_title": "Pass",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["dist/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "dist/background.js"
+  },
+  "options_page": "options.html",
+  "web_accessible_resources": [
+    {
+      "resources": ["webauthn_injected.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

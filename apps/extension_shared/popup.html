@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pass</title>
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="card">
+        <div class="mode-switch">
+          <button id="modeActive" class="mode-btn mode-btn-active" type="button">当前网站</button>
+          <button id="modeAll" class="mode-btn" type="button">全部</button>
+          <button id="modePasskey" class="mode-btn" type="button">通行密钥</button>
+          <button id="modeRecycle" class="mode-btn" type="button">回收站</button>
+        </div>
+        <div id="accountSearchSection" class="search-toolbar">
+          <button id="accountSearchFieldsBtn" class="search-fields-btn" type="button">筛选</button>
+          <input id="accountSearch" type="text" placeholder="搜索当前列表账号（用户名 / 站点别名 / 备注 / 密码）" />
+          <div id="accountSearchFieldsPanel" class="search-fields-panel hidden">
+            <label><input id="accountSearchFieldAll" type="checkbox" checked />全部</label>
+            <label><input id="accountSearchFieldUsername" type="checkbox" />用户名</label>
+            <label><input id="accountSearchFieldSites" type="checkbox" />站点别名</label>
+            <label><input id="accountSearchFieldNote" type="checkbox" />备注</label>
+            <label><input id="accountSearchFieldPassword" type="checkbox" />密码</label>
+          </div>
+        </div>
+        <div class="actions top-actions">
+          <button id="openCreateModal" class="button-primary" type="button">新建账号</button>
+          <button id="openSortModal" type="button">排序</button>
+        </div>
+        <div id="passkeySection" class="passkey passkey-hidden">
+          <div class="passkey-toolbar">
+            <label class="passkey-filter-check">
+              <input id="passkeyCurrentSiteOnly" type="checkbox" checked />
+              <span>仅当前站点</span>
+            </label>
+            <input id="passkeySearch" type="text" placeholder="搜索 rpId / 用户名 / credentialId" />
+          </div>
+          <div id="passkeyList" class="list"></div>
+        </div>
+        <div id="accountList" class="list"></div>
+        <p class="tip">右击扩展图标并点击“pass设置”可进入完整管理页。</p>
+        <p class="tip" id="popupStatus"></p>
+      </section>
+    </main>
+
+    <div id="createModal" class="modal-backdrop modal-hidden" aria-hidden="true">
+      <section class="modal-card" role="dialog" aria-modal="true" aria-label="新建账号">
+        <h3>新建账号</h3>
+        <div class="modal-form">
+          <div class="form-row form-row-multiline">
+            <label for="createSite">站点别名（每行一个）</label>
+            <textarea id="createSite" placeholder="例如&#10;icloud.com&#10;apple.com"></textarea>
+          </div>
+          <div class="form-row">
+            <label for="createUsername">用户名</label>
+            <input id="createUsername" type="text" placeholder="用户名" />
+          </div>
+          <div class="form-row">
+            <label for="createPassword">密码</label>
+            <input id="createPassword" type="text" placeholder="密码" />
+          </div>
+          <div class="form-row">
+            <label for="createTotp">TOTP（可选）</label>
+            <input id="createTotp" type="text" placeholder="Base32 密钥" />
+          </div>
+          <div class="form-row form-row-multiline">
+            <label>TOTP快速导入</label>
+            <div class="totp-import-actions">
+              <button id="createTotpPasteRawBtn" type="button">粘贴原始密钥</button>
+              <button id="createTotpPasteUriBtn" type="button">粘贴 otpauth URI</button>
+              <button id="createTotpPasteQrBtn" type="button">识别剪贴板二维码</button>
+            </div>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="createAccount" class="button-primary" type="button">创建账号</button>
+          <button id="closeCreateModal" type="button">关闭</button>
+        </div>
+      </section>
+    </div>
+    <div id="sortModal" class="modal-backdrop modal-hidden" aria-hidden="true">
+      <section class="modal-card sort-modal-card" role="dialog" aria-modal="true" aria-label="排序账号">
+        <h3>排序</h3>
+        <div id="sortModalList" class="sort-modal-list"></div>
+        <div class="actions">
+          <button id="closeSortModal" type="button">关闭</button>
+        </div>
+      </section>
+    </div>
+    <div id="historyModal" class="modal-backdrop modal-hidden" aria-hidden="true">
+      <section class="modal-card history-modal-card" role="dialog" aria-modal="true" aria-label="历史记录">
+        <h3>历史记录</h3>
+        <div id="historyModalList" class="history-modal-list"></div>
+        <div class="actions">
+          <button id="closeHistoryModal" type="button">关闭</button>
+        </div>
+      </section>
+    </div>
+    <div id="lockOverlay" class="popup-lock-overlay hidden" aria-hidden="true">
+      <section class="popup-lock-card" role="dialog" aria-modal="true" aria-label="扩展解锁">
+        <h3>Pass 已锁定</h3>
+        <p id="lockMessage" class="popup-lock-message">请输入主密码解锁。</p>
+        <input id="unlockPasswordInput" type="password" autocomplete="current-password" placeholder="主密码" />
+        <div class="actions">
+          <button id="unlockBtn" class="button-primary" type="button">解锁</button>
+          <button id="openOptionsFromLockBtn" type="button">打开设置</button>
+        </div>
+      </section>
+    </div>
+    <script src="./dist/popup.js"></script>
+  </body>
+  </html>

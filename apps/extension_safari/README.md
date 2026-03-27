@@ -3,7 +3,7 @@
 Safari Web Extension wrapper for the existing Pass browser extension.
 
 ## What it is
-- Generated from `/Users/x/code/pass/apps/extension_chrome`
+- Generated from `/Users/x/code/pass/apps/extension_shared`
 - Reuses the Chrome extension source files directly
 - Safari wrapper project lives at:
   - `/Users/x/code/pass/apps/extension_safari/PassSafari/PassSafari.xcodeproj`
@@ -51,10 +51,10 @@ What it does:
 5. If needed, allow it on all websites.
 
 ## Notes
-- The generated Safari project references files from `/Users/x/code/pass/apps/extension_chrome` instead of copying them, so we keep one extension codebase.
+- The generated Safari project references files from `/Users/x/code/pass/apps/extension_shared` instead of copying them, so we keep one extension codebase.
 - Before building Safari, rebuild the shared web extension bundle if JS changed:
 ```bash
-cd /Users/x/code/pass/apps/extension_chrome
+cd /Users/x/code/pass/apps/extension_shared
 npm run build
 ```
 - Safari converter reported that `clipboardRead` is not supported by the current Safari version. Clipboard-related flows may need Safari-specific fallback behavior later.

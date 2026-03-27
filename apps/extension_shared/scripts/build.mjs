@@ -19,7 +19,7 @@ const buildOptions = {
   bundle: true,
   format: "iife",
   platform: "browser",
-  target: ["firefox128"],
+  target: ["safari17", "firefox128", "chrome120"],
   logLevel: "info",
   legalComments: "none",
   sourcemap: false,
@@ -36,7 +36,7 @@ async function main() {
   }
 
   await esbuild.build(buildOptions);
-  console.log("Built extension bundles to dist/.");
+  console.log("Built shared extension bundles to dist/.");
 }
 
 main().catch((error) => {

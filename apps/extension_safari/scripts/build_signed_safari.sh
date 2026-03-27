@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_DIR="${ROOT_DIR}/PassSafari"
+SHARED_DIR="$(cd "${ROOT_DIR}/../extension_shared" && pwd)"
 APP_NAME="PassSafari"
 DERIVED_DATA="${PROJECT_DIR}/build_apple"
 APP_PATH="${DERIVED_DATA}/Build/Products/Debug/${APP_NAME}.app"
@@ -15,6 +16,10 @@ pkill -9 -x "Safari" >/dev/null 2>&1 || true
 chmod -R u+w "${DERIVED_DATA}" 2>/dev/null || true
 find "${DERIVED_DATA}" -depth -exec rm -rf {} + 2>/dev/null || true
 rm -rf "${DERIVED_DATA}"
+
+cd "${SHARED_DIR}"
+npm install
+npm run build
 
 cd "${PROJECT_DIR}"
 xcodebuild \
