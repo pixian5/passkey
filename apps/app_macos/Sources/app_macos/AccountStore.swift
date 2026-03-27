@@ -153,40 +153,40 @@ final class AccountStore: ObservableObject {
     @Published var syncEnableICloud: Bool = true {
         didSet {
             guard !isLoadingSyncPreferences else { return }
-            UserDefaults.standard.set(syncEnableICloud, forKey: Keys.syncEnableICloud)
+            setSyncPreference(syncEnableICloud, forKey: Keys.syncEnableICloud)
             handleSyncSourceSelectionChanged()
         }
     }
     @Published var syncEnableWebDAV: Bool = false {
         didSet {
             guard !isLoadingSyncPreferences else { return }
-            UserDefaults.standard.set(syncEnableWebDAV, forKey: Keys.syncEnableWebDAV)
+            setSyncPreference(syncEnableWebDAV, forKey: Keys.syncEnableWebDAV)
             handleSyncSourceSelectionChanged()
         }
     }
     @Published var syncEnableSelfHostedServer: Bool = false {
         didSet {
             guard !isLoadingSyncPreferences else { return }
-            UserDefaults.standard.set(syncEnableSelfHostedServer, forKey: Keys.syncEnableSelfHostedServer)
+            setSyncPreference(syncEnableSelfHostedServer, forKey: Keys.syncEnableSelfHostedServer)
             handleSyncSourceSelectionChanged()
         }
     }
     @Published var webdavBaseURL: String = "" {
         didSet {
             guard !isLoadingSyncPreferences else { return }
-            UserDefaults.standard.set(webdavBaseURL, forKey: Keys.webdavBaseURL)
+            setSyncPreference(webdavBaseURL, forKey: Keys.webdavBaseURL)
         }
     }
     @Published var webdavRemotePath: String = "pass-sync-bundle-v2.json" {
         didSet {
             guard !isLoadingSyncPreferences else { return }
-            UserDefaults.standard.set(webdavRemotePath, forKey: Keys.webdavRemotePath)
+            setSyncPreference(webdavRemotePath, forKey: Keys.webdavRemotePath)
         }
     }
     @Published var webdavUsername: String = "" {
         didSet {
             guard !isLoadingSyncPreferences else { return }
-            UserDefaults.standard.set(webdavUsername, forKey: Keys.webdavUsername)
+            setSyncPreference(webdavUsername, forKey: Keys.webdavUsername)
         }
     }
     @Published var webdavPassword: String = "" {
@@ -198,7 +198,12 @@ final class AccountStore: ObservableObject {
     @Published var serverBaseURL: String = "" {
         didSet {
             guard !isLoadingSyncPreferences else { return }
-            UserDefaults.standard.set(serverBaseURL, forKey: Keys.serverBaseURL)
+            let normalized = normalizedSelfHostedServerBaseURL(serverBaseURL)
+            if normalized != serverBaseURL {
+                serverBaseURL = normalized
+                return
+            }
+            setSyncPreference(normalized, forKey: Keys.serverBaseURL)
         }
     }
     @Published var serverAuthToken: String = "" {
@@ -210,7 +215,7 @@ final class AccountStore: ObservableObject {
     @Published var syncMode: SyncMode = .merge {
         didSet {
             guard !isLoadingSyncPreferences else { return }
-            UserDefaults.standard.set(syncMode.rawValue, forKey: Keys.syncMode)
+            setSyncPreference(syncMode.rawValue, forKey: Keys.syncMode)
         }
     }
     @Published var autoSyncIntervalMinutes: Int = AutoSyncInterval.disabled.rawValue {
@@ -221,7 +226,7 @@ final class AccountStore: ObservableObject {
                 return
             }
             guard !isLoadingSyncPreferences else { return }
-            UserDefaults.standard.set(resolved.rawValue, forKey: Keys.autoSyncIntervalMinutes)
+            setSyncPreference(resolved.rawValue, forKey: Keys.autoSyncIntervalMinutes)
             updateAutoSyncTimer()
         }
     }
@@ -2508,8 +2513,104 @@ final class AccountStore: ObservableObject {
         return url
     }
 
+    private func appBundleDefaults() -> UserDefaults? {
+        UserDefaults(suiteName: "com.pass.desktop")
+    }
+
+    private func legacyAppDefaults() -> UserDefaults? {
+        UserDefaults(suiteName: "PassMac")
+    }
+
+    private func syncPreferenceStores() -> [UserDefaults] {
+        [UserDefaults.standard, appBundleDefaults(), legacyAppDefaults()].compactMap { $0 }
+    }
+
+    private func setSyncPreference(_ value: Any?, forKey key: String) {
+        for store in syncPreferenceStores() {
+            store.set(value, forKey: key)
+            store.synchronize()
+        }
+    }
+
+    private func normalizedSelfHostedServerBaseURL(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return Self.defaultSelfHostedServerBaseURL }
+        guard let components = URLComponents(string: trimmed.lowercased()) else { return trimmed }
+        let host = components.host ?? ""
+        let port = components.port ?? ((components.scheme ?? "") == "https" ? 443 : 80)
+        return ((host == "127.0.0.1" || host == "localhost") && port == 53333)
+            ? Self.defaultSelfHostedServerBaseURL
+            : trimmed
+    }
+
+    private func isLegacyLocalSelfHostedServerBaseURL(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let components = URLComponents(string: trimmed.lowercased()) else { return false }
+        let host = components.host ?? ""
+        let port = components.port ?? ((components.scheme ?? "") == "https" ? 443 : 80)
+        return (host == "127.0.0.1" || host == "localhost") && port == 53333
+    }
+
+    private func copySyncPreferences(from source: UserDefaults, to destination: UserDefaults) {
+        let syncKeys = [
+            Keys.syncEnableICloud,
+            Keys.syncEnableWebDAV,
+            Keys.syncEnableSelfHostedServer,
+            Keys.syncMode,
+            Keys.autoSyncIntervalMinutes,
+            Keys.webdavBaseURL,
+            Keys.webdavRemotePath,
+            Keys.webdavUsername,
+            Keys.serverBaseURL,
+        ]
+        for key in syncKeys {
+            if let object = source.object(forKey: key) {
+                destination.set(object, forKey: key)
+            }
+        }
+    }
+
+    private func migrateLegacySyncPreferencesIfNeeded() {
+        let defaults = UserDefaults.standard
+        let stores = syncPreferenceStores()
+        let currentStoredBaseURL = defaults.string(forKey: Keys.serverBaseURL) ?? ""
+        let currentNeedsMigration = currentStoredBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || isLegacyLocalSelfHostedServerBaseURL(currentStoredBaseURL)
+
+        if currentNeedsMigration,
+           let seedStore = stores.first(where: { store in
+               let raw = store.string(forKey: Keys.serverBaseURL) ?? ""
+               return !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                   && !isLegacyLocalSelfHostedServerBaseURL(raw)
+           })
+        {
+            for store in stores {
+                if store !== seedStore {
+                    copySyncPreferences(from: seedStore, to: store)
+                    store.synchronize()
+                }
+            }
+        }
+
+        let storedBaseURL = defaults.string(forKey: Keys.serverBaseURL) ?? ""
+        let normalizedBaseURL = normalizedSelfHostedServerBaseURL(storedBaseURL)
+        if normalizedBaseURL != storedBaseURL {
+            for store in stores {
+                store.set(normalizedBaseURL, forKey: Keys.serverBaseURL)
+                store.synchronize()
+            }
+            cloudSyncStatus = "已将旧同步地址迁移为 \(normalizedBaseURL)"
+        }
+        for store in stores {
+            if store !== defaults {
+                copySyncPreferences(from: defaults, to: store)
+                store.synchronize()
+            }
+        }
+    }
+
     private func buildSelfHostedPayloadURL() -> URL? {
-        let base = serverBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = normalizedSelfHostedServerBaseURL(serverBaseURL).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !base.isEmpty else { return nil }
         let normalizedBase = base.hasSuffix("/") ? base : "\(base)/"
         return URL(string: "v1/sync/payload", relativeTo: URL(string: normalizedBase))?.absoluteURL
@@ -2706,6 +2807,7 @@ final class AccountStore: ObservableObject {
         PassSharedData.migrateLegacyStoreToSharedContainerIfNeeded()
 
         let defaults = UserDefaults.standard
+        migrateLegacySyncPreferencesIfNeeded()
         deviceName = defaults.string(forKey: Keys.deviceName) ?? ""
         exportDirectoryPath = defaults.string(forKey: Keys.exportDirectoryPath) ?? ""
         isLoadingSyncPreferences = true
@@ -2718,7 +2820,9 @@ final class AccountStore: ObservableObject {
         webdavRemotePath = defaults.string(forKey: Keys.webdavRemotePath) ?? "pass-sync-bundle-v2.json"
         webdavUsername = defaults.string(forKey: Keys.webdavUsername) ?? ""
         webdavPassword = readSecret(account: SecretKeys.webdavPasswordAccount)
-        serverBaseURL = defaults.string(forKey: Keys.serverBaseURL) ?? Self.defaultSelfHostedServerBaseURL
+        serverBaseURL = normalizedSelfHostedServerBaseURL(
+            defaults.string(forKey: Keys.serverBaseURL) ?? Self.defaultSelfHostedServerBaseURL
+        )
         serverAuthToken = {
             let saved = readSecret(account: SecretKeys.serverTokenAccount)
             return saved.isEmpty ? Self.defaultSelfHostedServerAuthToken : saved

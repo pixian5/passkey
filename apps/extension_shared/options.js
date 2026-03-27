@@ -61,6 +61,22 @@ const TOTP_DIGITS = 6;
 const TOTP_REFRESH_INTERVAL_MS = 1000;
 const OPTIONS_TOAST_DURATION_MS = 3000;
 
+function normalizeLegacySelfHostedServerBaseUrl(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return DEFAULT_SELF_HOSTED_SERVER_BASE_URL;
+  try {
+    const parsed = new URL(trimmed);
+    const host = String(parsed.hostname || "").toLowerCase();
+    const port = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80);
+    if ((host === "127.0.0.1" || host === "localhost") && port === 53333) {
+      return DEFAULT_SELF_HOSTED_SERVER_BASE_URL;
+    }
+  } catch {
+    return trimmed;
+  }
+  return trimmed;
+}
+
 const dom = {
   deviceName: document.getElementById("deviceName"),
   syncEnableWebdav: document.getElementById("syncEnableWebdav"),
@@ -488,11 +504,15 @@ async function loadSyncSettings() {
   dom.syncWebdavPath.value = String(result[STORAGE_KEY_SYNC_WEBDAV_PATH] || "pass-sync-bundle-v2.json");
   dom.syncWebdavUsername.value = String(result[STORAGE_KEY_SYNC_WEBDAV_USERNAME] || "");
   dom.syncWebdavPassword.value = String(result[STORAGE_KEY_SYNC_WEBDAV_PASSWORD] || "");
-  dom.syncServerBaseUrl.value = String(
+  const normalizedServerBaseUrl = normalizeLegacySelfHostedServerBaseUrl(
     result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL
   );
+  dom.syncServerBaseUrl.value = normalizedServerBaseUrl;
   dom.syncServerToken.value = String(result[STORAGE_KEY_SYNC_SERVER_TOKEN] || DEFAULT_SELF_HOSTED_SERVER_TOKEN);
   dom.syncAutoInterval.value = normalizeAutoSyncIntervalMinutes(result[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]);
+  if (normalizedServerBaseUrl !== String(result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || "")) {
+    await chrome.storage.local.set({ [STORAGE_KEY_SYNC_SERVER_BASE_URL]: normalizedServerBaseUrl });
+  }
   renderSyncBackendFields();
 }
 
@@ -670,7 +690,7 @@ async function persistSyncSettings({ showStatus = true } = {}) {
     [STORAGE_KEY_SYNC_WEBDAV_PATH]: String(dom.syncWebdavPath.value || "").trim() || "pass-sync-bundle-v2.json",
     [STORAGE_KEY_SYNC_WEBDAV_USERNAME]: String(dom.syncWebdavUsername.value || "").trim(),
     [STORAGE_KEY_SYNC_WEBDAV_PASSWORD]: String(dom.syncWebdavPassword.value || ""),
-    [STORAGE_KEY_SYNC_SERVER_BASE_URL]: String(dom.syncServerBaseUrl.value || "").trim(),
+    [STORAGE_KEY_SYNC_SERVER_BASE_URL]: normalizeLegacySelfHostedServerBaseUrl(dom.syncServerBaseUrl.value || ""),
     [STORAGE_KEY_SYNC_SERVER_TOKEN]: String(dom.syncServerToken.value || "").trim(),
     [STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]: Number(autoSyncIntervalMinutes),
   };

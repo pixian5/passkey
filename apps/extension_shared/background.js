@@ -42,6 +42,37 @@ const SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
 const SYNC_MODE_MERGE = "merge";
 const AUTO_SYNC_ALARM_NAME = "pass.sync.auto";
 
+function normalizeLegacySelfHostedServerBaseUrl(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return DEFAULT_SELF_HOSTED_SERVER_BASE_URL;
+  try {
+    const parsed = new URL(trimmed);
+    const host = String(parsed.hostname || "").toLowerCase();
+    const port = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80);
+    if ((host === "127.0.0.1" || host === "localhost") && port === 53333) {
+      return DEFAULT_SELF_HOSTED_SERVER_BASE_URL;
+    }
+  } catch {
+    return trimmed;
+  }
+  return trimmed;
+}
+
+async function migrateLegacySelfHostedServerSettings() {
+  const result = await chrome.storage.local.get([
+    STORAGE_KEY_SYNC_SERVER_BASE_URL,
+    STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER,
+  ]);
+  if (!result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]) {
+    return;
+  }
+  const current = String(result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || "");
+  const normalized = normalizeLegacySelfHostedServerBaseUrl(current);
+  if (normalized !== current) {
+    await chrome.storage.local.set({ [STORAGE_KEY_SYNC_SERVER_BASE_URL]: normalized });
+  }
+}
+
 chrome.runtime.onInstalled.addListener(async () => {
   const stored = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
 
@@ -49,12 +80,14 @@ chrome.runtime.onInstalled.addListener(async () => {
     await chrome.storage.local.set({ [STORAGE_KEY_DEVICE_NAME]: "ChromeMac" });
   }
 
+  await migrateLegacySelfHostedServerSettings();
   await ensureDataStorageReady();
   await ensurePasskeyStorageShape();
   ensureActionContextMenu();
   await scheduleAutoSyncAlarm();
 });
 
+void migrateLegacySelfHostedServerSettings();
 void ensureDataStorageReady();
 void ensurePasskeyStorageShape();
 ensureActionContextMenu();
@@ -62,6 +95,7 @@ void scheduleAutoSyncAlarm();
 
 chrome.runtime.onStartup.addListener(() => {
   ensureActionContextMenu();
+  void migrateLegacySelfHostedServerSettings();
   void scheduleAutoSyncAlarm();
 });
 
@@ -288,7 +322,9 @@ async function buildRemoteSyncTargetsFromStorage() {
   }
 
   if (Boolean(result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER])) {
-    const serverBaseUrl = String(result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL).trim();
+    const serverBaseUrl = normalizeLegacySelfHostedServerBaseUrl(
+      result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL
+    );
     if (!serverBaseUrl) return null;
     const normalizedBase = serverBaseUrl.endsWith("/") ? serverBaseUrl : `${serverBaseUrl}/`;
     const url = new URL("v1/sync/payload", normalizedBase).toString();
