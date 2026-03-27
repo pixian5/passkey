@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>copilot-53-tauri</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <header class="topbar">
+        <h1>copilot-53-tauri</h1>
+        <div class="actions">
+          <button id="btn-health">后端健康检查</button>
+          <button id="btn-demo">生成演示数据</button>
+          <button id="btn-export">导出 CSV</button>
+        </div>
+      </header>
+
+      <section class="settings">
+        <label for="deviceName">设备名</label>
+        <input id="deviceName" placeholder="例如：Pixian-MacBook" />
+        <button id="btn-save-device">保存设备名</button>
+      </section>
+
+      <section class="content-grid">
+        <aside class="list-panel">
+          <h2>账号列表</h2>
+          <ul id="accountList"></ul>
+        </aside>
+
+        <section class="editor-panel">
+          <h2>账号编辑</h2>
+          <form id="accountForm">
+            <input type="hidden" id="accountId" />
+            <label>站点（逗号分隔）<input id="sites" required /></label>
+            <label>用户名<input id="username" required /></label>
+            <label>密码<input id="password" required /></label>
+            <label>TOTP<input id="totpSecret" /></label>
+            <label>恢复码<input id="recoveryCodes" /></label>
+            <label>备注<textarea id="note"></textarea></label>
+
+            <div class="form-actions">
+              <button type="submit">保存</button>
+              <button type="button" id="btn-new">新建</button>
+              <button type="button" id="btn-delete">移入回收站</button>
+            </div>
+          </form>
+
+          <h3>回收站</h3>
+          <ul id="trashList"></ul>
+        </section>
+      </section>
+
+      <pre id="output"></pre>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
