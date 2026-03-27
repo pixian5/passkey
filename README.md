@@ -35,6 +35,8 @@ pass/
 ├── apps/
 │   ├── app_macos/          # macOS 原生应用（SwiftUI）✅ 可运行
 │   ├── app_flutter/        # 五端共享 UI（Flutter）🚧 规划中
+│   ├── copilot-Claude-flutter/ # Flutter 桌面端（Win/Ubuntu/macOS）✅ 可构建
+│   ├── codex-tauri/        # Tauri 2 桌面端（Win/Ubuntu/macOS）✅ 初始化
 │   ├── extension_chrome/   # Chrome 扩展（MV3）✅ 可构建
 │   ├── extension_firefox/  # Firefox 扩展
 │   ├── extension_safari/   # Safari 扩展（Swift + Web Extension）
@@ -62,6 +64,8 @@ pass/
 |------|------|------|------|
 | macOS 应用 | [`apps/app_macos`](apps/app_macos/README.md) | ✅ 可运行 | SwiftUI，支持账号管理、CSV 导出、回收站 |
 | Flutter 应用 | [`apps/app_flutter`](apps/app_flutter/README.md) | 🚧 规划中 | 五端（iOS/Android/Win/macOS/Linux）共享 UI |
+| Copilot Claude Flutter 桌面应用 | [`apps/copilot-Claude-flutter`](apps/copilot-Claude-flutter/README.md) | ✅ 可构建 | Windows / Ubuntu / macOS 统一 Flutter 桌面工程 |
+| Tauri 桌面应用 | [`apps/codex-tauri`](apps/codex-tauri/README.md) | ✅ 可构建 | Windows / Ubuntu / macOS 三端基础骨架 |
 | Chrome 扩展 | [`apps/extension_chrome`](apps/extension_chrome/README.md) | ✅ 可构建 | MV3，自动填充 + 同步触发 |
 | Firefox 扩展 | [`apps/extension_firefox`](apps/extension_firefox/README.md) | ✅ 可构建 | WebExtension |
 | Safari 扩展 | [`apps/extension_safari`](apps/extension_safari/README.md) | ✅ 可构建 | Swift + Web Extension |
@@ -95,6 +99,8 @@ pass/
 - ✅ **设计文档**：[`docs/`](docs/README.md) 覆盖架构、协议、数据模型、同步策略
 - ✅ **Rust Core workspace**：6 个 crate，已初始化
 - ✅ **macOS 原生应用**（SwiftUI）：账号 CRUD、域名别名、回收站、CSV 导出、SQLite WAL
+- ✅ **Copilot Claude Flutter 桌面应用**（Windows/Ubuntu/macOS）：桌面录入与列表演示工程
+- ✅ **Tauri 桌面应用**（Windows/Ubuntu/macOS）：设备名、账号 CRUD、域名别名同步、回收站、演示数据、CSV 导出
 - ✅ **Chrome 扩展**：MV3，自动填充、popup、options、background
 - ✅ **Firefox / Safari 扩展**：基于共享代码构建
 - ✅ **Ubuntu 同步服务**：Python 单文件，GET/PUT `/v1/sync/payload`，SQLite，Bearer Token 认证
