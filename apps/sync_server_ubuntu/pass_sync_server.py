@@ -169,6 +169,9 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
     def do_PUT(self) -> None:
         self._dispatch(expect_body=True)
 
+    def do_OPTIONS(self) -> None:
+        self._handle_options()
+
     def log_message(self, format: str, *args: Any) -> None:
         LOGGER.info("%s - %s", self.address_string(), format % args)
 
@@ -205,6 +208,29 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.INTERNAL_SERVER_ERROR,
                 {"error": "INTERNAL_ERROR", "message": "服务器内部错误。"},
             )
+
+    def _handle_options(self) -> None:
+        path = self.path.split("?", 1)[0]
+        if path not in {"/healthz", "/v1/sync/payload"}:
+            self._send_json(
+                HTTPStatus.NOT_FOUND,
+                {"error": "NOT_FOUND", "message": "接口不存在。"},
+            )
+            return
+        headers = self._cors_response_headers()
+        headers.update(
+            {
+                "Allow": "GET, HEAD, PUT, OPTIONS",
+                "Access-Control-Allow-Methods": "GET, HEAD, PUT, OPTIONS",
+                "Access-Control-Allow-Headers": self._allowed_cors_headers(),
+                "Access-Control-Max-Age": "600",
+                "Content-Length": "0",
+            }
+        )
+        self.send_response(HTTPStatus.NO_CONTENT.value)
+        for key, value in headers.items():
+            self.send_header(key, value)
+        self.end_headers()
 
     def _handle_healthz(self, head_only: bool) -> None:
         payload = {
@@ -281,6 +307,8 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
         head_only: bool = False,
     ) -> None:
         self.send_response(status.value)
+        for key, value in self._cors_response_headers().items():
+            self.send_header(key, value)
         if headers:
             for key, value in headers.items():
                 self.send_header(key, value)
@@ -288,6 +316,27 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         if not head_only:
             self.wfile.write(body)
+
+    def _allowed_cors_headers(self) -> str:
+        requested = self.headers.get("Access-Control-Request-Headers", "")
+        allowlist = {"authorization", "content-type", "if-match", "accept"}
+        normalized = []
+        for item in requested.split(","):
+            name = item.strip().lower()
+            if name and name in allowlist and name not in normalized:
+                normalized.append(name)
+        if not normalized:
+            normalized = ["authorization", "content-type", "if-match", "accept"]
+        return ", ".join(normalized)
+
+    def _cors_response_headers(self) -> dict[str, str]:
+        origin = self.headers.get("Origin")
+        if not origin:
+            return {}
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Vary": "Origin",
+        }
 
 
 class PassSyncHTTPServer(ThreadingHTTPServer):

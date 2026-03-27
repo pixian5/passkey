@@ -1,0 +1,13 @@
+{
+  "name": "pass-extension-firefox",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Build pipeline for Pass Firefox extension scripts.",
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "build:watch": "node ./scripts/build.mjs --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

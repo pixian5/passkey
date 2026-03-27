@@ -99,6 +99,42 @@ class PassSyncServerTests(unittest.TestCase):
             parsed = json.loads(response.read().decode("utf-8"))
         self.assertEqual(parsed["schema"], "pass.sync.bundle.v2")
 
+    def test_options_preflight_for_payload(self) -> None:
+        with self.request(
+            "OPTIONS",
+            "/v1/sync/payload",
+            headers={
+                "Origin": "moz-extension://test",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        ) as response:
+            self.assertEqual(response.status, 204)
+            self.assertEqual(response.headers["Access-Control-Allow-Origin"], "moz-extension://test")
+            self.assertIn("GET", response.headers["Access-Control-Allow-Methods"])
+            self.assertIn("authorization", response.headers["Access-Control-Allow-Headers"])
+
+    def test_get_payload_includes_cors_origin_header(self) -> None:
+        headers = {
+            "Authorization": "Bearer secret-token",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        with self.request("PUT", "/v1/sync/payload", body=sample_bundle(), headers=headers) as response:
+            self.assertEqual(response.status, 200)
+
+        with self.request(
+            "GET",
+            "/v1/sync/payload",
+            headers={
+                "Authorization": "Bearer secret-token",
+                "Origin": "chrome-extension://test",
+            },
+        ) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers["Access-Control-Allow-Origin"], "chrome-extension://test")
+
     def test_if_match_conflict(self) -> None:
         headers = {
             "Authorization": "Bearer secret-token",
