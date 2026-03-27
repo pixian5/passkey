@@ -1,0 +1,78 @@
+name: pass_flutter
+description: Pass - Cross-platform Password Manager (Flutter)
+version: 0.1.0
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # UI
+  cupertino_icons: ^1.0.6
+  flutter_svg: ^2.0.9
+
+  # State Management
+  provider: ^6.1.1
+
+  # Database
+  sqflite: ^2.3.0
+  path_provider: ^2.1.1
+  path: ^1.8.3
+
+  # Security
+  flutter_secure_storage: ^9.0.0
+  crypto: ^3.0.3
+
+  # Rust FFI Bridge
+  ffi: ^2.1.0
+  flutter_rust_bridge: ^2.0.0
+
+  # HTTP & Sync
+  http: ^1.1.2
+  dio: ^5.4.0
+
+  # TOTP
+  otp: ^3.1.4
+
+  # QR Code
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^3.5.5
+
+  # CSV
+  csv: ^5.1.1
+
+  # File Picker
+  file_picker: ^6.1.1
+
+  # Utilities
+  uuid: ^4.2.2
+  intl: ^0.18.1
+
+  # Platform Integration
+  window_manager: ^0.3.7
+  tray_manager: ^0.2.1
+  launch_at_startup: ^0.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+  build_runner: ^2.4.7
+  ffigen: ^10.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/icons/
+
+  fonts:
+    - family: Roboto
+      fonts:
+        - asset: fonts/Roboto-Regular.ttf
+        - asset: fonts/Roboto-Bold.ttf
+          weight: 700
