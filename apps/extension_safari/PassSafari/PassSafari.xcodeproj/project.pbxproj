@@ -489,7 +489,8 @@
 				CODE_SIGN_STYLE = Manual;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-				DEVELOPMENT_TEAM = 2P5Z4JVY8W;
+				CODE_SIGN_ENTITLEMENTS = "PassSafari Extension/PassSafariExtension.entitlements";
+				DEVELOPMENT_TEAM = PSTNW3UN4R;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -527,7 +528,8 @@
 				CODE_SIGN_STYLE = Manual;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-				DEVELOPMENT_TEAM = 2P5Z4JVY8W;
+				CODE_SIGN_ENTITLEMENTS = "PassSafari Extension/PassSafariExtension.entitlements";
+				DEVELOPMENT_TEAM = PSTNW3UN4R;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -567,7 +569,8 @@
 				CODE_SIGN_STYLE = Manual;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-				DEVELOPMENT_TEAM = 2P5Z4JVY8W;
+				CODE_SIGN_ENTITLEMENTS = PassSafari/PassSafari.entitlements;
+				DEVELOPMENT_TEAM = PSTNW3UN4R;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = YES;
@@ -612,7 +615,8 @@
 				CODE_SIGN_STYLE = Manual;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-				DEVELOPMENT_TEAM = 2P5Z4JVY8W;
+				CODE_SIGN_ENTITLEMENTS = PassSafari/PassSafari.entitlements;
+				DEVELOPMENT_TEAM = PSTNW3UN4R;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = YES;

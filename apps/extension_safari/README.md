@@ -27,7 +27,7 @@ xcodebuild -project PassSafari.xcodeproj -scheme PassSafari -configuration Debug
 Built app:
 - `/Users/x/code/pass/apps/extension_safari/PassSafari/build/Build/Products/Debug/PassSafari.app`
 
-## Self-signed local signing
+## Apple Development signing
 For local development on this Mac, use the bundled script:
 
 ```bash
@@ -36,12 +36,11 @@ cd /Users/x/code/pass/apps/extension_safari
 ```
 
 What it does:
-- creates a local self-signed code-signing certificate named `Pass Local Code Signing` if missing
-- trusts that certificate in the login keychain for code signing
 - kills any old `PassSafari` process
 - cleans the old derived data
-- builds the Safari host app unsigned
-- signs the built `.appex` and `.app` with the local self-signed certificate
+- builds the Safari host app with the local `Apple Development` certificate already installed on this Mac
+- installs the built app to `/Applications/PassSafari.app`
+- re-registers it with LaunchServices
 - launches the new app
 
 ## Enable in Safari

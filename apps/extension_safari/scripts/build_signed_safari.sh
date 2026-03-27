@@ -3,27 +3,15 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_DIR="${ROOT_DIR}/PassSafari"
-CERT_NAME="${PASS_SAFARI_CERT_NAME:-Pass Local Code Signing}"
 APP_NAME="PassSafari"
-DERIVED_DATA="${PROJECT_DIR}/build"
+DERIVED_DATA="${PROJECT_DIR}/build_apple"
 APP_PATH="${DERIVED_DATA}/Build/Products/Debug/${APP_NAME}.app"
-APPEX_PATH="${DERIVED_DATA}/Build/Products/Debug/${APP_NAME} Extension.appex"
-APP_ENTITLEMENTS="${PROJECT_DIR}/PassSafari/PassSafari.entitlements"
-APPEX_ENTITLEMENTS="${PROJECT_DIR}/PassSafari Extension/PassSafariExtension.entitlements"
-
-"${ROOT_DIR}/scripts/create_self_signed_cert.sh" "${CERT_NAME}"
-
-CERT_HASH="$(
-  security find-identity -v -p codesigning |
-  awk -v cert="\"${CERT_NAME}\"" '$0 ~ cert { print $2; exit }'
-)"
-
-if [[ -z "${CERT_HASH}" ]]; then
-  echo "未找到可用代码签名身份: ${CERT_NAME}"
-  exit 1
-fi
+INSTALL_PATH="/Applications/${APP_NAME}.app"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 pkill -9 -x "${APP_NAME}" >/dev/null 2>&1 || true
+chmod -R u+w "${DERIVED_DATA}" 2>/dev/null || true
+find "${DERIVED_DATA}" -depth -exec rm -rf {} + 2>/dev/null || true
 rm -rf "${DERIVED_DATA}"
 
 cd "${PROJECT_DIR}"
@@ -32,18 +20,17 @@ xcodebuild \
   -scheme PassSafari \
   -configuration Debug \
   -derivedDataPath "${DERIVED_DATA}" \
-  CODE_SIGNING_ALLOWED=NO \
   build
 
-if [[ ! -d "${APP_PATH}" || ! -d "${APPEX_PATH}" ]]; then
-  echo "构建产物不存在，签名中止。"
+if [[ ! -d "${APP_PATH}" ]]; then
+  echo "构建产物不存在: ${APP_PATH}"
   exit 1
 fi
 
-codesign --force --deep --sign "${CERT_HASH}" --entitlements "${APPEX_ENTITLEMENTS}" --timestamp=none "${APPEX_PATH}"
-codesign --force --deep --sign "${CERT_HASH}" --entitlements "${APP_ENTITLEMENTS}" --timestamp=none "${APP_PATH}"
-codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
+rm -rf "${INSTALL_PATH}"
+cp -R "${APP_PATH}" "${INSTALL_PATH}"
+"${LSREGISTER}" -f -R -trusted "${INSTALL_PATH}"
 
-open -a "${APP_PATH}"
+open "${INSTALL_PATH}"
 
-echo "已构建并启动: ${APP_PATH}"
+echo "已构建、安装并启动: ${INSTALL_PATH}"
