@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SOURCE_PNG="${ROOT_DIR}/pass.png"
+SOURCE_PNG="${ROOT_DIR}/pass.jpeg"
 EXTENSION_ICON_DIR="${ROOT_DIR}/apps/extension_shared/icons"
 SAFARI_ROOT="${ROOT_DIR}/apps/extension_safari/PassSafari/PassSafari"
 SAFARI_ICON_DIR="${SAFARI_ROOT}/Assets.xcassets/AppIcon.appiconset"
