@@ -60,11 +60,47 @@ private enum AccountSearchField: CaseIterable, Hashable {
     }
 }
 
+private enum AccountSortMode: String, CaseIterable, Hashable {
+    case `default`
+    case createdNewest
+    case createdOldest
+    case updatedNewest
+    case updatedOldest
+    case usernameAZ
+    case usernameZA
+    case siteAZ
+    case siteZA
+
+    var title: String {
+        switch self {
+        case .default:
+            return "默认排序"
+        case .createdNewest:
+            return "创建时间从新到旧"
+        case .createdOldest:
+            return "创建时间从旧到新"
+        case .updatedNewest:
+            return "最后修改时间从新到旧"
+        case .updatedOldest:
+            return "最后修改时间从旧到新"
+        case .usernameAZ:
+            return "用户名 A-Z"
+        case .usernameZA:
+            return "用户名 Z-A"
+        case .siteAZ:
+            return "站点名 A-Z"
+        case .siteZA:
+            return "站点名 Z-A"
+        }
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var store: AccountStore
     @Environment(\.openWindow) private var openWindow
     @State private var selectedSidebarFilter: AccountSidebarFilter = .all
     @State private var accountSearchText: String = ""
+    @State private var accountSortMode: AccountSortMode = .default
     @State private var useAllSearchFields: Bool = true
     @State private var selectedSearchFields: Set<AccountSearchField> = []
     @State private var showSearchFieldPopover: Bool = false
@@ -131,6 +167,26 @@ struct ContentView: View {
                             }
                             .buttonStyle(.plain)
                         }
+
+                        Menu {
+                            ForEach(AccountSortMode.allCases, id: \.self) { mode in
+                                Button {
+                                    accountSortMode = mode
+                                } label: {
+                                    HStack {
+                                        Text(mode.title)
+                                        if accountSortMode == mode {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "arrow.up.arrow.down.circle")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("排序")
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
@@ -588,7 +644,9 @@ struct ContentView: View {
         case .folder(let folderId):
             scopedAccounts = allAccounts.filter { !$0.isDeleted && $0.isInFolder(folderId) }
         }
-        let sortedScoped = store.displaySortedAccounts(scopedAccounts, scopeKey: selectedSidebarFilter.pinScopeKey)
+        let sortedScoped = sortAccounts(
+            store.displaySortedAccounts(scopedAccounts, scopeKey: selectedSidebarFilter.pinScopeKey)
+        )
 
         let query = accountSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if query.isEmpty {
@@ -642,6 +700,77 @@ struct ContentView: View {
 
         return haystacks.contains { value in
             value.lowercased().contains(needle)
+        }
+    }
+
+    private func sortAccounts(_ accounts: [PasswordAccount]) -> [PasswordAccount] {
+        switch accountSortMode {
+        case .default:
+            return accounts
+        case .createdNewest:
+            return accounts.sorted { lhs, rhs in
+                if lhs.createdAtMs != rhs.createdAtMs {
+                    return lhs.createdAtMs > rhs.createdAtMs
+                }
+                return lhs.accountId.localizedStandardCompare(rhs.accountId) == .orderedAscending
+            }
+        case .createdOldest:
+            return accounts.sorted { lhs, rhs in
+                if lhs.createdAtMs != rhs.createdAtMs {
+                    return lhs.createdAtMs < rhs.createdAtMs
+                }
+                return lhs.accountId.localizedStandardCompare(rhs.accountId) == .orderedAscending
+            }
+        case .updatedNewest:
+            return accounts.sorted { lhs, rhs in
+                if lhs.updatedAtMs != rhs.updatedAtMs {
+                    return lhs.updatedAtMs > rhs.updatedAtMs
+                }
+                return lhs.accountId.localizedStandardCompare(rhs.accountId) == .orderedAscending
+            }
+        case .updatedOldest:
+            return accounts.sorted { lhs, rhs in
+                if lhs.updatedAtMs != rhs.updatedAtMs {
+                    return lhs.updatedAtMs < rhs.updatedAtMs
+                }
+                return lhs.accountId.localizedStandardCompare(rhs.accountId) == .orderedAscending
+            }
+        case .usernameAZ:
+            return accounts.sorted { lhs, rhs in
+                let userCompare = lhs.username.localizedStandardCompare(rhs.username)
+                if userCompare != .orderedSame {
+                    return userCompare == .orderedAscending
+                }
+                return lhs.accountId.localizedStandardCompare(rhs.accountId) == .orderedAscending
+            }
+        case .usernameZA:
+            return accounts.sorted { lhs, rhs in
+                let userCompare = lhs.username.localizedStandardCompare(rhs.username)
+                if userCompare != .orderedSame {
+                    return userCompare == .orderedDescending
+                }
+                return lhs.accountId.localizedStandardCompare(rhs.accountId) == .orderedAscending
+            }
+        case .siteAZ:
+            return accounts.sorted { lhs, rhs in
+                let lhsSite = lhs.canonicalSite
+                let rhsSite = rhs.canonicalSite
+                let siteCompare = lhsSite.localizedStandardCompare(rhsSite)
+                if siteCompare != .orderedSame {
+                    return siteCompare == .orderedAscending
+                }
+                return lhs.accountId.localizedStandardCompare(rhs.accountId) == .orderedAscending
+            }
+        case .siteZA:
+            return accounts.sorted { lhs, rhs in
+                let lhsSite = lhs.canonicalSite
+                let rhsSite = rhs.canonicalSite
+                let siteCompare = lhsSite.localizedStandardCompare(rhsSite)
+                if siteCompare != .orderedSame {
+                    return siteCompare == .orderedDescending
+                }
+                return lhs.accountId.localizedStandardCompare(rhs.accountId) == .orderedAscending
+            }
         }
     }
 
