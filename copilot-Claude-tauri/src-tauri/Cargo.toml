@@ -1,0 +1,48 @@
+[package]
+name = "copilot-claude-tauri"
+version = "0.1.0"
+description = "Pass - Cross-platform Password Manager (Tauri)"
+authors = ["Claude AI"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "copilot_claude_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["devtools"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+bcrypt = "0.16"
+totp-lite = "2.0"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+base64 = "0.22"
+hostname = "0.4"
+chrono = "0.4"
+rand = "0.8"
+
+# Local pass_core dependencies
+pass-domain = { path = "../../core/pass_core/crates/domain" }
+pass-merge = { path = "../../core/pass_core/crates/merge" }
+pass-storage = { path = "../../core/pass_core/crates/storage" }
+pass-transport = { path = "../../core/pass_core/crates/transport" }
+pass-csvio = { path = "../../core/pass_core/crates/csvio" }
+
+
+
+
