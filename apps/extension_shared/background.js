@@ -59,17 +59,21 @@ function normalizeLegacySelfHostedServerBaseUrl(value) {
 }
 
 async function migrateLegacySelfHostedServerSettings() {
-  const result = await chrome.storage.local.get([
-    STORAGE_KEY_SYNC_SERVER_BASE_URL,
-    STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER,
-  ]);
-  if (!result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]) {
-    return;
-  }
-  const current = String(result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || "");
-  const normalized = normalizeLegacySelfHostedServerBaseUrl(current);
-  if (normalized !== current) {
-    await chrome.storage.local.set({ [STORAGE_KEY_SYNC_SERVER_BASE_URL]: normalized });
+  try {
+    const result = await chrome.storage.local.get([
+      STORAGE_KEY_SYNC_SERVER_BASE_URL,
+      STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER,
+    ]);
+    if (!result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]) {
+      return;
+    }
+    const current = String(result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || "");
+    const normalized = normalizeLegacySelfHostedServerBaseUrl(current);
+    if (normalized !== current) {
+      await chrome.storage.local.set({ [STORAGE_KEY_SYNC_SERVER_BASE_URL]: normalized });
+    }
+  } catch (error) {
+    console.warn("pass sync config migration skipped", error);
   }
 }
 
@@ -1077,7 +1081,12 @@ function base64EncodeUtf8(input) {
 async function pullRemotePayload(target) {
   const headers = { Accept: "application/json" };
   if (target.authHeader) headers.Authorization = target.authHeader;
-  const response = await fetch(target.url, { method: "GET", headers, cache: "no-store" });
+  let response;
+  try {
+    response = await fetch(target.url, { method: "GET", headers, cache: "no-store" });
+  } catch (error) {
+    throw new Error(`拉取远端失败（${target.label} ${target.url}）：${error?.message || error}`);
+  }
   if (response.status === 404) return { payload: null, etag: null };
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const text = await response.text();
@@ -1098,11 +1107,16 @@ async function pushRemotePayload(target, payload, ifMatch = null) {
   };
   if (target.authHeader) headers.Authorization = target.authHeader;
   if (ifMatch) headers["If-Match"] = ifMatch;
-  const response = await fetch(target.url, {
-    method: "PUT",
-    headers,
-    body: JSON.stringify(bundle, null, 2),
-  });
+  let response;
+  try {
+    response = await fetch(target.url, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify(bundle, null, 2),
+    });
+  } catch (error) {
+    throw new Error(`上传远端失败（${target.label} ${target.url}）：${error?.message || error}`);
+  }
   if (!response.ok) {
     const error = new Error(`HTTP ${response.status}`);
     error.status = response.status;
