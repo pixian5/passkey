@@ -59,22 +59,7 @@ function normalizeLegacySelfHostedServerBaseUrl(value) {
 }
 
 async function migrateLegacySelfHostedServerSettings() {
-  try {
-    const result = await chrome.storage.local.get([
-      STORAGE_KEY_SYNC_SERVER_BASE_URL,
-      STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER,
-    ]);
-    if (!result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]) {
-      return;
-    }
-    const current = String(result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || "");
-    const normalized = normalizeLegacySelfHostedServerBaseUrl(current);
-    if (normalized !== current) {
-      await chrome.storage.local.set({ [STORAGE_KEY_SYNC_SERVER_BASE_URL]: normalized });
-    }
-  } catch (error) {
-    console.warn("pass sync config migration skipped", error);
-  }
+  return;
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -84,14 +69,12 @@ chrome.runtime.onInstalled.addListener(async () => {
     await chrome.storage.local.set({ [STORAGE_KEY_DEVICE_NAME]: "ChromeMac" });
   }
 
-  await migrateLegacySelfHostedServerSettings();
   await ensureDataStorageReady();
   await ensurePasskeyStorageShape();
   ensureActionContextMenu();
   await scheduleAutoSyncAlarm();
 });
 
-void migrateLegacySelfHostedServerSettings();
 void ensureDataStorageReady();
 void ensurePasskeyStorageShape();
 ensureActionContextMenu();
@@ -99,7 +82,6 @@ void scheduleAutoSyncAlarm();
 
 chrome.runtime.onStartup.addListener(() => {
   ensureActionContextMenu();
-  void migrateLegacySelfHostedServerSettings();
   void scheduleAutoSyncAlarm();
 });
 
