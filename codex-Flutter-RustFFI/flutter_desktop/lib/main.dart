@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
+import 'rust_bridge.dart';
+
 void main() {
   runApp(const PassDesktopApp());
 }
@@ -35,6 +37,10 @@ class _PassHomePageState extends State<PassHomePage> {
   String _deviceName = 'Desktop';
   List<Account> _accounts = [];
   List<Account> _recycleBin = [];
+  String _rustStatus = '未初始化';
+  String _rustVersion = '-';
+  String _rustLibPath = '-';
+  int? _rustCompareResult;
 
   @override
   void initState() {
@@ -42,7 +48,16 @@ class _PassHomePageState extends State<PassHomePage> {
     _load();
   }
 
+  @override
+  void dispose() {
+    if (RustBridge.isReady) {
+      RustBridge.instance.shutdown();
+    }
+    super.dispose();
+  }
+
   Future<void> _load() async {
+    await _ensureRustBridge();
     final state = await _store.load();
     setState(() {
       _deviceName = state.deviceName;
@@ -52,11 +67,48 @@ class _PassHomePageState extends State<PassHomePage> {
     });
   }
 
+  Future<void> _ensureRustBridge() async {
+    if (RustBridge.isReady) return;
+    try {
+      final bridge = await RustBridge.ensureLoaded();
+      final compareResult = bridge.compareBounds(0, 10, 11, 20);
+      setState(() {
+        _rustStatus = '${bridge.health()} / ping=${bridge.ping()}';
+        _rustVersion = bridge.version();
+        _rustLibPath = bridge.libraryPath;
+        _rustCompareResult = compareResult;
+      });
+    } catch (e) {
+      setState(() {
+        _rustStatus = '加载失败: $e';
+      });
+    }
+  }
+
   Future<void> _persistAll(List<Account> all, {String? deviceName}) async {
-    final normalized = AccountAliasSync.sync(all);
-    await _store.save(
-        AppState(deviceName: deviceName ?? _deviceName, accounts: normalized));
-    await _load();
+    final targetState =
+        AppState(deviceName: deviceName ?? _deviceName, accounts: all);
+    await _store.save(targetState);
+    await _loadFromState(targetState);
+  }
+
+  Future<void> _loadFromState(AppState state) async {
+    setState(() {
+      _deviceName = state.deviceName;
+      _accounts = state.accounts.where((e) => !e.deleted).toList();
+      _recycleBin = state.accounts.where((e) => e.deleted).toList();
+      _loading = false;
+    });
+  }
+
+  AppState _currentState() => AppState(
+      deviceName: _deviceName, accounts: [..._accounts, ..._recycleBin]);
+
+  Future<void> _persistStateJsonFromRust(String stateJson) async {
+    final next =
+        AppState.fromJson(jsonDecode(stateJson) as Map<String, dynamic>);
+    await _store.save(next);
+    await _loadFromState(next);
   }
 
   Future<void> _addOrUpdateAccount([Account? account]) async {
@@ -66,37 +118,63 @@ class _PassHomePageState extends State<PassHomePage> {
     );
     if (edited == null) return;
 
-    final all = [..._accounts, ..._recycleBin];
-    final idx = all.indexWhere((e) => e.id == edited.id);
-    if (idx >= 0) {
-      all[idx] = edited.copyWith(updatedAt: DateTime.now());
-    } else {
-      all.add(edited);
+    try {
+      final nextJson = RustBridge.instance.stateUpsertAccount(
+        jsonEncode(_currentState().toJson()),
+        jsonEncode(edited.copyWith(updatedAt: DateTime.now()).toJson()),
+      );
+      await _persistStateJsonFromRust(nextJson);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('保存失败: $e')));
     }
-    await _persistAll(all);
   }
 
   Future<void> _softDelete(Account account) async {
-    final all = [..._accounts, ..._recycleBin];
-    final idx = all.indexWhere((e) => e.id == account.id);
-    if (idx < 0) return;
-    all[idx] =
-        account.copyWith(deletedAt: DateTime.now(), updatedAt: DateTime.now());
-    await _persistAll(all);
+    final now = DateTime.now().toIso8601String();
+    try {
+      final nextJson = RustBridge.instance.stateSoftDeleteAccount(
+        jsonEncode(_currentState().toJson()),
+        account.id,
+        now,
+        now,
+      );
+      await _persistStateJsonFromRust(nextJson);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('删除失败: $e')));
+    }
   }
 
   Future<void> _restore(Account account) async {
-    final all = [..._accounts, ..._recycleBin];
-    final idx = all.indexWhere((e) => e.id == account.id);
-    if (idx < 0) return;
-    all[idx] = account.copyWith(deletedAt: null, updatedAt: DateTime.now());
-    await _persistAll(all);
+    try {
+      final nextJson = RustBridge.instance.stateRestoreAccount(
+        jsonEncode(_currentState().toJson()),
+        account.id,
+        DateTime.now().toIso8601String(),
+      );
+      await _persistStateJsonFromRust(nextJson);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('恢复失败: $e')));
+    }
   }
 
   Future<void> _hardDelete(Account account) async {
-    final all = [..._accounts, ..._recycleBin]
-      ..removeWhere((e) => e.id == account.id);
-    await _persistAll(all);
+    try {
+      final nextJson = RustBridge.instance.stateHardDeleteAccount(
+        jsonEncode(_currentState().toJson()),
+        account.id,
+      );
+      await _persistStateJsonFromRust(nextJson);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('彻底删除失败: $e')));
+    }
   }
 
   Future<void> _setDeviceName() async {
@@ -142,14 +220,28 @@ class _PassHomePageState extends State<PassHomePage> {
           password: 'Mail!234',
           createdAt: now),
     ];
-    await _persistAll([..._accounts, ..._recycleBin, ...demo]);
+    for (final d in demo) {
+      final nextJson = RustBridge.instance.stateUpsertAccount(
+        jsonEncode(_currentState().toJson()),
+        jsonEncode(d.toJson()),
+      );
+      await _persistStateJsonFromRust(nextJson);
+    }
   }
 
   Future<void> _exportCsv() async {
-    final file = await _store.exportCsv(_accounts);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('已导出: ${file.path}')));
+    try {
+      final csv = RustBridge.instance
+          .exportAccountsCsv(jsonEncode(_currentState().toJson()));
+      final file = await _store.exportCsvString(csv);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('已导出: ${file.path}')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('导出失败: $e')));
+    }
   }
 
   @override
@@ -197,6 +289,10 @@ class _PassHomePageState extends State<PassHomePage> {
               recycleCount: _recycleBin.length,
               onSetDeviceName: _setDeviceName,
               dataDirFuture: _store.appDataDir(),
+              rustStatus: _rustStatus,
+              rustVersion: _rustVersion,
+              rustLibPath: _rustLibPath,
+              rustCompareResult: _rustCompareResult,
             ),
           ],
         ),
@@ -273,6 +369,10 @@ class _SettingsPane extends StatelessWidget {
     required this.recycleCount,
     required this.onSetDeviceName,
     required this.dataDirFuture,
+    required this.rustStatus,
+    required this.rustVersion,
+    required this.rustLibPath,
+    required this.rustCompareResult,
   });
 
   final String deviceName;
@@ -280,6 +380,10 @@ class _SettingsPane extends StatelessWidget {
   final int recycleCount;
   final VoidCallback onSetDeviceName;
   final Future<Directory> dataDirFuture;
+  final String rustStatus;
+  final String rustVersion;
+  final String rustLibPath;
+  final int? rustCompareResult;
 
   @override
   Widget build(BuildContext context) {
@@ -305,6 +409,14 @@ class _SettingsPane extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text('时间格式: yy-M-d H:m:s'),
+          const SizedBox(height: 12),
+          const Divider(),
+          const Text('Rust FFI 状态',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          Text('health/ping: $rustStatus'),
+          Text('version: $rustVersion'),
+          Text('compare_bounds(0-10,11-20): ${rustCompareResult ?? '-'}'),
+          Text('library: $rustLibPath'),
         ],
       ),
     );
@@ -639,14 +751,11 @@ class LocalStore {
         const JsonEncoder.withIndent('  ').convert(state.toJson()));
   }
 
-  Future<File> exportCsv(List<Account> accounts) async {
+  Future<File> exportCsvString(String csv) async {
     final dir = await appDataDir();
     final ts = DateTime.now().millisecondsSinceEpoch;
     final file = File('${dir.path}/pass-export-$ts.csv');
-    const header =
-        'id,sites,username,password,totp,recovery,note,created_at,updated_at,deleted_at';
-    final lines = [header, ...accounts.map((e) => e.toCsvLine())];
-    await file.writeAsString(lines.join('\n'));
+    await file.writeAsString(csv);
     return file;
   }
 }
