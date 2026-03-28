@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show File, Platform;
+import 'dart:math';
 
 import 'package:flutter/material.dart';
+
+final Random _idRandom = Random();
 
 void main() {
   runApp(const Copilot53DesktopApp());
@@ -245,9 +248,9 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
   }
 
   Future<void> _loadState() async {
-    final file = File(_stateFilePath);
-    if (!await file.exists()) return;
     try {
+      final file = File(_stateFilePath);
+      if (!await file.exists()) return;
       final content = await file.readAsString();
       final json = jsonDecode(content) as Map<String, dynamic>;
       if (!mounted) return;
@@ -260,19 +263,20 @@ class _DesktopHomePageState extends State<DesktopHomePage> {
           ..clear()
           ..addAll(
             (json['accounts'] as List<dynamic>? ?? [])
-                .whereType<Map<String, dynamic>>()
-                .map(PasswordAccount.fromJson),
+                .whereType<Map>()
+                .map((item) => PasswordAccount.fromJson(Map<String, dynamic>.from(item))),
           );
         _recycleBin
           ..clear()
           ..addAll(
             (json['recycleBin'] as List<dynamic>? ?? [])
-                .whereType<Map<String, dynamic>>()
-                .map(PasswordAccount.fromJson),
+                .whereType<Map>()
+                .map((item) => PasswordAccount.fromJson(Map<String, dynamic>.from(item))),
           );
         _syncAliasDomains();
       });
-    } catch (_) {
+    } catch (error, stackTrace) {
+      debugPrint('load state failed: $error\n$stackTrace');
       if (mounted) {
         _showMessage('读取本地数据失败，已使用空数据启动');
       }
@@ -681,7 +685,7 @@ class PasswordAccount {
   }) {
     final now = DateTime.now();
     return PasswordAccount(
-      id: '${now.microsecondsSinceEpoch}-${_seed++}',
+      id: '${now.microsecondsSinceEpoch}-${_idRandom.nextInt(0x100000000)}',
       sites: sites,
       username: username,
       password: password,
@@ -831,5 +835,3 @@ class PasswordAccount {
     ];
   }
 }
-
-int _seed = 1;
