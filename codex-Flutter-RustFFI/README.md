@@ -14,11 +14,14 @@
 - 已新增 `flutter_desktop` Flutter 桌面工程，包含 Linux / Windows / macOS 三端工程脚手架。
 - 已完成 `flutter analyze`、`flutter test`、`flutter build linux` 验证闭环。
 - 已完成 Linux 容器运行验证：`timeout 45s xvfb-run -a flutter run -d linux` 可进入调试会话。
+- 已打通 Rust FFI 最小能力：`init/shutdown/health/version/ping/compare_bounds`，Flutter 设置页可查看 FFI 健康状态与动态库路径。
+- 已将账号 CRUD（含回收站）、别名合并、CSV 导出核心逻辑迁入 Rust FFI；Flutter 侧改为调用 FFI 并持久化 Rust 返回的 `state.json`。
 
 ## 重大限制（已落文档）
 - `flutter build windows` 仅支持在 Windows 主机执行。
 - 在非 macOS 主机上，`flutter build` 不提供 `macos` 子命令；macOS 构建需在 macOS 主机执行。
 - 无图形界面的 Linux 容器运行桌面程序时，需要通过 `xvfb-run -a` 提供虚拟显示。
+- 若容器缺少 `flutter` 命令，可通过 `git clone https://github.com/flutter/flutter.git /workspace/flutter-sdk` + `export PATH=/workspace/flutter-sdk/bin:$PATH` 快速补齐。
 
 ## 后续落地方向
 - 将现有 `apps/app_flutter` 原型重构为分层结构。
