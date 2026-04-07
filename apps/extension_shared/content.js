@@ -5,6 +5,7 @@ const PASS_LOGIN_COOLDOWN_MS = 5000;
 const WEB_AUTHN_BRIDGE_SOURCE = "pass-webauthn-bridge";
 const WEB_AUTHN_REQUEST_TYPE = "PASSKEY_REQUEST";
 const WEB_AUTHN_RESPONSE_TYPE = "PASSKEY_RESPONSE";
+const WEB_AUTHN_NOTICE_TYPE = "PASSKEY_NOTICE";
 const PASS_PAGE_TOAST_ID = "pass-page-toast";
 const PASS_PAGE_TOAST_DURATION_MS = 3000;
 const PASSKEY_USE_BROWSER_FALLBACK = "__PASSKEY_USE_BROWSER_FALLBACK__";
@@ -246,7 +247,12 @@ function installWebAuthnBridge() {
 function onWebAuthnBridgeMessage(event) {
   if (event.source !== window) return;
   const data = event.data;
-  if (!data || data.source !== WEB_AUTHN_BRIDGE_SOURCE || data.type !== WEB_AUTHN_REQUEST_TYPE) return;
+  if (!data || data.source !== WEB_AUTHN_BRIDGE_SOURCE) return;
+  if (data.type === WEB_AUTHN_NOTICE_TYPE) {
+    handleWebAuthnBridgeNotice(data);
+    return;
+  }
+  if (data.type !== WEB_AUTHN_REQUEST_TYPE) return;
 
   const requestId = String(data.requestId || "");
   if (!requestId) return;
@@ -266,6 +272,17 @@ function onWebAuthnBridgeMessage(event) {
   });
 
   void handleWebAuthnBridgeRequest(requestId, payload);
+}
+
+function handleWebAuthnBridgeNotice(data) {
+  const message = String(data?.message || "").trim();
+  if (!message) return;
+  logPasskeyContent("bridge-notice-received", {
+    reason: String(data?.reason || ""),
+    operation: String(data?.operation || ""),
+    message,
+  });
+  showPassPageToast(message);
 }
 
 async function handleWebAuthnBridgeRequest(requestId, payload) {

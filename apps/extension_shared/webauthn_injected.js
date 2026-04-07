@@ -2,6 +2,7 @@
   const BRIDGE_SOURCE = "pass-webauthn-bridge";
   const REQUEST_TYPE = "PASSKEY_REQUEST";
   const RESPONSE_TYPE = "PASSKEY_RESPONSE";
+  const NOTICE_TYPE = "PASSKEY_NOTICE";
   const REQUEST_TIMEOUT_MS = 10000;
   const PASSKEY_LOG_PREFIX = "[Pass injected]";
 
@@ -43,6 +44,7 @@
       attachment: String(options?.publicKey?.authenticatorSelection?.authenticatorAttachment || ""),
     });
     if (!createDecision.manageable) {
+      postFallbackNotice("create", createDecision.reason);
       return originalCreate(options);
     }
 
@@ -74,6 +76,7 @@
         willFallback: shouldFallbackToBrowser(error),
       });
       if (shouldFallbackToBrowser(error)) {
+        postFallbackNotice("create", error?.code || error?.name || "fallback");
         return originalCreate(options);
       }
       throw toDomLikeError(error, "NotAllowedError");
@@ -94,6 +97,7 @@
         : 0,
     });
     if (!getDecision.manageable) {
+      postFallbackNotice("get", getDecision.reason);
       return originalGet(options);
     }
 
@@ -123,6 +127,7 @@
         willFallback: shouldFallbackToBrowser(error),
       });
       if (shouldFallbackToBrowser(error)) {
+        postFallbackNotice("get", error?.code || error?.name || "fallback");
         return originalGet(options);
       }
       throw toDomLikeError(error, "NotAllowedError");
@@ -420,6 +425,54 @@
     }
 
     return { manageable: true, reason: "allow-credentials-has-internal" };
+  }
+
+  function postFallbackNotice(operation, reason) {
+    const message = buildFallbackNoticeMessage(operation, reason);
+    if (!message) return;
+    logInjected("fallback-notice-posted", {
+      operation,
+      reason,
+      message,
+    });
+    window.postMessage({
+      source: BRIDGE_SOURCE,
+      type: NOTICE_TYPE,
+      operation,
+      reason,
+      message,
+    }, "*");
+  }
+
+  function buildFallbackNoticeMessage(operation, reason) {
+    const opLabel = operation === "get" ? "读取通行密钥" : "保存通行密钥";
+    switch (String(reason || "")) {
+      case "cross-platform-requested":
+        return `Pass 未接管${opLabel}，本次改由浏览器原生处理：网站请求外置安全密钥`;
+      case "allow-credentials-without-internal":
+        return `Pass 未接管${opLabel}，本次改由浏览器原生处理：网站指定了非本机通行密钥`;
+      case "missing-challenge-or-user-id":
+      case "missing-challenge":
+        return `Pass 未接管${opLabel}，本次改由浏览器原生处理：网站请求参数不完整`;
+      case "PASSKEY_USE_BROWSER":
+        return `Pass 已切换为浏览器原生处理${opLabel}`;
+      case "PASSKEY_CONTEXT_INVALIDATED":
+        return `Pass 已切换为浏览器原生处理${opLabel}：扩展上下文失效`;
+      case "PASSKEY_RUNTIME_ERROR":
+        return `Pass 已切换为浏览器原生处理${opLabel}：扩展通信失败`;
+      case "PASSKEY_EMPTY_RESPONSE":
+        return `Pass 已切换为浏览器原生处理${opLabel}：扩展未返回结果`;
+      case "PASSKEY_ALG_UNSUPPORTED":
+        return `Pass 已切换为浏览器原生处理${opLabel}：网站要求的算法当前未托管`;
+      case "PASSKEY_OP_UNSUPPORTED":
+        return `Pass 已切换为浏览器原生处理${opLabel}：操作类型当前未托管`;
+      case "TimeoutError":
+        return `Pass 已切换为浏览器原生处理${opLabel}：Pass 响应超时`;
+      case "NotSupportedError":
+        return `Pass 已切换为浏览器原生处理${opLabel}：当前环境不支持托管`;
+      default:
+        return `Pass 已切换为浏览器原生处理${opLabel}`;
+    }
   }
 
   function toDomLikeError(error, fallbackName) {
