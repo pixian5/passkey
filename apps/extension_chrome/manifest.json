@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Pass - Chrome Extension",
   "description": "Password manager extension scaffold with device name, domain alias group, and local account storage.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "permissions": [
     "storage",
     "alarms",

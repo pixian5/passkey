@@ -60,7 +60,7 @@ const DEFAULT_SELF_HOSTED_SERVER_TOKEN = "ClzgP2xsXHETVut9F6ddHVRdvvclz0QM0fDHve
 const SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
 const SYNC_MODE_MERGE = "merge";
 const AUTO_SYNC_ALARM_NAME = "pass.sync.auto";
-const PASS_EXTENSION_VERSION = "0.1.5";
+const PASS_EXTENSION_VERSION = "0.1.6";
 
 function normalizeLegacySelfHostedServerBaseUrl(value) {
   const trimmed = String(value || "").trim();
@@ -177,6 +177,14 @@ function shouldInjectMainWorldBridge(url) {
 async function ensureMainWorldPasskeyBridge(tabId, url) {
   if (!tabId || !shouldInjectMainWorldBridge(url)) return;
   try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["dist/content.js"],
+    });
+    logPasskeyFlow("isolated-bridge-injected", {
+      tabId,
+      url,
+    });
     await chrome.scripting.executeScript({
       target: { tabId },
       world: "MAIN",

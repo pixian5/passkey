@@ -1,5 +1,10 @@
 import { etldPlusOne, normalizeDomain, normalizeSites } from "./account_core.js";
 
+if (globalThis.__passContentBridgeInstalled) {
+  // Avoid duplicate isolated-world bridge registration when content script is injected proactively.
+} else {
+  globalThis.__passContentBridgeInstalled = true;
+
 const STORAGE_KEY_DATA_BUMP = "pass.data.bump.v1";
 const PASS_LOGIN_COOLDOWN_MS = 5000;
 const WEB_AUTHN_BRIDGE_SOURCE = "pass-webauthn-bridge";
@@ -10,7 +15,7 @@ const PASS_PAGE_TOAST_ID = "pass-page-toast";
 const PASS_PAGE_TOAST_DURATION_MS = 3000;
 const PASSKEY_USE_BROWSER_FALLBACK = "__PASSKEY_USE_BROWSER_FALLBACK__";
 const PASSKEY_LOG_PREFIX = "[Pass content]";
-const PASS_EXTENSION_VERSION = "0.1.5";
+const PASS_EXTENSION_VERSION = "0.1.6";
 
 let lastPromptKey = "";
 let lastPromptAt = 0;
@@ -704,6 +709,7 @@ function selectPasskeyCandidate(candidates) {
       cleanup(PASSKEY_USE_BROWSER_FALLBACK);
     }, 120000);
   });
+}
 }
 
 function formatChooserTime(ms) {
