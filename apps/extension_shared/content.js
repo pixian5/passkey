@@ -1,10 +1,5 @@
 import { etldPlusOne, normalizeDomain, normalizeSites } from "./account_core.js";
 
-if (globalThis.__passContentBridgeInstalled) {
-  // Avoid duplicate isolated-world bridge registration when content script is injected proactively.
-} else {
-  globalThis.__passContentBridgeInstalled = true;
-
 const STORAGE_KEY_DATA_BUMP = "pass.data.bump.v1";
 const PASS_LOGIN_COOLDOWN_MS = 5000;
 const WEB_AUTHN_BRIDGE_SOURCE = "pass-webauthn-bridge";
@@ -15,7 +10,7 @@ const PASS_PAGE_TOAST_ID = "pass-page-toast";
 const PASS_PAGE_TOAST_DURATION_MS = 3000;
 const PASSKEY_USE_BROWSER_FALLBACK = "__PASSKEY_USE_BROWSER_FALLBACK__";
 const PASSKEY_LOG_PREFIX = "[Pass content]";
-const PASS_EXTENSION_VERSION = "0.1.6";
+const PASS_EXTENSION_VERSION = "0.1.7";
 
 let lastPromptKey = "";
 let lastPromptAt = 0;
@@ -30,31 +25,37 @@ function logPasskeyContent(event, details = {}) {
   }
 }
 
-try {
-  window.__passContentVersion = PASS_EXTENSION_VERSION;
-  document.documentElement?.setAttribute("data-pass-content-version", PASS_EXTENSION_VERSION);
-  console.warn(`${PASSKEY_LOG_PREFIX} loaded`, {
-    version: PASS_EXTENSION_VERSION,
-    href: window.location.href,
-  });
-} catch {
-  // Ignore bootstrap diagnostics failures.
+if (!globalThis.__passContentBridgeInstalled) {
+  globalThis.__passContentBridgeInstalled = true;
+  installPassContentBridge();
 }
 
-initAccountCache().catch(() => {
-  // Ignore cache bootstrap errors; detection continues with empty cache.
-});
-window.addEventListener("message", onWebAuthnBridgeMessage, false);
+function installPassContentBridge() {
+  try {
+    window.__passContentVersion = PASS_EXTENSION_VERSION;
+    document.documentElement?.setAttribute("data-pass-content-version", PASS_EXTENSION_VERSION);
+    console.warn(`${PASSKEY_LOG_PREFIX} loaded`, {
+      version: PASS_EXTENSION_VERSION,
+      href: window.location.href,
+    });
+  } catch {
+    // Ignore bootstrap diagnostics failures.
+  }
 
-chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== "local") return;
-  if (!changes[STORAGE_KEY_DATA_BUMP]) return;
-  void initAccountCache();
-});
+  initAccountCache().catch(() => {
+    // Ignore cache bootstrap errors; detection continues with empty cache.
+  });
+  window.addEventListener("message", onWebAuthnBridgeMessage, false);
 
-document.addEventListener(
-  "submit",
-  (event) => {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local") return;
+    if (!changes[STORAGE_KEY_DATA_BUMP]) return;
+    void initAccountCache();
+  });
+
+  document.addEventListener(
+    "submit",
+    (event) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
 
@@ -111,9 +112,10 @@ document.addEventListener(
 
     // Fallback in case runtime message callback is delayed.
     setTimeout(resumeOnce, 250);
-  },
-  true
-);
+    },
+    true
+  );
+}
 
 async function initAccountCache() {
   const raw = await fetchAccountsForContent();
@@ -709,7 +711,6 @@ function selectPasskeyCandidate(candidates) {
       cleanup(PASSKEY_USE_BROWSER_FALLBACK);
     }, 120000);
   });
-}
 }
 
 function formatChooserTime(ms) {
