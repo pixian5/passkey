@@ -8,9 +8,9 @@ const WEB_AUTHN_RESPONSE_TYPE = "PASSKEY_RESPONSE";
 const WEB_AUTHN_NOTICE_TYPE = "PASSKEY_NOTICE";
 const PASS_PAGE_TOAST_ID = "pass-page-toast";
 const PASS_PAGE_TOAST_DURATION_MS = 3000;
-const PASSKEY_CHOOSER_CANCEL = "__PASSKEY_CHOOSER_CANCEL__";
+const PASSKEY_USE_BROWSER_FALLBACK = "__PASSKEY_USE_BROWSER_FALLBACK__";
 const PASSKEY_LOG_PREFIX = "[Pass content]";
-const PASS_EXTENSION_VERSION = "0.1.8";
+const PASS_EXTENSION_VERSION = "0.1.9";
 
 let lastPromptKey = "";
 let lastPromptAt = 0;
@@ -460,15 +460,15 @@ async function handlePasskeyGetWithChooser(payload) {
   const selectedId = await selectPasskeyCandidate(candidates);
   logPasskeyContent("chooser-selection-finished", {
     selectedId: String(selectedId || ""),
-    canceled: selectedId === PASSKEY_CHOOSER_CANCEL,
+    usedBrowserFallback: selectedId === PASSKEY_USE_BROWSER_FALLBACK,
   });
-  if (selectedId === PASSKEY_CHOOSER_CANCEL || !selectedId) {
+  if (!selectedId || selectedId === PASSKEY_USE_BROWSER_FALLBACK) {
     return {
       ok: false,
       error: {
         name: "AbortError",
-        message: "用户已取消本次通行密钥读取",
-        code: "PASSKEY_CHOOSER_CANCEL",
+        message: "用户关闭 Pass 通行密钥选择，继续使用浏览器通行密钥",
+        code: "PASSKEY_USE_BROWSER",
       },
     };
   }
@@ -630,7 +630,7 @@ function selectPasskeyCandidate(candidates) {
     const onKeydown = (event) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        cleanup(PASSKEY_CHOOSER_CANCEL);
+        cleanup(PASSKEY_USE_BROWSER_FALLBACK);
       }
     };
     document.addEventListener("keydown", onKeydown, true);
@@ -683,14 +683,14 @@ function selectPasskeyCandidate(candidates) {
 
     const cancelBtn = document.createElement("button");
     cancelBtn.type = "button";
-    cancelBtn.textContent = "取消";
+    cancelBtn.textContent = "关闭";
     cancelBtn.style.border = "1px solid #9ab9eb";
     cancelBtn.style.borderRadius = "8px";
     cancelBtn.style.padding = "5px 8px";
     cancelBtn.style.background = "#ffffff";
     cancelBtn.style.cursor = "pointer";
     cancelBtn.addEventListener("click", () => {
-      cleanup(PASSKEY_CHOOSER_CANCEL);
+      cleanup(PASSKEY_USE_BROWSER_FALLBACK);
     });
     footer.appendChild(cancelBtn);
 
@@ -698,7 +698,7 @@ function selectPasskeyCandidate(candidates) {
     document.documentElement.appendChild(root);
 
     timerId = setTimeout(() => {
-      cleanup(PASSKEY_CHOOSER_CANCEL);
+      cleanup(PASSKEY_USE_BROWSER_FALLBACK);
     }, 120000);
   });
 }
