@@ -10,6 +10,7 @@ const PASS_PAGE_TOAST_ID = "pass-page-toast";
 const PASS_PAGE_TOAST_DURATION_MS = 3000;
 const PASSKEY_USE_BROWSER_FALLBACK = "__PASSKEY_USE_BROWSER_FALLBACK__";
 const PASSKEY_LOG_PREFIX = "[Pass content]";
+const PASS_EXTENSION_VERSION = "0.1.3";
 
 let lastPromptKey = "";
 let lastPromptAt = 0;
@@ -22,6 +23,16 @@ function logPasskeyContent(event, details = {}) {
   } catch {
     // Ignore logging failures.
   }
+}
+
+try {
+  window.__passContentVersion = PASS_EXTENSION_VERSION;
+  console.warn(`${PASSKEY_LOG_PREFIX} loaded`, {
+    version: PASS_EXTENSION_VERSION,
+    href: window.location.href,
+  });
+} catch {
+  // Ignore bootstrap diagnostics failures.
 }
 
 initAccountCache().catch(() => {

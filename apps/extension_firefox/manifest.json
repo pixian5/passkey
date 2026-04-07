@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Pass - Firefox Extension",
   "description": "Password manager extension for Firefox with device name, domain alias group, and local account storage.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "browser_specific_settings": {
     "gecko": {
       "id": "pass@pixian5.github.io",
