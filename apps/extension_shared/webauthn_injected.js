@@ -6,7 +6,7 @@
   const REQUEST_TIMEOUT_MS = 10000;
   const FALLBACK_NOTICE_DELAY_MS = 1200;
   const PASSKEY_LOG_PREFIX = "[Pass injected]";
-  const PASS_EXTENSION_VERSION = "0.1.7";
+  const PASS_EXTENSION_VERSION = "0.1.8";
   const FALLBACK_TOAST_ID = "pass-injected-fallback-toast";
   const FALLBACK_OVERLAY_ID = "pass-injected-fallback-overlay";
 
@@ -380,6 +380,9 @@
   function shouldFallbackToBrowser(error) {
     const code = String(error?.code || "");
     const name = String(error?.name || "");
+    if (code === "PASSKEY_CHOOSER_CANCEL") {
+      return false;
+    }
     return code === "PASSKEY_NOT_FOUND" ||
       code === "PASSKEY_USE_BROWSER" ||
       code === "PASSKEY_CONTEXT_INVALIDATED" ||
