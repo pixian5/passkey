@@ -12,6 +12,15 @@ const CREATE_COMPAT_USER_NAME_FALLBACK = "user_name_fallback";
 const CREATE_COMPAT_RS256 = "rs256";
 const CREATE_COMPAT_USER_NAME_FALLBACK_RS256 = "user_name_fallback+rs256";
 const AAGUID_ZERO = new Uint8Array(16);
+const PASSKEY_LOG_PREFIX = "[Pass passkey_store]";
+
+function logPasskeyStore(event, details = {}) {
+  try {
+    console.info(PASSKEY_LOG_PREFIX, event, details);
+  } catch {
+    // Ignore logging failures.
+  }
+}
 
 class PasskeyError extends Error {
   constructor(name, message, code = "") {
@@ -44,8 +53,20 @@ export async function handlePasskeyBridgeOperation(payload) {
 
     switch (operation) {
       case "create":
+        logPasskeyStore("bridge-create-start", {
+          origin,
+          host,
+          rpId: String(publicKey?.rp?.id || host || ""),
+          userName: String(publicKey?.user?.name || "").trim(),
+        });
         return { ok: true, result: await createManagedCredential({ origin, host, publicKey }) };
       case "get":
+        logPasskeyStore("bridge-get-start", {
+          origin,
+          host,
+          rpId: String(publicKey?.rpId || host || ""),
+          allowCredentialsCount: Array.isArray(publicKey?.allowCredentials) ? publicKey.allowCredentials.length : 0,
+        });
         return { ok: true, result: await getManagedAssertion({ origin, host, publicKey }) };
       case "getCandidates":
         return { ok: true, result: await listManagedAssertionCandidates({ host, publicKey }) };
@@ -53,6 +74,11 @@ export async function handlePasskeyBridgeOperation(payload) {
         throw new PasskeyError("NotSupportedError", `不支持的操作: ${operation}`, "PASSKEY_OP_UNSUPPORTED");
     }
   } catch (error) {
+    logPasskeyStore("bridge-operation-error", {
+      name: error?.name || "Error",
+      code: error?.code || "",
+      message: error?.message || String(error || ""),
+    });
     return { ok: false, error: normalizeError(error) };
   }
 }
@@ -95,10 +121,30 @@ async function createManagedCredential({ origin, host, publicKey }) {
 
   const passkeys = await loadPasskeys();
   const excludeIds = normalizeCredentialIdList(publicKey?.excludeCredentials || []);
+  logPasskeyStore("create-context", {
+    rpId,
+    host,
+    userName,
+    displayName,
+    passkeysBefore: passkeys.length,
+    excludeCredentialsCount: excludeIds.length,
+    selectedAlg,
+    createCompatMethod,
+  });
   if (excludeIds.some((id) => passkeys.some((item) => item.rpId === rpId && item.credentialIdB64u === id))) {
+    logPasskeyStore("create-exclude-hit", {
+      rpId,
+      userName,
+      excludeCredentialsCount: excludeIds.length,
+    });
     throw new PasskeyError("InvalidStateError", "凭据已存在（excludeCredentials 命中）", "PASSKEY_CREDENTIAL_EXISTS");
   }
   const existing = pickLatestPasskeyForAccount(passkeys, rpId, userName, userHandleB64u);
+  logPasskeyStore(existing ? "create-existing-account-passkey-found" : "create-no-existing-passkey", {
+    rpId,
+    userName,
+    existingCredentialId: String(existing?.credentialIdB64u || ""),
+  });
   const nextPasskeys = existing
     ? passkeys.filter((item) => !isSamePasskeyAccount(item, rpId, userName, userHandleB64u))
     : [...passkeys];
@@ -154,6 +200,13 @@ async function createManagedCredential({ origin, host, publicKey }) {
     lastUsedAtMs: null,
   });
   await savePasskeys(nextPasskeys);
+  logPasskeyStore("create-saved", {
+    rpId,
+    userName,
+    credentialIdB64u,
+    createMode: existing ? "replaced" : "created",
+    passkeysAfter: nextPasskeys.length,
+  });
 
   return {
     credential: {
@@ -296,6 +349,12 @@ async function getManagedAssertion({ origin, host, publicKey }) {
   }
 
   const { rpId, passkeys, candidates } = await resolveGetCandidates({ host, publicKey });
+  logPasskeyStore("get-candidates-resolved", {
+    rpId,
+    host,
+    passkeysTotal: passkeys.length,
+    candidateCount: candidates.length,
+  });
   if (candidates.length === 0) {
     throw new PasskeyError("NotAllowedError", "未找到可用通行密钥", "PASSKEY_NOT_FOUND");
   }
@@ -331,6 +390,12 @@ async function getManagedAssertion({ origin, host, publicKey }) {
       updatedAtMs: now,
     };
     await savePasskeys(passkeys);
+    logPasskeyStore("get-selected-saved", {
+      rpId,
+      credentialIdB64u: selected.credentialIdB64u,
+      userName: String(selected.userName || ""),
+      signCount: nextSignCount,
+    });
   }
 
   return {
@@ -388,6 +453,13 @@ async function resolveGetCandidates({ host, publicKey }) {
   }
 
   candidates.sort((a, b) => (b.lastUsedAtMs || b.updatedAtMs || 0) - (a.lastUsedAtMs || a.updatedAtMs || 0));
+  logPasskeyStore("resolve-get-candidates", {
+    host,
+    rpId,
+    storedPasskeys: passkeys.length,
+    allowCredentialsCount: allowCredentialIds.length,
+    candidateCount: candidates.length,
+  });
   return { rpId, passkeys, candidates };
 }
 

@@ -8,11 +8,20 @@ const WEB_AUTHN_RESPONSE_TYPE = "PASSKEY_RESPONSE";
 const PASS_PAGE_TOAST_ID = "pass-page-toast";
 const PASS_PAGE_TOAST_DURATION_MS = 3000;
 const PASSKEY_USE_BROWSER_FALLBACK = "__PASSKEY_USE_BROWSER_FALLBACK__";
+const PASSKEY_LOG_PREFIX = "[Pass content]";
 
 let lastPromptKey = "";
 let lastPromptAt = 0;
 let accountsCache = [];
 let passPageToastTimer = null;
+
+function logPasskeyContent(event, details = {}) {
+  try {
+    console.info(PASSKEY_LOG_PREFIX, event, details);
+  } catch {
+    // Ignore logging failures.
+  }
+}
 
 initAccountCache().catch(() => {
   // Ignore cache bootstrap errors; detection continues with empty cache.
@@ -249,12 +258,23 @@ function onWebAuthnBridgeMessage(event) {
     host: window.location.hostname,
   };
 
+  logPasskeyContent("bridge-request-received", {
+    requestId,
+    operation: String(payload.operation || ""),
+    host: String(payload.host || ""),
+    rpId: String(payload?.publicKey?.rp?.id || payload?.publicKey?.rpId || ""),
+  });
+
   void handleWebAuthnBridgeRequest(requestId, payload);
 }
 
 async function handleWebAuthnBridgeRequest(requestId, payload) {
   try {
     if (!isRuntimeAvailable()) {
+      logPasskeyContent("bridge-runtime-unavailable", {
+        requestId,
+        operation: String(payload?.operation || ""),
+      });
       postWebAuthnBridgeResponse(requestId, {
         ok: false,
         error: {
@@ -266,9 +286,22 @@ async function handleWebAuthnBridgeRequest(requestId, payload) {
       return;
     }
 
+    logPasskeyContent("bridge-request-forwarded", {
+      requestId,
+      operation: String(payload?.operation || ""),
+      viaChooser: payload?.operation === "get",
+    });
     const response = payload?.operation === "get"
       ? await handlePasskeyGetWithChooser(payload)
       : await sendPasskeyBridgeOperation(payload);
+    logPasskeyContent("bridge-response-received", {
+      requestId,
+      operation: String(payload?.operation || ""),
+      ok: Boolean(response?.ok),
+      errorCode: String(response?.error?.code || ""),
+      createMode: String(response?.result?.createMode || ""),
+      createCompatMethod: String(response?.result?.createCompatMethod || ""),
+    });
     if (response?.ok) {
       if (payload?.operation === "create") {
         const createMode = String(response?.result?.createMode || "").toLowerCase();
@@ -292,6 +325,12 @@ async function handleWebAuthnBridgeRequest(requestId, payload) {
     }
     postWebAuthnBridgeResponse(requestId, response);
   } catch (error) {
+    logPasskeyContent("bridge-request-failed", {
+      requestId,
+      operation: String(payload?.operation || ""),
+      name: error?.name || "Error",
+      message: error?.message || String(error || ""),
+    });
     postWebAuthnBridgeResponse(requestId, {
       ok: false,
       error: {
@@ -371,9 +410,21 @@ function showPassPageToast(message) {
 }
 
 async function handlePasskeyGetWithChooser(payload) {
+  logPasskeyContent("chooser-candidates-requested", {
+    host: String(payload?.host || ""),
+    rpId: String(payload?.publicKey?.rpId || ""),
+  });
   const candidateResponse = await sendPasskeyBridgeOperation({
     ...payload,
     operation: "getCandidates",
+  });
+
+  logPasskeyContent("chooser-candidates-response", {
+    ok: Boolean(candidateResponse?.ok),
+    count: Array.isArray(candidateResponse?.result?.candidates)
+      ? candidateResponse.result.candidates.length
+      : 0,
+    errorCode: String(candidateResponse?.error?.code || ""),
   });
 
   if (!candidateResponse?.ok) {
@@ -384,10 +435,17 @@ async function handlePasskeyGetWithChooser(payload) {
     ? candidateResponse.result.candidates
     : [];
   if (candidates.length <= 1) {
+    logPasskeyContent("chooser-skipped", {
+      reason: candidates.length === 0 ? "no-candidate" : "single-candidate",
+    });
     return await sendPasskeyBridgeOperation(payload);
   }
 
   const selectedId = await selectPasskeyCandidate(candidates);
+  logPasskeyContent("chooser-selection-finished", {
+    selectedId: String(selectedId || ""),
+    usedBrowserFallback: selectedId === PASSKEY_USE_BROWSER_FALLBACK,
+  });
   if (!selectedId) {
     return {
       ok: false,
@@ -428,6 +486,9 @@ async function handlePasskeyGetWithChooser(payload) {
 function sendPasskeyBridgeOperation(payload) {
   return new Promise((resolve) => {
     if (!isRuntimeAvailable()) {
+      logPasskeyContent("runtime-unavailable-before-send", {
+        operation: String(payload?.operation || ""),
+      });
       resolve({
         ok: false,
         error: {
@@ -440,6 +501,11 @@ function sendPasskeyBridgeOperation(payload) {
     }
 
     try {
+      logPasskeyContent("runtime-send-start", {
+        operation: String(payload?.operation || ""),
+        host: String(payload?.host || ""),
+        rpId: String(payload?.publicKey?.rp?.id || payload?.publicKey?.rpId || ""),
+      });
       chrome.runtime.sendMessage(
         {
           type: "PASS_PASSKEY_OPERATION",
@@ -450,6 +516,11 @@ function sendPasskeyBridgeOperation(payload) {
         if (runtimeError) {
           const runtimeMessage = String(runtimeError.message || "");
           const contextInvalidated = runtimeMessage.toLowerCase().includes("extension context invalidated");
+          logPasskeyContent("runtime-send-error", {
+            operation: String(payload?.operation || ""),
+            runtimeMessage,
+            contextInvalidated,
+          });
           resolve({
             ok: false,
             error: {
@@ -462,6 +533,9 @@ function sendPasskeyBridgeOperation(payload) {
         }
 
           if (!response) {
+            logPasskeyContent("runtime-empty-response", {
+              operation: String(payload?.operation || ""),
+            });
             resolve({
               ok: false,
               error: {
@@ -473,10 +547,19 @@ function sendPasskeyBridgeOperation(payload) {
             return;
           }
 
+          logPasskeyContent("runtime-send-response", {
+            operation: String(payload?.operation || ""),
+            ok: Boolean(response?.ok),
+            errorCode: String(response?.error?.code || ""),
+          });
           resolve(response);
         }
       );
     } catch (error) {
+      logPasskeyContent("runtime-send-threw", {
+        operation: String(payload?.operation || ""),
+        message: error?.message || String(error || ""),
+      });
       resolve({
         ok: false,
         error: {

@@ -3,6 +3,7 @@
   const REQUEST_TYPE = "PASSKEY_REQUEST";
   const RESPONSE_TYPE = "PASSKEY_RESPONSE";
   const REQUEST_TIMEOUT_MS = 10000;
+  const PASSKEY_LOG_PREFIX = "[Pass injected]";
 
   if (window.__passWebAuthnBridgeInstalled) {
     return;
@@ -21,23 +22,57 @@
     return;
   }
 
+  function logInjected(event, details = {}) {
+    try {
+      console.info(PASSKEY_LOG_PREFIX, event, details);
+    } catch {
+      // Ignore logging failures.
+    }
+  }
+
   const patchedCreate = async function patchedCreate(options) {
     if (!options?.publicKey) {
       return originalCreate(options);
     }
-    if (!canPassManageCreate(options.publicKey)) {
+    const createDecision = explainCreateManageability(options.publicKey);
+    logInjected("create-intercepted", {
+      manageable: createDecision.manageable,
+      reason: createDecision.reason,
+      rpId: String(options?.publicKey?.rp?.id || window.location.hostname || ""),
+      userName: String(options?.publicKey?.user?.name || ""),
+      attachment: String(options?.publicKey?.authenticatorSelection?.authenticatorAttachment || ""),
+    });
+    if (!createDecision.manageable) {
       return originalCreate(options);
     }
 
     const serialized = serializeCreateOptions(options.publicKey);
     if (!serialized) {
+      logInjected("create-serialize-empty", {
+        rpId: String(options?.publicKey?.rp?.id || window.location.hostname || ""),
+      });
       return originalCreate(options);
     }
 
     try {
+      logInjected("create-bridge-start", {
+        rpId: String(serialized?.rp?.id || ""),
+        userName: String(serialized?.user?.name || ""),
+      });
       const response = await callBridge("create", serialized);
+      logInjected("create-bridge-success", {
+        createMode: String(response?.createMode || ""),
+        createCompatMethod: String(response?.createCompatMethod || ""),
+        credentialId: String(response?.credential?.id || ""),
+      });
       return buildCreateCredential(response?.credential);
     } catch (error) {
+      logInjected("create-bridge-error", {
+        name: error?.name || "Error",
+        code: error?.code || "",
+        message: error?.message || String(error || ""),
+        willFallback: shouldFallbackToBrowser(error),
+      });
       if (shouldFallbackToBrowser(error)) {
         return originalCreate(options);
       }
@@ -49,19 +84,44 @@
     if (!options?.publicKey) {
       return originalGet(options);
     }
-    if (!canPassManageGet(options.publicKey)) {
+    const getDecision = explainGetManageability(options.publicKey);
+    logInjected("get-intercepted", {
+      manageable: getDecision.manageable,
+      reason: getDecision.reason,
+      rpId: String(options?.publicKey?.rpId || window.location.hostname || ""),
+      allowCredentialsCount: Array.isArray(options?.publicKey?.allowCredentials)
+        ? options.publicKey.allowCredentials.length
+        : 0,
+    });
+    if (!getDecision.manageable) {
       return originalGet(options);
     }
 
     const serialized = serializeGetOptions(options.publicKey);
     if (!serialized) {
+      logInjected("get-serialize-empty", {
+        rpId: String(options?.publicKey?.rpId || window.location.hostname || ""),
+      });
       return originalGet(options);
     }
 
     try {
+      logInjected("get-bridge-start", {
+        rpId: String(serialized?.rpId || ""),
+        allowCredentialsCount: Array.isArray(serialized?.allowCredentials) ? serialized.allowCredentials.length : 0,
+      });
       const response = await callBridge("get", serialized);
+      logInjected("get-bridge-success", {
+        credentialId: String(response?.credential?.id || ""),
+      });
       return buildAssertionCredential(response?.credential);
     } catch (error) {
+      logInjected("get-bridge-error", {
+        name: error?.name || "Error",
+        code: error?.code || "",
+        message: error?.message || String(error || ""),
+        willFallback: shouldFallbackToBrowser(error),
+      });
       if (shouldFallbackToBrowser(error)) {
         return originalGet(options);
       }
@@ -104,18 +164,37 @@
 
         cleanup();
         if (data.ok) {
+          logInjected("bridge-response-ok", {
+            requestId,
+            operation,
+          });
           resolve(data.result || {});
           return;
         }
+        logInjected("bridge-response-error", {
+          requestId,
+          operation,
+          name: data?.error?.name || "Error",
+          code: data?.error?.code || "",
+          message: data?.error?.message || "",
+        });
         reject(data.error || { name: "OperationError", message: "通行密钥操作失败" });
       };
 
       window.addEventListener("message", onMessage);
       timeoutId = setTimeout(() => {
         cleanup();
+        logInjected("bridge-timeout", {
+          requestId,
+          operation,
+        });
         reject({ name: "TimeoutError", message: "通行密钥请求超时" });
       }, REQUEST_TIMEOUT_MS);
 
+      logInjected("bridge-posted", {
+        requestId,
+        operation,
+      });
       window.postMessage(request, "*");
     });
   }
@@ -294,33 +373,39 @@
   }
 
   function canPassManageCreate(publicKey) {
+    return explainCreateManageability(publicKey).manageable;
+  }
+
+  function canPassManageGet(publicKey) {
+    return explainGetManageability(publicKey).manageable;
+  }
+
+  function explainCreateManageability(publicKey) {
     const challenge = toBase64url(publicKey?.challenge);
     const userId = toBase64url(publicKey?.user?.id);
     if (!challenge || !userId) {
-      return false;
+      return { manageable: false, reason: "missing-challenge-or-user-id" };
     }
 
     const attachment = String(publicKey?.authenticatorSelection?.authenticatorAttachment || "").toLowerCase();
     if (attachment === "cross-platform") {
-      return false;
+      return { manageable: false, reason: "cross-platform-requested" };
     }
 
-    return true;
+    return { manageable: true, reason: "managed-by-pass" };
   }
 
-  function canPassManageGet(publicKey) {
+  function explainGetManageability(publicKey) {
     const challenge = toBase64url(publicKey?.challenge);
     if (!challenge) {
-      return false;
+      return { manageable: false, reason: "missing-challenge" };
     }
 
     const allow = Array.isArray(publicKey?.allowCredentials) ? publicKey.allowCredentials : [];
     if (allow.length === 0) {
-      return true;
+      return { manageable: true, reason: "no-allow-credentials" };
     }
 
-    // If RP explicitly provides allowCredentials, Pass can only satisfy entries
-    // that are internal-capable (or unspecified transports).
     const hasInternalCapable = allow.some((item) => {
       const transports = Array.isArray(item?.transports)
         ? item.transports.map((t) => String(t || "").toLowerCase())
@@ -330,7 +415,11 @@
       }
       return transports.includes("internal");
     });
-    return hasInternalCapable;
+    if (!hasInternalCapable) {
+      return { manageable: false, reason: "allow-credentials-without-internal" };
+    }
+
+    return { manageable: true, reason: "allow-credentials-has-internal" };
   }
 
   function toDomLikeError(error, fallbackName) {

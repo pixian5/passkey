@@ -22,6 +22,16 @@ import {
   setAccounts as setAccountsToDataStore,
 } from "./data_store.js";
 
+const PASSKEY_LOG_PREFIX = "[Pass background]";
+
+function logPasskeyFlow(event, details = {}) {
+  try {
+    console.info(PASSKEY_LOG_PREFIX, event, details);
+  } catch {
+    // Ignore logging failures.
+  }
+}
+
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
 const STORAGE_KEY_SYNC_ENABLE_WEBDAV = "pass.sync.enableWebDAV.v3";
 const STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER = "pass.sync.enableSelfHostedServer.v3";
@@ -351,13 +361,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function handlePasskeyOperationAndSyncAccount(payload) {
+  logPasskeyFlow("bridge-received", {
+    operation: String(payload?.operation || ""),
+    host: String(payload?.host || ""),
+    origin: String(payload?.origin || ""),
+  });
   const response = await handlePasskeyBridgeOperation(payload);
   if (!response?.ok) {
+    logPasskeyFlow("bridge-failed", {
+      operation: String(payload?.operation || ""),
+      error: response?.error || null,
+    });
     return response;
   }
 
   if (payload?.operation === "create") {
+    logPasskeyFlow("bridge-create-succeeded", {
+      accountHint: response.result?.accountHint || null,
+      createMode: String(response.result?.createMode || ""),
+      createCompatMethod: String(response.result?.createCompatMethod || ""),
+    });
     await upsertAccountForPasskey(response.result?.accountHint);
+  }
+  if (payload?.operation === "get") {
+    logPasskeyFlow("bridge-get-succeeded", {
+      assertionHint: response.result?.assertionHint || null,
+    });
   }
   return response;
 }
@@ -496,6 +525,9 @@ async function upsertAccountForPasskey(accountHint) {
   const username = normalizeUsername(accountHint?.username || "");
   const credentialIdB64u = normalizePasskeyId(accountHint?.credentialIdB64u || accountHint?.credentialId || "");
   if (!domain || !username) {
+    logPasskeyFlow("upsert-skipped-missing-account-hint", {
+      accountHint: accountHint || null,
+    });
     return;
   }
 
@@ -524,6 +556,11 @@ async function upsertAccountForPasskey(accountHint) {
     }
     if (fallbackIndexes.length === 1) {
       matchIndexes = fallbackIndexes;
+      logPasskeyFlow("upsert-using-single-domain-fallback", {
+        domain,
+        username,
+        fallbackAccountId: String(allAccounts[fallbackIndexes[0]]?.accountId || ""),
+      });
     }
   }
 
@@ -541,6 +578,12 @@ async function upsertAccountForPasskey(accountHint) {
     }
     allAccounts.push(created);
     await setAccounts(syncAliasGroups(allAccounts));
+    logPasskeyFlow("upsert-created-new-account", {
+      domain,
+      username,
+      accountId: created.accountId,
+      credentialIdB64u,
+    });
     return;
   }
 
@@ -560,6 +603,13 @@ async function upsertAccountForPasskey(accountHint) {
   const next = allAccounts.filter((_, index) => !removeIndexSet.has(index));
   next.push(mergedAccount);
   await setAccounts(syncAliasGroups(next));
+  logPasskeyFlow("upsert-merged-into-existing-account", {
+    domain,
+    username,
+    mergedAccountId: mergedAccount.accountId,
+    matchedAccountIds: matchedAccounts.map((item) => String(item?.accountId || "")),
+    credentialIdB64u,
+  });
 }
 
 function mergeMatchedAccountsForPasskey({
