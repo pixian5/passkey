@@ -4,9 +4,10 @@
   const RESPONSE_TYPE = "PASSKEY_RESPONSE";
   const NOTICE_TYPE = "PASSKEY_NOTICE";
   const REQUEST_TIMEOUT_MS = 10000;
-  const FALLBACK_NOTICE_DELAY_MS = 1500;
+  const FALLBACK_NOTICE_DELAY_MS = 1200;
   const PASSKEY_LOG_PREFIX = "[Pass injected]";
   const FALLBACK_TOAST_ID = "pass-injected-fallback-toast";
+  const FALLBACK_OVERLAY_ID = "pass-injected-fallback-overlay";
 
   if (window.__passWebAuthnBridgeInstalled) {
     return;
@@ -433,6 +434,7 @@
     const message = buildFallbackNoticeMessage(operation, reason);
     if (!message) return;
     showInjectedFallbackToast(message);
+    showInjectedFallbackOverlay(message);
     logInjected("fallback-notice-posted", {
       operation,
       reason,
@@ -523,6 +525,56 @@
         current.style.opacity = "0";
       }
     }, 3000);
+  }
+
+  function showInjectedFallbackOverlay(message) {
+    const text = String(message || "").trim();
+    if (!text) return;
+
+    let overlay = document.getElementById(FALLBACK_OVERLAY_ID);
+    if (!(overlay instanceof HTMLDivElement)) {
+      overlay = document.createElement("div");
+      overlay.id = FALLBACK_OVERLAY_ID;
+      overlay.style.position = "fixed";
+      overlay.style.inset = "0";
+      overlay.style.zIndex = "2147483646";
+      overlay.style.pointerEvents = "none";
+      overlay.style.display = "flex";
+      overlay.style.alignItems = "center";
+      overlay.style.justifyContent = "center";
+      overlay.style.background = "rgba(18, 24, 20, 0.18)";
+      overlay.style.opacity = "0";
+      overlay.style.transition = "opacity 120ms ease-out";
+
+      const panel = document.createElement("div");
+      panel.setAttribute("data-role", "panel");
+      panel.style.maxWidth = "min(720px, calc(100vw - 48px))";
+      panel.style.padding = "18px 22px";
+      panel.style.borderRadius = "16px";
+      panel.style.border = "1px solid #63a56a";
+      panel.style.background = "linear-gradient(180deg, #e8f8ea 0%, #d5f2d9 100%)";
+      panel.style.color = "#1d5b2c";
+      panel.style.font = '700 30px/1.45 "SF Pro Text", "PingFang SC", sans-serif';
+      panel.style.boxShadow = "0 24px 80px rgba(24, 68, 33, 0.28)";
+      panel.style.textAlign = "center";
+      panel.style.whiteSpace = "pre-wrap";
+      panel.style.wordBreak = "break-word";
+      overlay.appendChild(panel);
+
+      (document.documentElement || document.body).appendChild(overlay);
+    }
+
+    const panel = overlay.querySelector('[data-role="panel"]');
+    if (panel instanceof HTMLDivElement) {
+      panel.textContent = text;
+    }
+    overlay.style.opacity = "1";
+    setTimeout(() => {
+      const current = document.getElementById(FALLBACK_OVERLAY_ID);
+      if (current instanceof HTMLDivElement) {
+        current.style.opacity = "0";
+      }
+    }, Math.max(0, FALLBACK_NOTICE_DELAY_MS - 80));
   }
 
   function toDomLikeError(error, fallbackName) {
