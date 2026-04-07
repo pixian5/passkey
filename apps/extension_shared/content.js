@@ -10,7 +10,7 @@ const PASS_PAGE_TOAST_ID = "pass-page-toast";
 const PASS_PAGE_TOAST_DURATION_MS = 3000;
 const PASSKEY_USE_BROWSER_FALLBACK = "__PASSKEY_USE_BROWSER_FALLBACK__";
 const PASSKEY_LOG_PREFIX = "[Pass content]";
-const PASS_EXTENSION_VERSION = "0.1.3";
+const PASS_EXTENSION_VERSION = "0.1.4";
 
 let lastPromptKey = "";
 let lastPromptAt = 0;
@@ -38,7 +38,6 @@ try {
 initAccountCache().catch(() => {
   // Ignore cache bootstrap errors; detection continues with empty cache.
 });
-installWebAuthnBridge();
 window.addEventListener("message", onWebAuthnBridgeMessage, false);
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -234,25 +233,6 @@ function isVisible(input) {
   if (input.disabled || input.readOnly) return false;
   const style = window.getComputedStyle(input);
   return style.display !== "none" && style.visibility !== "hidden";
-}
-
-function installWebAuthnBridge() {
-  if (!isRuntimeAvailable()) return;
-  const scriptId = "pass-webauthn-bridge-injected";
-  if (document.getElementById(scriptId)) return;
-  const parent = document.head || document.documentElement;
-  if (!parent) return;
-
-  const script = document.createElement("script");
-  script.id = scriptId;
-  try {
-    script.src = chrome.runtime.getURL("webauthn_injected.js");
-  } catch {
-    return;
-  }
-  script.async = false;
-  parent.appendChild(script);
-  script.remove();
 }
 
 function onWebAuthnBridgeMessage(event) {

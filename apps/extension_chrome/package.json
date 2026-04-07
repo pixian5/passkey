@@ -1,6 +1,6 @@
 {
   "name": "pass-extension-chrome-shell",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "Chrome shell for the shared Pass browser extension.",
   "scripts": {
