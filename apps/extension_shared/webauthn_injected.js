@@ -4,8 +4,9 @@
   const RESPONSE_TYPE = "PASSKEY_RESPONSE";
   const NOTICE_TYPE = "PASSKEY_NOTICE";
   const REQUEST_TIMEOUT_MS = 10000;
-  const FALLBACK_NOTICE_DELAY_MS = 700;
+  const FALLBACK_NOTICE_DELAY_MS = 1500;
   const PASSKEY_LOG_PREFIX = "[Pass injected]";
+  const FALLBACK_TOAST_ID = "pass-injected-fallback-toast";
 
   if (window.__passWebAuthnBridgeInstalled) {
     return;
@@ -431,6 +432,7 @@
   function postFallbackNotice(operation, reason) {
     const message = buildFallbackNoticeMessage(operation, reason);
     if (!message) return;
+    showInjectedFallbackToast(message);
     logInjected("fallback-notice-posted", {
       operation,
       reason,
@@ -485,6 +487,42 @@
     return new Promise((resolve) => {
       setTimeout(resolve, Math.max(0, Number(ms) || 0));
     });
+  }
+
+  function showInjectedFallbackToast(message) {
+    const text = String(message || "").trim();
+    if (!text) return;
+
+    let toast = document.getElementById(FALLBACK_TOAST_ID);
+    if (!(toast instanceof HTMLDivElement)) {
+      toast = document.createElement("div");
+      toast.id = FALLBACK_TOAST_ID;
+      toast.style.position = "fixed";
+      toast.style.top = "14px";
+      toast.style.right = "14px";
+      toast.style.zIndex = "2147483647";
+      toast.style.maxWidth = "min(520px, calc(100vw - 28px))";
+      toast.style.padding = "10px 12px";
+      toast.style.borderRadius = "10px";
+      toast.style.border = "1px solid #63a56a";
+      toast.style.background = "linear-gradient(180deg, #e8f8ea 0%, #d5f2d9 100%)";
+      toast.style.color = "#1d5b2c";
+      toast.style.font = '600 24px/1.4 "SF Pro Text", "PingFang SC", sans-serif';
+      toast.style.boxShadow = "0 12px 28px rgba(24, 68, 33, 0.22)";
+      toast.style.pointerEvents = "none";
+      toast.style.opacity = "0";
+      toast.style.transition = "opacity 140ms ease-out";
+      (document.documentElement || document.body).appendChild(toast);
+    }
+
+    toast.textContent = text;
+    toast.style.opacity = "1";
+    setTimeout(() => {
+      const current = document.getElementById(FALLBACK_TOAST_ID);
+      if (current instanceof HTMLDivElement) {
+        current.style.opacity = "0";
+      }
+    }, 3000);
   }
 
   function toDomLikeError(error, fallbackName) {
