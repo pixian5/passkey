@@ -60,6 +60,7 @@ const DEFAULT_SELF_HOSTED_SERVER_TOKEN = "ClzgP2xsXHETVut9F6ddHVRdvvclz0QM0fDHve
 const SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
 const SYNC_MODE_MERGE = "merge";
 const AUTO_SYNC_ALARM_NAME = "pass.sync.auto";
+const PASS_EXTENSION_VERSION = "0.1.5";
 
 function normalizeLegacySelfHostedServerBaseUrl(value) {
   const trimmed = String(value || "").trim();
@@ -102,6 +103,20 @@ void scheduleAutoSyncAlarm();
 chrome.runtime.onStartup.addListener(() => {
   ensureActionContextMenu();
   void scheduleAutoSyncAlarm();
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== "complete") return;
+  void ensureMainWorldPasskeyBridge(tabId, tab?.url || "");
+});
+
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    void ensureMainWorldPasskeyBridge(tabId, tab?.url || "");
+  } catch {
+    // Ignore activation lookup failures.
+  }
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -152,6 +167,49 @@ function normalizeAutoSyncIntervalMinutes(value) {
   const normalized = Number(value);
   const allowed = new Set([0, 1, 3, 5, 10, 15, 30, 60]);
   return allowed.has(normalized) ? normalized : 0;
+}
+
+function shouldInjectMainWorldBridge(url) {
+  const value = String(url || "").trim().toLowerCase();
+  return value.startsWith("http://") || value.startsWith("https://");
+}
+
+async function ensureMainWorldPasskeyBridge(tabId, url) {
+  if (!tabId || !shouldInjectMainWorldBridge(url)) return;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: (version) => {
+        try {
+          window.__passMainWorldProbe = version;
+          document.documentElement?.setAttribute("data-pass-main-world-probe", version);
+          console.warn("[Pass probe] main world reachable", {
+            version,
+            href: window.location.href,
+          });
+        } catch {
+          // Ignore probe failures.
+        }
+      },
+      args: [PASS_EXTENSION_VERSION],
+    });
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["webauthn_injected.js"],
+      world: "MAIN",
+    });
+    logPasskeyFlow("main-world-bridge-injected", {
+      tabId,
+      url,
+    });
+  } catch (error) {
+    logPasskeyFlow("main-world-bridge-inject-failed", {
+      tabId,
+      url,
+      message: error?.message || String(error || ""),
+    });
+  }
 }
 
 async function scheduleAutoSyncAlarm() {

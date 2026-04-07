@@ -6,7 +6,7 @@
   const REQUEST_TIMEOUT_MS = 10000;
   const FALLBACK_NOTICE_DELAY_MS = 1200;
   const PASSKEY_LOG_PREFIX = "[Pass injected]";
-  const PASS_EXTENSION_VERSION = "0.1.4";
+  const PASS_EXTENSION_VERSION = "0.1.5";
   const FALLBACK_TOAST_ID = "pass-injected-fallback-toast";
   const FALLBACK_OVERLAY_ID = "pass-injected-fallback-overlay";
 
@@ -16,6 +16,7 @@
   window.__passWebAuthnBridgeInstalled = true;
   try {
     window.__passInjectedVersion = PASS_EXTENSION_VERSION;
+    document.documentElement?.setAttribute("data-pass-injected-version", PASS_EXTENSION_VERSION);
     console.warn(`${PASSKEY_LOG_PREFIX} installed`, {
       version: PASS_EXTENSION_VERSION,
       href: window.location.href,
