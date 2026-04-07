@@ -23,10 +23,19 @@ import {
 } from "./data_store.js";
 
 const PASSKEY_LOG_PREFIX = "[Pass background]";
+const SYNC_LOG_PREFIX = "[Pass sync]";
 
 function logPasskeyFlow(event, details = {}) {
   try {
     console.info(PASSKEY_LOG_PREFIX, event, details);
+  } catch {
+    // Ignore logging failures.
+  }
+}
+
+function logSyncFlow(event, details = {}) {
+  try {
+    console.info(SYNC_LOG_PREFIX, event, details);
   } catch {
     // Ignore logging failures.
   }
@@ -168,6 +177,11 @@ async function scheduleAutoSyncAlarm() {
 async function runAutoSync() {
   const targets = await buildRemoteSyncTargetsFromStorage();
   if (!targets || targets.length === 0) return;
+  logSyncFlow("auto-sync-start", {
+    targetLabels: targets.map((item) => item.label),
+    targetUrls: targets.map((item) => item.url),
+    online: typeof navigator !== "undefined" ? navigator.onLine : null,
+  });
 
   const localStored = await readBusinessDataFromStore();
   const localAccounts = Array.isArray(localStored.accounts)
@@ -187,7 +201,18 @@ async function runAutoSync() {
   let remoteAggregate = null;
 
   for (const target of targets) {
+    logSyncFlow("pull-start", {
+      label: target.label,
+      url: target.url,
+      hasAuthHeader: Boolean(target.authHeader),
+    });
     const remoteResponse = await pullRemotePayload(target);
+    logSyncFlow("pull-success", {
+      label: target.label,
+      url: target.url,
+      hasPayload: Boolean(remoteResponse.payload),
+      etag: remoteResponse.etag,
+    });
     target.remoteEtag = remoteResponse.etag;
     const remotePayload = remoteResponse.payload;
     const remoteAccounts = remotePayload ? remotePayload.accounts.map(normalizeAccountShape) : [];
@@ -228,11 +253,26 @@ async function runAutoSync() {
 
   const pushTargets = [...targets].sort((left, right) => Number(right.supportsEtag) - Number(left.supportsEtag));
   for (const target of pushTargets) {
+    logSyncFlow("push-start", {
+      label: target.label,
+      url: target.url,
+      supportsEtag: Boolean(target.supportsEtag),
+      remoteEtag: target.remoteEtag,
+    });
     const result = await pushRemotePayloadWithMode(target, {
       accounts: mergedAccounts,
       passkeys: mergedPasskeys,
       folders: mergedFolders,
     }, SYNC_MODE_MERGE);
+    logSyncFlow("push-success", {
+      label: target.label,
+      url: target.url,
+      itemCounts: {
+        accounts: Array.isArray(result?.payload?.accounts) ? result.payload.accounts.length : 0,
+        passkeys: Array.isArray(result?.payload?.passkeys) ? result.payload.passkeys.length : 0,
+        folders: Array.isArray(result?.payload?.folders) ? result.payload.folders.length : 0,
+      },
+    });
     mergedAccounts = result.payload.accounts.map(normalizeAccountShape);
     mergedFolders = result.payload.folders.map(normalizeFolderShape);
     mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, result.payload.passkeys);
@@ -246,6 +286,9 @@ async function runAutoSync() {
   await appendHistoryEntry({
     action: `自动同步完成（${targets.map((item) => item.label).join(" + ")}）`,
     timestampMs: Date.now(),
+  });
+  logSyncFlow("auto-sync-complete", {
+    targetLabels: targets.map((item) => item.label),
   });
 }
 
@@ -329,6 +372,16 @@ async function buildRemoteSyncTargetsFromStorage() {
     targets.push({ label: "服务器", url, authHeader, supportsEtag: true, remoteEtag: null });
   }
 
+  logSyncFlow("targets-built", {
+    webdavEnabled: Boolean(result[STORAGE_KEY_SYNC_ENABLE_WEBDAV]),
+    serverEnabled: Boolean(result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]),
+    targets: targets.map((item) => ({
+      label: item.label,
+      url: item.url,
+      hasAuthHeader: Boolean(item.authHeader),
+      supportsEtag: Boolean(item.supportsEtag),
+    })),
+  });
   return targets.length > 0 ? targets : null;
 }
 
@@ -1117,8 +1170,22 @@ async function pullRemotePayload(target) {
   try {
     response = await fetch(target.url, { method: "GET", headers, cache: "no-store" });
   } catch (error) {
+    logSyncFlow("pull-fetch-error", {
+      label: target.label,
+      url: target.url,
+      name: error?.name || "Error",
+      message: error?.message || String(error || ""),
+      stack: error?.stack || "",
+      online: typeof navigator !== "undefined" ? navigator.onLine : null,
+    });
     throw new Error(`拉取远端失败（${target.label} ${target.url}）：${error?.message || error}`);
   }
+  logSyncFlow("pull-http-response", {
+    label: target.label,
+    url: target.url,
+    status: response.status,
+    etag: response.headers.get("ETag"),
+  });
   if (response.status === 404) return { payload: null, etag: null };
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const text = await response.text();
@@ -1147,8 +1214,23 @@ async function pushRemotePayload(target, payload, ifMatch = null) {
       body: JSON.stringify(bundle, null, 2),
     });
   } catch (error) {
+    logSyncFlow("push-fetch-error", {
+      label: target.label,
+      url: target.url,
+      name: error?.name || "Error",
+      message: error?.message || String(error || ""),
+      stack: error?.stack || "",
+      online: typeof navigator !== "undefined" ? navigator.onLine : null,
+    });
     throw new Error(`上传远端失败（${target.label} ${target.url}）：${error?.message || error}`);
   }
+  logSyncFlow("push-http-response", {
+    label: target.label,
+    url: target.url,
+    status: response.status,
+    etag: response.headers.get("ETag"),
+    ifMatch,
+  });
   if (!response.ok) {
     const error = new Error(`HTTP ${response.status}`);
     error.status = response.status;
