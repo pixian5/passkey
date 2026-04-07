@@ -4,6 +4,7 @@
   const RESPONSE_TYPE = "PASSKEY_RESPONSE";
   const NOTICE_TYPE = "PASSKEY_NOTICE";
   const REQUEST_TIMEOUT_MS = 10000;
+  const FALLBACK_NOTICE_DELAY_MS = 700;
   const PASSKEY_LOG_PREFIX = "[Pass injected]";
 
   if (window.__passWebAuthnBridgeInstalled) {
@@ -44,7 +45,7 @@
       attachment: String(options?.publicKey?.authenticatorSelection?.authenticatorAttachment || ""),
     });
     if (!createDecision.manageable) {
-      postFallbackNotice("create", createDecision.reason);
+      await notifyFallbackBeforeBrowser("create", createDecision.reason);
       return originalCreate(options);
     }
 
@@ -76,7 +77,7 @@
         willFallback: shouldFallbackToBrowser(error),
       });
       if (shouldFallbackToBrowser(error)) {
-        postFallbackNotice("create", error?.code || error?.name || "fallback");
+        await notifyFallbackBeforeBrowser("create", error?.code || error?.name || "fallback");
         return originalCreate(options);
       }
       throw toDomLikeError(error, "NotAllowedError");
@@ -97,7 +98,7 @@
         : 0,
     });
     if (!getDecision.manageable) {
-      postFallbackNotice("get", getDecision.reason);
+      await notifyFallbackBeforeBrowser("get", getDecision.reason);
       return originalGet(options);
     }
 
@@ -127,7 +128,7 @@
         willFallback: shouldFallbackToBrowser(error),
       });
       if (shouldFallbackToBrowser(error)) {
-        postFallbackNotice("get", error?.code || error?.name || "fallback");
+        await notifyFallbackBeforeBrowser("get", error?.code || error?.name || "fallback");
         return originalGet(options);
       }
       throw toDomLikeError(error, "NotAllowedError");
@@ -444,6 +445,11 @@
     }, "*");
   }
 
+  async function notifyFallbackBeforeBrowser(operation, reason) {
+    postFallbackNotice(operation, reason);
+    await sleep(FALLBACK_NOTICE_DELAY_MS);
+  }
+
   function buildFallbackNoticeMessage(operation, reason) {
     const opLabel = operation === "get" ? "读取通行密钥" : "保存通行密钥";
     switch (String(reason || "")) {
@@ -473,6 +479,12 @@
       default:
         return `Pass 已切换为浏览器原生处理${opLabel}`;
     }
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => {
+      setTimeout(resolve, Math.max(0, Number(ms) || 0));
+    });
   }
 
   function toDomLikeError(error, fallbackName) {
