@@ -450,9 +450,9 @@ async function handlePasskeyGetWithChooser(payload) {
   const candidates = Array.isArray(candidateResponse?.result?.candidates)
     ? candidateResponse.result.candidates
     : [];
-  if (candidates.length === 0) {
+  if (candidates.length <= 1) {
     logPasskeyContent("chooser-skipped", {
-      reason: "no-candidate",
+      reason: candidates.length === 0 ? "no-candidate" : "single-candidate",
     });
     return await sendPasskeyBridgeOperation(payload);
   }
