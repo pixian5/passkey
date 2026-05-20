@@ -34,7 +34,7 @@ function installPassContentBridge() {
   try {
     window.__passContentVersion = PASS_EXTENSION_VERSION;
     document.documentElement?.setAttribute("data-pass-content-version", PASS_EXTENSION_VERSION);
-    console.warn(`${PASSKEY_LOG_PREFIX} loaded`, {
+    console.info(`${PASSKEY_LOG_PREFIX} loaded`, {
       version: PASS_EXTENSION_VERSION,
       href: window.location.href,
     });
