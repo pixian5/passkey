@@ -17,7 +17,7 @@
   try {
     window.__passInjectedVersion = PASS_EXTENSION_VERSION;
     document.documentElement?.setAttribute("data-pass-injected-version", PASS_EXTENSION_VERSION);
-    console.warn(`${PASSKEY_LOG_PREFIX} installed`, {
+    console.info(`${PASSKEY_LOG_PREFIX} installed`, {
       version: PASS_EXTENSION_VERSION,
       href: window.location.href,
     });
