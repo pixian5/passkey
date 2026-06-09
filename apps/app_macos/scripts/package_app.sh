@@ -43,6 +43,11 @@ else
   echo "[4/7] codesign not found, skipping signature step."
 fi
 
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister"
+if [[ -x "${LSREGISTER}" ]]; then
+  "${LSREGISTER}" -f -R -trusted "${APP_BUNDLE}" >/dev/null 2>&1 || true
+fi
+
 if [[ "${SKIP_INSTALL}" != "1" ]]; then
   echo "[5/7] Closing existing ${APP_NAME} instance ..."
   osascript -e "tell application \"${APP_NAME}\" to quit" >/dev/null 2>&1 || true
