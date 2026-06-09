@@ -292,12 +292,14 @@ extension AccountStore {
         Task { @MainActor in
             do {
                 let manager = ASCredentialExportManager(presentationAnchor: window)
-                let options = try await manager.requestExport(for: "com.pass.desktop.autofill")
+                statusMessage = "Apple Credential Exchange 正在请求导出授权..."
+                let options = try await manager.requestExport()
                 let data = try AppleCredentialExchangeMapper.exportData(
                     accounts: accounts,
                     passkeys: passkeys,
                     formatVersion: options.formatVersion
                 )
+                statusMessage = "Apple Credential Exchange 正在交给系统迁移..."
                 try await manager.exportCredentials(data)
                 statusMessage = "Apple Credential Exchange 导出完成：\(data.accounts.first?.items.count ?? 0) 条项目"
             } catch {
