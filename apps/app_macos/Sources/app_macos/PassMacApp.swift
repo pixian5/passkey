@@ -255,10 +255,7 @@ private struct WindowFrameAutosave: NSViewRepresentable {
                     Self.saveFrame(for: window, name: name)
                 }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self, weak window] in
-                guard let self, let window else { return }
-                self.restoreFrameIfNeeded(for: window, name: name)
-            }
+            restoreFrameIfNeeded(for: window, name: name)
         }
 
         @MainActor
@@ -269,7 +266,7 @@ private struct WindowFrameAutosave: NSViewRepresentable {
             guard let frameString = UserDefaults.standard.string(forKey: key) else { return }
             let restoredFrame = NSRectFromString(frameString)
             guard restoredFrame.width > 0, restoredFrame.height > 0 else { return }
-            window.setFrame(restoredFrame, display: true)
+            window.setFrame(restoredFrame, display: false, animate: false)
         }
 
         @MainActor
@@ -287,6 +284,11 @@ private struct WindowFrameAutosave: NSViewRepresentable {
 
 private final class WindowBindingView: NSView {
     var onWindowChange: ((NSWindow?) -> Void)?
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        onWindowChange?(newWindow)
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
