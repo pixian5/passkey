@@ -38,7 +38,18 @@ ditto "${BUILT_APP}" "${APP_BUNDLE}"
 
 if command -v codesign >/dev/null 2>&1; then
   echo "[4/7] Applying ad-hoc signature..."
-  codesign --force --deep --sign - "${APP_BUNDLE}" >/dev/null 2>&1 || true
+  if [[ -d "${APP_BUNDLE}/Contents/PlugIns/PassAutoFillExtension.appex" ]]; then
+    codesign \
+      --force \
+      --sign - \
+      --entitlements "${APP_ROOT}/AutofillExtension/AutoFillExtension.entitlements" \
+      "${APP_BUNDLE}/Contents/PlugIns/PassAutoFillExtension.appex" >/dev/null 2>&1 || true
+  fi
+  codesign \
+    --force \
+    --sign - \
+    --entitlements "${APP_ROOT}/PassMac.entitlements" \
+    "${APP_BUNDLE}" >/dev/null 2>&1 || true
 else
   echo "[4/7] codesign not found, skipping signature step."
 fi
