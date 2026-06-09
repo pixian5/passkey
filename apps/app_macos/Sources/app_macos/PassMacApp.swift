@@ -11,6 +11,7 @@ struct PassMacApp: App {
             AppLockGateView(store: store, appLock: appLock)
                 .font(store.textFont())
                 .appToast(store)
+                .modifier(AppleCredentialExchangeActivityModifier(store: store))
                 .background(MainWindowCloseTerminator())
                 .background(WindowFrameAutosave(name: "pass.main"))
         }
@@ -25,6 +26,7 @@ struct PassMacApp: App {
             SettingsView(store: store, appLock: appLock)
                 .font(store.textFont())
                 .appToast(store)
+                .modifier(AppleCredentialExchangeActivityModifier(store: store))
                 .background(WindowFrameAutosave(name: "pass.settings"))
         }
         .defaultSize(width: 860, height: 620)

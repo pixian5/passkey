@@ -3,31 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>files</key>
-	<dict>
-		<key>Resources/PassMac.icns</key>
-		<data>
-		ioGYGQxGf2kTOj2I0wLVVDXbfzM=
-		</data>
-	</dict>
+	<dict/>
 	<key>files2</key>
-	<dict>
-		<key>PlugIns/PassAutoFillExtension.appex</key>
-		<dict>
-			<key>cdhash</key>
-			<data>
-			M5Ftfd9/6PaW7sLxidsqHU9tkZM=
-			</data>
-			<key>requirement</key>
-			<string>cdhash H"33916d7ddf7fe8f696eec2f189db2a1d4f6d9193" or cdhash H"ec1c65df5d7507f29c113ac6b52753d90734394f"</string>
-		</dict>
-		<key>Resources/PassMac.icns</key>
-		<dict>
-			<key>hash2</key>
-			<data>
-			+OpEj8svORCnMQ1CrKIDfzUFLjqt+1qeebZZUgkklvg=
-			</data>
-		</dict>
-	</dict>
+	<dict/>
 	<key>rules</key>
 	<dict>
 		<key>^Resources/</key>

@@ -1636,6 +1636,35 @@ final class AccountStore: ObservableObject {
         }
     }
 
+    func mergeCredentialExchangeImport(_ result: CredentialExchangeImportResult) {
+        let previousAccounts = accounts
+        let localAccountCount = accounts.count
+        let localPasskeyCount = passkeys.count
+
+        let mergedAccounts = mergeAccountCollections(
+            local: accounts,
+            remote: normalizeDecodedAccounts(result.accounts)
+        )
+        let mergedPasskeys = mergePasskeyCollections(local: passkeys, remote: result.passkeys)
+
+        accounts = mergedAccounts
+        passkeys = mergedPasskeys
+        syncAliasGroups()
+        saveAccounts()
+        savePasskeysToLocalDisk()
+
+        statusMessage =
+            "Apple Credential Exchange 导入完成：账号 \(localAccountCount)+\(result.accounts.count)->\(accounts.count)，" +
+            "通行密钥 \(localPasskeyCount)+\(result.passkeys.count)->\(passkeys.count)" +
+            (result.skippedPasskeyCount > 0 ? "，跳过 \(result.skippedPasskeyCount) 条无法转换的通行密钥" : "")
+        appendAccountHistoryBatch(
+            category: .sync,
+            title: "Apple Credential Exchange 导入",
+            beforeAccounts: previousAccounts,
+            afterAccounts: accounts
+        )
+    }
+
     func importBrowserPasswordCsv(from fileURL: URL) {
         do {
             let previousAccounts = accounts

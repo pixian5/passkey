@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Pass</string>
+    <string name="provider_subtitle">Pass passwords and passkeys</string>
+</resources>

@@ -10,6 +10,7 @@ Runnable macOS desktop app (SwiftUI) for local password management demo.
 - Recycle bin view with restore and permanent delete.
 - Generate demo accounts.
 - Export local data to CSV.
+- Export passwords and passkeys through Apple Credential Exchange on macOS 26+.
 - Display all shown timestamps in `yy-M-d H:m:s` style (e.g. `26-3-14 9:2:8`).
 
 ## Run
@@ -47,6 +48,12 @@ Generated bundle:
 - `/Users/x/code/pass/apps/app_macos/dist/PassMac.app`
 - `/Applications/PassMac.app`（默认自动安装）
 - 安装后默认先关闭旧 `PassMac` 进程，再自动运行新版本
+
+`package_app.sh` now builds through Xcode so the generated app bundle includes
+`PassAutoFillExtension.appex`. The AutoFill/Credential Exchange path requires the
+`project.autofill.yml` generated Xcode project and real Developer ID/App Store
+signing before macOS will treat the app as a system credential provider. Local
+verification can use `CODE_SIGNING_ALLOWED=NO`.
 
 Skip installation:
 ```bash

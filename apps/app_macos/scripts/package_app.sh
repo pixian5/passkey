@@ -14,57 +14,27 @@ RUN_AFTER_INSTALL="${RUN_AFTER_INSTALL:-1}"
 
 "${ROOT_DIR}/scripts/sync-pass-icons.sh"
 
-echo "[1/7] Building release binary..."
+echo "[1/7] Building app bundle with Xcode..."
 cd "${APP_ROOT}"
-swift build -c release --product "${APP_NAME}"
+xcodebuild \
+  -project "${APP_ROOT}/PassMac.xcodeproj" \
+  -scheme "${APP_NAME}" \
+  -configuration Release \
+  -derivedDataPath "${APP_ROOT}/build/DerivedData" \
+  CODE_SIGNING_ALLOWED="${CODE_SIGNING_ALLOWED:-NO}" \
+  build
 
-echo "[2/7] Locating built binary..."
-BIN_PATH="$(find "${APP_ROOT}/.build" -type f -path "*/release/${APP_NAME}" | head -n 1 || true)"
-if [[ -z "${BIN_PATH}" ]]; then
-  echo "Failed to locate release binary for ${APP_NAME}" >&2
+echo "[2/7] Locating built app bundle..."
+BUILT_APP="${APP_ROOT}/build/DerivedData/Build/Products/Release/${APP_NAME}.app"
+if [[ ! -d "${BUILT_APP}" ]]; then
+  echo "Failed to locate release app bundle for ${APP_NAME}: ${BUILT_APP}" >&2
   exit 1
 fi
 
-echo "[3/7] Creating app bundle..."
-mkdir -p "${APP_BUNDLE}/Contents/MacOS"
-mkdir -p "${APP_BUNDLE}/Contents/Resources"
-cp -f "${BIN_PATH}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
-chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
-if [[ -f "${APP_ROOT}/Resources/PassMac.icns" ]]; then
-  cp -f "${APP_ROOT}/Resources/PassMac.icns" "${APP_BUNDLE}/Contents/Resources/PassMac.icns"
-fi
-
-cat > "${APP_BUNDLE}/Contents/Info.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleDevelopmentRegion</key>
-  <string>en</string>
-  <key>CFBundleExecutable</key>
-  <string>PassMac</string>
-  <key>CFBundleIdentifier</key>
-  <string>com.pass.desktop</string>
-  <key>CFBundleInfoDictionaryVersion</key>
-  <string>6.0</string>
-  <key>CFBundleIconFile</key>
-  <string>PassMac</string>
-  <key>CFBundleName</key>
-  <string>PassMac</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
-  <key>CFBundleVersion</key>
-  <string>1</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>13.0</string>
-  <key>NSHighResolutionCapable</key>
-  <true/>
-</dict>
-</plist>
-PLIST
+echo "[3/7] Copying app bundle to dist..."
+rm -rf "${APP_BUNDLE}"
+mkdir -p "${DIST_DIR}"
+ditto "${BUILT_APP}" "${APP_BUNDLE}"
 
 if command -v codesign >/dev/null 2>&1; then
   echo "[4/7] Applying ad-hoc signature..."

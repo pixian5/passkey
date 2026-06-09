@@ -14,6 +14,7 @@ targets:
     sources:
       - path: Sources/app_macos
       - path: Sources/shared
+      - path: Resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pass.desktop

@@ -266,6 +266,17 @@ struct SettingsView: View {
                             .font(store.buttonFont())
                             .buttonStyle(.bordered)
                         }
+
+                        HStack(spacing: 8) {
+                            Text("Apple迁移")
+                                .frame(width: labelColumnWidth, alignment: .leading)
+                                .fixedSize(horizontal: true, vertical: false)
+                            Button("导出到 Credential Exchange") {
+                                store.exportToAppleCredentialExchange()
+                            }
+                            .font(store.buttonFont())
+                            .buttonStyle(.bordered)
+                        }
                     }
                     .padding(.top, 2)
                 }
