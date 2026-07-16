@@ -77,6 +77,7 @@ function normalizeLegacySelfHostedServerBaseUrl(value) {
   if (!trimmed) return DEFAULT_SELF_HOSTED_SERVER_BASE_URL;
   try {
     const parsed = new URL(trimmed);
+    if (!isSecureSyncEndpoint(parsed)) return "";
     const host = String(parsed.hostname || "").toLowerCase();
     const port = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80);
     if ((host === "127.0.0.1" || host === "localhost") && port === 53333) {
@@ -86,6 +87,20 @@ function normalizeLegacySelfHostedServerBaseUrl(value) {
     return trimmed;
   }
   return trimmed;
+}
+
+function isSecureSyncEndpoint(url) {
+  if (url.protocol === "https:") return true;
+  const host = String(url.hostname || "").toLowerCase();
+  return url.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(host);
+}
+
+function isSecureSyncEndpointValue(value) {
+  try {
+    return isSecureSyncEndpoint(new URL(String(value || "").trim()));
+  } catch {
+    return false;
+  }
 }
 
 const dom = {
@@ -635,9 +650,14 @@ async function saveLockSettings({ showStatus = true } = {}) {
   const password = String(dom.lockMasterPassword.value || "").trim();
   const confirm = String(dom.lockMasterPasswordConfirm.value || "").trim();
 
-  const result = await chrome.storage.local.get([STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
+  const result = await chrome.storage.local.get([
+    STORAGE_KEY_LOCK_ENABLED,
+    STORAGE_KEY_LOCK_MASTER_CREDENTIAL,
+  ]);
   const existingCredential = normalizeLockMasterCredential(result[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
+  const wasLockEnabled = Boolean(result[STORAGE_KEY_LOCK_ENABLED]) && Boolean(existingCredential);
   let nextCredential = existingCredential;
+  let currentPasswordForRewrap = "";
 
   if (lockEnabled) {
     const shouldSetOrUpdatePassword = !existingCredential || password || confirm;
@@ -653,6 +673,14 @@ async function saveLockSettings({ showStatus = true } = {}) {
           setDeviceStatus("两次输入的主密码不一致");
         }
         return;
+      }
+      if (existingCredential) {
+        const promptResult = window.prompt("请输入当前主密码以更新主密码", "");
+        currentPasswordForRewrap = String(promptResult || "").trim();
+        if (!currentPasswordForRewrap) {
+          if (showStatus) setDeviceStatus("未输入当前主密码，已取消更新");
+          return;
+        }
       }
       nextCredential = await createLockMasterCredential(password);
     }
@@ -683,6 +711,67 @@ async function saveLockSettings({ showStatus = true } = {}) {
       if (showStatus) {
         setDeviceStatus("当前主密码错误，无法关闭解锁");
       }
+      return;
+    }
+    const disableResult = await chrome.runtime.sendMessage({
+      type: "PASS_LOCK_DISABLE_DATA",
+      payload: { password: disablePassword },
+    });
+    if (!disableResult?.ok) {
+      dom.lockEnabled.checked = true;
+      renderLockSettingsFields();
+      if (showStatus) setDeviceStatus(disableResult?.error || "无法关闭本地数据保护");
+      return;
+    }
+  }
+
+  if (lockEnabled && !existingCredential) {
+    await chrome.storage.local.set({ [STORAGE_KEY_LOCK_MASTER_CREDENTIAL]: nextCredential });
+    const configureResult = await chrome.runtime.sendMessage({
+      type: "PASS_LOCK_CONFIGURE_DATA",
+      payload: { password },
+    });
+    if (!configureResult?.ok) {
+      await chrome.storage.local.remove(STORAGE_KEY_LOCK_MASTER_CREDENTIAL);
+      if (showStatus) setDeviceStatus(configureResult?.error || "无法保护本地数据");
+      return;
+    }
+    nextCredential = normalizeLockMasterCredential(configureResult.credential) || nextCredential;
+  }
+
+  if (lockEnabled && existingCredential && !wasLockEnabled && !(password || confirm)) {
+    const promptResult = window.prompt("请输入当前主密码以启用本地数据保护", "");
+    const currentPassword = String(promptResult || "").trim();
+    if (!currentPassword) {
+      dom.lockEnabled.checked = false;
+      renderLockSettingsFields();
+      if (showStatus) setDeviceStatus("未输入当前主密码，已取消启用");
+      return;
+    }
+    const configureResult = await chrome.runtime.sendMessage({
+      type: "PASS_LOCK_CONFIGURE_DATA",
+      payload: { password: currentPassword },
+    });
+    if (!configureResult?.ok) {
+      dom.lockEnabled.checked = false;
+      renderLockSettingsFields();
+      if (showStatus) setDeviceStatus(configureResult?.error || "无法保护本地数据");
+      return;
+    }
+    nextCredential = normalizeLockMasterCredential(configureResult.credential) || nextCredential;
+  }
+
+  if (lockEnabled && existingCredential && (password || confirm)) {
+    const rewrapResult = await chrome.runtime.sendMessage({
+      type: "PASS_LOCK_REWRAP_DATA",
+      payload: {
+        currentPassword: currentPasswordForRewrap,
+        nextPassword: password,
+        nextCredential,
+      },
+    });
+    if (!rewrapResult?.ok) {
+      if (showStatus) setDeviceStatus(rewrapResult?.error || "无法更新本地数据保护");
       return;
     }
   }
@@ -723,6 +812,14 @@ async function persistSyncSettings({ showStatus = true } = {}) {
   const enableWebdav = Boolean(dom.syncEnableWebdav.checked);
   const enableServer = Boolean(dom.syncEnableServer.checked);
   const autoSyncIntervalMinutes = normalizeAutoSyncIntervalMinutes(dom.syncAutoInterval.value);
+  if (enableWebdav && !isSecureSyncEndpointValue(dom.syncWebdavBaseUrl.value)) {
+    if (showStatus) setStatus("WebDAV 地址必须使用 HTTPS（本机回环地址可使用 HTTP）");
+    return;
+  }
+  if (enableServer && !normalizeLegacySelfHostedServerBaseUrl(dom.syncServerBaseUrl.value || "")) {
+    if (showStatus) setStatus("服务器地址必须使用 HTTPS（本机回环地址可使用 HTTP）");
+    return;
+  }
   const nextSettings = {
     [STORAGE_KEY_SYNC_ENABLE_WEBDAV]: enableWebdav,
     [STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]: enableServer,

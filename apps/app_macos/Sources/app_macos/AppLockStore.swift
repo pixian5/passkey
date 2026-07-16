@@ -1,4 +1,5 @@
 import AppKit
+import CommonCrypto
 import CryptoKit
 import Foundation
 import LocalAuthentication
@@ -202,11 +203,14 @@ final class AppLockStore: ObservableObject {
 
     private func storeMasterPassword(_ password: String) -> Bool {
         let salt = Data((0..<16).map { _ in UInt8.random(in: UInt8.min ... UInt8.max) })
-        let digest = passwordDigest(password: password, salt: salt)
+        guard let digest = pbkdf2Digest(password: password, salt: salt, iterations: MasterPasswordCredential.iterations) else {
+            return false
+        }
         let credential = MasterPasswordCredential(
-            version: 1,
+            version: MasterPasswordCredential.currentVersion,
             saltBase64: salt.base64EncodedString(),
-            digestBase64: digest
+            digestBase64: digest.base64EncodedString(),
+            iterations: MasterPasswordCredential.iterations
         )
         guard let encoded = try? JSONEncoder().encode(credential) else {
             return false
@@ -227,8 +231,24 @@ final class AppLockStore: ObservableObject {
     private func verifyPassword(_ password: String) -> Bool {
         if let credential = loadMasterCredential(),
            let salt = Data(base64Encoded: credential.saltBase64) {
-            let candidate = passwordDigest(password: password, salt: salt)
-            return candidate == credential.digestBase64
+            let candidate: Data?
+            if credential.version == MasterPasswordCredential.currentVersion {
+                candidate = pbkdf2Digest(password: password, salt: salt, iterations: credential.iterations)
+            } else if credential.version == 1 {
+                candidate = legacyPasswordDigest(password: password, salt: salt)
+            } else {
+                return false
+            }
+            guard let candidate,
+                  let expected = Data(base64Encoded: credential.digestBase64),
+                  timingSafeEqual(candidate, expected)
+            else {
+                return false
+            }
+            if credential.version == 1 {
+                _ = storeMasterPassword(password)
+            }
+            return true
         }
 
         let defaults = UserDefaults.standard
@@ -239,16 +259,55 @@ final class AppLockStore: ObservableObject {
             return false
         }
 
-        let candidate = passwordDigest(password: password, salt: salt)
-        return candidate == digest
+        guard let candidate = legacyPasswordDigest(password: password, salt: salt),
+              let expected = Data(base64Encoded: digest),
+              timingSafeEqual(candidate, expected)
+        else {
+            return false
+        }
+        _ = storeMasterPassword(password)
+        return true
     }
 
-    private func passwordDigest(password: String, salt: Data) -> String {
+    private func legacyPasswordDigest(password: String, salt: Data) -> Data? {
         var source = Data()
         source.append(salt)
         source.append(Data(password.utf8))
         let hash = SHA256.hash(data: source)
-        return Data(hash).base64EncodedString()
+        return Data(hash)
+    }
+
+    private func pbkdf2Digest(password: String, salt: Data, iterations: Int) -> Data? {
+        guard iterations >= MasterPasswordCredential.minimumIterations else { return nil }
+        var derived = Data(repeating: 0, count: 32)
+        let derivedCount = derived.count
+        let status = derived.withUnsafeMutableBytes { derivedBuffer in
+            salt.withUnsafeBytes { saltBuffer in
+                password.withCString { passwordBuffer in
+                    CCKeyDerivationPBKDF(
+                        CCPBKDFAlgorithm(kCCPBKDF2),
+                        passwordBuffer,
+                        strlen(passwordBuffer),
+                        saltBuffer.bindMemory(to: UInt8.self).baseAddress,
+                        salt.count,
+                        CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
+                        UInt32(iterations),
+                        derivedBuffer.bindMemory(to: UInt8.self).baseAddress,
+                        derivedCount
+                    )
+                }
+            }
+        }
+        return status == kCCSuccess ? derived : nil
+    }
+
+    private func timingSafeEqual(_ lhs: Data, _ rhs: Data) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        var difference: UInt8 = 0
+        for (left, right) in zip(lhs, rhs) {
+            difference |= left ^ right
+        }
+        return difference == 0
     }
 
     private func installActivityMonitor() {
@@ -296,7 +355,19 @@ private enum AppLockKeys {
 }
 
 private struct MasterPasswordCredential: Codable {
+    static let currentVersion = 2
+    static let iterations = 310_000
+    static let minimumIterations = 100_000
+
     let version: Int
     let saltBase64: String
     let digestBase64: String
+    let iterations: Int
+
+    init(version: Int, saltBase64: String, digestBase64: String, iterations: Int = 1) {
+        self.version = version
+        self.saltBase64 = saltBase64
+        self.digestBase64 = digestBase64
+        self.iterations = iterations
+    }
 }

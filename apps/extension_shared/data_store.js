@@ -1,3 +1,5 @@
+import { base64ToBytes, bytesToBase64, normalizeLockMasterCredential } from "./lock_crypto.js";
+
 const DB_NAME = "pass.local.db.v1";
 const DB_VERSION = 1;
 const STORE_COLLECTIONS = "collections";
@@ -13,10 +15,14 @@ const LEGACY_STORAGE_KEY_PASSKEYS = "pass.passkeys";
 const LEGACY_STORAGE_KEY_FOLDERS = "pass.folders";
 const STORAGE_KEY_MIGRATION_DONE = "pass.data.migratedToIndexedDb.v1";
 const STORAGE_KEY_ENCRYPTION_KEY = "pass.data.encryptionKey.v1";
+const STORAGE_KEY_WRAPPED_ENCRYPTION_KEY = "pass.data.wrappedEncryptionKey.v2";
+const STORAGE_KEY_SESSION_ENCRYPTION_KEY = "pass.data.sessionEncryptionKey.v2";
+const DATA_KEY_WRAP_AAD = "pass.data.encryptionKey.v2";
 export const STORAGE_KEY_DATA_BUMP = "pass.data.bump.v1";
 
 let dbPromise = null;
 let readyPromise = null;
+let unlockedEncryptionKey = null;
 
 function requestAsPromise(request) {
   return new Promise((resolve, reject) => {
@@ -90,30 +96,133 @@ async function writeCollection(key, value) {
 }
 
 async function loadOrCreateEncryptionKey() {
-  const stored = await chrome.storage.local.get([STORAGE_KEY_ENCRYPTION_KEY]);
+  if (unlockedEncryptionKey) return unlockedEncryptionKey;
+  const session = await chrome.storage.session.get([STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
+  const sessionKey = base64ToBytes(session[STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
+  if (sessionKey.length === 32) {
+    unlockedEncryptionKey = await crypto.subtle.importKey("raw", sessionKey, "AES-GCM", false, ["encrypt", "decrypt"]);
+    return unlockedEncryptionKey;
+  }
+
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEY_ENCRYPTION_KEY,
+    STORAGE_KEY_WRAPPED_ENCRYPTION_KEY,
+  ]);
+  if (stored[STORAGE_KEY_WRAPPED_ENCRYPTION_KEY]) {
+    throw new Error("扩展已锁定，无法读取本地数据");
+  }
   let rawKey = base64ToBytes(stored[STORAGE_KEY_ENCRYPTION_KEY]);
   if (rawKey.length !== 32) {
     rawKey = crypto.getRandomValues(new Uint8Array(32));
     await chrome.storage.local.set({ [STORAGE_KEY_ENCRYPTION_KEY]: bytesToBase64(rawKey) });
   }
-  return crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt", "decrypt"]);
+  unlockedEncryptionKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt", "decrypt"]);
+  return unlockedEncryptionKey;
 }
 
-function bytesToBase64(bytes) {
-  let binary = "";
-  for (const value of bytes) binary += String.fromCharCode(value);
-  return btoa(binary);
-}
-
-function base64ToBytes(base64) {
-  try {
-    const binary = atob(String(base64 || ""));
-    const output = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) output[i] = binary.charCodeAt(i);
-    return output;
-  } catch {
-    return new Uint8Array();
+export async function unlockDataEncryption(password, rawCredential) {
+  const credential = normalizeLockMasterCredential(rawCredential);
+  if (!credential) throw new Error("主密码凭据无效");
+  const wrappingKey = await deriveWrappingKey(password, credential);
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEY_ENCRYPTION_KEY,
+    STORAGE_KEY_WRAPPED_ENCRYPTION_KEY,
+  ]);
+  let rawKey = null;
+  const wrapped = stored[STORAGE_KEY_WRAPPED_ENCRYPTION_KEY];
+  if (wrapped) {
+    rawKey = await unwrapDataKey(wrappingKey, wrapped);
+  } else {
+    const legacy = base64ToBytes(stored[STORAGE_KEY_ENCRYPTION_KEY]);
+    rawKey = legacy.length === 32 ? legacy : crypto.getRandomValues(new Uint8Array(32));
+    await storeWrappedDataKey(wrappingKey, rawKey);
+    await chrome.storage.local.remove(STORAGE_KEY_ENCRYPTION_KEY);
   }
+  await cacheUnlockedDataKey(rawKey);
+}
+
+export async function rewrapDataEncryption(currentPassword, currentCredential, nextPassword, nextCredential) {
+  await unlockDataEncryption(currentPassword, currentCredential);
+  const session = await chrome.storage.session.get([STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
+  const rawKey = base64ToBytes(session[STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
+  if (rawKey.length !== 32) throw new Error("无法读取已解锁的数据密钥");
+  await storeWrappedDataKey(await deriveWrappingKey(nextPassword, normalizeCredential(nextCredential)), rawKey);
+}
+
+export async function lockDataEncryption() {
+  unlockedEncryptionKey = null;
+  await chrome.storage.session.remove(STORAGE_KEY_SESSION_ENCRYPTION_KEY);
+}
+
+export async function disableDataEncryption(password, rawCredential) {
+  await unlockDataEncryption(password, rawCredential);
+  const session = await chrome.storage.session.get([STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
+  const rawKey = base64ToBytes(session[STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
+  if (rawKey.length !== 32) throw new Error("无法读取已解锁的数据密钥");
+  await chrome.storage.local.set({ [STORAGE_KEY_ENCRYPTION_KEY]: bytesToBase64(rawKey) });
+  await chrome.storage.local.remove(STORAGE_KEY_WRAPPED_ENCRYPTION_KEY);
+  await lockDataEncryption();
+}
+
+async function deriveWrappingKey(password, credential) {
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(String(password || "").trim()),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      hash: "SHA-256",
+      salt: base64ToBytes(credential.saltBase64),
+      iterations: credential.iterations,
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+function normalizeCredential(value) {
+  const credential = normalizeLockMasterCredential(value);
+  if (!credential) throw new Error("主密码凭据无效");
+  return credential;
+}
+
+async function unwrapDataKey(wrappingKey, wrapped) {
+  if (!wrapped || Number(wrapped.version) !== 2) throw new Error("本地数据密钥格式无效");
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: base64ToBytes(wrapped.nonceBase64), additionalData: new TextEncoder().encode(DATA_KEY_WRAP_AAD) },
+    wrappingKey,
+    base64ToBytes(wrapped.ciphertextBase64)
+  );
+  const rawKey = new Uint8Array(plaintext);
+  if (rawKey.length !== 32) throw new Error("本地数据密钥长度无效");
+  return rawKey;
+}
+
+async function storeWrappedDataKey(wrappingKey, rawKey) {
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: nonce, additionalData: new TextEncoder().encode(DATA_KEY_WRAP_AAD) },
+    wrappingKey,
+    rawKey
+  );
+  await chrome.storage.local.set({
+    [STORAGE_KEY_WRAPPED_ENCRYPTION_KEY]: {
+      version: 2,
+      nonceBase64: bytesToBase64(nonce),
+      ciphertextBase64: bytesToBase64(new Uint8Array(ciphertext)),
+    },
+  });
+}
+
+async function cacheUnlockedDataKey(rawKey) {
+  await chrome.storage.session.set({ [STORAGE_KEY_SESSION_ENCRYPTION_KEY]: bytesToBase64(rawKey) });
+  unlockedEncryptionKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 
 async function touchDataBump(reason) {
@@ -168,7 +277,10 @@ export async function ensureDataStorageReady() {
     readyPromise = (async () => {
       await openDatabase();
       await migrateLegacyStorageIfNeeded();
-    })();
+    })().catch((error) => {
+      readyPromise = null;
+      throw error;
+    });
   }
   return readyPromise;
 }

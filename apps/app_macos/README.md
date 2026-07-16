@@ -4,6 +4,8 @@ Runnable macOS desktop app (SwiftUI) for local password management demo.
 
 Remote sync bundles use AES-256-GCM with an independent Keychain-held sync key. The key is never sent to the server; browser extensions and other platforms must be configured with the same key.
 
+The app-lock password verifier uses PBKDF2-SHA-256 (310000 iterations). Existing legacy password verifiers are upgraded after the next successful password unlock. Sync endpoints must use HTTPS; HTTP is accepted only for `localhost`, `127.0.0.1`, and `::1` during local development, so network credentials are not sent in plaintext.
+
 ## Features
 - Set and persist device name in `PassMac > Settings...`.
 - Create account manually (site + username + password).

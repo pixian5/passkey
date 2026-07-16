@@ -123,20 +123,21 @@ init().catch((error) => {
 
 async function init() {
   await resolveCurrentDomain();
+  await loadLockSettingsFromStorage();
+  bindEvents();
+  renderLockOverlay();
+  scheduleIdleAutoLockCheck();
+  startTotpRefreshTicker();
+  chrome.storage.onChanged.addListener(handleStorageChanged);
+  if (isLockedForInteraction()) return;
   await Promise.all([
     ensureDataStorageReady(),
     loadAccounts(),
     loadFolders(),
     loadHistory(),
     loadPasskeys(),
-    loadLockSettingsFromStorage(),
   ]);
   renderAccounts();
-  bindEvents();
-  renderLockOverlay();
-  scheduleIdleAutoLockCheck();
-  startTotpRefreshTicker();
-  chrome.storage.onChanged.addListener(handleStorageChanged);
 }
 
 function handleStorageChanged(changes, areaName) {
@@ -467,6 +468,14 @@ async function unlockPopupWithPassword() {
     const refreshed = await chrome.storage.local.get([STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
     lockSettings.credential = normalizeLockMasterCredential(refreshed[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
     setPopupLockedState(false);
+    await Promise.all([
+      ensureDataStorageReady(),
+      loadAccounts(),
+      loadFolders(),
+      loadHistory(),
+      loadPasskeys(),
+    ]);
+    renderAccounts();
     setStatus("扩展已解锁");
   } finally {
     lockOperationInFlight = false;

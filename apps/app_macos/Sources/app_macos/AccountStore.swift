@@ -2522,7 +2522,11 @@ final class AccountStore: ObservableObject {
     private func buildWebDAVResourceURL() -> URL? {
         let base = webdavBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let remotePath = webdavRemotePath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !base.isEmpty, !remotePath.isEmpty, let baseURL = URL(string: base) else {
+        guard !base.isEmpty,
+              !remotePath.isEmpty,
+              let baseURL = URL(string: base),
+              isSecureSyncEndpoint(baseURL)
+        else {
             return nil
         }
         var url = baseURL
@@ -2554,7 +2558,10 @@ final class AccountStore: ObservableObject {
     private func normalizedSelfHostedServerBaseURL(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return Self.defaultSelfHostedServerBaseURL }
-        guard let components = URLComponents(string: trimmed.lowercased()) else { return trimmed }
+        guard let components = URLComponents(string: trimmed.lowercased()),
+              let url = components.url,
+              isSecureSyncEndpoint(url)
+        else { return "" }
         let host = components.host ?? ""
         let port = components.port ?? ((components.scheme ?? "") == "https" ? 443 : 80)
         return ((host == "127.0.0.1" || host == "localhost") && port == 53333)
@@ -2630,9 +2637,15 @@ final class AccountStore: ObservableObject {
 
     private func buildSelfHostedPayloadURL() -> URL? {
         let base = normalizedSelfHostedServerBaseURL(serverBaseURL).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !base.isEmpty else { return nil }
+        guard !base.isEmpty, let baseURL = URL(string: base), isSecureSyncEndpoint(baseURL) else { return nil }
         let normalizedBase = base.hasSuffix("/") ? base : "\(base)/"
         return URL(string: "v1/sync/payload", relativeTo: URL(string: normalizedBase))?.absoluteURL
+    }
+
+    private func isSecureSyncEndpoint(_ url: URL) -> Bool {
+        if url.scheme?.lowercased() == "https" { return true }
+        let host = url.host?.lowercased() ?? ""
+        return url.scheme?.lowercased() == "http" && ["localhost", "127.0.0.1", "::1"].contains(host)
     }
 
     private func buildBasicAuthorization(username: String, password: String) -> String? {

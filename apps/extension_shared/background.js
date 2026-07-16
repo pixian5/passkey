@@ -15,11 +15,15 @@ import {
 } from "../../core/pass_core/js/sync_merge_core.js";
 import {
   appendHistoryEntry,
+  disableDataEncryption,
   ensureDataStorageReady,
   getAllData as getAllDataFromDataStore,
   getAccounts as getAccountsFromDataStore,
+  lockDataEncryption,
+  rewrapDataEncryption,
   setAllData as setAllDataToDataStore,
   setAccounts as setAccountsToDataStore,
+  unlockDataEncryption,
 } from "./data_store.js";
 import {
   createLockMasterCredential,
@@ -92,6 +96,7 @@ function normalizeLegacySelfHostedServerBaseUrl(value) {
   if (!trimmed) return DEFAULT_SELF_HOSTED_SERVER_BASE_URL;
   try {
     const parsed = new URL(trimmed);
+    if (!isSecureSyncEndpoint(parsed)) return "";
     const host = String(parsed.hostname || "").toLowerCase();
     const port = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80);
     if ((host === "127.0.0.1" || host === "localhost") && port === 53333) {
@@ -101,6 +106,12 @@ function normalizeLegacySelfHostedServerBaseUrl(value) {
     return trimmed;
   }
   return trimmed;
+}
+
+function isSecureSyncEndpoint(url) {
+  if (url.protocol === "https:") return true;
+  const host = String(url.hostname || "").toLowerCase();
+  return url.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(host);
 }
 
 async function migrateLegacySelfHostedServerSettings() {
@@ -114,14 +125,14 @@ chrome.runtime.onInstalled.addListener(async () => {
     await chrome.storage.local.set({ [STORAGE_KEY_DEVICE_NAME]: "ChromeMac" });
   }
 
-  await ensureDataStorageReady();
-  await ensurePasskeyStorageShape();
+  await ensureDataStorageReady().catch(() => {});
+  await ensurePasskeyStorageShape().catch(() => {});
   ensureActionContextMenu();
   await scheduleAutoSyncAlarm();
 });
 
-void ensureDataStorageReady();
-void ensurePasskeyStorageShape();
+void ensureDataStorageReady().catch(() => {});
+void ensurePasskeyStorageShape().catch(() => {});
 ensureActionContextMenu();
 void scheduleAutoSyncAlarm();
 
@@ -445,6 +456,15 @@ async function buildRemoteSyncTargetsFromStorage() {
     const baseUrl = String(result[STORAGE_KEY_SYNC_WEBDAV_BASE_URL] || "").trim();
     const remotePath = String(result[STORAGE_KEY_SYNC_WEBDAV_PATH] || "").trim() || "pass-sync-bundle-v2.json";
     if (!baseUrl) return null;
+    let parsedBaseUrl;
+    try {
+      parsedBaseUrl = new URL(baseUrl);
+    } catch {
+      throw new Error("WebDAV 同步地址无效");
+    }
+    if (!isSecureSyncEndpoint(parsedBaseUrl)) {
+      throw new Error("WebDAV 同步地址必须使用 HTTPS（本机回环地址可使用 HTTP）");
+    }
     const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
     const url = new URL(remotePath.replace(/^\/+/g, ""), normalizedBase).toString();
     const username = String(result[STORAGE_KEY_SYNC_WEBDAV_USERNAME] || "");
@@ -460,7 +480,7 @@ async function buildRemoteSyncTargetsFromStorage() {
     const serverBaseUrl = normalizeLegacySelfHostedServerBaseUrl(
       result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL
     );
-    if (!serverBaseUrl) return null;
+    if (!serverBaseUrl) throw new Error("服务器同步地址必须使用 HTTPS（本机回环地址可使用 HTTP）");
     const normalizedBase = serverBaseUrl.endsWith("/") ? serverBaseUrl : `${serverBaseUrl}/`;
     const url = new URL("v1/sync/payload", normalizedBase).toString();
     const token = String(result[STORAGE_KEY_SYNC_SERVER_TOKEN] || "").trim();
@@ -500,6 +520,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "PASS_LOCK_NOW":
         await lockBackground();
         sendResponse({ ok: true, locked: true });
+        return;
+      case "PASS_LOCK_CONFIGURE_DATA":
+        sendResponse(await configureDataEncryption(message.payload));
+        return;
+      case "PASS_LOCK_DISABLE_DATA":
+        sendResponse(await disableBackgroundDataEncryption(message.payload));
+        return;
+      case "PASS_LOCK_REWRAP_DATA":
+        sendResponse(await rewrapBackgroundDataEncryption(message.payload));
         return;
       case "PASS_LOCK_ACTIVITY":
         await registerBackgroundLockActivity();
@@ -569,9 +598,16 @@ async function unlockBackground(rawPassword) {
   if (!password || !(await verifyLockMasterPassword(credential, password))) {
     return { ok: false, enabled: true, locked: true, error: "主密码错误" };
   }
+  let activeCredential = credential;
   if (credential.version === 1) {
     const upgraded = await createLockMasterCredential(password);
     await chrome.storage.local.set({ [STORAGE_KEY_LOCK_MASTER_CREDENTIAL]: upgraded });
+    activeCredential = upgraded;
+  }
+  try {
+    await unlockDataEncryption(password, activeCredential);
+  } catch (error) {
+    return { ok: false, enabled: true, locked: true, error: `无法解锁本地数据: ${error?.message || error}` };
   }
   const now = Date.now();
   await chrome.storage.session.set({
@@ -587,7 +623,61 @@ async function lockBackground() {
     STORAGE_KEY_LOCK_UNLOCKED_AT,
     STORAGE_KEY_LOCK_LAST_ACTIVITY,
   ]);
+  await lockDataEncryption();
   await broadcastLockState(true);
+}
+
+async function configureDataEncryption(payload) {
+  const password = String(payload?.password || "").trim();
+  const stored = await chrome.storage.local.get([STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
+  const credential = normalizeLockMasterCredential(stored[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
+  if (!password || !credential || !(await verifyLockMasterPassword(credential, password))) {
+    return { ok: false, error: "主密码错误，无法保护本地数据" };
+  }
+  try {
+    let activeCredential = credential;
+    if (credential.version === 1) {
+      activeCredential = await createLockMasterCredential(password);
+      await chrome.storage.local.set({ [STORAGE_KEY_LOCK_MASTER_CREDENTIAL]: activeCredential });
+    }
+    await unlockDataEncryption(password, activeCredential);
+    return { ok: true, credential: activeCredential };
+  } catch (error) {
+    return { ok: false, error: `无法保护本地数据: ${error?.message || error}` };
+  }
+}
+
+async function disableBackgroundDataEncryption(payload) {
+  const password = String(payload?.password || "").trim();
+  const stored = await chrome.storage.local.get([STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
+  const credential = normalizeLockMasterCredential(stored[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
+  if (!password || !credential || !(await verifyLockMasterPassword(credential, password))) {
+    return { ok: false, error: "主密码错误，无法关闭本地数据保护" };
+  }
+  try {
+    await disableDataEncryption(password, credential);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: `无法关闭本地数据保护: ${error?.message || error}` };
+  }
+}
+
+async function rewrapBackgroundDataEncryption(payload) {
+  const currentPassword = String(payload?.currentPassword || "").trim();
+  const nextPassword = String(payload?.nextPassword || "").trim();
+  const stored = await chrome.storage.local.get([STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
+  const currentCredential = normalizeLockMasterCredential(stored[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
+  const nextCredential = normalizeLockMasterCredential(payload?.nextCredential);
+  if (!currentPassword || !nextPassword || !currentCredential || !nextCredential ||
+      !(await verifyLockMasterPassword(currentCredential, currentPassword))) {
+    return { ok: false, error: "当前主密码错误，无法更新主密码" };
+  }
+  try {
+    await rewrapDataEncryption(currentPassword, currentCredential, nextPassword, nextCredential);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: `无法更新本地数据保护: ${error?.message || error}` };
+  }
 }
 
 async function registerBackgroundLockActivity() {
