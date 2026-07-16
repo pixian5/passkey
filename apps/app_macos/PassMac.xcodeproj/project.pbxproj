@@ -11,7 +11,9 @@
 		19BF9B560D59A922291FE4FC /* AppLockGateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D74364D86164E8DEB13F04AC /* AppLockGateView.swift */; };
 		2098575762A4584406D3A2E0 /* CreateAccountWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0EE98C4F1895D551D4DC15 /* CreateAccountWindowView.swift */; };
 		2D11A2786796D77E55F61DF6 /* PassSharedAccountRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E0C928C5DF28D261971A48C /* PassSharedAccountRepository.swift */; };
+		30A91B77709F0D4D20F0E380 /* PassSharedCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = E45BF037B241F100E2C195E5 /* PassSharedCrypto.swift */; };
 		331E9BF4F148903DB3497C91 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99993A46A4FE0D6D32E70035 /* Models.swift */; };
+		335B023A9F18911334D040DD /* LocalKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = B27A36689B66024DBA74586B /* LocalKeychain.swift */; };
 		408F44161FCF8F9FFFAD9716 /* PassSharedData.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF4659CDF23C2A1DC24A14FB /* PassSharedData.swift */; };
 		4676C0FE6D5027F0BB466BF8 /* LocalSQLiteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0754637CBC9E0926C0543F48 /* LocalSQLiteStore.swift */; };
 		50B2522415D9C2211529BB67 /* PassMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B33B5DDB6E674C0CAE5D2004 /* PassMacApp.swift */; };
@@ -28,6 +30,7 @@
 		9FE33818EFBCBA8F32BAA6D9 /* PassAutoFillExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 893853F422A6F51E043B5715 /* PassAutoFillExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A37478270656CA203E0BB84C /* AppleCredentialExchange.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9496C7F83125669EB11769D0 /* AppleCredentialExchange.swift */; };
 		A703B7D4995B2D1DE2842649 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DCAD9B40BB7EEF8131C7B72 /* SettingsView.swift */; };
+		AD369B0083D626D74BCE07FA /* PassSharedCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = E45BF037B241F100E2C195E5 /* PassSharedCrypto.swift */; };
 		B53352F13FE392EEF6EFFB18 /* PassMac.icns in Resources */ = {isa = PBXBuildFile; fileRef = 72B061B7EE160156729572D5 /* PassMac.icns */; };
 		CBC0EF3C889A01C54F478298 /* DomainUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A09487F2F423EA5B6B401E3 /* DomainUtils.swift */; };
 		DD44DFEB677BBDE42F2F5B83 /* PassSharedData.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF4659CDF23C2A1DC24A14FB /* PassSharedData.swift */; };
@@ -82,6 +85,7 @@
 		D74364D86164E8DEB13F04AC /* AppLockGateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockGateView.swift; sourceTree = "<group>"; };
 		DEE2D2CD3411D5E212F6E08A /* AppLockStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockStore.swift; sourceTree = "<group>"; };
 		E0B455F3FA9BBFD37B86AA28 /* AutoFillExtension-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "AutoFillExtension-Info.plist"; sourceTree = "<group>"; };
+		E45BF037B241F100E2C195E5 /* PassSharedCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassSharedCrypto.swift; sourceTree = "<group>"; };
 		E93F0E304AB6E8C3797AAA42 /* AppToastOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppToastOverlay.swift; sourceTree = "<group>"; };
 		EEC5536DE467F4FC0BA63702 /* AutoFillCredentialProviderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoFillCredentialProviderViewController.swift; sourceTree = "<group>"; };
 		F60C5671651BB3C5552DC3CC /* AccountStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountStore.swift; sourceTree = "<group>"; };
@@ -144,6 +148,7 @@
 			isa = PBXGroup;
 			children = (
 				0E0C928C5DF28D261971A48C /* PassSharedAccountRepository.swift */,
+				E45BF037B241F100E2C195E5 /* PassSharedCrypto.swift */,
 				FF4659CDF23C2A1DC24A14FB /* PassSharedData.swift */,
 			);
 			path = shared;
@@ -271,6 +276,7 @@
 				62739667FEF351AA012796AC /* Models.swift in Sources */,
 				50B2522415D9C2211529BB67 /* PassMacApp.swift in Sources */,
 				2D11A2786796D77E55F61DF6 /* PassSharedAccountRepository.swift in Sources */,
+				AD369B0083D626D74BCE07FA /* PassSharedCrypto.swift in Sources */,
 				408F44161FCF8F9FFFAD9716 /* PassSharedData.swift in Sources */,
 				A703B7D4995B2D1DE2842649 /* SettingsView.swift in Sources */,
 				F76DF1A986627720AECF25F8 /* TotpGenerator.swift in Sources */,
@@ -283,9 +289,11 @@
 			files = (
 				9E088675D61DB0F4EE41172D /* AutoFillCredentialProviderViewController.swift in Sources */,
 				7DBF9E3763DEF03C2999C1C8 /* DomainUtils.swift in Sources */,
+				335B023A9F18911334D040DD /* LocalKeychain.swift in Sources */,
 				4676C0FE6D5027F0BB466BF8 /* LocalSQLiteStore.swift in Sources */,
 				331E9BF4F148903DB3497C91 /* Models.swift in Sources */,
 				F8D633EC72217B9C6C585ACB /* PassSharedAccountRepository.swift in Sources */,
+				30A91B77709F0D4D20F0E380 /* PassSharedCrypto.swift in Sources */,
 				DD44DFEB677BBDE42F2F5B83 /* PassSharedData.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

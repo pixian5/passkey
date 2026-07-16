@@ -60,7 +60,7 @@ final class LocalSQLiteStore {
         guard let bytes = sqlite3_column_blob(statement, 0), length > 0 else {
             return Data()
         }
-        return Data(bytes: bytes, count: length)
+        return try PassSharedCrypto.decrypt(Data(bytes: bytes, count: length))
     }
 
     func writeData(_ data: Data, for key: String, updatedAtMs: Int64) throws {
@@ -83,7 +83,8 @@ final class LocalSQLiteStore {
             sqlite3_bind_text(statement, 1, pointer, -1, SQLITE_TRANSIENT)
         }
 
-        data.withUnsafeBytes { rawBuffer in
+        let encrypted = try PassSharedCrypto.encrypt(data)
+        encrypted.withUnsafeBytes { rawBuffer in
             let bytes = rawBuffer.baseAddress
             sqlite3_bind_blob(statement, 2, bytes, Int32(rawBuffer.count), SQLITE_TRANSIENT)
         }

@@ -236,7 +236,6 @@ final class AccountStore: ObservableObject {
     static let fixedNewAccountFolderId = UUID(uuidString: "F16A2C4E-4A2A-43D5-A670-3F1767D41001")!
     static let syncBundleSchemaV2 = "pass.sync.bundle.v2"
     static let defaultSelfHostedServerBaseURL = "https://or.sbbz.tech:5443"
-    static let defaultSelfHostedServerAuthToken = "ClzgP2xsXHETVut9F6ddHVRdvvclz0QM0fDHveyOZFhGjs7l"
     private static let maxHistoryEntries = 500
     private static let installedFontFamilies: Set<String> = Set(NSFontManager.shared.availableFontFamilies)
 
@@ -309,6 +308,10 @@ final class AccountStore: ObservableObject {
     }
 
     init() {
+        // Legacy versions wrote remote credentials as plaintext JSON.
+        try? FileManager.default.removeItem(
+            at: dataDirectoryURL().appendingPathComponent("sync-secrets.json", isDirectory: false)
+        )
         load()
         handleSyncSourceSelectionChanged()
     }
@@ -2786,40 +2789,22 @@ final class AccountStore: ObservableObject {
     }
 
     private func saveSecret(_ secret: String, account: String) -> Bool {
-        var secrets = readStoredSyncSecrets()
         let normalized = secret.trimmingCharacters(in: .newlines)
         if normalized.isEmpty {
-            secrets.removeValue(forKey: account)
-        } else {
-            secrets[account] = secret
+            return LocalKeychain.delete(service: SecretKeys.service, account: account)
         }
-        return writeStoredSyncSecrets(secrets)
+        return LocalKeychain.save(
+            service: SecretKeys.service,
+            account: account,
+            data: Data(secret.utf8)
+        )
     }
 
     private func readSecret(account: String) -> String {
-        readStoredSyncSecrets()[account] ?? ""
-    }
-
-    private func readStoredSyncSecrets() -> [String: String] {
-        let url = syncSecretsFileURL()
-        guard let data = try? Data(contentsOf: url),
-              let decoded = try? decoder.decode([String: String].self, from: data)
-        else {
-            return [:]
+        guard let data = LocalKeychain.read(service: SecretKeys.service, account: account) else {
+            return ""
         }
-        return decoded
-    }
-
-    private func writeStoredSyncSecrets(_ secrets: [String: String]) -> Bool {
-        let url = syncSecretsFileURL()
-        do {
-            try FileManager.default.createDirectory(at: dataDirectoryURL(), withIntermediateDirectories: true)
-            let data = try encoder.encode(secrets)
-            try data.write(to: url, options: [.atomic])
-            return true
-        } catch {
-            return false
-        }
+        return String(data: data, encoding: .utf8) ?? ""
     }
 
     func currentTotpCode(for account: PasswordAccount, at date: Date = Date()) -> String? {
@@ -2852,10 +2837,7 @@ final class AccountStore: ObservableObject {
         serverBaseURL = normalizedSelfHostedServerBaseURL(
             defaults.string(forKey: Keys.serverBaseURL) ?? Self.defaultSelfHostedServerBaseURL
         )
-        serverAuthToken = {
-            let saved = readSecret(account: SecretKeys.serverTokenAccount)
-            return saved.isEmpty ? Self.defaultSelfHostedServerAuthToken : saved
-        }()
+        serverAuthToken = readSecret(account: SecretKeys.serverTokenAccount)
         isLoadingSyncPreferences = false
 
         let foldersDataFromDatabase = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.folders)
@@ -4995,10 +4977,6 @@ final class AccountStore: ObservableObject {
 
     private func passkeysFileURL() -> URL {
         dataDirectoryURL().appendingPathComponent("passkeys.json", isDirectory: false)
-    }
-
-    private func syncSecretsFileURL() -> URL {
-        dataDirectoryURL().appendingPathComponent("sync-secrets.json", isDirectory: false)
     }
 
     private func nowMs() -> Int64 {

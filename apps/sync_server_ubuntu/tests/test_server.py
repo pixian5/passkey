@@ -74,6 +74,27 @@ class PassSyncServerTests(unittest.TestCase):
         self.assertEqual(context.exception.code, 401)
         context.exception.close()
 
+    def test_rejects_payload_requests_without_token_configuration(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+        config = AppConfig(
+            host="127.0.0.1",
+            port=0,
+            db_path=Path(self.temp_dir.name) / "unauthenticated.sqlite3",
+            token_scopes={},
+        )
+        self.server = build_server(config)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            self.request("GET", "/v1/sync/payload")
+        self.assertEqual(context.exception.code, 503)
+        context.exception.close()
+
     def test_put_then_get_roundtrip(self) -> None:
         with self.request(
             "PUT",

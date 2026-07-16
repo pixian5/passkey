@@ -38,17 +38,33 @@ ditto "${BUILT_APP}" "${APP_BUNDLE}"
 
 if command -v codesign >/dev/null 2>&1; then
   echo "[4/7] Applying ad-hoc signature..."
+  APP_ENTITLEMENTS="${APP_ROOT}/PassMac.entitlements"
+  EXTENSION_ENTITLEMENTS="${APP_ROOT}/AutofillExtension/AutoFillExtension.entitlements"
+  TEMP_ENTITLEMENTS_DIR=""
+  if [[ "${CODE_SIGNING_ALLOWED:-NO}" == "NO" ]]; then
+    # Ad-hoc signatures cannot satisfy a keychain access group containing an
+    # AppIdentifierPrefix. Keep production entitlements in the source plist,
+    # but remove that one entitlement from local development bundles.
+    TEMP_ENTITLEMENTS_DIR="$(mktemp -d)"
+    trap '[[ -n "${TEMP_ENTITLEMENTS_DIR}" ]] && rm -rf "${TEMP_ENTITLEMENTS_DIR}"' EXIT
+    APP_ENTITLEMENTS="${TEMP_ENTITLEMENTS_DIR}/PassMac.entitlements"
+    EXTENSION_ENTITLEMENTS="${TEMP_ENTITLEMENTS_DIR}/AutoFillExtension.entitlements"
+    cp "${APP_ROOT}/PassMac.entitlements" "${APP_ENTITLEMENTS}"
+    cp "${APP_ROOT}/AutofillExtension/AutoFillExtension.entitlements" "${EXTENSION_ENTITLEMENTS}"
+    plutil -remove keychain-access-groups "${APP_ENTITLEMENTS}"
+    plutil -remove keychain-access-groups "${EXTENSION_ENTITLEMENTS}"
+  fi
   if [[ -d "${APP_BUNDLE}/Contents/PlugIns/PassAutoFillExtension.appex" ]]; then
     codesign \
       --force \
       --sign - \
-      --entitlements "${APP_ROOT}/AutofillExtension/AutoFillExtension.entitlements" \
+      --entitlements "${EXTENSION_ENTITLEMENTS}" \
       "${APP_BUNDLE}/Contents/PlugIns/PassAutoFillExtension.appex" >/dev/null 2>&1 || true
   fi
   codesign \
     --force \
     --sign - \
-    --entitlements "${APP_ROOT}/PassMac.entitlements" \
+    --entitlements "${APP_ENTITLEMENTS}" \
     "${APP_BUNDLE}" >/dev/null 2>&1 || true
 else
   echo "[4/7] codesign not found, skipping signature step."

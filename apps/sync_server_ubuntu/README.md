@@ -22,7 +22,7 @@ cd /Users/x/code/pass/apps/sync_server_ubuntu
 python3 pass_sync_server.py
 ```
 
-默认监听 `0.0.0.0:53333`，数据库位于：
+默认仅监听 `127.0.0.1:53333`，数据库位于：
 
 ```text
 ./data/pass_sync.sqlite3
@@ -31,13 +31,13 @@ python3 pass_sync_server.py
 ## 环境变量
 
 - `PASS_SYNC_HOST`
-  - 默认 `0.0.0.0`
+  - 默认 `127.0.0.1`
 - `PASS_SYNC_PORT`
   - 默认 `53333`
 - `PASS_SYNC_DB_PATH`
   - 默认 `./data/pass_sync.sqlite3`
 - `PASS_SYNC_BEARER_TOKENS`
-  - 为空时不鉴权
+  - 必填；未配置时 `/v1/sync/payload` 会拒绝所有请求
   - 支持：
     - `token-value`
     - `default=token-value`

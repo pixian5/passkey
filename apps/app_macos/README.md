@@ -52,8 +52,12 @@ Generated bundle:
 `package_app.sh` now builds through Xcode so the generated app bundle includes
 `PassAutoFillExtension.appex`. The AutoFill/Credential Exchange path requires the
 `project.autofill.yml` generated Xcode project and real Developer ID/App Store
-signing before macOS will treat the app as a system credential provider. Local
-verification can use `CODE_SIGNING_ALLOWED=NO`.
+signing before macOS will treat the app as a system credential provider. The
+same signing is required for the app and extension to share the Keychain-held
+database encryption key. Local verification can use `CODE_SIGNING_ALLOWED=NO`;
+the packaging script removes the shared Keychain entitlement from that ad-hoc
+development bundle so it can launch, but AutoFill cannot read the encrypted
+database in that mode.
 
 Skip installation:
 ```bash

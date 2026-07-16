@@ -340,6 +340,10 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
 
 
 class PassSyncHTTPServer(ThreadingHTTPServer):
+    # Do not let an idle HTTP/1.1 client connection block process shutdown.
+    daemon_threads = True
+    block_on_close = False
+
     def __init__(self, server_address: tuple[str, int], handler_cls: type[BaseHTTPRequestHandler], config: AppConfig):
         super().__init__(server_address, handler_cls)
         self.config = config
@@ -347,7 +351,11 @@ class PassSyncHTTPServer(ThreadingHTTPServer):
 
     def resolve_scope(self, authorization_header: str | None) -> str:
         if not self.config.auth_enabled:
-            return "default"
+            raise RequestError(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                "AUTH_NOT_CONFIGURED",
+                "服务器尚未配置 PASS_SYNC_BEARER_TOKENS。",
+            )
         if not authorization_header:
             raise RequestError(HTTPStatus.UNAUTHORIZED, "AUTH_REQUIRED", "缺少 Bearer Token。")
         scheme, _, token = authorization_header.partition(" ")
@@ -427,7 +435,7 @@ def load_config() -> AppConfig:
     db_path = Path(os.environ.get("PASS_SYNC_DB_PATH", script_dir / "data" / "pass_sync.sqlite3")).expanduser()
     token_scopes = parse_token_scopes(os.environ.get("PASS_SYNC_BEARER_TOKENS", ""))
     return AppConfig(
-        host=os.environ.get("PASS_SYNC_HOST", "0.0.0.0"),
+        host=os.environ.get("PASS_SYNC_HOST", "127.0.0.1"),
         port=int(os.environ.get("PASS_SYNC_PORT", "53333")),
         db_path=db_path,
         token_scopes=token_scopes,

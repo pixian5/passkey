@@ -1,0 +1,25 @@
+name: Deploy Sync Server
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "apps/sync_server_ubuntu/**"
+      - ".github/workflows/deploy-sync-server.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy on the sync host
+        uses: appleboy/ssh-action@v1.2.1
+        with:
+          host: ${{ secrets.SYNC_SERVER_HOST }}
+          username: ${{ secrets.SYNC_SERVER_USER }}
+          key: ${{ secrets.SYNC_SERVER_SSH_KEY }}
+          script: |
+            set -eu
+            cd /opt/pass-sync-server
+            git fetch origin master
+            git checkout -f origin/master
+            sudo systemctl restart pass-sync-server

@@ -50,6 +50,7 @@ targets:
       - path: Sources/app_macos/Models.swift
       - path: Sources/app_macos/DomainUtils.swift
       - path: Sources/app_macos/LocalSQLiteStore.swift
+      - path: Sources/app_macos/LocalKeychain.swift
     settings:
       base:
         PRODUCT_NAME: PassAutoFillExtension
