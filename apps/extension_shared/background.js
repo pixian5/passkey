@@ -20,9 +20,11 @@ import {
   getAllData as getAllDataFromDataStore,
   getAccounts as getAccountsFromDataStore,
   lockDataEncryption,
+  migrateLegacySyncSecrets,
   rewrapDataEncryption,
   setAllData as setAllDataToDataStore,
   setAccounts as setAccountsToDataStore,
+  setSyncSecrets,
   unlockDataEncryption,
 } from "./data_store.js";
 import {
@@ -62,12 +64,9 @@ const STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER = "pass.sync.enableSelfHostedSe
 const STORAGE_KEY_SYNC_WEBDAV_BASE_URL = "pass.sync.webdav.baseUrl.v2";
 const STORAGE_KEY_SYNC_WEBDAV_PATH = "pass.sync.webdav.path.v2";
 const STORAGE_KEY_SYNC_WEBDAV_USERNAME = "pass.sync.webdav.username.v2";
-const STORAGE_KEY_SYNC_WEBDAV_PASSWORD = "pass.sync.webdav.password.v2";
 const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
-const STORAGE_KEY_SYNC_SERVER_TOKEN = "pass.sync.server.token.v2";
 const STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
-const STORAGE_KEY_SYNC_ENCRYPTION_KEY = "pass.sync.encryptionKey.v1";
 const CONTEXT_MENU_ID_ALL_ACCOUNTS = "pass.context.all_accounts";
 const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
 const FIXED_NEW_ACCOUNT_FOLDER_NAME = "新账号";
@@ -163,9 +162,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     changes[STORAGE_KEY_SYNC_WEBDAV_BASE_URL] ||
     changes[STORAGE_KEY_SYNC_WEBDAV_PATH] ||
     changes[STORAGE_KEY_SYNC_WEBDAV_USERNAME] ||
-    changes[STORAGE_KEY_SYNC_WEBDAV_PASSWORD] ||
     changes[STORAGE_KEY_SYNC_SERVER_BASE_URL] ||
-    changes[STORAGE_KEY_SYNC_SERVER_TOKEN] ||
     changes[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]
   ) {
     void scheduleAutoSyncAlarm();
@@ -446,10 +443,9 @@ async function buildRemoteSyncTargetsFromStorage() {
     STORAGE_KEY_SYNC_WEBDAV_BASE_URL,
     STORAGE_KEY_SYNC_WEBDAV_PATH,
     STORAGE_KEY_SYNC_WEBDAV_USERNAME,
-    STORAGE_KEY_SYNC_WEBDAV_PASSWORD,
     STORAGE_KEY_SYNC_SERVER_BASE_URL,
-    STORAGE_KEY_SYNC_SERVER_TOKEN,
   ]);
+  const secrets = await migrateLegacySyncSecrets();
 
   const targets = [];
   if (Boolean(result[STORAGE_KEY_SYNC_ENABLE_WEBDAV])) {
@@ -468,7 +464,7 @@ async function buildRemoteSyncTargetsFromStorage() {
     const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
     const url = new URL(remotePath.replace(/^\/+/g, ""), normalizedBase).toString();
     const username = String(result[STORAGE_KEY_SYNC_WEBDAV_USERNAME] || "");
-    const password = String(result[STORAGE_KEY_SYNC_WEBDAV_PASSWORD] || "");
+    const password = secrets.webdavPassword;
     let authHeader = null;
     if (username || password) {
       authHeader = `Basic ${base64EncodeUtf8(`${username}:${password}`)}`;
@@ -483,7 +479,7 @@ async function buildRemoteSyncTargetsFromStorage() {
     if (!serverBaseUrl) throw new Error("服务器同步地址必须使用 HTTPS（本机回环地址可使用 HTTP）");
     const normalizedBase = serverBaseUrl.endsWith("/") ? serverBaseUrl : `${serverBaseUrl}/`;
     const url = new URL("v1/sync/payload", normalizedBase).toString();
-    const token = String(result[STORAGE_KEY_SYNC_SERVER_TOKEN] || "").trim();
+    const token = secrets.serverToken;
     const authHeader = token ? `Bearer ${token}` : null;
     targets.push({ label: "服务器", url, authHeader, supportsEtag: true, remoteEtag: null });
   }
@@ -1526,11 +1522,11 @@ async function pushRemotePayload(target, payload, ifMatch = null) {
 }
 
 async function getOrCreateSyncEncryptionKey() {
-  const stored = await chrome.storage.local.get([STORAGE_KEY_SYNC_ENCRYPTION_KEY]);
-  const existing = normalizeSyncEncryptionKey(stored[STORAGE_KEY_SYNC_ENCRYPTION_KEY]);
+  const secrets = await migrateLegacySyncSecrets();
+  const existing = normalizeSyncEncryptionKey(secrets.encryptionKey);
   if (existing) return existing;
   const generated = generateSyncEncryptionKey();
-  await chrome.storage.local.set({ [STORAGE_KEY_SYNC_ENCRYPTION_KEY]: generated });
+  await setSyncSecrets({ ...secrets, encryptionKey: generated });
   return generated;
 }
 

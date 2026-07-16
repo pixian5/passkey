@@ -13,6 +13,7 @@ const COLLECTION_ACCOUNTS = "accounts";
 const COLLECTION_PASSKEYS = "passkeys";
 const COLLECTION_FOLDERS = "folders";
 const COLLECTION_HISTORY = "history";
+const COLLECTION_SYNC_SECRETS = "syncSecrets";
 const HISTORY_MAX_ENTRIES = 500;
 
 const LEGACY_STORAGE_KEY_ACCOUNTS = "pass.accounts";
@@ -22,6 +23,9 @@ const STORAGE_KEY_MIGRATION_DONE = "pass.data.migratedToIndexedDb.v1";
 const STORAGE_KEY_ENCRYPTION_KEY = "pass.data.encryptionKey.v1";
 const STORAGE_KEY_WRAPPED_ENCRYPTION_KEY = "pass.data.wrappedEncryptionKey.v2";
 const STORAGE_KEY_SESSION_ENCRYPTION_KEY = "pass.data.sessionEncryptionKey.v2";
+const LEGACY_STORAGE_KEY_SYNC_WEBDAV_PASSWORD = "pass.sync.webdav.password.v2";
+const LEGACY_STORAGE_KEY_SYNC_SERVER_TOKEN = "pass.sync.server.token.v2";
+const LEGACY_STORAGE_KEY_SYNC_ENCRYPTION_KEY = "pass.sync.encryptionKey.v1";
 const LEGACY_DATA_KEY_WRAP_AAD = "pass.data.encryptionKey.v2";
 const DATA_KEY_WRAP_AAD = "pass.data.encryptionKey.v3";
 const DATA_KEY_WRAP_VERSION = 3;
@@ -389,6 +393,51 @@ export async function setAllData({ accounts, passkeys, folders }) {
     writeCollection(COLLECTION_FOLDERS, folders),
   ]);
   await touchDataBump("all");
+}
+
+function normalizeSyncSecrets(value) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    webdavPassword: String(source.webdavPassword || ""),
+    serverToken: String(source.serverToken || "").trim(),
+    encryptionKey: String(source.encryptionKey || "").trim(),
+  };
+}
+
+export async function getSyncSecrets() {
+  await ensureDataStorageReady();
+  const entries = await readCollection(COLLECTION_SYNC_SECRETS);
+  return normalizeSyncSecrets(Array.isArray(entries) ? entries[0] : null);
+}
+
+export async function setSyncSecrets(value) {
+  await ensureDataStorageReady();
+  const normalized = normalizeSyncSecrets(value);
+  await writeCollection(COLLECTION_SYNC_SECRETS, [normalized]);
+  return normalized;
+}
+
+export async function migrateLegacySyncSecrets() {
+  const existing = await getSyncSecrets();
+  const legacy = await chrome.storage.local.get([
+    LEGACY_STORAGE_KEY_SYNC_WEBDAV_PASSWORD,
+    LEGACY_STORAGE_KEY_SYNC_SERVER_TOKEN,
+    LEGACY_STORAGE_KEY_SYNC_ENCRYPTION_KEY,
+  ]);
+  const migrated = normalizeSyncSecrets({
+    webdavPassword: existing.webdavPassword || legacy[LEGACY_STORAGE_KEY_SYNC_WEBDAV_PASSWORD],
+    serverToken: existing.serverToken || legacy[LEGACY_STORAGE_KEY_SYNC_SERVER_TOKEN],
+    encryptionKey: existing.encryptionKey || legacy[LEGACY_STORAGE_KEY_SYNC_ENCRYPTION_KEY],
+  });
+  if (migrated.webdavPassword || migrated.serverToken || migrated.encryptionKey) {
+    await setSyncSecrets(migrated);
+  }
+  await chrome.storage.local.remove([
+    LEGACY_STORAGE_KEY_SYNC_WEBDAV_PASSWORD,
+    LEGACY_STORAGE_KEY_SYNC_SERVER_TOKEN,
+    LEGACY_STORAGE_KEY_SYNC_ENCRYPTION_KEY,
+  ]);
+  return migrated;
 }
 
 export async function getHistory() {

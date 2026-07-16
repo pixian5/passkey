@@ -20,9 +20,11 @@ import {
   ensureDataStorageReady,
   getAllData as getAllDataFromDataStore,
   getHistory as getHistoryFromDataStore,
+  migrateLegacySyncSecrets,
   setAccounts as setAccountsToDataStore,
   setAllData as setAllDataToDataStore,
   setFolders as setFoldersToDataStore,
+  setSyncSecrets,
 } from "./data_store.js";
 import {
   createLockMasterCredential,
@@ -42,12 +44,9 @@ const STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER = "pass.sync.enableSelfHostedSe
 const STORAGE_KEY_SYNC_WEBDAV_BASE_URL = "pass.sync.webdav.baseUrl.v2";
 const STORAGE_KEY_SYNC_WEBDAV_PATH = "pass.sync.webdav.path.v2";
 const STORAGE_KEY_SYNC_WEBDAV_USERNAME = "pass.sync.webdav.username.v2";
-const STORAGE_KEY_SYNC_WEBDAV_PASSWORD = "pass.sync.webdav.password.v2";
 const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
-const STORAGE_KEY_SYNC_SERVER_TOKEN = "pass.sync.server.token.v2";
 const STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
-const STORAGE_KEY_SYNC_ENCRYPTION_KEY = "pass.sync.encryptionKey.v1";
 const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "https://or.sbbz.tech:5443";
 const SYNC_MODE_MERGE = "merge";
 const SYNC_MODE_REMOTE_OVERWRITE_LOCAL = "remoteOverwriteLocal";
@@ -212,10 +211,10 @@ init().catch((error) => {
 
 async function init() {
   await loadDeviceName();
-  await loadSyncSettings();
   await loadLockSettings();
   await ensureOptionsUnlocked();
   await ensureDataStorageReady();
+  await loadSyncSettings();
   await refresh();
   startTotpRefreshTicker();
 
@@ -531,12 +530,10 @@ async function loadSyncSettings() {
     STORAGE_KEY_SYNC_WEBDAV_BASE_URL,
     STORAGE_KEY_SYNC_WEBDAV_PATH,
     STORAGE_KEY_SYNC_WEBDAV_USERNAME,
-    STORAGE_KEY_SYNC_WEBDAV_PASSWORD,
     STORAGE_KEY_SYNC_SERVER_BASE_URL,
-    STORAGE_KEY_SYNC_SERVER_TOKEN,
     STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES,
-    STORAGE_KEY_SYNC_ENCRYPTION_KEY,
   ]);
+  const secrets = await migrateLegacySyncSecrets();
   const hasEnableWebdav = typeof result[STORAGE_KEY_SYNC_ENABLE_WEBDAV] === "boolean";
   const hasEnableServer = typeof result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER] === "boolean";
   const enableWebdav = hasEnableWebdav
@@ -551,17 +548,17 @@ async function loadSyncSettings() {
   dom.syncWebdavBaseUrl.value = String(result[STORAGE_KEY_SYNC_WEBDAV_BASE_URL] || "");
   dom.syncWebdavPath.value = String(result[STORAGE_KEY_SYNC_WEBDAV_PATH] || "pass-sync-bundle-v2.json");
   dom.syncWebdavUsername.value = String(result[STORAGE_KEY_SYNC_WEBDAV_USERNAME] || "");
-  dom.syncWebdavPassword.value = String(result[STORAGE_KEY_SYNC_WEBDAV_PASSWORD] || "");
+  dom.syncWebdavPassword.value = secrets.webdavPassword;
   const normalizedServerBaseUrl = normalizeLegacySelfHostedServerBaseUrl(
     result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL
   );
   dom.syncServerBaseUrl.value = normalizedServerBaseUrl;
-  dom.syncServerToken.value = String(result[STORAGE_KEY_SYNC_SERVER_TOKEN] || "");
-  const syncEncryptionKey = normalizeSyncEncryptionKey(result[STORAGE_KEY_SYNC_ENCRYPTION_KEY])
+  dom.syncServerToken.value = secrets.serverToken;
+  const syncEncryptionKey = normalizeSyncEncryptionKey(secrets.encryptionKey)
     || generateSyncEncryptionKey();
   dom.syncEncryptionKey.value = syncEncryptionKey;
-  if (syncEncryptionKey !== result[STORAGE_KEY_SYNC_ENCRYPTION_KEY]) {
-    await chrome.storage.local.set({ [STORAGE_KEY_SYNC_ENCRYPTION_KEY]: syncEncryptionKey });
+  if (syncEncryptionKey !== secrets.encryptionKey) {
+    await setSyncSecrets({ ...secrets, encryptionKey: syncEncryptionKey });
   }
   dom.syncAutoInterval.value = normalizeAutoSyncIntervalMinutes(result[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]);
   if (normalizedServerBaseUrl !== String(result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || "")) {
@@ -826,29 +823,29 @@ async function persistSyncSettings({ showStatus = true } = {}) {
     [STORAGE_KEY_SYNC_WEBDAV_BASE_URL]: String(dom.syncWebdavBaseUrl.value || "").trim(),
     [STORAGE_KEY_SYNC_WEBDAV_PATH]: String(dom.syncWebdavPath.value || "").trim() || "pass-sync-bundle-v2.json",
     [STORAGE_KEY_SYNC_WEBDAV_USERNAME]: String(dom.syncWebdavUsername.value || "").trim(),
-    [STORAGE_KEY_SYNC_WEBDAV_PASSWORD]: String(dom.syncWebdavPassword.value || ""),
     [STORAGE_KEY_SYNC_SERVER_BASE_URL]: normalizeLegacySelfHostedServerBaseUrl(dom.syncServerBaseUrl.value || ""),
-    [STORAGE_KEY_SYNC_SERVER_TOKEN]: String(dom.syncServerToken.value || "").trim(),
     [STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]: Number(autoSyncIntervalMinutes),
-    [STORAGE_KEY_SYNC_ENCRYPTION_KEY]: normalizeSyncEncryptionKey(dom.syncEncryptionKey.value),
   };
-  if (!nextSettings[STORAGE_KEY_SYNC_ENCRYPTION_KEY]) {
+  const nextSecrets = {
+    webdavPassword: String(dom.syncWebdavPassword.value || ""),
+    serverToken: String(dom.syncServerToken.value || "").trim(),
+    encryptionKey: normalizeSyncEncryptionKey(dom.syncEncryptionKey.value),
+  };
+  if (!nextSecrets.encryptionKey) {
     if (showStatus) setStatus("同步加密密钥无效，请重新生成或输入其他设备的密钥");
     return;
   }
   await chrome.storage.local.set(nextSettings);
+  await setSyncSecrets(nextSecrets);
 
   const persisted = await chrome.storage.local.get([
     STORAGE_KEY_SYNC_SERVER_BASE_URL,
-    STORAGE_KEY_SYNC_SERVER_TOKEN,
     STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES,
   ]);
   dom.syncServerBaseUrl.value = String(
     persisted[STORAGE_KEY_SYNC_SERVER_BASE_URL] || nextSettings[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL
   );
-  dom.syncServerToken.value = String(
-    persisted[STORAGE_KEY_SYNC_SERVER_TOKEN] || nextSettings[STORAGE_KEY_SYNC_SERVER_TOKEN] || ""
-  );
+  dom.syncServerToken.value = nextSecrets.serverToken;
   dom.syncAutoInterval.value = normalizeAutoSyncIntervalMinutes(
     persisted[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES] ?? nextSettings[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]
   );

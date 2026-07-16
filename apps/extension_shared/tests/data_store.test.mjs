@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
+import { IDBKeyRange, indexedDB } from "fake-indexeddb";
+
+globalThis.indexedDB = indexedDB;
+globalThis.IDBKeyRange = IDBKeyRange;
 
 function createStorageArea() {
   const values = new Map();
@@ -30,8 +34,11 @@ globalThis.chrome = { storage: { local, session } };
 
 const {
   disableDataEncryption,
+  getSyncSecrets,
   lockDataEncryption,
+  migrateLegacySyncSecrets,
   rewrapDataEncryption,
+  setSyncSecrets,
   unlockDataEncryption,
 } = await import("../data_store.js");
 const {
@@ -43,6 +50,9 @@ const {
 const WRAPPED_KEY = "pass.data.wrappedEncryptionKey.v2";
 const LEGACY_KEY = "pass.data.encryptionKey.v1";
 const SESSION_KEY = "pass.data.sessionEncryptionKey.v2";
+const WEBDAV_PASSWORD_KEY = "pass.sync.webdav.password.v2";
+const SERVER_TOKEN_KEY = "pass.sync.server.token.v2";
+const SYNC_ENCRYPTION_KEY = "pass.sync.encryptionKey.v1";
 const V2_AAD = new TextEncoder().encode("pass.data.encryptionKey.v2");
 const V3_AAD = new TextEncoder().encode("pass.data.encryptionKey.v3");
 
@@ -77,6 +87,26 @@ async function createV2Envelope(password, credential, rawKey) {
     nonceBase64: bytesToBase64(nonce),
     ciphertextBase64: bytesToBase64(new Uint8Array(ciphertext)),
   };
+}
+
+async function readEncryptedCollectionRow(key) {
+  const database = await new Promise((resolve, reject) => {
+    const request = indexedDB.open("pass.local.db.v1", 1);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  try {
+    return await new Promise((resolve, reject) => {
+      const request = database
+        .transaction("collections", "readonly")
+        .objectStore("collections")
+        .get(key);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  } finally {
+    database.close();
+  }
 }
 
 beforeEach(async () => {
@@ -180,4 +210,41 @@ test("更新主密码、关闭保护和重新启用都会保持 v3 包装可用"
   stored = await local.get([WRAPPED_KEY, LEGACY_KEY]);
   assert.equal(stored[WRAPPED_KEY].version, 3);
   assert.equal(stored[LEGACY_KEY], undefined);
+});
+
+test("同步秘密迁移到加密数据库后，锁定状态无法读取且明文键被删除", async () => {
+  const password = "sync secrets password";
+  const credential = await createLockMasterCredential(password);
+  await unlockDataEncryption(password, credential);
+  await local.set({
+    [WEBDAV_PASSWORD_KEY]: "webdav secret",
+    [SERVER_TOKEN_KEY]: "server secret",
+    [SYNC_ENCRYPTION_KEY]: "sync secret",
+  });
+
+  const migrated = await migrateLegacySyncSecrets();
+  assert.deepEqual(migrated, {
+    webdavPassword: "webdav secret",
+    serverToken: "server secret",
+    encryptionKey: "sync secret",
+  });
+  const plaintext = await local.get([
+    WEBDAV_PASSWORD_KEY,
+    SERVER_TOKEN_KEY,
+    SYNC_ENCRYPTION_KEY,
+  ]);
+  assert.deepEqual(plaintext, {});
+  const encryptedRow = await readEncryptedCollectionRow("syncSecrets");
+  assert.equal(encryptedRow.version, 1);
+  assert.equal(JSON.stringify(encryptedRow).includes("webdav secret"), false);
+  assert.equal(JSON.stringify(encryptedRow).includes("server secret"), false);
+  assert.equal(JSON.stringify(encryptedRow).includes("sync secret"), false);
+
+  await lockDataEncryption();
+  await assert.rejects(() => getSyncSecrets(), /扩展已锁定/);
+
+  await unlockDataEncryption(password, credential);
+  assert.deepEqual(await getSyncSecrets(), migrated);
+  await setSyncSecrets({ ...migrated, serverToken: "updated token" });
+  assert.equal((await getSyncSecrets()).serverToken, "updated token");
 });
