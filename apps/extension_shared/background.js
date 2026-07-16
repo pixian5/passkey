@@ -21,6 +21,17 @@ import {
   setAllData as setAllDataToDataStore,
   setAccounts as setAccountsToDataStore,
 } from "./data_store.js";
+import {
+  createLockMasterCredential,
+  normalizeLockMasterCredential,
+  verifyLockMasterPassword,
+} from "./lock_crypto.js";
+import {
+  decryptSyncBundleDocument,
+  encryptSyncBundleDocument,
+  generateSyncEncryptionKey,
+  normalizeSyncEncryptionKey,
+} from "./sync_crypto.js";
 
 const PASSKEY_LOG_PREFIX = "[Pass background]";
 const SYNC_LOG_PREFIX = "[Pass sync]";
@@ -52,6 +63,7 @@ const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
 const STORAGE_KEY_SYNC_SERVER_TOKEN = "pass.sync.server.token.v2";
 const STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
+const STORAGE_KEY_SYNC_ENCRYPTION_KEY = "pass.sync.encryptionKey.v1";
 const CONTEXT_MENU_ID_ALL_ACCOUNTS = "pass.context.all_accounts";
 const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
 const FIXED_NEW_ACCOUNT_FOLDER_NAME = "新账号";
@@ -60,6 +72,20 @@ const SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
 const SYNC_MODE_MERGE = "merge";
 const AUTO_SYNC_ALARM_NAME = "pass.sync.auto";
 const PASS_EXTENSION_VERSION = "0.1.9";
+const STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
+const STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
+const STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
+const STORAGE_KEY_LOCK_MASTER_CREDENTIAL = "pass.lock.masterCredential.v1";
+const STORAGE_KEY_LOCK_UNLOCKED_AT = "pass.lock.unlockedAtMs.v1";
+const STORAGE_KEY_LOCK_LAST_ACTIVITY = "pass.lock.lastActivityAtMs.v1";
+const LOCK_POLICY_IDLE_TIMEOUT = "idleTimeout";
+const SENSITIVE_MESSAGE_TYPES = new Set([
+  "PASS_FILL_ACTIVE_TAB",
+  "PASS_LOGIN_DETECTED",
+  "PASS_SAVE_FROM_LOGIN",
+  "PASS_PASSKEY_OPERATION",
+  "PASS_CONTENT_GET_ACCOUNTS",
+]);
 
 function normalizeLegacySelfHostedServerBaseUrl(value) {
   const trimmed = String(value || "").trim();
@@ -240,6 +266,11 @@ async function scheduleAutoSyncAlarm() {
 }
 
 async function runAutoSync() {
+  const lockStatus = await getBackgroundLockStatus();
+  if (lockStatus.locked) {
+    logSyncFlow("auto-sync-skipped-locked");
+    return;
+  }
   const targets = await buildRemoteSyncTargetsFromStorage();
   if (!targets || targets.length === 0) return;
   logSyncFlow("auto-sync-start", {
@@ -452,7 +483,28 @@ async function buildRemoteSyncTargetsFromStorage() {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
+    if (SENSITIVE_MESSAGE_TYPES.has(message?.type)) {
+      const lockStatus = await getBackgroundLockStatus();
+      if (lockStatus.locked) {
+        sendResponse({ ok: false, locked: true, error: "扩展已锁定" });
+        return;
+      }
+    }
     switch (message?.type) {
+      case "PASS_LOCK_STATUS":
+        sendResponse(await getBackgroundLockStatus());
+        return;
+      case "PASS_LOCK_UNLOCK":
+        sendResponse(await unlockBackground(message.payload?.password));
+        return;
+      case "PASS_LOCK_NOW":
+        await lockBackground();
+        sendResponse({ ok: true, locked: true });
+        return;
+      case "PASS_LOCK_ACTIVITY":
+        await registerBackgroundLockActivity();
+        sendResponse({ ok: true });
+        return;
       case "PASS_FILL_ACTIVE_TAB":
         sendResponse(await handleFillActiveTab(message.payload));
         return;
@@ -477,6 +529,83 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return true;
 });
+
+async function getBackgroundLockStatus() {
+  const settings = await chrome.storage.local.get([
+    STORAGE_KEY_LOCK_ENABLED,
+    STORAGE_KEY_LOCK_POLICY,
+    STORAGE_KEY_LOCK_IDLE_MINUTES,
+    STORAGE_KEY_LOCK_MASTER_CREDENTIAL,
+  ]);
+  const enabled = Boolean(settings[STORAGE_KEY_LOCK_ENABLED])
+    && Boolean(normalizeLockMasterCredential(settings[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]));
+  if (!enabled) return { ok: true, enabled: false, locked: false };
+
+  const session = await chrome.storage.session.get([
+    STORAGE_KEY_LOCK_UNLOCKED_AT,
+    STORAGE_KEY_LOCK_LAST_ACTIVITY,
+  ]);
+  const unlockedAtMs = Number(session[STORAGE_KEY_LOCK_UNLOCKED_AT] || 0);
+  let locked = unlockedAtMs <= 0;
+  if (!locked && settings[STORAGE_KEY_LOCK_POLICY] === LOCK_POLICY_IDLE_TIMEOUT) {
+    const idleMinutes = Math.min(Math.max(Number(settings[STORAGE_KEY_LOCK_IDLE_MINUTES] || 5), 1), 60);
+    const lastActivityAtMs = Number(session[STORAGE_KEY_LOCK_LAST_ACTIVITY] || unlockedAtMs);
+    locked = Date.now() - lastActivityAtMs >= idleMinutes * 60 * 1000;
+    if (locked) await lockBackground();
+  }
+  return { ok: true, enabled: true, locked };
+}
+
+async function unlockBackground(rawPassword) {
+  const password = String(rawPassword || "").trim();
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEY_LOCK_ENABLED,
+    STORAGE_KEY_LOCK_MASTER_CREDENTIAL,
+  ]);
+  const credential = normalizeLockMasterCredential(stored[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
+  if (!stored[STORAGE_KEY_LOCK_ENABLED] || !credential) {
+    return { ok: true, enabled: false, locked: false };
+  }
+  if (!password || !(await verifyLockMasterPassword(credential, password))) {
+    return { ok: false, enabled: true, locked: true, error: "主密码错误" };
+  }
+  if (credential.version === 1) {
+    const upgraded = await createLockMasterCredential(password);
+    await chrome.storage.local.set({ [STORAGE_KEY_LOCK_MASTER_CREDENTIAL]: upgraded });
+  }
+  const now = Date.now();
+  await chrome.storage.session.set({
+    [STORAGE_KEY_LOCK_UNLOCKED_AT]: now,
+    [STORAGE_KEY_LOCK_LAST_ACTIVITY]: now,
+  });
+  await broadcastLockState(false);
+  return { ok: true, enabled: true, locked: false };
+}
+
+async function lockBackground() {
+  await chrome.storage.session.remove([
+    STORAGE_KEY_LOCK_UNLOCKED_AT,
+    STORAGE_KEY_LOCK_LAST_ACTIVITY,
+  ]);
+  await broadcastLockState(true);
+}
+
+async function registerBackgroundLockActivity() {
+  const status = await getBackgroundLockStatus();
+  if (!status.enabled || status.locked) return;
+  await chrome.storage.session.set({ [STORAGE_KEY_LOCK_LAST_ACTIVITY]: Date.now() });
+}
+
+async function broadcastLockState(locked) {
+  try {
+    const tabs = await chrome.tabs.query({});
+    await Promise.allSettled(tabs
+      .filter((tab) => tab.id)
+      .map((tab) => chrome.tabs.sendMessage(tab.id, { type: locked ? "PASS_LOCKED" : "PASS_UNLOCKED" })));
+  } catch {
+    // Tabs without the content script are expected to reject the message.
+  }
+}
 
 async function handlePasskeyOperationAndSyncAccount(payload) {
   logPasskeyFlow("bridge-received", {
@@ -1257,7 +1386,8 @@ async function pullRemotePayload(target) {
   if (!String(text || "").trim()) {
     return { payload: null, etag: response.headers.get("ETag") };
   }
-  const parsed = JSON.parse(text);
+  const key = await getOrCreateSyncEncryptionKey();
+  const parsed = await decryptSyncBundleDocument(JSON.parse(text), key);
   const payload = parseSyncBundlePayload(parsed, { requireBundleSchema: true });
   if (!payload) throw new Error("远端数据格式错误，仅支持 pass.sync.bundle.v2");
   return { payload, etag: response.headers.get("ETag") };
@@ -1265,6 +1395,7 @@ async function pullRemotePayload(target) {
 
 async function pushRemotePayload(target, payload, ifMatch = null) {
   const bundle = await buildSyncBundleFromPayload(payload);
+  const encryptedBundle = await encryptSyncBundleDocument(bundle, await getOrCreateSyncEncryptionKey());
   const headers = {
     "Content-Type": "application/json",
     Accept: "application/json",
@@ -1276,7 +1407,7 @@ async function pushRemotePayload(target, payload, ifMatch = null) {
     response = await fetch(target.url, {
       method: "PUT",
       headers,
-      body: JSON.stringify(bundle, null, 2),
+      body: JSON.stringify(encryptedBundle, null, 2),
     });
   } catch (error) {
     logSyncFlow("push-fetch-error", {
@@ -1302,6 +1433,15 @@ async function pushRemotePayload(target, payload, ifMatch = null) {
     throw error;
   }
   return { etag: response.headers.get("ETag") };
+}
+
+async function getOrCreateSyncEncryptionKey() {
+  const stored = await chrome.storage.local.get([STORAGE_KEY_SYNC_ENCRYPTION_KEY]);
+  const existing = normalizeSyncEncryptionKey(stored[STORAGE_KEY_SYNC_ENCRYPTION_KEY]);
+  if (existing) return existing;
+  const generated = generateSyncEncryptionKey();
+  await chrome.storage.local.set({ [STORAGE_KEY_SYNC_ENCRYPTION_KEY]: generated });
+  return generated;
 }
 
 async function pushRemotePayloadWithRetry(target, payload) {

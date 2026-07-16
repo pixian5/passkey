@@ -37,12 +37,16 @@ final class LocalSQLiteStore {
 
     func readData(for key: String) throws -> Data? {
         try openIfNeeded()
-        let sql = "SELECT value FROM kv WHERE key = ?1 LIMIT 1;"
+        let sql = "SELECT value, updated_at_ms FROM kv WHERE key = ?1 LIMIT 1;"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
             throw LocalSQLiteStoreError.prepareFailed(lastErrorMessage())
         }
-        defer { sqlite3_finalize(statement) }
+        defer {
+            if let statement {
+                sqlite3_finalize(statement)
+            }
+        }
 
         _ = key.withCString { pointer in
             sqlite3_bind_text(statement, 1, pointer, -1, SQLITE_TRANSIENT)
@@ -60,7 +64,17 @@ final class LocalSQLiteStore {
         guard let bytes = sqlite3_column_blob(statement, 0), length > 0 else {
             return Data()
         }
-        return try PassSharedCrypto.decrypt(Data(bytes: bytes, count: length))
+        let storedData = Data(bytes: bytes, count: length)
+        if PassSharedCrypto.isEncrypted(storedData) {
+            return try PassSharedCrypto.decrypt(storedData)
+        }
+
+        // Rows written before local encryption was introduced are migrated on first read.
+        let updatedAtMs = sqlite3_column_int64(statement, 1)
+        sqlite3_finalize(statement)
+        statement = nil
+        try writeData(storedData, for: key, updatedAtMs: updatedAtMs)
+        return storedData
     }
 
     func writeData(_ data: Data, for key: String, updatedAtMs: Int64) throws {

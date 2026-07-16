@@ -5,7 +5,7 @@
 - `GET /v1/sync/payload`
 - `PUT /v1/sync/payload`
 
-服务端只负责认证、版本控制和持久化 `pass.sync.bundle.v2`，可直接被 mac App 和 Chrome 扩展接入。
+服务端只负责认证、版本控制和持久化 `pass.sync.encrypted.v1` 密文信封，无法读取账号、密码、TOTP、恢复码或 Passkey。
 
 ## 特性
 
@@ -44,6 +44,8 @@ python3 pass_sync_server.py
     - `family=token-a,work=token-b`
 - `PASS_SYNC_LOG_LEVEL`
   - 默认 `INFO`
+- `PASS_SYNC_MAX_BODY_BYTES`
+  - 默认 `2097152`（2 MiB）
 
 ## 客户端接入
 
@@ -51,6 +53,7 @@ python3 pass_sync_server.py
 
 - 服务地址：`https://your-domain.example`
 - Token：`PASS_SYNC_BEARER_TOKENS` 中对应值
+- 同步加密密钥：在所有客户端填写同一枚 256 位密钥；该密钥不得配置到服务器
 
 客户端会自动访问：
 

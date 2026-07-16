@@ -84,6 +84,12 @@
               <span></span>
             </div>
           </div>
+          <div class="row">
+            <label for="syncEncryptionKey">同步加密密钥</label>
+            <input id="syncEncryptionKey" type="password" autocomplete="off" placeholder="所有设备必须填写同一密钥" />
+            <button id="generateSyncEncryptionKeyBtn" type="button">生成</button>
+          </div>
+          <p class="hint">该密钥只保存在客户端，用于 AES-256-GCM 端到端加密；跨平台同步时需在各设备填写同一值。</p>
           <div class="lock-settings">
             <h4>解锁设置</h4>
             <div class="row lock-row">

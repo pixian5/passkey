@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -14,21 +15,11 @@ from pass_sync_server import AppConfig, build_server
 def sample_bundle(exported_at_ms: int = 1_777_777_777_777) -> bytes:
     return json.dumps(
         {
-            "schema": "pass.sync.bundle.v2",
+            "schema": "pass.sync.encrypted.v1",
             "exportedAtMs": exported_at_ms,
-            "source": {
-                "app": "pass-extension",
-                "platform": "chrome-extension",
-                "deviceName": "ChromeMac",
-                "deviceId": "device-1",
-                "logicalClockMs": exported_at_ms,
-                "formatVersion": 2,
-            },
-            "payload": {
-                "accounts": [],
-                "folders": [],
-                "passkeys": [],
-            },
+            "cipher": "AES-256-GCM",
+            "nonceBase64": "AAAAAAAAAAAAAAAA",
+            "ciphertextBase64": "AAAAAAAAAAAAAAAAAAAAAAAA",
         }
     ).encode("utf-8")
 
@@ -118,7 +109,51 @@ class PassSyncServerTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertEqual(response.headers["ETag"], etag)
             parsed = json.loads(response.read().decode("utf-8"))
-        self.assertEqual(parsed["schema"], "pass.sync.bundle.v2")
+        self.assertEqual(parsed["schema"], "pass.sync.encrypted.v1")
+
+    def test_rejects_plaintext_bundle(self) -> None:
+        plaintext = json.dumps({
+            "schema": "pass.sync.bundle.v2",
+            "exportedAtMs": 1,
+            "source": {},
+            "payload": {"accounts": [], "folders": [], "passkeys": []},
+        }).encode("utf-8")
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            self.request(
+                "PUT",
+                "/v1/sync/payload",
+                body=plaintext,
+                headers={
+                    "Authorization": "Bearer secret-token",
+                    "Content-Type": "application/json",
+                },
+            )
+        self.assertEqual(context.exception.code, 400)
+        context.exception.close()
+
+    def test_startup_removes_legacy_plaintext_payload(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+        db_path = Path(self.temp_dir.name) / "legacy.sqlite3"
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                "CREATE TABLE payloads (scope TEXT PRIMARY KEY, etag TEXT, payload_json TEXT, "
+                "payload_sha256 TEXT, exported_at_ms INTEGER, updated_at_ms INTEGER)"
+            )
+            connection.execute(
+                "INSERT INTO payloads VALUES (?, ?, ?, ?, ?, ?)",
+                ("default", '"old"', json.dumps({"schema": "pass.sync.bundle.v2", "payload": {}}), "old", 1, 1),
+            )
+        config = AppConfig(host="127.0.0.1", port=0, db_path=db_path, token_scopes={"secret-token": "default"})
+        self.server = build_server(config)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            self.request("GET", "/v1/sync/payload", headers={"Authorization": "Bearer secret-token"})
+        self.assertEqual(context.exception.code, 404)
+        context.exception.close()
 
     def test_options_preflight_for_payload(self) -> None:
         with self.request(
@@ -182,6 +217,27 @@ class PassSyncServerTests(unittest.TestCase):
                 headers={**headers, "If-Match": first_etag},
             )
         self.assertEqual(context.exception.code, 412)
+        context.exception.close()
+
+    def test_rejects_payload_larger_than_configured_limit(self) -> None:
+        self.server.config = AppConfig(
+            host="127.0.0.1",
+            port=0,
+            db_path=Path(self.temp_dir.name) / "sync.sqlite3",
+            token_scopes={"secret-token": "default"},
+            max_body_bytes=32,
+        )
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            self.request(
+                "PUT",
+                "/v1/sync/payload",
+                body=sample_bundle(),
+                headers={
+                    "Authorization": "Bearer secret-token",
+                    "Content-Type": "application/json",
+                },
+            )
+        self.assertEqual(context.exception.code, 413)
         context.exception.close()
 
 

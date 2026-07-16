@@ -12,6 +12,7 @@ const LEGACY_STORAGE_KEY_ACCOUNTS = "pass.accounts";
 const LEGACY_STORAGE_KEY_PASSKEYS = "pass.passkeys";
 const LEGACY_STORAGE_KEY_FOLDERS = "pass.folders";
 const STORAGE_KEY_MIGRATION_DONE = "pass.data.migratedToIndexedDb.v1";
+const STORAGE_KEY_ENCRYPTION_KEY = "pass.data.encryptionKey.v1";
 export const STORAGE_KEY_DATA_BUMP = "pass.data.bump.v1";
 
 let dbPromise = null;
@@ -45,19 +46,74 @@ async function readCollection(key) {
   const tx = db.transaction(STORE_COLLECTIONS, "readonly");
   const store = tx.objectStore(STORE_COLLECTIONS);
   const row = await requestAsPromise(store.get(key));
-  return Array.isArray(row?.value) ? row.value : [];
+  if (!row) return [];
+  if (Array.isArray(row.value)) {
+    await writeCollection(key, row.value);
+    return row.value;
+  }
+  if (Number(row.version) !== 1 || !row.nonceBase64 || !row.ciphertextBase64) {
+    throw new Error(`IndexedDB 集合格式无效: ${key}`);
+  }
+  const cryptoKey = await loadOrCreateEncryptionKey();
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: base64ToBytes(row.nonceBase64), additionalData: new TextEncoder().encode(key) },
+    cryptoKey,
+    base64ToBytes(row.ciphertextBase64)
+  );
+  const decoded = JSON.parse(new TextDecoder().decode(plaintext));
+  return Array.isArray(decoded) ? decoded : [];
 }
 
 async function writeCollection(key, value) {
+  const cryptoKey = await loadOrCreateEncryptionKey();
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const plaintext = new TextEncoder().encode(JSON.stringify(Array.isArray(value) ? value : []));
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: nonce, additionalData: new TextEncoder().encode(key) },
+    cryptoKey,
+    plaintext
+  );
   const db = await openDatabase();
   const tx = db.transaction(STORE_COLLECTIONS, "readwrite");
   const store = tx.objectStore(STORE_COLLECTIONS);
-  store.put({ key, value: Array.isArray(value) ? value : [] });
+  store.put({
+    key,
+    version: 1,
+    nonceBase64: bytesToBase64(nonce),
+    ciphertextBase64: bytesToBase64(new Uint8Array(ciphertext)),
+  });
   await new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error || new Error("IndexedDB transaction failed"));
     tx.onabort = () => reject(tx.error || new Error("IndexedDB transaction aborted"));
   });
+}
+
+async function loadOrCreateEncryptionKey() {
+  const stored = await chrome.storage.local.get([STORAGE_KEY_ENCRYPTION_KEY]);
+  let rawKey = base64ToBytes(stored[STORAGE_KEY_ENCRYPTION_KEY]);
+  if (rawKey.length !== 32) {
+    rawKey = crypto.getRandomValues(new Uint8Array(32));
+    await chrome.storage.local.set({ [STORAGE_KEY_ENCRYPTION_KEY]: bytesToBase64(rawKey) });
+  }
+  return crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt", "decrypt"]);
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  for (const value of bytes) binary += String.fromCharCode(value);
+  return btoa(binary);
+}
+
+function base64ToBytes(base64) {
+  try {
+    const binary = atob(String(base64 || ""));
+    const output = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) output[i] = binary.charCodeAt(i);
+    return output;
+  } catch {
+    return new Uint8Array();
+  }
 }
 
 async function touchDataBump(reason) {

@@ -20,6 +20,7 @@ import {
   setAccounts as setAccountsToDataStore,
   setPasskeys as setPasskeysToDataStore,
 } from "./data_store.js";
+import { normalizeLockMasterCredential } from "./lock_crypto.js";
 
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
 const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
@@ -329,6 +330,7 @@ function registerPopupActivity() {
   if (!isLockFeatureEnabled()) return;
   if (isPopupLocked) return;
   lockLastActivityAtMs = Date.now();
+  void chrome.runtime.sendMessage({ type: "PASS_LOCK_ACTIVITY" });
   scheduleIdleAutoLockCheck();
 }
 
@@ -350,6 +352,7 @@ function scheduleIdleAutoLockCheck() {
     if (!isLockFeatureEnabled() || isPopupLocked) return;
     const idleForMs = Date.now() - lockLastActivityAtMs;
     if (idleForMs >= timeoutMs) {
+      void chrome.runtime.sendMessage({ type: "PASS_LOCK_NOW" });
       setPopupLockedState(true, `超过 ${lockSettings.idleMinutes} 分钟无操作，已锁定`);
       setStatus(`超过 ${lockSettings.idleMinutes} 分钟无操作，已锁定`);
       return;
@@ -362,6 +365,7 @@ function lockForBackgroundIfNeeded(reason) {
   if (!isLockFeatureEnabled()) return;
   if (isPopupLocked) return;
   if (lockSettings.policy !== LOCK_POLICY_ON_BACKGROUND) return;
+  void chrome.runtime.sendMessage({ type: "PASS_LOCK_NOW" });
   setPopupLockedState(true, reason);
   setStatus(reason);
 }
@@ -422,10 +426,15 @@ async function loadLockSettingsFromStorage({ relockIfEnabled = false, relockMess
     return;
   }
 
-  if (relockIfEnabled || !isPopupLocked) {
+  if (relockIfEnabled) {
+    await chrome.runtime.sendMessage({ type: "PASS_LOCK_NOW" });
     setPopupLockedState(true, relockMessage || "请输入主密码解锁。");
     return;
   }
+
+  const status = await chrome.runtime.sendMessage({ type: "PASS_LOCK_STATUS" });
+  setPopupLockedState(Boolean(status?.locked), status?.locked ? "请输入主密码解锁。" : "");
+  if (!status?.locked) return;
 
   scheduleIdleAutoLockCheck();
   renderLockOverlay();
@@ -445,13 +454,18 @@ async function unlockPopupWithPassword() {
 
   lockOperationInFlight = true;
   try {
-    const verified = await verifyLockMasterPassword(lockSettings.credential, password);
-    if (!verified) {
+    const response = await chrome.runtime.sendMessage({
+      type: "PASS_LOCK_UNLOCK",
+      payload: { password },
+    });
+    if (!response?.ok || response?.locked) {
       popupLockMessage = "主密码错误";
       renderLockOverlay();
       setStatus("主密码错误");
       return;
     }
+    const refreshed = await chrome.storage.local.get([STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
+    lockSettings.credential = normalizeLockMasterCredential(refreshed[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
     setPopupLockedState(false);
     setStatus("扩展已解锁");
   } finally {
@@ -471,57 +485,6 @@ function clampLockIdleMinutes(value) {
   if (!Number.isFinite(parsed)) return LOCK_IDLE_MINUTES_DEFAULT;
   const rounded = Math.round(parsed);
   return Math.min(Math.max(rounded, LOCK_IDLE_MINUTES_MIN), LOCK_IDLE_MINUTES_MAX);
-}
-
-function normalizeLockMasterCredential(value) {
-  if (!value || typeof value !== "object") return null;
-  const version = Number(value.version || 1);
-  const saltBase64 = String(value.saltBase64 || "");
-  const digestBase64 = String(value.digestBase64 || "");
-  if (version !== 1 || !saltBase64 || !digestBase64) return null;
-  const saltBytes = base64ToBytes(saltBase64);
-  if (saltBytes.length === 0) return null;
-  return { version, saltBase64, digestBase64 };
-}
-
-async function verifyLockMasterPassword(credential, password) {
-  const normalized = normalizeLockMasterCredential(credential);
-  if (!normalized) return false;
-  const saltBytes = base64ToBytes(normalized.saltBase64);
-  if (saltBytes.length === 0) return false;
-  const digest = await computePasswordDigest(password, saltBytes);
-  return digest === normalized.digestBase64;
-}
-
-async function computePasswordDigest(password, saltBytes) {
-  const encoder = new TextEncoder();
-  const passwordBytes = encoder.encode(String(password || ""));
-  const merged = new Uint8Array(saltBytes.length + passwordBytes.length);
-  merged.set(saltBytes, 0);
-  merged.set(passwordBytes, saltBytes.length);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", merged);
-  return bytesToBase64(new Uint8Array(hashBuffer));
-}
-
-function bytesToBase64(bytes) {
-  let binary = "";
-  for (const value of bytes) {
-    binary += String.fromCharCode(value);
-  }
-  return btoa(binary);
-}
-
-function base64ToBytes(base64) {
-  try {
-    const binary = atob(String(base64 || ""));
-    const output = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) {
-      output[i] = binary.charCodeAt(i);
-    }
-    return output;
-  } catch {
-    return new Uint8Array();
-  }
 }
 
 function setViewMode(nextMode) {

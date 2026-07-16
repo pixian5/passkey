@@ -53,6 +53,16 @@ function installPassContentBridge() {
     void initAccountCache();
   });
 
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message?.type === "PASS_LOCKED") {
+      accountsCache = [];
+      return;
+    }
+    if (message?.type === "PASS_UNLOCKED") {
+      void initAccountCache();
+    }
+  });
+
   document.addEventListener(
     "submit",
     (event) => {

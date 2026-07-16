@@ -7,9 +7,13 @@ final class PassSharedAccountRepository {
     func loadAccounts() -> [PasswordAccount] {
         PassSharedData.migrateLegacyStoreToSharedContainerIfNeeded()
 
-        if let data = try? sqliteStore.readData(for: "accounts"),
-           let decoded = try? decoder.decode([PasswordAccount].self, from: data) {
-            return decoded
+        do {
+            if let data = try sqliteStore.readData(for: "accounts") {
+                return try decoder.decode([PasswordAccount].self, from: data)
+            }
+        } catch {
+            NSLog("Pass AutoFill 无法读取本地加密账号数据: %@", error.localizedDescription)
+            return []
         }
 
         let legacyURL = PassSharedData.accountsLegacyJSONURL()

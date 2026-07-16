@@ -24,6 +24,17 @@ import {
   setAllData as setAllDataToDataStore,
   setFolders as setFoldersToDataStore,
 } from "./data_store.js";
+import {
+  createLockMasterCredential,
+  normalizeLockMasterCredential,
+  verifyLockMasterPassword,
+} from "./lock_crypto.js";
+import {
+  decryptSyncBundleDocument,
+  encryptSyncBundleDocument,
+  generateSyncEncryptionKey,
+  normalizeSyncEncryptionKey,
+} from "./sync_crypto.js";
 
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
 const STORAGE_KEY_SYNC_ENABLE_WEBDAV = "pass.sync.enableWebDAV.v3";
@@ -36,6 +47,7 @@ const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
 const STORAGE_KEY_SYNC_SERVER_TOKEN = "pass.sync.server.token.v2";
 const STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
+const STORAGE_KEY_SYNC_ENCRYPTION_KEY = "pass.sync.encryptionKey.v1";
 const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "https://or.sbbz.tech:5443";
 const SYNC_MODE_MERGE = "merge";
 const SYNC_MODE_REMOTE_OVERWRITE_LOCAL = "remoteOverwriteLocal";
@@ -91,6 +103,8 @@ const dom = {
   syncWebdavPassword: document.getElementById("syncWebdavPassword"),
   syncServerBaseUrl: document.getElementById("syncServerBaseUrl"),
   syncServerToken: document.getElementById("syncServerToken"),
+  syncEncryptionKey: document.getElementById("syncEncryptionKey"),
+  generateSyncEncryptionKeyBtn: document.getElementById("generateSyncEncryptionKeyBtn"),
   syncAutoInterval: document.getElementById("syncAutoInterval"),
   syncAutoStatus: document.getElementById("syncAutoStatus"),
   deviceStatus: document.getElementById("deviceStatus"),
@@ -185,6 +199,7 @@ async function init() {
   await loadDeviceName();
   await loadSyncSettings();
   await loadLockSettings();
+  await ensureOptionsUnlocked();
   await ensureDataStorageReady();
   await refresh();
   startTotpRefreshTicker();
@@ -224,12 +239,18 @@ async function init() {
   dom.syncWebdavPassword.addEventListener("input", scheduleSyncSettingsSave);
   dom.syncServerBaseUrl.addEventListener("input", scheduleSyncSettingsSave);
   dom.syncServerToken.addEventListener("input", scheduleSyncSettingsSave);
+  dom.syncEncryptionKey.addEventListener("input", scheduleSyncSettingsSave);
   dom.syncWebdavBaseUrl.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.syncWebdavPath.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.syncWebdavUsername.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.syncWebdavPassword.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.syncServerBaseUrl.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.syncServerToken.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
+  dom.syncEncryptionKey.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
+  dom.generateSyncEncryptionKeyBtn.addEventListener("click", () => {
+    dom.syncEncryptionKey.value = generateSyncEncryptionKey();
+    void persistSyncSettings({ showStatus: true });
+  });
   dom.lockEnabled.addEventListener("change", () => {
     renderLockSettingsFields();
     void saveLockSettings({ showStatus: false });
@@ -361,6 +382,18 @@ async function init() {
   dom.clearBtn.addEventListener("click", clearAll);
 }
 
+async function ensureOptionsUnlocked() {
+  const status = await chrome.runtime.sendMessage({ type: "PASS_LOCK_STATUS" });
+  if (!status?.enabled || !status?.locked) return;
+  const password = String(window.prompt("请输入主密码以打开 Pass 设置", "") || "").trim();
+  if (!password) throw new Error("扩展已锁定，未加载账号数据");
+  const result = await chrome.runtime.sendMessage({
+    type: "PASS_LOCK_UNLOCK",
+    payload: { password },
+  });
+  if (!result?.ok || result?.locked) throw new Error("主密码错误，未加载账号数据");
+}
+
 async function loadDeviceName() {
   const result = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
   dom.deviceName.value = String(result[STORAGE_KEY_DEVICE_NAME] || "ChromeMac");
@@ -487,6 +520,7 @@ async function loadSyncSettings() {
     STORAGE_KEY_SYNC_SERVER_BASE_URL,
     STORAGE_KEY_SYNC_SERVER_TOKEN,
     STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES,
+    STORAGE_KEY_SYNC_ENCRYPTION_KEY,
   ]);
   const hasEnableWebdav = typeof result[STORAGE_KEY_SYNC_ENABLE_WEBDAV] === "boolean";
   const hasEnableServer = typeof result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER] === "boolean";
@@ -508,6 +542,12 @@ async function loadSyncSettings() {
   );
   dom.syncServerBaseUrl.value = normalizedServerBaseUrl;
   dom.syncServerToken.value = String(result[STORAGE_KEY_SYNC_SERVER_TOKEN] || "");
+  const syncEncryptionKey = normalizeSyncEncryptionKey(result[STORAGE_KEY_SYNC_ENCRYPTION_KEY])
+    || generateSyncEncryptionKey();
+  dom.syncEncryptionKey.value = syncEncryptionKey;
+  if (syncEncryptionKey !== result[STORAGE_KEY_SYNC_ENCRYPTION_KEY]) {
+    await chrome.storage.local.set({ [STORAGE_KEY_SYNC_ENCRYPTION_KEY]: syncEncryptionKey });
+  }
   dom.syncAutoInterval.value = normalizeAutoSyncIntervalMinutes(result[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]);
   if (normalizedServerBaseUrl !== String(result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || "")) {
     await chrome.storage.local.set({ [STORAGE_KEY_SYNC_SERVER_BASE_URL]: normalizedServerBaseUrl });
@@ -654,6 +694,7 @@ async function saveLockSettings({ showStatus = true } = {}) {
     [STORAGE_KEY_LOCK_MASTER_CREDENTIAL]: nextCredential,
   };
   await chrome.storage.local.set(updates);
+  await chrome.runtime.sendMessage({ type: "PASS_LOCK_NOW" });
   lockCredentialExists = Boolean(nextCredential);
   dom.lockMasterPassword.value = "";
   dom.lockMasterPasswordConfirm.value = "";
@@ -692,7 +733,12 @@ async function persistSyncSettings({ showStatus = true } = {}) {
     [STORAGE_KEY_SYNC_SERVER_BASE_URL]: normalizeLegacySelfHostedServerBaseUrl(dom.syncServerBaseUrl.value || ""),
     [STORAGE_KEY_SYNC_SERVER_TOKEN]: String(dom.syncServerToken.value || "").trim(),
     [STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]: Number(autoSyncIntervalMinutes),
+    [STORAGE_KEY_SYNC_ENCRYPTION_KEY]: normalizeSyncEncryptionKey(dom.syncEncryptionKey.value),
   };
+  if (!nextSettings[STORAGE_KEY_SYNC_ENCRYPTION_KEY]) {
+    if (showStatus) setStatus("同步加密密钥无效，请重新生成或输入其他设备的密钥");
+    return;
+  }
   await chrome.storage.local.set(nextSettings);
 
   const persisted = await chrome.storage.local.get([
@@ -760,8 +806,9 @@ async function clearAll() {
 
 async function exportSyncBundle() {
   const bundle = await buildSyncBundle();
+  const encrypted = await encryptSyncBundleDocument(bundle, dom.syncEncryptionKey.value);
   const fileName = `pass-sync-bundle-${formatFileTimestamp(bundle.exportedAtMs)}.json`;
-  const text = JSON.stringify(bundle, null, 2);
+  const text = JSON.stringify(encrypted, null, 2);
   downloadTextFile(fileName, text, "application/json");
   setStatus(
     `同步包已导出：${bundle.payload.accounts.length} 条账号，` +
@@ -791,9 +838,9 @@ async function importSyncBundleAndMerge() {
 
   let parsed;
   try {
-    parsed = JSON.parse(await file.text());
+    parsed = await decryptSyncBundleDocument(JSON.parse(await file.text()), dom.syncEncryptionKey.value);
   } catch (error) {
-    setStatus(`同步包 JSON 解析失败: ${error.message}`);
+    setStatus(`同步包读取失败: ${error.message}`);
     return;
   }
 
@@ -1371,7 +1418,7 @@ async function pullRemotePayload(target) {
   }
   let parsed;
   try {
-    parsed = JSON.parse(text);
+    parsed = await decryptSyncBundleDocument(JSON.parse(text), dom.syncEncryptionKey.value);
   } catch (error) {
     throw new Error(`远端 JSON 解析失败: ${error.message}`);
   }
@@ -1387,6 +1434,7 @@ async function pullRemotePayload(target) {
 
 async function pushRemotePayload(target, payload, ifMatch = null) {
   const bundle = await buildSyncBundleFromPayload(payload);
+  const encryptedBundle = await encryptSyncBundleDocument(bundle, dom.syncEncryptionKey.value);
   const headers = {
     "Content-Type": "application/json",
     Accept: "application/json",
@@ -1400,7 +1448,7 @@ async function pushRemotePayload(target, payload, ifMatch = null) {
   const response = await fetch(target.url, {
     method: "PUT",
     headers,
-    body: JSON.stringify(bundle, null, 2),
+    body: JSON.stringify(encryptedBundle, null, 2),
   });
   if (!response.ok) {
     const error = new Error(`HTTP ${response.status}`);
@@ -4182,69 +4230,6 @@ function clampLockIdleMinutes(value) {
   if (!Number.isFinite(parsed)) return LOCK_IDLE_MINUTES_DEFAULT;
   const rounded = Math.round(parsed);
   return Math.min(Math.max(rounded, LOCK_IDLE_MINUTES_MIN), LOCK_IDLE_MINUTES_MAX);
-}
-
-function normalizeLockMasterCredential(value) {
-  if (!value || typeof value !== "object") return null;
-  const version = Number(value.version || 1);
-  const saltBase64 = String(value.saltBase64 || "");
-  const digestBase64 = String(value.digestBase64 || "");
-  if (version !== 1 || !saltBase64 || !digestBase64) return null;
-  const saltBytes = base64ToBytes(saltBase64);
-  if (saltBytes.length === 0) return null;
-  return { version, saltBase64, digestBase64 };
-}
-
-async function createLockMasterCredential(password) {
-  const normalizedPassword = String(password || "").trim();
-  const saltBytes = new Uint8Array(16);
-  crypto.getRandomValues(saltBytes);
-  const digestBase64 = await computePasswordDigest(normalizedPassword, saltBytes);
-  return {
-    version: 1,
-    saltBase64: bytesToBase64(saltBytes),
-    digestBase64,
-  };
-}
-
-async function verifyLockMasterPassword(credential, password) {
-  const normalized = normalizeLockMasterCredential(credential);
-  if (!normalized) return false;
-  const saltBytes = base64ToBytes(normalized.saltBase64);
-  if (saltBytes.length === 0) return false;
-  const digest = await computePasswordDigest(String(password || "").trim(), saltBytes);
-  return digest === normalized.digestBase64;
-}
-
-async function computePasswordDigest(password, saltBytes) {
-  const encoder = new TextEncoder();
-  const passwordBytes = encoder.encode(String(password || ""));
-  const merged = new Uint8Array(saltBytes.length + passwordBytes.length);
-  merged.set(saltBytes, 0);
-  merged.set(passwordBytes, saltBytes.length);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", merged);
-  return bytesToBase64(new Uint8Array(hashBuffer));
-}
-
-function bytesToBase64(bytes) {
-  let binary = "";
-  for (const value of bytes) {
-    binary += String.fromCharCode(value);
-  }
-  return btoa(binary);
-}
-
-function base64ToBytes(base64) {
-  try {
-    const binary = atob(String(base64 || ""));
-    const output = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) {
-      output[i] = binary.charCodeAt(i);
-    }
-    return output;
-  } catch {
-    return new Uint8Array();
-  }
 }
 
 function escapeHtml(value) {

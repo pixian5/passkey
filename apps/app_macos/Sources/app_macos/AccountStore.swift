@@ -212,6 +212,12 @@ final class AccountStore: ObservableObject {
             _ = saveSecret(serverAuthToken, account: SecretKeys.serverTokenAccount)
         }
     }
+    @Published var syncEncryptionKey: String = "" {
+        didSet {
+            guard !isLoadingSyncPreferences else { return }
+            _ = saveSecret(syncEncryptionKey, account: SecretKeys.syncEncryptionKeyAccount)
+        }
+    }
     @Published var syncMode: SyncMode = .merge {
         didSet {
             guard !isLoadingSyncPreferences else { return }
@@ -1560,32 +1566,13 @@ final class AccountStore: ObservableObject {
     }
 
     func exportSyncBundle(to fileURL: URL) {
-        let logicalClockMs = nowMs()
-        let bundle = SyncBundleV2(
-            schema: Self.syncBundleSchemaV2,
-            exportedAtMs: logicalClockMs,
-            source: SyncBundleSource(
-                app: "pass-mac",
-                platform: "macos-app",
-                deviceName: currentDeviceName(),
-                deviceId: syncDeviceId(),
-                logicalClockMs: logicalClockMs,
-                formatVersion: 2
-            ),
-            payload: SyncBundlePayload(
-                accounts: accounts,
-                folders: folders,
-                passkeys: passkeys
-            )
-        )
-
         do {
             let parentDirectory = fileURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(
                 at: parentDirectory,
                 withIntermediateDirectories: true
             )
-            let data = try encoder.encode(bundle)
+            let data = try encodeEncryptedSyncBundle(payload: buildCurrentSyncPayload())
             try data.write(to: fileURL, options: Data.WritingOptions.atomic)
             statusMessage = "同步包导出成功: \(fileURL.path)"
         } catch {
@@ -2718,7 +2705,7 @@ final class AccountStore: ObservableObject {
         if let ifMatch {
             request.setValue(ifMatch, forHTTPHeaderField: "If-Match")
         }
-        request.httpBody = try encoder.encode(buildSyncBundleDocument(payload: payload))
+        request.httpBody = try encodeEncryptedSyncBundle(payload: payload)
         let (_, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw NSError(
@@ -2838,6 +2825,11 @@ final class AccountStore: ObservableObject {
             defaults.string(forKey: Keys.serverBaseURL) ?? Self.defaultSelfHostedServerBaseURL
         )
         serverAuthToken = readSecret(account: SecretKeys.serverTokenAccount)
+        syncEncryptionKey = readSecret(account: SecretKeys.syncEncryptionKeyAccount)
+        if !PassSyncCrypto.isValidKeyString(syncEncryptionKey) {
+            syncEncryptionKey = PassSyncCrypto.generateKeyString()
+            _ = saveSecret(syncEncryptionKey, account: SecretKeys.syncEncryptionKeyAccount)
+        }
         isLoadingSyncPreferences = false
 
         let foldersDataFromDatabase = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.folders)
@@ -3362,7 +3354,12 @@ final class AccountStore: ObservableObject {
     }
 
     private func loadCollectionDataFromLocalDatabase(for key: String) -> Data? {
-        try? localSQLiteStore.readData(for: key)
+        do {
+            return try localSQLiteStore.readData(for: key)
+        } catch {
+            statusMessage = "读取本地加密数据失败（\(key)）: \(error.localizedDescription)"
+            return nil
+        }
     }
 
     private func saveCollectionDataToLocalDatabase(_ data: Data, for key: String) throws {
@@ -3529,8 +3526,7 @@ final class AccountStore: ObservableObject {
                 userInfo: [NSLocalizedDescriptionKey: "iCloud 不可用，已使用本机数据"]
             )
         }
-        let bundle = buildSyncBundleDocument(payload: payload)
-        let data = try encoder.encode(bundle)
+        let data = try encodeEncryptedSyncBundle(payload: payload)
         if data.count > 900_000 {
             throw NSError(
                 domain: "AccountStore.ICloudSync",
@@ -3917,7 +3913,24 @@ final class AccountStore: ObservableObject {
         passkeys: [PasskeyRecord],
         kind: String
     ) {
-        if let bundle = try? decoder.decode(SyncBundleV2.self, from: data),
+        let plaintext: Data
+        if let envelope = try? decoder.decode(PassSyncEncryptedEnvelope.self, from: data),
+           envelope.schema == PassSyncCrypto.schema
+        {
+            do {
+                plaintext = try PassSyncCrypto.decrypt(envelope, keyString: syncEncryptionKey)
+            } catch {
+                throw NSError(
+                    domain: "AccountStore.SyncBundle",
+                    code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: "同步包解密失败，请确认所有设备使用同一同步加密密钥"]
+                )
+            }
+        } else {
+            plaintext = data
+        }
+
+        if let bundle = try? decoder.decode(SyncBundleV2.self, from: plaintext),
            bundle.schema == Self.syncBundleSchemaV2
         {
             return (bundle.payload.accounts, bundle.payload.folders, bundle.payload.passkeys, "v2")
@@ -3928,6 +3941,32 @@ final class AccountStore: ObservableObject {
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: "不支持的同步包格式，仅支持 pass.sync.bundle.v2"]
         )
+    }
+
+    private func encodeEncryptedSyncBundle(payload: SyncBundlePayload) throws -> Data {
+        let bundle = buildSyncBundleDocument(payload: payload)
+        let plaintext = try encoder.encode(bundle)
+        let envelope = try PassSyncCrypto.encrypt(
+            plaintext,
+            keyString: syncEncryptionKey,
+            exportedAtMs: bundle.exportedAtMs
+        )
+        return try encoder.encode(envelope)
+    }
+
+    func generateSyncEncryptionKey() {
+        syncEncryptionKey = PassSyncCrypto.generateKeyString()
+        statusMessage = "已生成新的同步加密密钥；其他设备必须填写同一密钥"
+    }
+
+    func copySyncEncryptionKey() {
+        guard PassSyncCrypto.isValidKeyString(syncEncryptionKey) else {
+            statusMessage = "同步加密密钥无效"
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(syncEncryptionKey, forType: .string)
+        statusMessage = "同步加密密钥已复制"
     }
 
     private func newerField(
@@ -5163,6 +5202,7 @@ private enum SecretKeys {
     static let service = "pass.sync.credentials.v2"
     static let webdavPasswordAccount = "sync.webdav.password"
     static let serverTokenAccount = "sync.server.token"
+    static let syncEncryptionKeyAccount = "sync.encryption.key.v1"
 }
 
 private enum ICloudKeys {

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import logging
@@ -25,6 +27,7 @@ class AppConfig:
     port: int
     db_path: Path
     token_scopes: dict[str, str]
+    max_body_bytes: int = 2 * 1024 * 1024
 
     @property
     def auth_enabled(self) -> bool:
@@ -69,6 +72,18 @@ class PayloadRepository:
                 );
                 """
             )
+            rows = connection.execute("SELECT scope, payload_json FROM payloads;").fetchall()
+            plaintext_scopes = []
+            for row in rows:
+                try:
+                    schema = json.loads(row["payload_json"]).get("schema")
+                except (json.JSONDecodeError, AttributeError):
+                    schema = None
+                if schema != "pass.sync.encrypted.v1":
+                    plaintext_scopes.append(row["scope"])
+            if plaintext_scopes:
+                connection.executemany("DELETE FROM payloads WHERE scope = ?1;", [(scope,) for scope in plaintext_scopes])
+                LOGGER.warning("Removed %s legacy plaintext sync payload(s)", len(plaintext_scopes))
 
     def get(self, scope: str) -> StoredPayload | None:
         with self._connect() as connection:
@@ -256,10 +271,24 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
         self._send_bytes(HTTPStatus.OK, body_bytes, headers=headers, head_only=head_only)
 
     def _handle_put_payload(self, scope: str) -> None:
-        content_length = int(self.headers.get("Content-Length", "0") or "0")
-        raw_body = self.rfile.read(content_length)
-        if not raw_body:
+        content_length_header = self.headers.get("Content-Length")
+        if content_length_header is None:
+            raise RequestError(HTTPStatus.LENGTH_REQUIRED, "LENGTH_REQUIRED", "必须提供 Content-Length。")
+        try:
+            content_length = int(content_length_header)
+        except ValueError as error:
+            raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_CONTENT_LENGTH", "Content-Length 无效。") from error
+        if content_length <= 0:
             raise RequestError(HTTPStatus.BAD_REQUEST, "EMPTY_BODY", "请求体不能为空。")
+        if content_length > self.server.config.max_body_bytes:
+            raise RequestError(
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                "PAYLOAD_TOO_LARGE",
+                f"请求体不能超过 {self.server.config.max_body_bytes} 字节。",
+            )
+        raw_body = self.rfile.read(content_length)
+        if len(raw_body) != content_length:
+            raise RequestError(HTTPStatus.BAD_REQUEST, "INCOMPLETE_BODY", "请求体长度与 Content-Length 不一致。")
         payload_json, payload_sha256, exported_at_ms = parse_and_validate_bundle(raw_body)
         stored = self.server.repository.put(
             scope=scope,
@@ -375,20 +404,25 @@ def parse_and_validate_bundle(raw_body: bytes) -> tuple[str, str, int]:
 
     if not isinstance(parsed, dict):
         raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_BUNDLE", "根节点必须是对象。")
-    if parsed.get("schema") != "pass.sync.bundle.v2":
-        raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_SCHEMA", "仅支持 pass.sync.bundle.v2。")
+    if parsed.get("schema") != "pass.sync.encrypted.v1":
+        raise RequestError(
+            HTTPStatus.BAD_REQUEST,
+            "ENCRYPTION_REQUIRED",
+            "服务端仅接受 pass.sync.encrypted.v1 端到端加密信封。",
+        )
+    if parsed.get("cipher") != "AES-256-GCM":
+        raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_CIPHER", "仅支持 AES-256-GCM。")
 
-    payload = parsed.get("payload")
-    if not isinstance(payload, dict):
-        raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_PAYLOAD", "payload 必须是对象。")
-
-    for field_name in ("accounts", "folders", "passkeys"):
-        if not isinstance(payload.get(field_name), list):
-            raise RequestError(
-                HTTPStatus.BAD_REQUEST,
-                "INVALID_PAYLOAD",
-                f"payload.{field_name} 必须是数组。",
-            )
+    for field_name, minimum_bytes in (("nonceBase64", 12), ("ciphertextBase64", 17)):
+        value = parsed.get(field_name)
+        if not isinstance(value, str):
+            raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_ENVELOPE", f"{field_name} 必须是 Base64 字符串。")
+        try:
+            decoded = base64.b64decode(value, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_ENVELOPE", f"{field_name} 不是合法 Base64。") from exc
+        if len(decoded) < minimum_bytes:
+            raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_ENVELOPE", f"{field_name} 长度不足。")
 
     exported_at_ms = parsed.get("exportedAtMs")
     if not isinstance(exported_at_ms, int):
@@ -439,6 +473,7 @@ def load_config() -> AppConfig:
         port=int(os.environ.get("PASS_SYNC_PORT", "53333")),
         db_path=db_path,
         token_scopes=token_scopes,
+        max_body_bytes=max(1024, int(os.environ.get("PASS_SYNC_MAX_BODY_BYTES", str(2 * 1024 * 1024)))),
     )
 
 

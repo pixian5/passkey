@@ -136,6 +136,25 @@ struct SettingsView: View {
                         }
 
                         HStack(spacing: 8) {
+                            Text("同步加密密钥")
+                                .frame(width: labelColumnWidth, alignment: .leading)
+                            SecureField("所有设备必须填写同一密钥", text: $store.syncEncryptionKey)
+                                .textFieldStyle(.roundedBorder)
+                            Button("生成") {
+                                store.generateSyncEncryptionKey()
+                            }
+                            .buttonStyle(.bordered)
+                            Button("复制") {
+                                store.copySyncEncryptionKey()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        Text("同步内容使用 AES-256-GCM 端到端加密；访问令牌只负责服务器认证，不能解密同步数据。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 8) {
                             Text("自动同步")
                                 .frame(width: labelColumnWidth, alignment: .leading)
                             Picker("自动同步", selection: $store.autoSyncIntervalMinutes) {
