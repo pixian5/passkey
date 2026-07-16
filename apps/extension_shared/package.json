@@ -2,10 +2,12 @@
   "name": "pass-extension-shared",
   "version": "0.1.9",
   "private": true,
+  "type": "module",
   "description": "Shared build pipeline for Pass browser extensions.",
   "scripts": {
     "build": "node ./scripts/build.mjs",
-    "build:watch": "node ./scripts/build.mjs --watch"
+    "build:watch": "node ./scripts/build.mjs --watch",
+    "test": "node --test ./tests/*.test.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"

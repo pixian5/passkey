@@ -1,4 +1,9 @@
-import { base64ToBytes, bytesToBase64, normalizeLockMasterCredential } from "./lock_crypto.js";
+import {
+  base64ToBytes,
+  bytesToBase64,
+  LOCK_PBKDF2_ITERATIONS,
+  normalizeLockMasterCredential,
+} from "./lock_crypto.js";
 
 const DB_NAME = "pass.local.db.v1";
 const DB_VERSION = 1;
@@ -17,7 +22,11 @@ const STORAGE_KEY_MIGRATION_DONE = "pass.data.migratedToIndexedDb.v1";
 const STORAGE_KEY_ENCRYPTION_KEY = "pass.data.encryptionKey.v1";
 const STORAGE_KEY_WRAPPED_ENCRYPTION_KEY = "pass.data.wrappedEncryptionKey.v2";
 const STORAGE_KEY_SESSION_ENCRYPTION_KEY = "pass.data.sessionEncryptionKey.v2";
-const DATA_KEY_WRAP_AAD = "pass.data.encryptionKey.v2";
+const LEGACY_DATA_KEY_WRAP_AAD = "pass.data.encryptionKey.v2";
+const DATA_KEY_WRAP_AAD = "pass.data.encryptionKey.v3";
+const DATA_KEY_WRAP_VERSION = 3;
+const DATA_KEY_WRAP_KDF = "PBKDF2-SHA-256";
+const DATA_KEY_WRAP_SALT_BYTES = 16;
 export const STORAGE_KEY_DATA_BUMP = "pass.data.bump.v1";
 
 let dbPromise = null;
@@ -123,7 +132,6 @@ async function loadOrCreateEncryptionKey() {
 export async function unlockDataEncryption(password, rawCredential) {
   const credential = normalizeLockMasterCredential(rawCredential);
   if (!credential) throw new Error("主密码凭据无效");
-  const wrappingKey = await deriveWrappingKey(password, credential);
   const stored = await chrome.storage.local.get([
     STORAGE_KEY_ENCRYPTION_KEY,
     STORAGE_KEY_WRAPPED_ENCRYPTION_KEY,
@@ -131,11 +139,23 @@ export async function unlockDataEncryption(password, rawCredential) {
   let rawKey = null;
   const wrapped = stored[STORAGE_KEY_WRAPPED_ENCRYPTION_KEY];
   if (wrapped) {
-    rawKey = await unwrapDataKey(wrappingKey, wrapped);
+    if (Number(wrapped.version) === DATA_KEY_WRAP_VERSION) {
+      rawKey = await unwrapDataKey(password, wrapped);
+    } else if (Number(wrapped.version) === 2) {
+      const legacyWrappingKey = await deriveWrappingKey(
+        password,
+        base64ToBytes(credential.saltBase64),
+        credential.iterations
+      );
+      rawKey = await unwrapLegacyDataKey(legacyWrappingKey, wrapped);
+      await storeWrappedDataKey(password, rawKey);
+    } else {
+      throw new Error("本地数据密钥格式无效");
+    }
   } else {
     const legacy = base64ToBytes(stored[STORAGE_KEY_ENCRYPTION_KEY]);
     rawKey = legacy.length === 32 ? legacy : crypto.getRandomValues(new Uint8Array(32));
-    await storeWrappedDataKey(wrappingKey, rawKey);
+    await storeWrappedDataKey(password, rawKey);
     await chrome.storage.local.remove(STORAGE_KEY_ENCRYPTION_KEY);
   }
   await cacheUnlockedDataKey(rawKey);
@@ -146,7 +166,8 @@ export async function rewrapDataEncryption(currentPassword, currentCredential, n
   const session = await chrome.storage.session.get([STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
   const rawKey = base64ToBytes(session[STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
   if (rawKey.length !== 32) throw new Error("无法读取已解锁的数据密钥");
-  await storeWrappedDataKey(await deriveWrappingKey(nextPassword, normalizeCredential(nextCredential)), rawKey);
+  normalizeCredential(nextCredential);
+  await storeWrappedDataKey(nextPassword, rawKey);
 }
 
 export async function lockDataEncryption() {
@@ -164,7 +185,7 @@ export async function disableDataEncryption(password, rawCredential) {
   await lockDataEncryption();
 }
 
-async function deriveWrappingKey(password, credential) {
+async function deriveWrappingKey(password, saltBytes, iterations) {
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(String(password || "").trim()),
@@ -176,8 +197,8 @@ async function deriveWrappingKey(password, credential) {
     {
       name: "PBKDF2",
       hash: "SHA-256",
-      salt: base64ToBytes(credential.saltBase64),
-      iterations: credential.iterations,
+      salt: saltBytes,
+      iterations,
     },
     keyMaterial,
     { name: "AES-GCM", length: 256 },
@@ -192,10 +213,14 @@ function normalizeCredential(value) {
   return credential;
 }
 
-async function unwrapDataKey(wrappingKey, wrapped) {
+async function unwrapLegacyDataKey(wrappingKey, wrapped) {
   if (!wrapped || Number(wrapped.version) !== 2) throw new Error("本地数据密钥格式无效");
   const plaintext = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: base64ToBytes(wrapped.nonceBase64), additionalData: new TextEncoder().encode(DATA_KEY_WRAP_AAD) },
+    {
+      name: "AES-GCM",
+      iv: base64ToBytes(wrapped.nonceBase64),
+      additionalData: new TextEncoder().encode(LEGACY_DATA_KEY_WRAP_AAD),
+    },
     wrappingKey,
     base64ToBytes(wrapped.ciphertextBase64)
   );
@@ -204,8 +229,33 @@ async function unwrapDataKey(wrappingKey, wrapped) {
   return rawKey;
 }
 
-async function storeWrappedDataKey(wrappingKey, rawKey) {
+async function unwrapDataKey(password, wrapped) {
+  if (!wrapped || Number(wrapped.version) !== DATA_KEY_WRAP_VERSION ||
+      String(wrapped.kdf || "") !== DATA_KEY_WRAP_KDF ||
+      Number(wrapped.iterations) !== LOCK_PBKDF2_ITERATIONS) {
+    throw new Error("本地数据密钥格式无效");
+  }
+  const saltBytes = base64ToBytes(wrapped.wrapSaltBase64);
+  const nonce = base64ToBytes(wrapped.nonceBase64);
+  const ciphertext = base64ToBytes(wrapped.ciphertextBase64);
+  if (saltBytes.length !== DATA_KEY_WRAP_SALT_BYTES || nonce.length !== 12 || ciphertext.length !== 48) {
+    throw new Error("本地数据密钥格式无效");
+  }
+  const wrappingKey = await deriveWrappingKey(password, saltBytes, LOCK_PBKDF2_ITERATIONS);
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: nonce, additionalData: new TextEncoder().encode(DATA_KEY_WRAP_AAD) },
+    wrappingKey,
+    ciphertext
+  );
+  const rawKey = new Uint8Array(plaintext);
+  if (rawKey.length !== 32) throw new Error("本地数据密钥长度无效");
+  return rawKey;
+}
+
+async function storeWrappedDataKey(password, rawKey) {
+  const wrapSalt = crypto.getRandomValues(new Uint8Array(DATA_KEY_WRAP_SALT_BYTES));
   const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const wrappingKey = await deriveWrappingKey(password, wrapSalt, LOCK_PBKDF2_ITERATIONS);
   const ciphertext = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv: nonce, additionalData: new TextEncoder().encode(DATA_KEY_WRAP_AAD) },
     wrappingKey,
@@ -213,7 +263,10 @@ async function storeWrappedDataKey(wrappingKey, rawKey) {
   );
   await chrome.storage.local.set({
     [STORAGE_KEY_WRAPPED_ENCRYPTION_KEY]: {
-      version: 2,
+      version: DATA_KEY_WRAP_VERSION,
+      kdf: DATA_KEY_WRAP_KDF,
+      iterations: LOCK_PBKDF2_ITERATIONS,
+      wrapSaltBase64: bytesToBase64(wrapSalt),
       nonceBase64: bytesToBase64(nonce),
       ciphertextBase64: bytesToBase64(new Uint8Array(ciphertext)),
     },
