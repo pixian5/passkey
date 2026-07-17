@@ -317,7 +317,7 @@ async function runAutoSync() {
       hasPayload: Boolean(remoteResponse.payload),
       etag: remoteResponse.etag,
     });
-    target.remoteEtag = remoteResponse.etag;
+    updateRemoteConcurrencyState(target, remoteResponse.etag);
     const remotePayload = remoteResponse.payload;
     const remoteAccounts = remotePayload ? remotePayload.accounts.map(normalizeAccountShape) : [];
     const remotePasskeys = remotePayload ? buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys) : [];
@@ -469,7 +469,7 @@ async function buildRemoteSyncTargetsFromStorage() {
     if (username || password) {
       authHeader = `Basic ${base64EncodeUtf8(`${username}:${password}`)}`;
     }
-    targets.push({ label: "WebDAV", url, authHeader, supportsEtag: false, remoteEtag: null });
+    targets.push({ label: "WebDAV", kind: "webdav", url, authHeader, supportsEtag: false, remoteEtag: null });
   }
 
   if (Boolean(result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER])) {
@@ -481,7 +481,7 @@ async function buildRemoteSyncTargetsFromStorage() {
     const url = new URL("v1/sync/payload", normalizedBase).toString();
     const token = secrets.serverToken;
     const authHeader = token ? `Bearer ${token}` : null;
-    targets.push({ label: "服务器", url, authHeader, supportsEtag: true, remoteEtag: null });
+    targets.push({ label: "服务器", kind: "server", url, authHeader, supportsEtag: true, remoteEtag: null });
   }
 
   logSyncFlow("targets-built", {
@@ -491,6 +491,7 @@ async function buildRemoteSyncTargetsFromStorage() {
       label: item.label,
       url: item.url,
       hasAuthHeader: Boolean(item.authHeader),
+      kind: item.kind === "webdav" ? "webdav" : "server",
       supportsEtag: Boolean(item.supportsEtag),
     })),
   });
@@ -1480,6 +1481,14 @@ async function pullRemotePayload(target) {
   return { payload, etag: response.headers.get("ETag") };
 }
 
+function updateRemoteConcurrencyState(target, etag) {
+  const normalizedEtag = typeof etag === "string" && etag.trim() ? etag : null;
+  target.remoteEtag = normalizedEtag;
+  if (target.kind === "webdav") {
+    target.supportsEtag = Boolean(normalizedEtag);
+  }
+}
+
 async function pushRemotePayload(target, payload, ifMatch = null) {
   const bundle = await buildSyncBundleFromPayload(payload);
   const encryptedBundle = await encryptSyncBundleDocument(bundle, await getOrCreateSyncEncryptionKey());
@@ -1530,14 +1539,14 @@ async function getOrCreateSyncEncryptionKey() {
 async function pushRemotePayloadWithRetry(target, payload) {
   try {
     const pushResult = await pushRemotePayload(target, payload, target.remoteEtag);
-    target.remoteEtag = pushResult.etag;
+    updateRemoteConcurrencyState(target, pushResult.etag);
     return { payload };
   } catch (error) {
     if (!target.supportsEtag || error?.status !== 412) throw error;
   }
 
   const latestResponse = await pullRemotePayload(target);
-  target.remoteEtag = latestResponse.etag;
+  updateRemoteConcurrencyState(target, latestResponse.etag);
   const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
   const localAccounts = Array.isArray(payload.accounts) ? payload.accounts.map(normalizeAccountShape) : [];
   const localPasskeys = buildUnifiedPasskeys(localAccounts, Array.isArray(payload.passkeys) ? payload.passkeys.map(normalizePasskeyShape) : []);
@@ -1556,14 +1565,14 @@ async function pushRemotePayloadWithRetry(target, payload) {
 
   await writeBusinessDataToStore(reconciledPayload);
   const retryResult = await pushRemotePayload(target, reconciledPayload, target.remoteEtag);
-  target.remoteEtag = retryResult.etag;
+  updateRemoteConcurrencyState(target, retryResult.etag);
   return { payload: reconciledPayload };
 }
 
 async function pushRemotePayloadWithMode(target, payload, syncMode) {
   if (syncMode !== SYNC_MODE_MERGE) {
     const pushResult = await pushRemotePayload(target, payload, null);
-    target.remoteEtag = pushResult.etag;
+    updateRemoteConcurrencyState(target, pushResult.etag);
     return { payload };
   }
   return pushRemotePayloadWithRetry(target, payload);

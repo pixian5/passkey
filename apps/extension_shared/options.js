@@ -1300,7 +1300,7 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
       let remotePayload = null;
       try {
         const remoteResponse = await pullRemotePayload(target);
-        target.remoteEtag = remoteResponse.etag;
+        updateRemoteConcurrencyState(target, remoteResponse.etag);
         remotePayload = remoteResponse.payload;
       } catch (error) {
         setStatus(`${target.label} 拉取失败: ${error.message}`);
@@ -1461,7 +1461,7 @@ function buildRemoteSyncTargetsFromDom() {
     if (username || password) {
       authHeader = `Basic ${base64EncodeUtf8(`${username}:${password}`)}`;
     }
-    targets.push({ label: "WebDAV", url, authHeader, supportsEtag: false, remoteEtag: null });
+    targets.push({ label: "WebDAV", kind: "webdav", url, authHeader, supportsEtag: false, remoteEtag: null });
   }
 
   if (dom.syncEnableServer.checked) {
@@ -1480,7 +1480,7 @@ function buildRemoteSyncTargetsFromDom() {
     }
     const token = String(dom.syncServerToken.value || "").trim();
     const authHeader = token ? `Bearer ${token}` : null;
-    targets.push({ label: "服务器", url, authHeader, supportsEtag: true, remoteEtag: null });
+    targets.push({ label: "服务器", kind: "server", url, authHeader, supportsEtag: true, remoteEtag: null });
   }
 
   if (targets.length === 0) {
@@ -1531,6 +1531,14 @@ async function pullRemotePayload(target) {
   };
 }
 
+function updateRemoteConcurrencyState(target, etag) {
+  const normalizedEtag = typeof etag === "string" && etag.trim() ? etag : null;
+  target.remoteEtag = normalizedEtag;
+  if (target.kind === "webdav") {
+    target.supportsEtag = Boolean(normalizedEtag);
+  }
+}
+
 async function pushRemotePayload(target, payload, ifMatch = null) {
   const bundle = await buildSyncBundleFromPayload(payload);
   const encryptedBundle = await encryptSyncBundleDocument(bundle, dom.syncEncryptionKey.value);
@@ -1562,7 +1570,7 @@ async function pushRemotePayload(target, payload, ifMatch = null) {
 async function pushRemotePayloadWithRetry(target, payload) {
   try {
     const pushResult = await pushRemotePayload(target, payload, target.remoteEtag);
-    target.remoteEtag = pushResult.etag;
+    updateRemoteConcurrencyState(target, pushResult.etag);
     return { payload };
   } catch (error) {
     if (!target.supportsEtag || error?.status !== 412) {
@@ -1571,7 +1579,7 @@ async function pushRemotePayloadWithRetry(target, payload) {
   }
 
   const latestResponse = await pullRemotePayload(target);
-  target.remoteEtag = latestResponse.etag;
+  updateRemoteConcurrencyState(target, latestResponse.etag);
   const remotePayload = latestResponse.payload || {
     accounts: [],
     passkeys: [],
@@ -1607,14 +1615,14 @@ async function pushRemotePayloadWithRetry(target, payload) {
 
   await writeBusinessDataToStore(reconciledPayload);
   const retryResult = await pushRemotePayload(target, reconciledPayload, target.remoteEtag);
-  target.remoteEtag = retryResult.etag;
+  updateRemoteConcurrencyState(target, retryResult.etag);
   return { payload: reconciledPayload };
 }
 
 async function pushRemotePayloadRemotePreferred(target, payload) {
   try {
     const pushResult = await pushRemotePayload(target, payload, target.remoteEtag);
-    target.remoteEtag = pushResult.etag;
+    updateRemoteConcurrencyState(target, pushResult.etag);
     return { payload };
   } catch (error) {
     if (!target.supportsEtag || error?.status !== 412) {
@@ -1623,7 +1631,7 @@ async function pushRemotePayloadRemotePreferred(target, payload) {
   }
 
   const latestResponse = await pullRemotePayload(target);
-  target.remoteEtag = latestResponse.etag;
+  updateRemoteConcurrencyState(target, latestResponse.etag);
   const latestPayload = latestResponse.payload || {
     accounts: [],
     passkeys: [],
@@ -1631,14 +1639,15 @@ async function pushRemotePayloadRemotePreferred(target, payload) {
   };
   await writeBusinessDataToStore(latestPayload);
   const retryResult = await pushRemotePayload(target, latestPayload, target.remoteEtag);
-  target.remoteEtag = retryResult.etag;
+  updateRemoteConcurrencyState(target, retryResult.etag);
   return { payload: latestPayload };
 }
 
 async function pushRemotePayloadWithMode(target, payload, syncMode) {
   switch (syncMode) {
     case SYNC_MODE_LOCAL_OVERWRITE_REMOTE: {
-      await pushRemotePayload(target, payload, null);
+      const pushResult = await pushRemotePayload(target, payload, null);
+      updateRemoteConcurrencyState(target, pushResult.etag);
       return { payload };
     }
     case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:

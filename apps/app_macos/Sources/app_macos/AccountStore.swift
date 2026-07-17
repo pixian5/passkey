@@ -255,6 +255,12 @@ final class AccountStore: ObservableObject {
         let changedLocalData: Bool
     }
 
+    private struct ETagPushResult {
+        let payload: SyncBundlePayload
+        let changedLocalData: Bool
+        let etag: String?
+    }
+
     struct RemoteOverwritePreflightResult {
         let unreachableSources: [String]
         let emptySources: [String]
@@ -2181,6 +2187,7 @@ final class AccountStore: ObservableObject {
         let localPayload = buildCurrentSyncPayload()
         var mergedPayload = localPayload
         var selfHostedETag: String?
+        var webDAVETag: String?
 
         if mode != .localOverwriteRemote {
             var remoteAggregate: SyncBundlePayload?
@@ -2210,6 +2217,7 @@ final class AccountStore: ObservableObject {
                         from: resourceURL,
                         authorization: authorization
                     )
+                    webDAVETag = remoteResponse.etag
                     if let remotePayload = remoteResponse.payload {
                         remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: remotePayload)
                     }
@@ -2293,7 +2301,7 @@ final class AccountStore: ObservableObject {
                     mergedPayload = pushResult.payload
                     changed = changed || pushResult.changedLocalData
                 case .localOverwriteRemote:
-                    try await pushRemotePayload(
+                    _ = try await pushRemotePayload(
                         mergedPayload,
                         to: resourceURL,
                         authorization: authorization
@@ -2330,11 +2338,36 @@ final class AccountStore: ObservableObject {
                     username: webdavUsername,
                     password: webdavPassword
                 )
-                try await pushRemotePayload(
-                    mergedPayload,
-                    to: resourceURL,
-                    authorization: authorization
-                )
+                switch mode {
+                case .merge:
+                    let pushResult = try await pushWebDAVPayloadWithRetry(
+                        mergedPayload,
+                        to: resourceURL,
+                        authorization: authorization,
+                        etag: webDAVETag,
+                        historyTitle: "同步冲突后重新合并（WebDAV，\(mode.label)）"
+                    )
+                    webDAVETag = pushResult.etag
+                    mergedPayload = pushResult.payload
+                    changed = changed || pushResult.changedLocalData
+                case .remoteOverwriteLocal:
+                    let pushResult = try await pushWebDAVRemotePayloadWithRetry(
+                        mergedPayload,
+                        to: resourceURL,
+                        authorization: authorization,
+                        etag: webDAVETag,
+                        historyTitle: "远端覆盖本地（WebDAV，\(mode.label)）"
+                    )
+                    webDAVETag = pushResult.etag
+                    mergedPayload = pushResult.payload
+                    changed = changed || pushResult.changedLocalData
+                case .localOverwriteRemote:
+                    webDAVETag = try await pushRemotePayload(
+                        mergedPayload,
+                        to: resourceURL,
+                        authorization: authorization
+                    )
+                }
             } catch {
                 pushErrors.append("WebDAV: \(error.localizedDescription)")
             }
@@ -2742,7 +2775,7 @@ final class AccountStore: ObservableObject {
         to url: URL,
         authorization: String?,
         ifMatch: String? = nil
-    ) async throws {
+    ) async throws -> String? {
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
         request.timeoutInterval = 30
@@ -2773,6 +2806,7 @@ final class AccountStore: ObservableObject {
                 userInfo: [NSLocalizedDescriptionKey: "远端上传失败，HTTP \(http.statusCode)"]
             )
         }
+        return http.value(forHTTPHeaderField: "ETag")
     }
 
     private func pushSelfHostedPayloadWithRetry(
@@ -2783,20 +2817,69 @@ final class AccountStore: ObservableObject {
         historyTitle: String
     ) async throws -> SelfHostedPushResult {
         do {
-            try await pushRemotePayload(payload, to: url, authorization: authorization, ifMatch: etag)
+            _ = try await pushRemotePayload(payload, to: url, authorization: authorization, ifMatch: etag)
             return SelfHostedPushResult(payload: payload, changedLocalData: false)
         } catch SyncRemoteError.preconditionFailed {
             let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
             let latestPayload = latestResponse.payload ?? SyncBundlePayload(accounts: [], folders: [], passkeys: [])
             let reconciledPayload = mergePayloads(local: payload, remote: latestPayload)
             let changed = applyMergedPayloadIfNeeded(reconciledPayload, historyTitle: historyTitle)
-            try await pushRemotePayload(
+            _ = try await pushRemotePayload(
                 reconciledPayload,
                 to: url,
                 authorization: authorization,
                 ifMatch: latestResponse.etag
             )
             return SelfHostedPushResult(payload: reconciledPayload, changedLocalData: changed)
+        }
+    }
+
+    private func pushWebDAVPayloadWithRetry(
+        _ payload: SyncBundlePayload,
+        to url: URL,
+        authorization: String?,
+        etag: String?,
+        historyTitle: String
+    ) async throws -> ETagPushResult {
+        do {
+            let nextETag = try await pushRemotePayload(payload, to: url, authorization: authorization, ifMatch: etag)
+            return ETagPushResult(payload: payload, changedLocalData: false, etag: nextETag)
+        } catch SyncRemoteError.preconditionFailed {
+            let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
+            let latestPayload = latestResponse.payload ?? emptySyncPayload()
+            let reconciledPayload = mergePayloads(local: payload, remote: latestPayload)
+            let changed = applyMergedPayloadIfNeeded(reconciledPayload, historyTitle: historyTitle)
+            let nextETag = try await pushRemotePayload(
+                reconciledPayload,
+                to: url,
+                authorization: authorization,
+                ifMatch: latestResponse.etag
+            )
+            return ETagPushResult(payload: reconciledPayload, changedLocalData: changed, etag: nextETag)
+        }
+    }
+
+    private func pushWebDAVRemotePayloadWithRetry(
+        _ payload: SyncBundlePayload,
+        to url: URL,
+        authorization: String?,
+        etag: String?,
+        historyTitle: String
+    ) async throws -> ETagPushResult {
+        do {
+            let nextETag = try await pushRemotePayload(payload, to: url, authorization: authorization, ifMatch: etag)
+            return ETagPushResult(payload: payload, changedLocalData: false, etag: nextETag)
+        } catch SyncRemoteError.preconditionFailed {
+            let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
+            let latestPayload = latestResponse.payload ?? emptySyncPayload()
+            let changed = applyMergedPayloadIfNeeded(latestPayload, historyTitle: historyTitle)
+            let nextETag = try await pushRemotePayload(
+                latestPayload,
+                to: url,
+                authorization: authorization,
+                ifMatch: latestResponse.etag
+            )
+            return ETagPushResult(payload: latestPayload, changedLocalData: changed, etag: nextETag)
         }
     }
 
@@ -2808,13 +2891,13 @@ final class AccountStore: ObservableObject {
         historyTitle: String
     ) async throws -> SelfHostedPushResult {
         do {
-            try await pushRemotePayload(payload, to: url, authorization: authorization, ifMatch: etag)
+            _ = try await pushRemotePayload(payload, to: url, authorization: authorization, ifMatch: etag)
             return SelfHostedPushResult(payload: payload, changedLocalData: false)
         } catch SyncRemoteError.preconditionFailed {
             let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
             let latestPayload = latestResponse.payload ?? emptySyncPayload()
             let changed = applyMergedPayloadIfNeeded(latestPayload, historyTitle: historyTitle)
-            try await pushRemotePayload(
+            _ = try await pushRemotePayload(
                 latestPayload,
                 to: url,
                 authorization: authorization,
