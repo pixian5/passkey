@@ -1295,6 +1295,13 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
     ? localStored.folders.map(normalizeFolderShape)
     : [];
 
+  try {
+    await saveLocalSafetySnapshot(`同步前自动备份（${getSyncModeHistoryLabel(normalizedSyncMode)}）`);
+  } catch (error) {
+    setStatus(`同步已停止，无法创建本地安全备份：${error.message}`);
+    return;
+  }
+
   let mergedAccounts = localAccounts;
   let mergedPasskeys = localPasskeys;
   let mergedFolders = localFolders;

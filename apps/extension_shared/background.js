@@ -67,6 +67,7 @@ const STORAGE_KEY_SYNC_WEBDAV_USERNAME = "pass.sync.webdav.username.v2";
 const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
 const STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
+const STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS = "pass.localSafetySnapshots.v1";
 const CONTEXT_MENU_ID_ALL_ACCOUNTS = "pass.context.all_accounts";
 const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
 const FIXED_NEW_ACCOUNT_FOLDER_NAME = "新账号";
@@ -299,6 +300,13 @@ async function runAutoSync() {
     ? localStored.folders.map(normalizeFolderShape)
     : [];
 
+  try {
+    await saveLocalSafetySnapshot("自动同步前自动备份");
+  } catch (error) {
+    logSyncFlow("auto-sync-aborted-backup-failed", { message: error?.message || String(error || "") });
+    return;
+  }
+
   let mergedAccounts = localAccounts;
   let mergedPasskeys = localPasskeys;
   let mergedFolders = localFolders;
@@ -403,6 +411,18 @@ async function readBusinessDataFromStore() {
     passkeys: Array.isArray(stored.passkeys) ? stored.passkeys : [],
     folders: Array.isArray(stored.folders) ? stored.folders : [],
   };
+}
+
+async function saveLocalSafetySnapshot(reason) {
+  const payload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+  const result = await chrome.storage.local.get([STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]);
+  const snapshots = Array.isArray(result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS])
+    ? result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]
+    : [];
+  snapshots.unshift({ createdAtMs: Date.now(), reason: String(reason || "同步前备份"), payload });
+  await chrome.storage.local.set({
+    [STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]: snapshots.slice(0, 5),
+  });
 }
 
 function normalizeSyncPayloadShape(payload) {
