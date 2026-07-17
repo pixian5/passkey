@@ -47,6 +47,7 @@ const STORAGE_KEY_SYNC_WEBDAV_USERNAME = "pass.sync.webdav.username.v2";
 const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
 const STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
+const STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS = "pass.localSafetySnapshots.v1";
 const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "https://or.sbbz.tech:5443";
 const SYNC_MODE_MERGE = "merge";
 const SYNC_MODE_REMOTE_OVERWRITE_LOCAL = "remoteOverwriteLocal";
@@ -109,6 +110,9 @@ const dom = {
   syncMergeBtn: document.getElementById("syncMergeBtn"),
   syncRemoteOverwriteLocalBtn: document.getElementById("syncRemoteOverwriteLocalBtn"),
   syncLocalOverwriteRemoteBtn: document.getElementById("syncLocalOverwriteRemoteBtn"),
+  syncLoadVersionsBtn: document.getElementById("syncLoadVersionsBtn"),
+  syncVersionsStatus: document.getElementById("syncVersionsStatus"),
+  syncVersionsList: document.getElementById("syncVersionsList"),
   syncWebdavFields: document.getElementById("syncWebdavFields"),
   syncServerFields: document.getElementById("syncServerFields"),
   syncWebdavBaseUrl: document.getElementById("syncWebdavBaseUrl"),
@@ -234,6 +238,7 @@ async function init() {
     if (!shouldContinue) return;
     await syncNowWithRemote(SYNC_MODE_LOCAL_OVERWRITE_REMOTE);
   });
+  dom.syncLoadVersionsBtn.addEventListener("click", () => void loadServerSyncVersions());
   dom.deviceName.addEventListener("input", () => {
     scheduleDeviceNameSave();
   });
@@ -1480,7 +1485,15 @@ function buildRemoteSyncTargetsFromDom() {
     }
     const token = String(dom.syncServerToken.value || "").trim();
     const authHeader = token ? `Bearer ${token}` : null;
-    targets.push({ label: "服务器", kind: "server", url, authHeader, supportsEtag: true, remoteEtag: null });
+    targets.push({
+      label: "服务器",
+      kind: "server",
+      url,
+      versionsUrl: new URL("v1/sync/versions", normalizedBase).toString(),
+      authHeader,
+      supportsEtag: true,
+      remoteEtag: null,
+    });
   }
 
   if (targets.length === 0) {
@@ -1529,6 +1542,96 @@ async function pullRemotePayload(target) {
     payload,
     etag: response.headers.get("ETag"),
   };
+}
+
+async function loadServerSyncVersions() {
+  dom.syncVersionsStatus.textContent = "正在读取…";
+  dom.syncVersionsList.replaceChildren();
+  try {
+    if (!(await saveSyncSettings())) throw new Error("同步服务器配置无效");
+    const targets = buildRemoteSyncTargetsFromDom();
+    const target = targets?.find((item) => item.kind === "server");
+    if (!target) throw new Error("请先启用并配置自建服务器");
+    const headers = { Accept: "application/json" };
+    if (target.authHeader) headers.Authorization = target.authHeader;
+    const response = await fetch(target.versionsUrl, { method: "GET", headers, cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const parsed = await response.json();
+    const versions = Array.isArray(parsed?.versions) ? parsed.versions : [];
+    renderServerSyncVersions(target, versions);
+    dom.syncVersionsStatus.textContent = `共 ${versions.length} 个快照`;
+  } catch (error) {
+    dom.syncVersionsStatus.textContent = `读取失败：${error.message}`;
+  }
+}
+
+function renderServerSyncVersions(target, versions) {
+  dom.syncVersionsList.replaceChildren();
+  if (versions.length === 0) {
+    dom.syncVersionsList.textContent = "服务器暂无可恢复快照";
+    return;
+  }
+  for (const version of versions) {
+    const row = document.createElement("div");
+    row.className = "sync-version-row";
+    const summary = document.createElement("span");
+    summary.textContent = `版本 ${version.versionId} · 导出 ${formatTime(version.exportedAtMs)} · 保存 ${formatTime(version.savedAtMs)} · ${String(version.payloadSha256 || "").slice(0, 12)}`;
+    const restoreButton = document.createElement("button");
+    restoreButton.type = "button";
+    restoreButton.textContent = "恢复此版本";
+    restoreButton.addEventListener("click", () => void restoreServerSyncVersion(target, version));
+    row.append(summary, restoreButton);
+    dom.syncVersionsList.append(row);
+  }
+}
+
+async function saveLocalSafetySnapshot(reason) {
+  const payload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+  const result = await chrome.storage.local.get([STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]);
+  const snapshots = Array.isArray(result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS])
+    ? result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]
+    : [];
+  snapshots.unshift({
+    createdAtMs: Date.now(),
+    reason: String(reason || "同步前备份"),
+    payload,
+  });
+  await chrome.storage.local.set({
+    [STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]: snapshots.slice(0, 5),
+  });
+}
+
+async function restoreServerSyncVersion(target, version) {
+  const versionId = Number(version?.versionId);
+  if (!Number.isInteger(versionId) || versionId <= 0) return;
+  const confirmed = window.confirm(
+    `确定恢复服务器快照版本 ${versionId} 吗？\n\n恢复前会保存当前本机数据；恢复后本机数据将替换为该快照内容。`
+  );
+  if (!confirmed) return;
+  dom.syncVersionsStatus.textContent = `正在恢复版本 ${versionId}…`;
+  try {
+    await saveLocalSafetySnapshot(`恢复服务器快照版本 ${versionId} 前`);
+    const currentResponse = await pullRemotePayload(target);
+    if (!currentResponse.payload || !currentResponse.etag) {
+      throw new Error("服务器当前没有可用于并发保护的 ETag");
+    }
+    const headers = { Accept: "application/json", "If-Match": currentResponse.etag };
+    if (target.authHeader) headers.Authorization = target.authHeader;
+    const restoreUrl = `${target.versionsUrl}/${encodeURIComponent(versionId)}/restore`;
+    const response = await fetch(restoreUrl, { method: "POST", headers, cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const restoredRemote = await pullRemotePayload(target);
+    if (!restoredRemote.payload) throw new Error("恢复后服务器没有返回有效数据");
+    const before = await readBusinessDataFromStore();
+    await writeBusinessDataToStore(restoredRemote.payload);
+    await appendHistory(
+      `恢复服务器快照版本 ${versionId}：账号 ${before.accounts.length}->${restoredRemote.payload.accounts.length}，通行密钥 ${before.passkeys.length}->${restoredRemote.payload.passkeys.length}`
+    );
+    await refresh({ silent: true });
+    dom.syncVersionsStatus.textContent = `版本 ${versionId} 恢复完成`;
+  } catch (error) {
+    dom.syncVersionsStatus.textContent = `恢复失败：${error.message}`;
+  }
 }
 
 function updateRemoteConcurrencyState(target, etag) {

@@ -96,6 +96,35 @@ label {
   gap: 8px;
 }
 
+.sync-restore-panel {
+  margin: 8px 0;
+  padding: 10px;
+  border: 1px dashed #bfd4f4;
+  border-radius: 10px;
+  background: rgba(247, 251, 255, 0.75);
+}
+
+.sync-restore-toolbar,
+.sync-version-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sync-versions-list {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.sync-version-row {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+}
+
 .lock-settings {
   margin-top: 12px;
   padding-top: 10px;

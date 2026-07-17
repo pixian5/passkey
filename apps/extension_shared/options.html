@@ -36,6 +36,14 @@
           <p class="hint">
             合并：保留双方变更；云端覆盖本地：用所有已启用远端的汇总结果替换本机；本地覆盖云端：直接把本机数据推到所有已启用远端。
           </p>
+          <div class="sync-restore-panel">
+            <div class="sync-restore-toolbar">
+              <button id="syncLoadVersionsBtn" type="button">读取服务器快照</button>
+              <span id="syncVersionsStatus" class="hint"></span>
+            </div>
+            <div id="syncVersionsList" class="sync-versions-list"></div>
+            <p class="hint">恢复前会先保存本机安全快照；恢复只支持自建服务器，并要求当前 ETag 未发生变化。</p>
+          </div>
           <div class="row">
             <label for="syncAutoInterval">自动同步</label>
             <select id="syncAutoInterval">
