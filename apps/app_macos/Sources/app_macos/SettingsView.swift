@@ -81,7 +81,7 @@ struct SettingsView: View {
                             leadingToggle("自建服务器", isOn: $store.syncEnableSelfHostedServer)
                         }
 
-                        Text("主同步源用于“云端覆盖本地”和冲突裁决；其他已启用源作为镜像备份，合并结果会回写所有源。")
+                        Text("主同步源用于“云端覆盖本地”和主源写入顺序；合并仍按时间戳与设备名规则裁决，其他源作为镜像备份。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
