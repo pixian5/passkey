@@ -1523,11 +1523,7 @@ async function pushRemotePayload(target, payload, ifMatch = null) {
 
 async function getOrCreateSyncEncryptionKey() {
   const secrets = await migrateLegacySyncSecrets();
-  const existing = normalizeSyncEncryptionKey(secrets.encryptionKey);
-  if (existing) return existing;
-  const generated = generateSyncEncryptionKey();
-  await setSyncSecrets({ ...secrets, encryptionKey: generated });
-  return generated;
+  return normalizeSyncEncryptionKey(secrets.encryptionKey);
 }
 
 async function pushRemotePayloadWithRetry(target, payload) {

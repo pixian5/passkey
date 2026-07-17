@@ -2840,7 +2840,7 @@ final class AccountStore: ObservableObject {
         serverAuthToken = readSecret(account: SecretKeys.serverTokenAccount)
         syncEncryptionKey = readSecret(account: SecretKeys.syncEncryptionKeyAccount)
         if !PassSyncCrypto.isValidKeyString(syncEncryptionKey) {
-            syncEncryptionKey = PassSyncCrypto.generateKeyString()
+            syncEncryptionKey = ""
             _ = saveSecret(syncEncryptionKey, account: SecretKeys.syncEncryptionKeyAccount)
         }
         isLoadingSyncPreferences = false
@@ -3927,20 +3927,14 @@ final class AccountStore: ObservableObject {
         kind: String
     ) {
         let plaintext: Data
-        if let envelope = try? decoder.decode(PassSyncEncryptedEnvelope.self, from: data),
-           envelope.schema == PassSyncCrypto.schema
-        {
-            do {
-                plaintext = try PassSyncCrypto.decrypt(envelope, keyString: syncEncryptionKey)
-            } catch {
-                throw NSError(
-                    domain: "AccountStore.SyncBundle",
-                    code: 2,
-                    userInfo: [NSLocalizedDescriptionKey: "同步包解密失败，请确认所有设备使用同一同步加密密钥"]
-                )
-            }
-        } else {
-            plaintext = data
+        do {
+            plaintext = try PassSyncCrypto.decrypt(data, keyString: syncEncryptionKey)
+        } catch {
+            throw NSError(
+                domain: "AccountStore.SyncBundle",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "同步包解密失败，请确认所有设备使用同一同步加密密钥或保持留空"]
+            )
         }
 
         if let bundle = try? decoder.decode(SyncBundleV2.self, from: plaintext),
@@ -3959,12 +3953,11 @@ final class AccountStore: ObservableObject {
     private func encodeEncryptedSyncBundle(payload: SyncBundlePayload) throws -> Data {
         let bundle = buildSyncBundleDocument(payload: payload)
         let plaintext = try encoder.encode(bundle)
-        let envelope = try PassSyncCrypto.encrypt(
+        return try PassSyncCrypto.encrypt(
             plaintext,
             keyString: syncEncryptionKey,
             exportedAtMs: bundle.exportedAtMs
         )
-        return try encoder.encode(envelope)
     }
 
     func generateSyncEncryptionKey() {
@@ -3973,6 +3966,11 @@ final class AccountStore: ObservableObject {
     }
 
     func copySyncEncryptionKey() {
+        let trimmed = PassSyncCrypto.normalizedKeyString(syncEncryptionKey)
+        guard !trimmed.isEmpty else {
+            statusMessage = "同步加密密钥为空，当前使用明文同步"
+            return
+        }
         guard PassSyncCrypto.isValidKeyString(syncEncryptionKey) else {
             statusMessage = "同步加密密钥无效"
             return

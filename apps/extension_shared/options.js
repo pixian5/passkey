@@ -559,8 +559,7 @@ async function loadSyncSettings() {
   );
   dom.syncServerBaseUrl.value = normalizedServerBaseUrl;
   dom.syncServerToken.value = secrets.serverToken;
-  const syncEncryptionKey = normalizeSyncEncryptionKey(secrets.encryptionKey)
-    || generateSyncEncryptionKey();
+  const syncEncryptionKey = normalizeSyncEncryptionKey(secrets.encryptionKey);
   dom.syncEncryptionKey.value = syncEncryptionKey;
   if (syncEncryptionKey !== secrets.encryptionKey) {
     await setSyncSecrets({ ...secrets, encryptionKey: syncEncryptionKey });
@@ -836,8 +835,8 @@ async function persistSyncSettings({ showStatus = true } = {}) {
     serverToken: String(dom.syncServerToken.value || "").trim(),
     encryptionKey: normalizeSyncEncryptionKey(dom.syncEncryptionKey.value),
   };
-  if (!nextSecrets.encryptionKey) {
-    if (showStatus) setStatus("同步加密密钥无效，请重新生成或输入其他设备的密钥");
+  if (dom.syncEncryptionKey.value.trim() && !nextSecrets.encryptionKey) {
+    if (showStatus) setStatus("同步加密密钥无效，留空将不使用加密");
     return;
   }
   await chrome.storage.local.set(nextSettings);

@@ -79,11 +79,11 @@ class PayloadRepository:
                     schema = json.loads(row["payload_json"]).get("schema")
                 except (json.JSONDecodeError, AttributeError):
                     schema = None
-                if schema != "pass.sync.encrypted.v1":
+                if schema not in {"pass.sync.encrypted.v1", "pass.sync.bundle.v2"}:
                     plaintext_scopes.append(row["scope"])
             if plaintext_scopes:
                 connection.executemany("DELETE FROM payloads WHERE scope = ?1;", [(scope,) for scope in plaintext_scopes])
-                LOGGER.warning("Removed %s legacy plaintext sync payload(s)", len(plaintext_scopes))
+                LOGGER.warning("Removed %s legacy unsupported payload(s)", len(plaintext_scopes))
 
     def get(self, scope: str) -> StoredPayload | None:
         with self._connect() as connection:
@@ -404,25 +404,28 @@ def parse_and_validate_bundle(raw_body: bytes) -> tuple[str, str, int]:
 
     if not isinstance(parsed, dict):
         raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_BUNDLE", "根节点必须是对象。")
-    if parsed.get("schema") != "pass.sync.encrypted.v1":
+
+    schema = parsed.get("schema")
+    if schema not in {"pass.sync.encrypted.v1", "pass.sync.bundle.v2"}:
         raise RequestError(
             HTTPStatus.BAD_REQUEST,
-            "ENCRYPTION_REQUIRED",
-            "服务端仅接受 pass.sync.encrypted.v1 端到端加密信封。",
+            "INVALID_SCHEMA",
+            "服务端仅接受 pass.sync.encrypted.v1 或 pass.sync.bundle.v2。",
         )
-    if parsed.get("cipher") != "AES-256-GCM":
-        raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_CIPHER", "仅支持 AES-256-GCM。")
 
-    for field_name, minimum_bytes in (("nonceBase64", 12), ("ciphertextBase64", 17)):
-        value = parsed.get(field_name)
-        if not isinstance(value, str):
-            raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_ENVELOPE", f"{field_name} 必须是 Base64 字符串。")
-        try:
-            decoded = base64.b64decode(value, validate=True)
-        except (ValueError, binascii.Error) as exc:
-            raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_ENVELOPE", f"{field_name} 不是合法 Base64。") from exc
-        if len(decoded) < minimum_bytes:
-            raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_ENVELOPE", f"{field_name} 长度不足。")
+    if schema == "pass.sync.encrypted.v1":
+        if parsed.get("cipher") != "AES-256-GCM":
+            raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_CIPHER", "仅支持 AES-256-GCM。")
+        for field_name, minimum_bytes in (("nonceBase64", 12), ("ciphertextBase64", 17)):
+            value = parsed.get(field_name)
+            if not isinstance(value, str):
+                raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_ENVELOPE", f"{field_name} 必须是 Base64 字符串。")
+            try:
+                decoded = base64.b64decode(value, validate=True)
+            except (ValueError, binascii.Error) as exc:
+                raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_ENVELOPE", f"{field_name} 不是合法 Base64。") from exc
+            if len(decoded) < minimum_bytes:
+                raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_ENVELOPE", f"{field_name} 长度不足。")
 
     exported_at_ms = parsed.get("exportedAtMs")
     if not isinstance(exported_at_ms, int):

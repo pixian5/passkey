@@ -113,7 +113,7 @@ class PassSyncServerTests(unittest.TestCase):
 
     def test_rejects_plaintext_bundle(self) -> None:
         plaintext = json.dumps({
-            "schema": "pass.sync.bundle.v2",
+            "schema": "pass.sync.bundle.legacy",
             "exportedAtMs": 1,
             "source": {},
             "payload": {"accounts": [], "folders": [], "passkeys": []},
@@ -131,6 +131,38 @@ class PassSyncServerTests(unittest.TestCase):
         self.assertEqual(context.exception.code, 400)
         context.exception.close()
 
+    def test_accepts_plaintext_bundle_v2(self) -> None:
+        plaintext = json.dumps({
+            "schema": "pass.sync.bundle.v2",
+            "exportedAtMs": 1_777_777_777_777,
+            "source": {"app": "pass-extension", "version": "0.1.9"},
+            "payload": {"accounts": [], "folders": [], "passkeys": []},
+        }).encode("utf-8")
+        with self.request(
+            "PUT",
+            "/v1/sync/payload",
+            body=plaintext,
+            headers={
+                "Authorization": "Bearer secret-token",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        ) as response:
+            self.assertEqual(response.status, 200)
+            etag = response.headers["ETag"]
+            self.assertTrue(etag)
+
+        with self.request(
+            "GET",
+            "/v1/sync/payload",
+            headers={"Authorization": "Bearer secret-token"},
+        ) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers["ETag"], etag)
+            parsed = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(parsed["schema"], "pass.sync.bundle.v2")
+        self.assertEqual(parsed["payload"]["accounts"], [])
+
     def test_startup_removes_legacy_plaintext_payload(self) -> None:
         self.server.shutdown()
         self.server.server_close()
@@ -143,7 +175,7 @@ class PassSyncServerTests(unittest.TestCase):
             )
             connection.execute(
                 "INSERT INTO payloads VALUES (?, ?, ?, ?, ?, ?)",
-                ("default", '"old"', json.dumps({"schema": "pass.sync.bundle.v2", "payload": {}}), "old", 1, 1),
+                ("default", '"old"', json.dumps({"schema": "pass.sync.unknown", "payload": {}}), "old", 1, 1),
             )
         config = AppConfig(host="127.0.0.1", port=0, db_path=db_path, token_scopes={"secret-token": "default"})
         self.server = build_server(config)

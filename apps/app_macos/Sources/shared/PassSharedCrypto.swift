@@ -73,6 +73,7 @@ struct PassSyncEncryptedEnvelope: Codable {
 
 enum PassSyncCrypto {
     static let schema = "pass.sync.encrypted.v1"
+    static let plaintextSchema = "pass.sync.bundle.v2"
     private static let cipher = "AES-256-GCM"
 
     static func generateKeyString() -> String {
@@ -80,24 +81,68 @@ enum PassSyncCrypto {
         return key.withUnsafeBytes { Data($0) }.base64URLEncodedString()
     }
 
-    static func isValidKeyString(_ value: String) -> Bool {
-        Data(base64URLString: value.trimmingCharacters(in: .whitespacesAndNewlines))?.count == 32
+    static func normalizedKeyString(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    static func encrypt(_ plaintext: Data, keyString: String, exportedAtMs: Int64) throws -> PassSyncEncryptedEnvelope {
-        let key = try symmetricKey(from: keyString)
-        let sealed = try AES.GCM.seal(plaintext, using: key, authenticating: Data(schema.utf8))
+    static func isEncryptionEnabled(_ value: String) -> Bool {
+        isValidKeyString(value)
+    }
+
+    static func isValidKeyString(_ value: String) -> Bool {
+        normalizedKeyString(value).isEmpty
+            || Data(base64URLString: normalizedKeyString(value))?.count == 32
+    }
+
+    static func encrypt(_ plaintext: Data, keyString: String, exportedAtMs: Int64) throws -> Data {
+        let key = normalizedKeyString(keyString)
+        if key.isEmpty {
+            return plaintext
+        }
+        guard isValidKeyString(key) else {
+            throw NSError(
+                domain: "PassSyncCrypto",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "同步加密密钥无效，必须是 256 位密钥"]
+            )
+        }
+        let symmetric = SymmetricKey(data: Data(base64URLString: key)!)
+        let sealed = try AES.GCM.seal(plaintext, using: symmetric, authenticating: Data(schema.utf8))
         let ciphertextAndTag = sealed.ciphertext + sealed.tag
-        return PassSyncEncryptedEnvelope(
+        let envelope = PassSyncEncryptedEnvelope(
             schema: schema,
             exportedAtMs: exportedAtMs,
             cipher: cipher,
             nonceBase64: Data(sealed.nonce).base64EncodedString(),
             ciphertextBase64: ciphertextAndTag.base64EncodedString()
         )
+        return try JSONEncoder().encode(envelope)
     }
 
-    static func decrypt(_ envelope: PassSyncEncryptedEnvelope, keyString: String) throws -> Data {
+    static func decrypt(_ data: Data, keyString: String) throws -> Data {
+        // 明文 bundle 直接返回
+        if let probe = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let schemaValue = probe["schema"] as? String,
+           schemaValue == plaintextSchema
+        {
+            return data
+        }
+        let key = normalizedKeyString(keyString)
+        if key.isEmpty {
+            throw NSError(
+                domain: "PassSyncCrypto",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "该同步包为加密信封，但当前未配置同步加密密钥"]
+            )
+        }
+        guard isValidKeyString(key) else {
+            throw NSError(
+                domain: "PassSyncCrypto",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "同步加密密钥无效，必须是 256 位密钥"]
+            )
+        }
+        let envelope = try JSONDecoder().decode(PassSyncEncryptedEnvelope.self, from: data)
         guard envelope.schema == schema, envelope.cipher == cipher,
               let nonceData = Data(base64Encoded: envelope.nonceBase64),
               let combined = Data(base64Encoded: envelope.ciphertextBase64),
@@ -109,20 +154,8 @@ enum PassSyncCrypto {
         let ciphertext = combined.dropLast(16)
         let tag = combined.suffix(16)
         let sealed = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag)
-        return try AES.GCM.open(sealed, using: symmetricKey(from: keyString), authenticating: Data(schema.utf8))
-    }
-
-    private static func symmetricKey(from value: String) throws -> SymmetricKey {
-        guard let data = Data(base64URLString: value.trimmingCharacters(in: .whitespacesAndNewlines)),
-              data.count == 32
-        else {
-            throw NSError(
-                domain: "PassSyncCrypto",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "同步加密密钥无效，必须是 256 位密钥"]
-            )
-        }
-        return SymmetricKey(data: data)
+        let symmetric = SymmetricKey(data: Data(base64URLString: key)!)
+        return try AES.GCM.open(sealed, using: symmetric, authenticating: Data(schema.utf8))
     }
 }
 

@@ -1,4 +1,5 @@
 export const SYNC_ENCRYPTED_SCHEMA_V1 = "pass.sync.encrypted.v1";
+export const SYNC_PLAINTEXT_SCHEMA = "pass.sync.bundle.v2";
 
 export function generateSyncEncryptionKey() {
   return bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
@@ -6,16 +7,25 @@ export function generateSyncEncryptionKey() {
 
 export function normalizeSyncEncryptionKey(value) {
   const normalized = String(value || "").trim();
+  if (!normalized) return "";
   return base64UrlToBytes(normalized).length === 32 ? normalized : "";
 }
 
+export function isSyncEncryptionEnabled(rawKey) {
+  return Boolean(normalizeSyncEncryptionKey(rawKey));
+}
+
 export async function encryptSyncBundleDocument(document, rawKey) {
-  const key = await importSyncKey(rawKey, ["encrypt"]);
+  const key = normalizeSyncEncryptionKey(rawKey);
+  if (!key) {
+    return { ...document, schema: document?.schema || SYNC_PLAINTEXT_SCHEMA };
+  }
+  const imported = await importSyncKey(key, ["encrypt"]);
   const nonce = crypto.getRandomValues(new Uint8Array(12));
   const plaintext = new TextEncoder().encode(JSON.stringify(document));
   const ciphertext = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv: nonce, additionalData: new TextEncoder().encode(SYNC_ENCRYPTED_SCHEMA_V1) },
-    key,
+    imported,
     plaintext
   );
   return {
@@ -28,23 +38,30 @@ export async function encryptSyncBundleDocument(document, rawKey) {
 }
 
 export async function decryptSyncBundleDocument(envelope, rawKey) {
-  if (String(envelope?.schema || "") !== SYNC_ENCRYPTED_SCHEMA_V1) {
-    return envelope;
+  const schema = String(envelope?.schema || "");
+  if (schema === SYNC_PLAINTEXT_SCHEMA) return envelope;
+  if (schema !== SYNC_ENCRYPTED_SCHEMA_V1) {
+    throw new Error("不支持的同步包格式");
   }
-  const key = await importSyncKey(rawKey, ["decrypt"]);
+  const key = normalizeSyncEncryptionKey(rawKey);
+  if (!key) {
+    throw new Error("该同步包为加密信封，但当前未配置同步加密密钥");
+  }
   if (envelope?.cipher !== "AES-256-GCM") throw new Error("不支持的同步加密算法");
   try {
+    const imported = await importSyncKey(key, ["decrypt"]);
     const plaintext = await crypto.subtle.decrypt(
       {
         name: "AES-GCM",
         iv: base64ToBytes(envelope.nonceBase64),
         additionalData: new TextEncoder().encode(SYNC_ENCRYPTED_SCHEMA_V1),
       },
-      key,
+      imported,
       base64ToBytes(envelope.ciphertextBase64)
     );
     return JSON.parse(new TextDecoder().decode(plaintext));
-  } catch {
+  } catch (error) {
+    if (String(error?.message || "").includes("同步")) throw error;
     throw new Error("同步包解密失败，请确认所有设备使用同一同步加密密钥");
   }
 }

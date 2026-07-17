@@ -138,7 +138,7 @@ struct SettingsView: View {
                         HStack(spacing: 8) {
                             Text("同步加密密钥")
                                 .frame(width: labelColumnWidth, alignment: .leading)
-                            TextField("所有设备必须填写同一密钥", text: $store.syncEncryptionKey)
+                            TextField("留空则不同步加密", text: $store.syncEncryptionKey)
                                 .textFieldStyle(.roundedBorder)
                             Button("生成") {
                                 store.generateSyncEncryptionKey()
@@ -150,7 +150,7 @@ struct SettingsView: View {
                             .buttonStyle(.bordered)
                         }
 
-                        Text("同步内容使用 AES-256-GCM 端到端加密；访问令牌只负责服务器认证，不能解密同步数据。")
+                        Text("留空时使用明文同步（仅推荐本地局域网/受信环境）；填写后使用 AES-256-GCM 端到端加密，所有设备必须填写同一值。访问令牌只负责服务器认证，不能解密同步数据。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
