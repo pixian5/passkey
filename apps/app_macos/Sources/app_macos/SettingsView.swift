@@ -153,7 +153,7 @@ struct SettingsView: View {
                             .buttonStyle(.bordered)
                         }
 
-                        Text("留空时使用明文同步（仅推荐本地局域网/受信环境）；填写后使用 AES-256-GCM 端到端加密，所有设备必须填写同一值。访问令牌只负责服务器认证，不能解密同步数据。")
+                        Text("远程同步和同步包导出必须填写 256 位密钥，并在所有设备使用同一值。同步使用 AES-256-GCM 端到端加密，服务器无法读取数据；访问令牌只负责服务器认证。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 

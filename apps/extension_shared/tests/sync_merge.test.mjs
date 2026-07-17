@@ -94,3 +94,22 @@ test("永久删除墓碑不会被旧设备的活动记录重新生成", () => {
   assert.equal(merged.isDeleted, true);
   assert.equal(merged.isPermanentlyDeleted, true);
 });
+
+test("同一稳定 recordId 但历史 accountId 不同的记录会合并", () => {
+  const left = helpers.normalizeAccountShape({
+    accountId: "legacy-account-a",
+    recordId: "stable-record-1",
+    password: "left",
+  });
+  const right = helpers.normalizeAccountShape({
+    accountId: "legacy-account-b",
+    recordId: "stable-record-1",
+    password: "right",
+    passwordUpdatedAtMs: 2,
+    updatedAtMs: 2,
+  });
+  const merged = mergeAccountCollections([left], [right], helpers);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].recordId, "stable-record-1");
+  assert.equal(merged[0].password, "right");
+});

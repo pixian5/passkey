@@ -491,6 +491,23 @@ function syncPayloadEquals(lhs, rhs) {
   return JSON.stringify(normalizeSyncPayloadShape(lhs)) === JSON.stringify(normalizeSyncPayloadShape(rhs));
 }
 
+function countSyncAccountConflicts(localAccounts, remoteAccounts) {
+  const localByKey = new Map();
+  for (const account of localAccounts || []) {
+    const key = String(account?.recordId || account?.accountId || "").trim().toLowerCase();
+    if (key) localByKey.set(key, account);
+  }
+  const fields = ["username", "password", "totpSecret", "recoveryCodes", "note", "isDeleted"];
+  let count = 0;
+  for (const remote of remoteAccounts || []) {
+    const key = String(remote?.recordId || remote?.accountId || "").trim().toLowerCase();
+    const local = localByKey.get(key);
+    if (!local) continue;
+    count += fields.filter((field) => String(local[field] ?? "") !== String(remote[field] ?? "")).length;
+  }
+  return count;
+}
+
 async function writeBusinessDataToStore({ accounts, passkeys, folders }) {
   const nextPayload = normalizeSyncPayloadShape({ accounts, passkeys, folders });
   const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
@@ -847,7 +864,7 @@ async function persistSyncSettings({ showStatus = true } = {}) {
     encryptionKey: normalizeSyncEncryptionKey(dom.syncEncryptionKey.value),
   };
   if (dom.syncEncryptionKey.value.trim() && !nextSecrets.encryptionKey) {
-    if (showStatus) setStatus("同步加密密钥无效，留空将不使用加密");
+    if (showStatus) setStatus("同步加密密钥无效，远程同步必须配置 256 位密钥");
     return false;
   }
   await chrome.storage.local.set(nextSettings);
@@ -915,8 +932,13 @@ async function clearAll() {
 }
 
 async function exportSyncBundle() {
+  const encryptionKey = normalizeSyncEncryptionKey(dom.syncEncryptionKey.value);
+  if (!encryptionKey) {
+    setStatus("同步包导出已停止：请先配置 256 位同步加密密钥，避免密码以明文落盘");
+    return;
+  }
   const bundle = await buildSyncBundle();
-  const encrypted = await encryptSyncBundleDocument(bundle, dom.syncEncryptionKey.value);
+  const encrypted = await encryptSyncBundleDocument(bundle, encryptionKey);
   const fileName = `pass-sync-bundle-${formatFileTimestamp(bundle.exportedAtMs)}.json`;
   const text = JSON.stringify(encrypted, null, 2);
   downloadTextFile(fileName, text, "application/json");
@@ -1285,6 +1307,10 @@ async function importGoogleAuthenticatorMigration(migration, folderPlan = null) 
 
 async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
   if (!(await saveSyncSettings())) return;
+  if (!normalizeSyncEncryptionKey(dom.syncEncryptionKey.value)) {
+    setStatus("远程同步已停止：请先配置 256 位同步加密密钥");
+    return;
+  }
   const targets = buildRemoteSyncTargetsFromDom();
   if (!targets || targets.length === 0) return;
   const normalizedSyncMode = normalizeSyncMode(syncMode);
@@ -1311,6 +1337,7 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
   let mergedAccounts = localAccounts;
   let mergedPasskeys = localPasskeys;
   let mergedFolders = localFolders;
+  let conflictCount = 0;
 
   if (normalizedSyncMode !== SYNC_MODE_LOCAL_OVERWRITE_REMOTE) {
     let remoteAggregate = null;
@@ -1319,6 +1346,7 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
       try {
         const remoteResponse = await pullRemotePayload(target);
         updateRemoteConcurrencyState(target, remoteResponse.etag);
+        target.remotePayload = remoteResponse.payload;
         remotePayload = remoteResponse.payload;
       } catch (error) {
         setStatus(`${target.label} 拉取失败: ${error.message}`);
@@ -1350,6 +1378,7 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
 
     if (normalizedSyncMode === SYNC_MODE_MERGE) {
       if (remoteAggregate) {
+        conflictCount = countSyncAccountConflicts(localAccounts, remoteAggregate.accounts);
         mergedFolders = mergeFolderCollections(localFolders, remoteAggregate.folders);
         mergedAccounts = mergeAccountCollections(localAccounts, remoteAggregate.accounts);
         mergedAccounts = syncAliasGroups(mergedAccounts);
@@ -1358,15 +1387,19 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
         mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
       }
     } else if (normalizedSyncMode === SYNC_MODE_REMOTE_OVERWRITE_LOCAL) {
-      if (remoteAggregate) {
-        mergedAccounts = remoteAggregate.accounts;
-        mergedPasskeys = buildUnifiedPasskeys(remoteAggregate.accounts, remoteAggregate.passkeys);
-        mergedFolders = remoteAggregate.folders;
-      } else {
-        mergedAccounts = [];
-        mergedPasskeys = [];
-        mergedFolders = [];
+      const remoteIsEmpty = !remoteAggregate || (
+        remoteAggregate.accounts.length === 0 &&
+        remoteAggregate.passkeys.length === 0 &&
+        remoteAggregate.folders.length === 0
+      );
+      const localIsNonEmpty = localAccounts.length > 0 || localPasskeys.length > 0 || localFolders.length > 0;
+      if (remoteIsEmpty && localIsNonEmpty) {
+        setStatus("云端覆盖本地已停止：所有远端为空，避免清空本地数据");
+        return;
       }
+      mergedAccounts = remoteAggregate?.accounts || [];
+      mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, remoteAggregate?.passkeys || []);
+      mergedFolders = remoteAggregate?.folders || [];
     }
   }
 
@@ -1376,7 +1409,8 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
     folders: mergedFolders,
   });
   await appendHistory(
-    `${getSyncModeHistoryLabel(normalizedSyncMode)}：账号 ${localAccounts.length}->${mergedAccounts.length}，通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}`
+    `${getSyncModeHistoryLabel(normalizedSyncMode)}：账号 ${localAccounts.length}->${mergedAccounts.length}，通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}` +
+      (conflictCount > 0 ? `，检测到 ${conflictCount} 个字段冲突并按时间/设备规则裁决` : "")
   );
 
   const pushErrors = [];
@@ -1408,7 +1442,8 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
   }
   setStatus(
     `${getSyncModeStatusLabel(normalizedSyncMode)}（${sourceSummary}）：账号 ${localAccounts.length}->${mergedAccounts.length}，` +
-      `通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}，文件夹 ${localFolders.length}->${mergedFolders.length}`
+      `通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}，文件夹 ${localFolders.length}->${mergedFolders.length}` +
+      (conflictCount > 0 ? `，字段冲突 ${conflictCount} 个` : "")
   );
 }
 
@@ -1655,7 +1690,14 @@ function updateRemoteConcurrencyState(target, etag) {
   }
 }
 
-async function pushRemotePayload(target, payload, ifMatch = null) {
+function createSyncIdempotencyKey() {
+  return `pass-${Date.now()}-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`;
+}
+
+async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey = null) {
+  if (target.remotePayload && syncPayloadEquals(target.remotePayload, payload)) {
+    return { etag: target.remoteEtag, skipped: true };
+  }
   const bundle = await buildSyncBundleFromPayload(payload);
   const encryptedBundle = await encryptSyncBundleDocument(bundle, dom.syncEncryptionKey.value);
   const headers = {
@@ -1668,6 +1710,7 @@ async function pushRemotePayload(target, payload, ifMatch = null) {
   if (ifMatch) {
     headers["If-Match"] = ifMatch;
   }
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   const response = await fetch(target.url, {
     method: "PUT",
     headers,
@@ -1684,85 +1727,72 @@ async function pushRemotePayload(target, payload, ifMatch = null) {
 }
 
 async function pushRemotePayloadWithRetry(target, payload) {
-  try {
-    const pushResult = await pushRemotePayload(target, payload, target.remoteEtag);
-    updateRemoteConcurrencyState(target, pushResult.etag);
-    return { payload };
-  } catch (error) {
-    if (!target.supportsEtag || error?.status !== 412) {
-      throw error;
+  let candidate = payload;
+  const idempotencyKey = createSyncIdempotencyKey();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const pushResult = await pushRemotePayload(target, candidate, target.remoteEtag, idempotencyKey);
+      updateRemoteConcurrencyState(target, pushResult.etag);
+      target.remotePayload = candidate;
+      return { payload: candidate };
+    } catch (error) {
+      if (!target.supportsEtag || error?.status !== 412 || attempt === 2) throw error;
     }
+
+    const latestResponse = await pullRemotePayload(target);
+    updateRemoteConcurrencyState(target, latestResponse.etag);
+    target.remotePayload = latestResponse.payload;
+    const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
+    const localAccounts = Array.isArray(candidate.accounts)
+      ? candidate.accounts.map(normalizeAccountShape)
+      : [];
+    const localPasskeys = buildUnifiedPasskeys(
+      localAccounts,
+      Array.isArray(candidate.passkeys) ? candidate.passkeys.map(normalizePasskeyShape) : []
+    );
+    const localFolders = Array.isArray(candidate.folders)
+      ? candidate.folders.map(normalizeFolderShape)
+      : [];
+    const remoteAccounts = remotePayload.accounts.map(normalizeAccountShape);
+    const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys);
+    const remoteFolders = remotePayload.folders.map(normalizeFolderShape);
+    let mergedFolders = mergeFolderCollections(localFolders, remoteFolders);
+    let mergedAccounts = mergeAccountCollections(localAccounts, remoteAccounts);
+    mergedAccounts = syncAliasGroups(mergedAccounts);
+    mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
+    let mergedPasskeys = mergePasskeyCollections(localPasskeys, remotePasskeys);
+    mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
+    candidate = { accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders };
+    await writeBusinessDataToStore(candidate);
   }
-
-  const latestResponse = await pullRemotePayload(target);
-  updateRemoteConcurrencyState(target, latestResponse.etag);
-  const remotePayload = latestResponse.payload || {
-    accounts: [],
-    passkeys: [],
-    folders: [],
-  };
-
-  const localAccounts = Array.isArray(payload.accounts)
-    ? payload.accounts.map(normalizeAccountShape)
-    : [];
-  const localPasskeys = buildUnifiedPasskeys(
-    localAccounts,
-    Array.isArray(payload.passkeys) ? payload.passkeys.map(normalizePasskeyShape) : []
-  );
-  const localFolders = Array.isArray(payload.folders)
-    ? payload.folders.map(normalizeFolderShape)
-    : [];
-  const remoteAccounts = remotePayload.accounts.map(normalizeAccountShape);
-  const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys);
-  const remoteFolders = remotePayload.folders.map(normalizeFolderShape);
-
-  let mergedFolders = mergeFolderCollections(localFolders, remoteFolders);
-  let mergedAccounts = mergeAccountCollections(localAccounts, remoteAccounts);
-  mergedAccounts = syncAliasGroups(mergedAccounts);
-  mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
-  let mergedPasskeys = mergePasskeyCollections(localPasskeys, remotePasskeys);
-  mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
-
-  const reconciledPayload = {
-    accounts: mergedAccounts,
-    passkeys: mergedPasskeys,
-    folders: mergedFolders,
-  };
-
-  await writeBusinessDataToStore(reconciledPayload);
-  const retryResult = await pushRemotePayload(target, reconciledPayload, target.remoteEtag);
-  updateRemoteConcurrencyState(target, retryResult.etag);
-  return { payload: reconciledPayload };
+  throw new Error("远端并发冲突重试次数已用尽");
 }
 
 async function pushRemotePayloadRemotePreferred(target, payload) {
-  try {
-    const pushResult = await pushRemotePayload(target, payload, target.remoteEtag);
-    updateRemoteConcurrencyState(target, pushResult.etag);
-    return { payload };
-  } catch (error) {
-    if (!target.supportsEtag || error?.status !== 412) {
-      throw error;
+  let candidate = payload;
+  const idempotencyKey = createSyncIdempotencyKey();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const pushResult = await pushRemotePayload(target, candidate, target.remoteEtag, idempotencyKey);
+      updateRemoteConcurrencyState(target, pushResult.etag);
+      target.remotePayload = candidate;
+      return { payload: candidate };
+    } catch (error) {
+      if (!target.supportsEtag || error?.status !== 412 || attempt === 2) throw error;
     }
+    const latestResponse = await pullRemotePayload(target);
+    updateRemoteConcurrencyState(target, latestResponse.etag);
+    candidate = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
+    target.remotePayload = candidate;
+    await writeBusinessDataToStore(candidate);
   }
-
-  const latestResponse = await pullRemotePayload(target);
-  updateRemoteConcurrencyState(target, latestResponse.etag);
-  const latestPayload = latestResponse.payload || {
-    accounts: [],
-    passkeys: [],
-    folders: [],
-  };
-  await writeBusinessDataToStore(latestPayload);
-  const retryResult = await pushRemotePayload(target, latestPayload, target.remoteEtag);
-  updateRemoteConcurrencyState(target, retryResult.etag);
-  return { payload: latestPayload };
+  throw new Error("远端并发冲突重试次数已用尽");
 }
 
 async function pushRemotePayloadWithMode(target, payload, syncMode) {
   switch (syncMode) {
     case SYNC_MODE_LOCAL_OVERWRITE_REMOTE: {
-      const pushResult = await pushRemotePayload(target, payload, null);
+      const pushResult = await pushRemotePayload(target, payload, null, createSyncIdempotencyKey());
       updateRemoteConcurrencyState(target, pushResult.etag);
       return { payload };
     }

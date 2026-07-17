@@ -89,6 +89,11 @@ enum PassSyncCrypto {
         isValidKeyString(value)
     }
 
+    static func isEncryptionKeyConfigured(_ value: String) -> Bool {
+        let normalized = normalizedKeyString(value)
+        return !normalized.isEmpty && isValidKeyString(normalized)
+    }
+
     static func isValidKeyString(_ value: String) -> Bool {
         normalizedKeyString(value).isEmpty
             || Data(base64URLString: normalizedKeyString(value))?.count == 32

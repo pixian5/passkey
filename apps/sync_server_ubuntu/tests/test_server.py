@@ -111,6 +111,25 @@ class PassSyncServerTests(unittest.TestCase):
             parsed = json.loads(response.read().decode("utf-8"))
         self.assertEqual(parsed["schema"], "pass.sync.encrypted.v1")
 
+    def test_idempotency_key_replays_original_write(self) -> None:
+        headers = {
+            "Authorization": "Bearer secret-token",
+            "Content-Type": "application/json",
+            "Idempotency-Key": "sync-retry-1",
+        }
+        with self.request("PUT", "/v1/sync/payload", body=sample_bundle(100), headers=headers) as response:
+            first_etag = response.headers["ETag"]
+            first_body = json.loads(response.read().decode("utf-8"))
+
+        with self.request(
+            "PUT",
+            "/v1/sync/payload",
+            body=sample_bundle(100),
+            headers=headers,
+        ) as response:
+            self.assertEqual(response.headers["ETag"], first_etag)
+            self.assertEqual(json.loads(response.read().decode("utf-8")), first_body)
+
     def test_rejects_plaintext_bundle(self) -> None:
         plaintext = json.dumps({
             "schema": "pass.sync.bundle.legacy",
@@ -162,6 +181,30 @@ class PassSyncServerTests(unittest.TestCase):
             parsed = json.loads(response.read().decode("utf-8"))
         self.assertEqual(parsed["schema"], "pass.sync.bundle.v2")
         self.assertEqual(parsed["payload"]["accounts"], [])
+
+    def test_production_mode_rejects_plaintext_bundle_v2(self) -> None:
+        self.server.config = AppConfig(
+            host="127.0.0.1",
+            port=0,
+            db_path=Path(self.temp_dir.name) / "sync.sqlite3",
+            token_scopes={"secret-token": "default"},
+            allow_plaintext=False,
+        )
+        plaintext = json.dumps({
+            "schema": "pass.sync.bundle.v2",
+            "exportedAtMs": 1_777_777_777_777,
+            "source": {"app": "pass-extension"},
+            "payload": {"accounts": [], "folders": [], "passkeys": []},
+        }).encode("utf-8")
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            self.request(
+                "PUT",
+                "/v1/sync/payload",
+                body=plaintext,
+                headers={"Authorization": "Bearer secret-token", "Content-Type": "application/json"},
+            )
+        self.assertEqual(context.exception.code, 400)
+        context.exception.close()
 
     def test_startup_removes_legacy_plaintext_payload(self) -> None:
         self.server.shutdown()

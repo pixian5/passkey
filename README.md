@@ -1,6 +1,6 @@
 # pass
 
-跨平台密码管理器 Monorepo。支持 macOS、Windows、Linux（Ubuntu）、iOS、Android 客户端，以及 Chrome / Firefox / Safari 浏览器扩展，核心数据与同步逻辑由一套 Rust 库共享。
+跨平台密码管理器 Monorepo。包含 macOS、Windows、Linux（Ubuntu）、iOS、Android 客户端，以及 Chrome / Firefox / Safari 浏览器扩展。当前远程同步已在 macOS App、浏览器扩展和 Ubuntu 服务之间落地；其它客户端仍需接入 Rust FFI 后才能达到完整跨平台同步。
 
 > 完整设计文档见 [`docs/`](docs/README.md)。
 

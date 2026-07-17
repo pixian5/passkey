@@ -285,6 +285,11 @@ async function runAutoSync() {
   }
   const targets = await buildRemoteSyncTargetsFromStorage();
   if (!targets || targets.length === 0) return;
+  const encryptionKey = await getOrCreateSyncEncryptionKey();
+  if (!encryptionKey) {
+    logSyncFlow("auto-sync-skipped-no-encryption-key");
+    return;
+  }
   logSyncFlow("auto-sync-start", {
     targetLabels: targets.map((item) => item.label),
     targetUrls: targets.map((item) => item.url),
@@ -321,7 +326,16 @@ async function runAutoSync() {
       url: target.url,
       hasAuthHeader: Boolean(target.authHeader),
     });
-    const remoteResponse = await pullRemotePayload(target);
+    let remoteResponse;
+    try {
+      remoteResponse = await pullRemotePayload(target);
+    } catch (error) {
+      logSyncFlow("auto-sync-aborted-pull-failed", {
+        label: target.label,
+        message: error?.message || String(error || ""),
+      });
+      return;
+    }
     logSyncFlow("pull-success", {
       label: target.label,
       url: target.url,
@@ -329,6 +343,7 @@ async function runAutoSync() {
       etag: remoteResponse.etag,
     });
     updateRemoteConcurrencyState(target, remoteResponse.etag);
+    target.remotePayload = remoteResponse.payload;
     const remotePayload = remoteResponse.payload;
     const remoteAccounts = remotePayload ? remotePayload.accounts.map(normalizeAccountShape) : [];
     const remotePasskeys = remotePayload ? buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys) : [];
@@ -367,6 +382,7 @@ async function runAutoSync() {
   });
 
   const pushTargets = [...targets].sort((left, right) => Number(right.supportsEtag) - Number(left.supportsEtag));
+  const pushErrors = [];
   for (const target of pushTargets) {
     logSyncFlow("push-start", {
       label: target.label,
@@ -374,11 +390,21 @@ async function runAutoSync() {
       supportsEtag: Boolean(target.supportsEtag),
       remoteEtag: target.remoteEtag,
     });
-    const result = await pushRemotePayloadWithMode(target, {
-      accounts: mergedAccounts,
-      passkeys: mergedPasskeys,
-      folders: mergedFolders,
-    }, SYNC_MODE_MERGE);
+    let result;
+    try {
+      result = await pushRemotePayloadWithMode(target, {
+        accounts: mergedAccounts,
+        passkeys: mergedPasskeys,
+        folders: mergedFolders,
+      }, SYNC_MODE_MERGE);
+    } catch (error) {
+      pushErrors.push(`${target.label}: ${error?.message || String(error || "")}`);
+      logSyncFlow("auto-sync-push-failed", {
+        label: target.label,
+        message: error?.message || String(error || ""),
+      });
+      continue;
+    }
     logSyncFlow("push-success", {
       label: target.label,
       url: target.url,
@@ -399,11 +425,14 @@ async function runAutoSync() {
     folders: mergedFolders,
   });
   await appendHistoryEntry({
-    action: `自动同步完成（${targets.map((item) => item.label).join(" + ")}）`,
+    action: pushErrors.length > 0
+      ? `自动同步部分完成（${pushErrors.join("；")}）`
+      : `自动同步完成（${targets.map((item) => item.label).join(" + ")}）`,
     timestampMs: Date.now(),
   });
   logSyncFlow("auto-sync-complete", {
     targetLabels: targets.map((item) => item.label),
+    pushErrors,
   });
 }
 
@@ -1512,7 +1541,14 @@ function updateRemoteConcurrencyState(target, etag) {
   }
 }
 
-async function pushRemotePayload(target, payload, ifMatch = null) {
+function createSyncIdempotencyKey() {
+  return `pass-${Date.now()}-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`;
+}
+
+async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey = null) {
+  if (target.remotePayload && syncPayloadEquals(target.remotePayload, payload)) {
+    return { etag: target.remoteEtag, skipped: true };
+  }
   const bundle = await buildSyncBundleFromPayload(payload);
   const encryptedBundle = await encryptSyncBundleDocument(bundle, await getOrCreateSyncEncryptionKey());
   const headers = {
@@ -1521,6 +1557,7 @@ async function pushRemotePayload(target, payload, ifMatch = null) {
   };
   if (target.authHeader) headers.Authorization = target.authHeader;
   if (ifMatch) headers["If-Match"] = ifMatch;
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   let response;
   try {
     response = await fetch(target.url, {
@@ -1560,41 +1597,42 @@ async function getOrCreateSyncEncryptionKey() {
 }
 
 async function pushRemotePayloadWithRetry(target, payload) {
-  try {
-    const pushResult = await pushRemotePayload(target, payload, target.remoteEtag);
-    updateRemoteConcurrencyState(target, pushResult.etag);
-    return { payload };
-  } catch (error) {
-    if (!target.supportsEtag || error?.status !== 412) throw error;
+  let candidate = payload;
+  const idempotencyKey = createSyncIdempotencyKey();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const pushResult = await pushRemotePayload(target, candidate, target.remoteEtag, idempotencyKey);
+      updateRemoteConcurrencyState(target, pushResult.etag);
+      target.remotePayload = candidate;
+      return { payload: candidate };
+    } catch (error) {
+      if (!target.supportsEtag || error?.status !== 412 || attempt === 2) throw error;
+    }
+    const latestResponse = await pullRemotePayload(target);
+    updateRemoteConcurrencyState(target, latestResponse.etag);
+    target.remotePayload = latestResponse.payload;
+    const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
+    const localAccounts = Array.isArray(candidate.accounts) ? candidate.accounts.map(normalizeAccountShape) : [];
+    const localPasskeys = buildUnifiedPasskeys(localAccounts, Array.isArray(candidate.passkeys) ? candidate.passkeys.map(normalizePasskeyShape) : []);
+    const localFolders = Array.isArray(candidate.folders) ? candidate.folders.map(normalizeFolderShape) : [];
+    const remoteAccounts = remotePayload.accounts.map(normalizeAccountShape);
+    const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys);
+    const remoteFolders = remotePayload.folders.map(normalizeFolderShape);
+    let mergedFolders = mergeFolderCollections(localFolders, remoteFolders);
+    let mergedAccounts = mergeAccountCollections(localAccounts, remoteAccounts);
+    mergedAccounts = syncAliasGroups(mergedAccounts);
+    mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
+    let mergedPasskeys = mergePasskeyCollections(localPasskeys, remotePasskeys);
+    mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
+    candidate = { accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders };
+    await writeBusinessDataToStore(candidate);
   }
-
-  const latestResponse = await pullRemotePayload(target);
-  updateRemoteConcurrencyState(target, latestResponse.etag);
-  const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
-  const localAccounts = Array.isArray(payload.accounts) ? payload.accounts.map(normalizeAccountShape) : [];
-  const localPasskeys = buildUnifiedPasskeys(localAccounts, Array.isArray(payload.passkeys) ? payload.passkeys.map(normalizePasskeyShape) : []);
-  const localFolders = Array.isArray(payload.folders) ? payload.folders.map(normalizeFolderShape) : [];
-  const remoteAccounts = remotePayload.accounts.map(normalizeAccountShape);
-  const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys);
-  const remoteFolders = remotePayload.folders.map(normalizeFolderShape);
-
-  let mergedFolders = mergeFolderCollections(localFolders, remoteFolders);
-  let mergedAccounts = mergeAccountCollections(localAccounts, remoteAccounts);
-  mergedAccounts = syncAliasGroups(mergedAccounts);
-  mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
-  let mergedPasskeys = mergePasskeyCollections(localPasskeys, remotePasskeys);
-  mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
-  const reconciledPayload = { accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders };
-
-  await writeBusinessDataToStore(reconciledPayload);
-  const retryResult = await pushRemotePayload(target, reconciledPayload, target.remoteEtag);
-  updateRemoteConcurrencyState(target, retryResult.etag);
-  return { payload: reconciledPayload };
+  throw new Error("远端并发冲突重试次数已用尽");
 }
 
 async function pushRemotePayloadWithMode(target, payload, syncMode) {
   if (syncMode !== SYNC_MODE_MERGE) {
-    const pushResult = await pushRemotePayload(target, payload, null);
+    const pushResult = await pushRemotePayload(target, payload, null, createSyncIdempotencyKey());
     updateRemoteConcurrencyState(target, pushResult.etag);
     return { payload };
   }

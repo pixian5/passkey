@@ -66,6 +66,9 @@ python3 pass_sync_server.py
   - 默认 `INFO`
 - `PASS_SYNC_MAX_BODY_BYTES`
   - 默认 `2097152`（2 MiB）
+- `PASS_SYNC_ALLOW_PLAINTEXT`
+  - 默认关闭（`0`）；生产服务器拒绝未加密的 `pass.sync.bundle.v2`
+  - 仅本地开发测试可显式设置为 `1`
 - `PASS_SYNC_TLS_CERT` / `PASS_SYNC_TLS_KEY`
   - 同时配置后启用 TLS；生产环境应使用证书和私钥文件，并将 `PASS_SYNC_PORT` 设置为 HTTPS 监听端口
 
@@ -103,9 +106,16 @@ sudo editor /etc/systemd/system/pass-sync-server.service
 # 修改 PASS_SYNC_BEARER_TOKENS 和路径
 sudo systemctl daemon-reload
 sudo systemctl enable --now pass-sync-server
+
+# 安装每日数据库备份（推荐）
+sudo cp pass-sync-server-backup.service pass-sync-server-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now pass-sync-server-backup.timer
 ```
 
 服务文件模板见 [`pass-sync-server.service`](./pass-sync-server.service)。
+备份脚本和每日定时器模板见 [`backup_sync_db.sh`](./backup_sync_db.sh)、
+[`pass-sync-server-backup.timer`](./pass-sync-server-backup.timer)。
 
 ```ini
 [Unit]

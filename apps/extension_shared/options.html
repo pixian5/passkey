@@ -97,7 +97,7 @@
             <input id="syncEncryptionKey" type="text" autocomplete="off" placeholder="留空则不同步加密，所有设备必须填写同一密钥" />
             <button id="generateSyncEncryptionKeyBtn" type="button">生成</button>
           </div>
-          <p class="hint">留空时使用明文同步（仅推荐本地局域网/受信环境）；填写后使用 AES-256-GCM 端到端加密，跨平台同步时需在各设备填写同一值。</p>
+          <p class="hint">远程同步和同步包导出必须填写 256 位密钥，并在所有设备使用同一值；AES-256-GCM 端到端加密后服务器无法读取数据。留空只能保留本地数据，不能执行远程同步。</p>
           <div class="lock-settings">
             <h4>解锁设置</h4>
             <div class="row lock-row">

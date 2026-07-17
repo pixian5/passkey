@@ -29,6 +29,7 @@ class AppConfig:
     db_path: Path
     token_scopes: dict[str, str]
     max_body_bytes: int = 2 * 1024 * 1024
+    allow_plaintext: bool = True
     tls_cert_path: Path | None = None
     tls_key_path: Path | None = None
 
@@ -122,6 +123,21 @@ class PayloadRepository:
                   exported_at_ms INTEGER NOT NULL,
                   updated_at_ms INTEGER NOT NULL,
                   saved_at_ms INTEGER NOT NULL
+                );
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sync_idempotency (
+                  scope TEXT NOT NULL,
+                  idempotency_key TEXT NOT NULL,
+                  etag TEXT NOT NULL,
+                  payload_json TEXT NOT NULL,
+                  payload_sha256 TEXT NOT NULL,
+                  exported_at_ms INTEGER NOT NULL,
+                  updated_at_ms INTEGER NOT NULL,
+                  created_at_ms INTEGER NOT NULL,
+                  PRIMARY KEY(scope, idempotency_key)
                 );
                 """
             )
@@ -221,11 +237,39 @@ class PayloadRepository:
         exported_at_ms: int,
         if_match: str | None,
         operation: str = "put",
+        idempotency_key: str | None = None,
     ) -> StoredPayload:
         next_etag = f"\"{payload_sha256}\""
         now_ms = current_time_ms()
 
         with self._write_lock:
+            if idempotency_key:
+                with self._connect() as connection:
+                    replay = connection.execute(
+                        """
+                        SELECT etag, payload_json, payload_sha256, exported_at_ms, updated_at_ms
+                        FROM sync_idempotency
+                        WHERE scope = ?1 AND idempotency_key = ?2
+                        LIMIT 1;
+                        """,
+                        (scope, idempotency_key),
+                    ).fetchone()
+                if replay is not None:
+                    if replay["payload_sha256"] != payload_sha256:
+                        raise RequestError(
+                            HTTPStatus.CONFLICT,
+                            "IDEMPOTENCY_KEY_REUSED",
+                            "Idempotency-Key 已经用于另一份同步数据。",
+                        )
+                    self.record_operation(scope, "idempotent_replay", "success", replay["etag"], None)
+                    return StoredPayload(
+                        scope=scope,
+                        etag=replay["etag"],
+                        payload_json=replay["payload_json"],
+                        payload_sha256=replay["payload_sha256"],
+                        exported_at_ms=replay["exported_at_ms"],
+                        updated_at_ms=replay["updated_at_ms"],
+                    )
             current = self.get(scope)
             if not etag_matches(current.etag if current else None, if_match):
                 self.record_operation(scope, operation, "conflict", current.etag if current else None, None)
@@ -278,6 +322,38 @@ class PayloadRepository:
                     """,
                     (scope, next_etag, payload_json, payload_sha256, exported_at_ms, now_ms, now_ms),
                 )
+                if idempotency_key:
+                    connection.execute(
+                        """
+                        INSERT OR IGNORE INTO sync_idempotency (
+                          scope, idempotency_key, etag, payload_json, payload_sha256,
+                          exported_at_ms, updated_at_ms, created_at_ms
+                        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8);
+                        """,
+                        (
+                            scope,
+                            idempotency_key,
+                            next_etag,
+                            payload_json,
+                            payload_sha256,
+                            exported_at_ms,
+                            now_ms,
+                            now_ms,
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        DELETE FROM sync_idempotency
+                        WHERE scope = ?1
+                          AND rowid NOT IN (
+                            SELECT rowid FROM sync_idempotency
+                            WHERE scope = ?1
+                            ORDER BY created_at_ms DESC
+                            LIMIT 500
+                          );
+                        """,
+                        (scope,),
+                    )
                 connection.execute(
                     """
                     DELETE FROM payload_versions
@@ -622,13 +698,20 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
         raw_body = self.rfile.read(content_length)
         if len(raw_body) != content_length:
             raise RequestError(HTTPStatus.BAD_REQUEST, "INCOMPLETE_BODY", "请求体长度与 Content-Length 不一致。")
-        payload_json, payload_sha256, exported_at_ms = parse_and_validate_bundle(raw_body)
+        payload_json, payload_sha256, exported_at_ms = parse_and_validate_bundle(
+            raw_body,
+            allow_plaintext=self.server.config.allow_plaintext,
+        )
+        idempotency_key = self.headers.get("Idempotency-Key", "").strip() or None
+        if idempotency_key is not None and len(idempotency_key) > 200:
+            raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key 过长。")
         stored = self.server.repository.put(
             scope=scope,
             payload_json=payload_json,
             payload_sha256=payload_sha256,
             exported_at_ms=exported_at_ms,
             if_match=self.headers.get("If-Match"),
+            idempotency_key=idempotency_key,
         )
         self._send_json(
             HTTPStatus.OK,
@@ -681,7 +764,7 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
 
     def _allowed_cors_headers(self) -> str:
         requested = self.headers.get("Access-Control-Request-Headers", "")
-        allowlist = {"authorization", "content-type", "if-match", "accept"}
+        allowlist = {"authorization", "content-type", "if-match", "idempotency-key", "accept"}
         normalized = []
         for item in requested.split(","):
             name = item.strip().lower()
@@ -729,7 +812,7 @@ class PassSyncHTTPServer(ThreadingHTTPServer):
         return scope
 
 
-def parse_and_validate_bundle(raw_body: bytes) -> tuple[str, str, int]:
+def parse_and_validate_bundle(raw_body: bytes, *, allow_plaintext: bool = True) -> tuple[str, str, int]:
     try:
         parsed = json.loads(raw_body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -744,6 +827,13 @@ def parse_and_validate_bundle(raw_body: bytes) -> tuple[str, str, int]:
             HTTPStatus.BAD_REQUEST,
             "INVALID_SCHEMA",
             "服务端仅接受 pass.sync.encrypted.v1 或 pass.sync.bundle.v2。",
+        )
+
+    if schema == "pass.sync.bundle.v2" and not allow_plaintext:
+        raise RequestError(
+            HTTPStatus.BAD_REQUEST,
+            "PLAINTEXT_SYNC_DISABLED",
+            "服务器已禁止明文同步，请在所有客户端配置同步加密密钥。",
         )
 
     if schema == "pass.sync.encrypted.v1":
@@ -814,6 +904,7 @@ def load_config() -> AppConfig:
         db_path=db_path,
         token_scopes=token_scopes,
         max_body_bytes=max(1024, int(os.environ.get("PASS_SYNC_MAX_BODY_BYTES", str(2 * 1024 * 1024)))),
+        allow_plaintext=os.environ.get("PASS_SYNC_ALLOW_PLAINTEXT", "0").strip().lower() in {"1", "true", "yes"},
         tls_cert_path=Path(cert_value).expanduser() if cert_value else None,
         tls_key_path=Path(key_value).expanduser() if key_value else None,
     )

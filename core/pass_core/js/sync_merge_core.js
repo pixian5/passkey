@@ -325,22 +325,26 @@ function mergeSameFolder(lhs, rhs, h) {
 
 export function mergeAccountCollections(local, remote, helpers) {
   const h = resolveHelpers(helpers);
-  const mergedById = new Map();
-  const order = [];
+  const merged = [];
 
   for (const account of [...(Array.isArray(local) ? local : []), ...(Array.isArray(remote) ? remote : [])]) {
     const normalized = h.normalizeAccountShape(account);
-    const id = asString(normalized.accountId).trim();
-    if (!id) continue;
-    if (mergedById.has(id)) {
-      mergedById.set(id, mergeSameAccount(mergedById.get(id), normalized, h));
+    const accountId = asString(normalized.accountId).trim();
+    const recordId = asString(normalized.recordId || normalized.id).trim().toLowerCase();
+    if (!accountId && !recordId) continue;
+    const existingIndex = merged.findIndex((candidate) => {
+      const candidateAccountId = asString(candidate.accountId).trim();
+      const candidateRecordId = asString(candidate.recordId || candidate.id).trim().toLowerCase();
+      return (accountId && candidateAccountId === accountId) || (recordId && candidateRecordId === recordId);
+    });
+    if (existingIndex >= 0) {
+      merged[existingIndex] = mergeSameAccount(merged[existingIndex], normalized, h);
     } else {
-      mergedById.set(id, normalized);
-      order.push(id);
+      merged.push(normalized);
     }
   }
 
-  return order.map((id) => mergedById.get(id)).filter(Boolean);
+  return merged.filter(Boolean);
 }
 
 export function mergePasskeyCollections(local, remote, helpers) {

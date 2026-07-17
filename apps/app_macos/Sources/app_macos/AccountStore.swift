@@ -1631,6 +1631,13 @@ final class AccountStore: ObservableObject {
     func exportSyncBundle(to fileURL: URL) {
         do {
             loadSyncSecretsIfNeeded()
+            guard PassSyncCrypto.isEncryptionKeyConfigured(syncEncryptionKey) else {
+                throw NSError(
+                    domain: "AccountStore.SyncBundle",
+                    code: 4,
+                    userInfo: [NSLocalizedDescriptionKey: "同步包导出必须先配置 256 位同步加密密钥"]
+                )
+            }
             let parentDirectory = fileURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(
                 at: parentDirectory,
@@ -2210,6 +2217,11 @@ final class AccountStore: ObservableObject {
         }
 
         loadSyncSecretsIfNeeded()
+        guard PassSyncCrypto.isEncryptionKeyConfigured(syncEncryptionKey) else {
+            cloudSyncStatus = "同步已停止：尚未配置 256 位同步加密密钥"
+            statusMessage = "同步已停止，请先配置 256 位同步加密密钥"
+            return
+        }
         let localPayload = buildCurrentSyncPayload()
         do {
             try saveLocalSyncSafetySnapshot(localPayload, reason: "同步前自动备份")
@@ -2221,6 +2233,9 @@ final class AccountStore: ObservableObject {
         var mergedPayload = localPayload
         var selfHostedETag: String?
         var webDAVETag: String?
+        var selfHostedRemotePayload: SyncBundlePayload?
+        var webDAVRemotePayload: SyncBundlePayload?
+        var conflictCount = 0
 
         if mode != .localOverwriteRemote {
             var remoteAggregate: SyncBundlePayload?
@@ -2251,6 +2266,7 @@ final class AccountStore: ObservableObject {
                         authorization: authorization
                     )
                     webDAVETag = remoteResponse.etag
+                    webDAVRemotePayload = remoteResponse.payload
                     if let remotePayload = remoteResponse.payload {
                         remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: remotePayload)
                     }
@@ -2272,6 +2288,7 @@ final class AccountStore: ObservableObject {
                         authorization: authorization
                     )
                     selfHostedETag = remoteResponse.etag
+                    selfHostedRemotePayload = remoteResponse.payload
                     if let remotePayload = remoteResponse.payload {
                         remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: remotePayload)
                     }
@@ -2284,16 +2301,24 @@ final class AccountStore: ObservableObject {
             switch mode {
             case .merge:
                 if let remoteAggregate {
+                    conflictCount = countSyncAccountConflicts(local: localPayload.accounts, remote: remoteAggregate.accounts)
                     mergedPayload = mergePayloads(local: localPayload, remote: remoteAggregate)
                 }
             case .remoteOverwriteLocal:
-                mergedPayload = remoteAggregate ?? emptySyncPayload()
+                guard let remoteAggregate,
+                      !isSyncPayloadEmpty(remoteAggregate)
+                else {
+                    statusMessage = "云端覆盖本地已停止：所有远端为空，避免清空本地数据"
+                    return
+                }
+                mergedPayload = remoteAggregate
             case .localOverwriteRemote:
                 break
             }
         }
 
-        let syncTitle = "同步并更新本地（\(enabledSourceNames.joined(separator: " + "))，\(mode.label)）"
+        let conflictSuffix = conflictCount > 0 ? "，检测到 \(conflictCount) 个字段冲突并按时间/设备规则裁决" : ""
+        let syncTitle = "同步并更新本地（\(enabledSourceNames.joined(separator: " + "))，\(mode.label)）\(conflictSuffix)"
         var changed = applyMergedPayloadIfNeeded(mergedPayload, historyTitle: syncTitle)
         var pushErrors: [String] = []
 
@@ -2306,7 +2331,8 @@ final class AccountStore: ObservableObject {
                     finalPayload: mergedPayload,
                     enabledSourceNames: enabledSourceNames,
                     pushErrors: pushErrors,
-                    mode: mode
+                    mode: mode,
+                    conflictCount: conflictCount
                 )
                 return
             }
@@ -2314,6 +2340,11 @@ final class AccountStore: ObservableObject {
                 let authorization = buildBearerAuthorization(serverAuthToken)
                 switch mode {
                 case .merge:
+                    if let selfHostedRemotePayload,
+                       syncPayloadEquals(mergedPayload, selfHostedRemotePayload)
+                    {
+                        break
+                    }
                     let pushResult = try await pushSelfHostedPayloadWithRetry(
                         mergedPayload,
                         to: resourceURL,
@@ -2324,6 +2355,11 @@ final class AccountStore: ObservableObject {
                     mergedPayload = pushResult.payload
                     changed = changed || pushResult.changedLocalData
                 case .remoteOverwriteLocal:
+                    if let selfHostedRemotePayload,
+                       syncPayloadEquals(mergedPayload, selfHostedRemotePayload)
+                    {
+                        break
+                    }
                     let pushResult = try await pushSelfHostedRemotePayloadWithRetry(
                         mergedPayload,
                         to: resourceURL,
@@ -2337,7 +2373,8 @@ final class AccountStore: ObservableObject {
                     _ = try await pushRemotePayload(
                         mergedPayload,
                         to: resourceURL,
-                        authorization: authorization
+                        authorization: authorization,
+                        idempotencyKey: "pass-\(syncDeviceId())-\(UUID().uuidString)"
                     )
                 }
             } catch {
@@ -2362,7 +2399,8 @@ final class AccountStore: ObservableObject {
                     finalPayload: mergedPayload,
                     enabledSourceNames: enabledSourceNames,
                     pushErrors: pushErrors,
-                    mode: mode
+                    mode: mode,
+                    conflictCount: conflictCount
                 )
                 return
             }
@@ -2373,6 +2411,11 @@ final class AccountStore: ObservableObject {
                 )
                 switch mode {
                 case .merge:
+                    if let webDAVRemotePayload,
+                       syncPayloadEquals(mergedPayload, webDAVRemotePayload)
+                    {
+                        break
+                    }
                     let pushResult = try await pushWebDAVPayloadWithRetry(
                         mergedPayload,
                         to: resourceURL,
@@ -2384,6 +2427,11 @@ final class AccountStore: ObservableObject {
                     mergedPayload = pushResult.payload
                     changed = changed || pushResult.changedLocalData
                 case .remoteOverwriteLocal:
+                    if let webDAVRemotePayload,
+                       syncPayloadEquals(mergedPayload, webDAVRemotePayload)
+                    {
+                        break
+                    }
                     let pushResult = try await pushWebDAVRemotePayloadWithRetry(
                         mergedPayload,
                         to: resourceURL,
@@ -2398,7 +2446,8 @@ final class AccountStore: ObservableObject {
                     webDAVETag = try await pushRemotePayload(
                         mergedPayload,
                         to: resourceURL,
-                        authorization: authorization
+                        authorization: authorization,
+                        idempotencyKey: "pass-\(syncDeviceId())-\(UUID().uuidString)"
                     )
                 }
             } catch {
@@ -2412,7 +2461,8 @@ final class AccountStore: ObservableObject {
             finalPayload: mergedPayload,
             enabledSourceNames: enabledSourceNames,
             pushErrors: pushErrors,
-            mode: mode
+            mode: mode,
+            conflictCount: conflictCount
         )
     }
 
@@ -2422,20 +2472,22 @@ final class AccountStore: ObservableObject {
         finalPayload: SyncBundlePayload,
         enabledSourceNames: [String],
         pushErrors: [String],
-        mode: SyncMode
+        mode: SyncMode,
+        conflictCount: Int
     ) {
         let sourceSummary = enabledSourceNames.joined(separator: " + ")
         let payloadSummary = syncPayloadSummary(before: localPayload, after: finalPayload)
+        let conflictSummary = conflictCount > 0 ? "\n字段冲突：\(conflictCount) 个" : ""
         if pushErrors.isEmpty {
             cloudSyncStatus = changed
-                ? "\(mode.completionVerb)（\(sourceSummary)）\n\(payloadSummary)\n时间：\(displayTime(nowMs()))"
-                : "\(mode.label)后无字段变化，已跳过本地写入（\(sourceSummary)）\n\(payloadSummary)\n时间：\(displayTime(nowMs()))"
+                ? "\(mode.completionVerb)（\(sourceSummary)）\n\(payloadSummary)\(conflictSummary)\n时间：\(displayTime(nowMs()))"
+                : "\(mode.label)后无字段变化，已跳过本地写入（\(sourceSummary)）\n\(payloadSummary)\(conflictSummary)\n时间：\(displayTime(nowMs()))"
             statusMessage = changed
-                ? "\(sourceSummary) \(mode.completionVerb)\n\(payloadSummary)"
-                : "\(sourceSummary) 无字段变化，已跳过本地写入\n\(payloadSummary)"
+                ? "\(sourceSummary) \(mode.completionVerb)\n\(payloadSummary)\(conflictSummary)"
+                : "\(sourceSummary) 无字段变化，已跳过本地写入\n\(payloadSummary)\(conflictSummary)"
         } else {
-            cloudSyncStatus = "同步部分失败（\(sourceSummary)）\n\(pushErrors.joined(separator: "；"))\n\(payloadSummary)"
-            statusMessage = "同步完成但部分源失败\n\(pushErrors.joined(separator: "；"))\n\(payloadSummary)"
+            cloudSyncStatus = "同步部分失败（\(sourceSummary)）\n\(pushErrors.joined(separator: "；"))\n\(payloadSummary)\(conflictSummary)"
+            statusMessage = "同步完成但部分源失败\n\(pushErrors.joined(separator: "；"))\n\(payloadSummary)\(conflictSummary)"
         }
     }
 
@@ -2445,6 +2497,29 @@ final class AccountStore: ObservableObject {
             "通行密钥 \(before.passkeys.count)->\(after.passkeys.count)",
             "文件夹 \(before.folders.count)->\(after.folders.count)"
         ].joined(separator: "\n")
+    }
+
+    private func countSyncAccountConflicts(local: [PasswordAccount], remote: [PasswordAccount]) -> Int {
+        let localByIdentity = Dictionary(local.map { ("account:\($0.accountId)", $0) }) { first, _ in first }
+        let localByRecord = Dictionary(local.map { ("record:\($0.id.uuidString.lowercased())", $0) }) { first, _ in first }
+        let fields: [(PasswordAccount) -> String] = [
+            { $0.username }, { $0.password }, { $0.totpSecret },
+            { $0.recoveryCodes }, { $0.note }, { String($0.isDeleted) },
+        ]
+        var count = 0
+        for account in remote {
+            let localAccount = localByIdentity["account:\(account.accountId)"]
+                ?? localByRecord["record:\(account.id.uuidString.lowercased())"]
+            guard let localAccount else { continue }
+            count += fields.reduce(into: 0) { result, field in
+                if field(localAccount) != field(account) { result += 1 }
+            }
+        }
+        return count
+    }
+
+    private func isSyncPayloadEmpty(_ payload: SyncBundlePayload) -> Bool {
+        payload.accounts.isEmpty && payload.passkeys.isEmpty && payload.folders.isEmpty
     }
 
     private func activeSyncSourceNames() -> [String] {
@@ -2907,7 +2982,8 @@ final class AccountStore: ObservableObject {
         _ payload: SyncBundlePayload,
         to url: URL,
         authorization: String?,
-        ifMatch: String? = nil
+        ifMatch: String? = nil,
+        idempotencyKey: String? = nil
     ) async throws -> String? {
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
@@ -2919,6 +2995,9 @@ final class AccountStore: ObservableObject {
         }
         if let ifMatch {
             request.setValue(ifMatch, forHTTPHeaderField: "If-Match")
+        }
+        if let idempotencyKey {
+            request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
         }
         request.httpBody = try encodeEncryptedSyncBundle(payload: payload)
         let (_, response) = try await URLSession.shared.data(for: request)
@@ -2949,22 +3028,25 @@ final class AccountStore: ObservableObject {
         etag: String?,
         historyTitle: String
     ) async throws -> SelfHostedPushResult {
-        do {
-            _ = try await pushRemotePayload(payload, to: url, authorization: authorization, ifMatch: etag)
-            return SelfHostedPushResult(payload: payload, changedLocalData: false)
-        } catch SyncRemoteError.preconditionFailed {
-            let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
-            let latestPayload = latestResponse.payload ?? SyncBundlePayload(accounts: [], folders: [], passkeys: [])
-            let reconciledPayload = mergePayloads(local: payload, remote: latestPayload)
-            let changed = applyMergedPayloadIfNeeded(reconciledPayload, historyTitle: historyTitle)
-            _ = try await pushRemotePayload(
-                reconciledPayload,
-                to: url,
-                authorization: authorization,
-                ifMatch: latestResponse.etag
-            )
-            return SelfHostedPushResult(payload: reconciledPayload, changedLocalData: changed)
+        var candidate = payload
+        var currentETag = etag
+        var changed = false
+        let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
+        for attempt in 0..<3 {
+            do {
+                _ = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
+                return SelfHostedPushResult(payload: candidate, changedLocalData: changed)
+            } catch SyncRemoteError.preconditionFailed {
+                guard attempt < 2 else { throw SyncRemoteError.preconditionFailed }
+                let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
+                let latestPayload = latestResponse.payload ?? emptySyncPayload()
+                currentETag = latestResponse.etag
+                candidate = mergePayloads(local: candidate, remote: latestPayload)
+                let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
+                changed = changed || applied
+            }
         }
+        throw SyncRemoteError.preconditionFailed
     }
 
     private func pushWebDAVPayloadWithRetry(
@@ -2974,22 +3056,24 @@ final class AccountStore: ObservableObject {
         etag: String?,
         historyTitle: String
     ) async throws -> ETagPushResult {
-        do {
-            let nextETag = try await pushRemotePayload(payload, to: url, authorization: authorization, ifMatch: etag)
-            return ETagPushResult(payload: payload, changedLocalData: false, etag: nextETag)
-        } catch SyncRemoteError.preconditionFailed {
-            let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
-            let latestPayload = latestResponse.payload ?? emptySyncPayload()
-            let reconciledPayload = mergePayloads(local: payload, remote: latestPayload)
-            let changed = applyMergedPayloadIfNeeded(reconciledPayload, historyTitle: historyTitle)
-            let nextETag = try await pushRemotePayload(
-                reconciledPayload,
-                to: url,
-                authorization: authorization,
-                ifMatch: latestResponse.etag
-            )
-            return ETagPushResult(payload: reconciledPayload, changedLocalData: changed, etag: nextETag)
+        var candidate = payload
+        var currentETag = etag
+        var changed = false
+        let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
+        for attempt in 0..<3 {
+            do {
+                let nextETag = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
+                return ETagPushResult(payload: candidate, changedLocalData: changed, etag: nextETag)
+            } catch SyncRemoteError.preconditionFailed {
+                guard attempt < 2 else { throw SyncRemoteError.preconditionFailed }
+                let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
+                currentETag = latestResponse.etag
+                candidate = mergePayloads(local: candidate, remote: latestResponse.payload ?? emptySyncPayload())
+                let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
+                changed = changed || applied
+            }
         }
+        throw SyncRemoteError.preconditionFailed
     }
 
     private func pushWebDAVRemotePayloadWithRetry(
@@ -2999,21 +3083,24 @@ final class AccountStore: ObservableObject {
         etag: String?,
         historyTitle: String
     ) async throws -> ETagPushResult {
-        do {
-            let nextETag = try await pushRemotePayload(payload, to: url, authorization: authorization, ifMatch: etag)
-            return ETagPushResult(payload: payload, changedLocalData: false, etag: nextETag)
-        } catch SyncRemoteError.preconditionFailed {
-            let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
-            let latestPayload = latestResponse.payload ?? emptySyncPayload()
-            let changed = applyMergedPayloadIfNeeded(latestPayload, historyTitle: historyTitle)
-            let nextETag = try await pushRemotePayload(
-                latestPayload,
-                to: url,
-                authorization: authorization,
-                ifMatch: latestResponse.etag
-            )
-            return ETagPushResult(payload: latestPayload, changedLocalData: changed, etag: nextETag)
+        var candidate = payload
+        var currentETag = etag
+        var changed = false
+        let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
+        for attempt in 0..<3 {
+            do {
+                let nextETag = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
+                return ETagPushResult(payload: candidate, changedLocalData: changed, etag: nextETag)
+            } catch SyncRemoteError.preconditionFailed {
+                guard attempt < 2 else { throw SyncRemoteError.preconditionFailed }
+                let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
+                currentETag = latestResponse.etag
+                candidate = latestResponse.payload ?? emptySyncPayload()
+                let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
+                changed = changed || applied
+            }
         }
+        throw SyncRemoteError.preconditionFailed
     }
 
     private func pushSelfHostedRemotePayloadWithRetry(
@@ -3023,21 +3110,24 @@ final class AccountStore: ObservableObject {
         etag: String?,
         historyTitle: String
     ) async throws -> SelfHostedPushResult {
-        do {
-            _ = try await pushRemotePayload(payload, to: url, authorization: authorization, ifMatch: etag)
-            return SelfHostedPushResult(payload: payload, changedLocalData: false)
-        } catch SyncRemoteError.preconditionFailed {
-            let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
-            let latestPayload = latestResponse.payload ?? emptySyncPayload()
-            let changed = applyMergedPayloadIfNeeded(latestPayload, historyTitle: historyTitle)
-            _ = try await pushRemotePayload(
-                latestPayload,
-                to: url,
-                authorization: authorization,
-                ifMatch: latestResponse.etag
-            )
-            return SelfHostedPushResult(payload: latestPayload, changedLocalData: changed)
+        var candidate = payload
+        var currentETag = etag
+        var changed = false
+        let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
+        for attempt in 0..<3 {
+            do {
+                _ = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
+                return SelfHostedPushResult(payload: candidate, changedLocalData: changed)
+            } catch SyncRemoteError.preconditionFailed {
+                guard attempt < 2 else { throw SyncRemoteError.preconditionFailed }
+                let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
+                currentETag = latestResponse.etag
+                candidate = latestResponse.payload ?? emptySyncPayload()
+                let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
+                changed = changed || applied
+            }
         }
+        throw SyncRemoteError.preconditionFailed
     }
 
     private func saveSecret(_ secret: String, account: String) -> Bool {
@@ -3861,28 +3951,17 @@ final class AccountStore: ObservableObject {
         local: [PasswordAccount],
         remote: [PasswordAccount]
     ) -> [PasswordAccount] {
-        var mergedById: [String: PasswordAccount] = [:]
-        var order: [String] = []
-
-        for account in local {
-            if let existing = mergedById[account.accountId] {
-                mergedById[account.accountId] = mergeSameAccount(existing, account)
+        var merged: [PasswordAccount] = []
+        for account in local + remote {
+            if let existingIndex = merged.firstIndex(where: {
+                $0.accountId == account.accountId || $0.id == account.id
+            }) {
+                merged[existingIndex] = mergeSameAccount(merged[existingIndex], account)
             } else {
-                mergedById[account.accountId] = account
-                order.append(account.accountId)
+                merged.append(account)
             }
         }
-
-        for account in remote {
-            if let existing = mergedById[account.accountId] {
-                mergedById[account.accountId] = mergeSameAccount(existing, account)
-            } else {
-                mergedById[account.accountId] = account
-                order.append(account.accountId)
-            }
-        }
-
-        return order.compactMap { mergedById[$0] }
+        return merged
     }
 
     private func mergeSameAccount(_ lhs: PasswordAccount, _ rhs: PasswordAccount) -> PasswordAccount {
