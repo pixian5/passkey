@@ -38,6 +38,10 @@ files_to_update=(
     "$ROOT_DIR/apps/extension_shared/package.json"
     "$ROOT_DIR/apps/extension_shared/background.js"
     "$ROOT_DIR/apps/extension_shared/webauthn_injected.js"
+    "$ROOT_DIR/apps/extension_chrome/manifest.json"
+    "$ROOT_DIR/apps/extension_chrome/package.json"
+    "$ROOT_DIR/apps/extension_firefox/manifest.json"
+    "$ROOT_DIR/apps/extension_firefox/package.json"
 )
 
 for file in "${files_to_update[@]}"; do
