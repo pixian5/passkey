@@ -23,8 +23,8 @@ jobs:
             cd /opt/pass-sync-server
             stamp=$(date +%Y%m%d-%H%M%S)
             sudo mkdir -p "/var/lib/pass-sync/backups/${stamp}-pre-deploy"
-            if [ -x ./backup_sync_db.sh ]; then
-              sudo PASS_SYNC_BACKUP_DIR="/var/lib/pass-sync/backups/${stamp}-pre-deploy" ./backup_sync_db.sh
+            if [ -x ./apps/sync_server_ubuntu/backup_sync_db.sh ]; then
+              sudo PASS_SYNC_BACKUP_DIR="/var/lib/pass-sync/backups/${stamp}-pre-deploy" ./apps/sync_server_ubuntu/backup_sync_db.sh
             else
               sudo cp -a /var/lib/pass-sync/pass_sync.sqlite3 "/var/lib/pass-sync/backups/${stamp}-pre-deploy/pass_sync.sqlite3"
             fi
