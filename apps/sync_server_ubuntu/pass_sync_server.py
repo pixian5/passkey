@@ -12,6 +12,7 @@ import sqlite3
 import ssl
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -85,8 +86,17 @@ class PayloadRepository:
         connection.execute("PRAGMA synchronous=NORMAL;")
         return connection
 
+    @contextmanager
+    def _managed_connect(self):
+        connection = self._connect()
+        try:
+            yield connection
+            connection.commit()
+        finally:
+            connection.close()
+
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with self._managed_connect() as connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS payloads (
@@ -155,7 +165,7 @@ class PayloadRepository:
                 LOGGER.warning("Removed %s legacy unsupported payload(s)", len(plaintext_scopes))
 
     def get(self, scope: str) -> StoredPayload | None:
-        with self._connect() as connection:
+        with self._managed_connect() as connection:
             row = connection.execute(
                 """
                 SELECT scope, etag, payload_json, payload_sha256, exported_at_ms, updated_at_ms
@@ -178,7 +188,7 @@ class PayloadRepository:
 
     def list_versions(self, scope: str, limit: int = 50) -> list[StoredVersion]:
         safe_limit = min(max(int(limit), 1), 50)
-        with self._connect() as connection:
+        with self._managed_connect() as connection:
             rows = connection.execute(
                 """
                 SELECT version_id, scope, etag, payload_json, payload_sha256,
@@ -205,7 +215,7 @@ class PayloadRepository:
         ]
 
     def get_version(self, scope: str, version_id: int) -> StoredVersion | None:
-        with self._connect() as connection:
+        with self._managed_connect() as connection:
             row = connection.execute(
                 """
                 SELECT version_id, scope, etag, payload_json, payload_sha256,
@@ -244,7 +254,7 @@ class PayloadRepository:
 
         with self._write_lock:
             if idempotency_key:
-                with self._connect() as connection:
+                with self._managed_connect() as connection:
                     replay = connection.execute(
                         """
                         SELECT etag, payload_json, payload_sha256, exported_at_ms, updated_at_ms
@@ -275,7 +285,7 @@ class PayloadRepository:
                 self.record_operation(scope, operation, "conflict", current.etag if current else None, None)
                 raise PreconditionFailedError()
 
-            with self._connect() as connection:
+            with self._managed_connect() as connection:
                 if current is not None:
                     connection.execute(
                         """
@@ -399,7 +409,7 @@ class PayloadRepository:
         etag: str | None,
         version_id: int | None,
     ) -> None:
-        with self._connect() as connection:
+        with self._managed_connect() as connection:
             connection.execute(
                 """
                 INSERT INTO sync_operations (
@@ -411,7 +421,7 @@ class PayloadRepository:
 
     def list_operations(self, scope: str, limit: int = 100) -> list[StoredOperation]:
         safe_limit = min(max(int(limit), 1), 100)
-        with self._connect() as connection:
+        with self._managed_connect() as connection:
             rows = connection.execute(
                 """
                 SELECT operation_id, scope, operation, status, etag, version_id, created_at_ms

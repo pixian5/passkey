@@ -1379,6 +1379,9 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
     if (normalizedSyncMode === SYNC_MODE_MERGE) {
       if (remoteAggregate) {
         conflictCount = countSyncAccountConflicts(localAccounts, remoteAggregate.accounts);
+        if (conflictCount > 0) {
+          await saveLocalSafetySnapshot("同步冲突远端候选备份", remoteAggregate);
+        }
         mergedFolders = mergeFolderCollections(localFolders, remoteAggregate.folders);
         mergedAccounts = mergeAccountCollections(localAccounts, remoteAggregate.accounts);
         mergedAccounts = syncAliasGroups(mergedAccounts);
@@ -1633,8 +1636,8 @@ function renderServerSyncVersions(target, versions) {
   }
 }
 
-async function saveLocalSafetySnapshot(reason) {
-  const payload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+async function saveLocalSafetySnapshot(reason, payloadOverride = null) {
+  const payload = normalizeSyncPayloadShape(payloadOverride || await readBusinessDataFromStore());
   const result = await chrome.storage.local.get([STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]);
   const snapshots = Array.isArray(result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS])
     ? result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]

@@ -2302,6 +2302,9 @@ final class AccountStore: ObservableObject {
             case .merge:
                 if let remoteAggregate {
                     conflictCount = countSyncAccountConflicts(local: localPayload.accounts, remote: remoteAggregate.accounts)
+                    if conflictCount > 0 {
+                        try? saveLocalSyncSafetySnapshot(remoteAggregate, reason: "同步冲突远端候选备份")
+                    }
                     mergedPayload = mergePayloads(local: localPayload, remote: remoteAggregate)
                 }
             case .remoteOverwriteLocal:
