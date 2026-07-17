@@ -277,6 +277,46 @@ class PassSyncServerTests(unittest.TestCase):
             restored = json.loads(response.read().decode("utf-8"))
         self.assertEqual(restored["exportedAtMs"], 4000)
 
+    def test_restore_version_requires_current_etag_and_creates_new_snapshot(self) -> None:
+        headers = {
+            "Authorization": "Bearer secret-token",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        with self.request("PUT", "/v1/sync/payload", body=sample_bundle(6000), headers=headers) as response:
+            first_etag = response.headers["ETag"]
+        with self.request("PUT", "/v1/sync/payload", body=sample_bundle(7000), headers=headers) as response:
+            current_etag = response.headers["ETag"]
+
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            self.request("POST", "/v1/sync/versions/1/restore", headers=headers)
+        self.assertEqual(context.exception.code, 428)
+        context.exception.close()
+
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            self.request(
+                "POST",
+                "/v1/sync/versions/1/restore",
+                headers={**headers, "If-Match": first_etag},
+            )
+        self.assertEqual(context.exception.code, 412)
+        context.exception.close()
+
+        with self.request(
+            "POST",
+            "/v1/sync/versions/1/restore",
+            headers={**headers, "If-Match": current_etag},
+        ) as response:
+            self.assertEqual(response.status, 200)
+            restored_etag = response.headers["ETag"]
+            result = json.loads(response.read().decode("utf-8"))
+        self.assertTrue(result["ok"])
+        self.assertNotEqual(restored_etag, current_etag)
+
+        with self.request("GET", "/v1/sync/payload", headers=headers) as response:
+            restored = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(restored["exportedAtMs"], 6000)
+
     def test_options_allows_version_download_path(self) -> None:
         request = urllib.request.Request(
             f"{self.base_url}/v1/sync/versions/1",
@@ -290,6 +330,21 @@ class PassSyncServerTests(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=5) as response:
             self.assertEqual(response.status, 204)
             self.assertEqual(response.headers["Access-Control-Allow-Origin"], "chrome-extension://test")
+
+    def test_options_allows_version_restore_path(self) -> None:
+        request = urllib.request.Request(
+            f"{self.base_url}/v1/sync/versions/1/restore",
+            method="OPTIONS",
+            headers={
+                "Origin": "chrome-extension://test",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization, if-match",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertEqual(response.status, 204)
+            self.assertIn("POST", response.headers["Access-Control-Allow-Methods"])
+            self.assertIn("if-match", response.headers["Access-Control-Allow-Headers"])
 
     def test_rejects_payload_larger_than_configured_limit(self) -> None:
         self.server.config = AppConfig(

@@ -272,6 +272,18 @@ class PayloadRepository:
                 updated_at_ms=now_ms,
             )
 
+    def restore_version(self, scope: str, version_id: int, if_match: str | None) -> StoredPayload | None:
+        version = self.get_version(scope, version_id)
+        if version is None:
+            return None
+        return self.put(
+            scope=scope,
+            payload_json=version.payload_json,
+            payload_sha256=version.payload_sha256,
+            exported_at_ms=version.exported_at_ms,
+            if_match=if_match,
+        )
+
 
 class RequestError(Exception):
     def __init__(self, status: HTTPStatus, code: str, message: str) -> None:
@@ -303,6 +315,9 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
     def do_PUT(self) -> None:
         self._dispatch(expect_body=True)
 
+    def do_POST(self) -> None:
+        self._dispatch(expect_body=False)
+
     def do_OPTIONS(self) -> None:
         self._handle_options()
 
@@ -318,12 +333,18 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             is_payload_path = path == "/v1/sync/payload"
             is_versions_path = path == "/v1/sync/versions"
             version_id = None
+            restore_version_id = None
             if path.startswith("/v1/sync/versions/"):
                 raw_version_id = path.removeprefix("/v1/sync/versions/")
+                if raw_version_id.endswith("/restore"):
+                    raw_version_id = raw_version_id.removesuffix("/restore")
+                    restore_version_id = int(raw_version_id) if raw_version_id.isdigit() else None
                 if not raw_version_id.isdigit():
-                    raise RequestError(HTTPStatus.NOT_FOUND, "NOT_FOUND", "接口不存在。")
-                version_id = int(raw_version_id)
-            if not (is_payload_path or is_versions_path or version_id is not None):
+                    if restore_version_id is None:
+                        raise RequestError(HTTPStatus.NOT_FOUND, "NOT_FOUND", "接口不存在。")
+                elif restore_version_id is None:
+                    version_id = int(raw_version_id)
+            if not (is_payload_path or is_versions_path or version_id is not None or restore_version_id is not None):
                 raise RequestError(HTTPStatus.NOT_FOUND, "NOT_FOUND", "接口不存在。")
 
             scope = self.server.resolve_scope(self.headers.get("Authorization"))
@@ -336,6 +357,11 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 if self.command not in {"GET", "HEAD"}:
                     raise RequestError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "请求方法不支持。")
                 self._handle_get_version(scope=scope, version_id=version_id, head_only=head_only)
+                return
+            if restore_version_id is not None:
+                if self.command != "POST":
+                    raise RequestError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "请求方法不支持。")
+                self._handle_restore_version(scope=scope, version_id=restore_version_id)
                 return
             if self.command == "GET" or self.command == "HEAD":
                 self._handle_get_payload(scope=scope, head_only=head_only)
@@ -365,8 +391,9 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         version_path = path.startswith("/v1/sync/versions/")
         version_suffix = path.removeprefix("/v1/sync/versions/") if version_path else ""
+        restore_path = version_suffix.endswith("/restore") and version_suffix.removesuffix("/restore").isdigit()
         if path not in {"/healthz", "/v1/sync/payload", "/v1/sync/versions"} and not (
-            version_path and version_suffix.isdigit()
+            version_path and (version_suffix.isdigit() or restore_path)
         ):
             self._send_json(
                 HTTPStatus.NOT_FOUND,
@@ -376,8 +403,8 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
         headers = self._cors_response_headers()
         headers.update(
             {
-                "Allow": "GET, HEAD, PUT, OPTIONS",
-                "Access-Control-Allow-Methods": "GET, HEAD, PUT, OPTIONS",
+                "Allow": "GET, HEAD, POST, PUT, OPTIONS",
+                "Access-Control-Allow-Methods": "GET, HEAD, POST, PUT, OPTIONS",
                 "Access-Control-Allow-Headers": self._allowed_cors_headers(),
                 "Access-Control-Max-Age": "600",
                 "Content-Length": "0",
@@ -443,6 +470,39 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             "Cache-Control": "no-store",
         }
         self._send_bytes(HTTPStatus.OK, body_bytes, headers=headers, head_only=head_only)
+
+    def _handle_restore_version(self, scope: str, version_id: int) -> None:
+        if_match = self.headers.get("If-Match")
+        if if_match is None or not if_match.strip():
+            raise RequestError(
+                HTTPStatus.PRECONDITION_REQUIRED,
+                "IF_MATCH_REQUIRED",
+                "恢复快照必须提供当前数据的 If-Match，以避免覆盖并发更新。",
+            )
+        restored = self.server.repository.restore_version(
+            scope=scope,
+            version_id=version_id,
+            if_match=if_match,
+        )
+        if restored is None:
+            raise RequestError(HTTPStatus.NOT_FOUND, "VERSION_NOT_FOUND", "同步快照版本不存在。")
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "restoredVersionId": version_id,
+                "etag": restored.etag,
+                "payloadSha256": restored.payload_sha256,
+                "updatedAtMs": restored.updated_at_ms,
+            },
+            extra_headers={
+                "ETag": restored.etag,
+                "X-Payload-Sha256": restored.payload_sha256,
+                "X-Sync-Scope": scope,
+                "X-Sync-Version": str(version_id),
+                "Cache-Control": "no-store",
+            },
+        )
 
     def _handle_put_payload(self, scope: str) -> None:
         content_length_header = self.headers.get("Content-Length")
