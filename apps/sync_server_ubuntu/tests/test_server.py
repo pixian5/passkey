@@ -263,13 +263,19 @@ class PassSyncServerTests(unittest.TestCase):
         with self.request("PUT", "/v1/sync/payload", body=sample_bundle(5000), headers=headers) as response:
             self.assertEqual(response.status, 200)
 
-        with sqlite3.connect(self.server.config.db_path) as connection:
-            rows = connection.execute(
-                "SELECT payload_sha256 FROM payload_versions WHERE scope = ? ORDER BY version_id",
-                ("default",),
-            ).fetchall()
-        self.assertEqual(len(rows), 3)
-        self.assertNotEqual(rows[0][0], rows[-1][0])
+        with self.request("GET", "/v1/sync/versions", headers=headers) as response:
+            versions = json.loads(response.read().decode("utf-8"))["versions"]
+        self.assertEqual(len(versions), 3)
+        self.assertNotEqual(versions[0]["payloadSha256"], versions[-1]["payloadSha256"])
+
+        oldest_version_id = versions[-1]["versionId"]
+        with self.request(
+            "GET",
+            f"/v1/sync/versions/{oldest_version_id}",
+            headers=headers,
+        ) as response:
+            restored = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(restored["exportedAtMs"], 4000)
 
     def test_rejects_payload_larger_than_configured_limit(self) -> None:
         self.server.config = AppConfig(

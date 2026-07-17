@@ -44,6 +44,18 @@ class StoredPayload:
     updated_at_ms: int
 
 
+@dataclass(frozen=True)
+class StoredVersion:
+    version_id: int
+    scope: str
+    etag: str
+    payload_json: str
+    payload_sha256: str
+    exported_at_ms: int
+    updated_at_ms: int
+    saved_at_ms: int
+
+
 class PayloadRepository:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -119,6 +131,59 @@ class PayloadRepository:
             payload_sha256=row["payload_sha256"],
             exported_at_ms=row["exported_at_ms"],
             updated_at_ms=row["updated_at_ms"],
+        )
+
+    def list_versions(self, scope: str, limit: int = 50) -> list[StoredVersion]:
+        safe_limit = min(max(int(limit), 1), 50)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT version_id, scope, etag, payload_json, payload_sha256,
+                       exported_at_ms, updated_at_ms, saved_at_ms
+                FROM payload_versions
+                WHERE scope = ?1
+                ORDER BY version_id DESC
+                LIMIT ?2;
+                """,
+                (scope, safe_limit),
+            ).fetchall()
+        return [
+            StoredVersion(
+                version_id=row["version_id"],
+                scope=row["scope"],
+                etag=row["etag"],
+                payload_json=row["payload_json"],
+                payload_sha256=row["payload_sha256"],
+                exported_at_ms=row["exported_at_ms"],
+                updated_at_ms=row["updated_at_ms"],
+                saved_at_ms=row["saved_at_ms"],
+            )
+            for row in rows
+        ]
+
+    def get_version(self, scope: str, version_id: int) -> StoredVersion | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT version_id, scope, etag, payload_json, payload_sha256,
+                       exported_at_ms, updated_at_ms, saved_at_ms
+                FROM payload_versions
+                WHERE scope = ?1 AND version_id = ?2
+                LIMIT 1;
+                """,
+                (scope, version_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return StoredVersion(
+            version_id=row["version_id"],
+            scope=row["scope"],
+            etag=row["etag"],
+            payload_json=row["payload_json"],
+            payload_sha256=row["payload_sha256"],
+            exported_at_ms=row["exported_at_ms"],
+            updated_at_ms=row["updated_at_ms"],
+            saved_at_ms=row["saved_at_ms"],
         )
 
     def put(
@@ -250,10 +315,28 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             if path == "/healthz":
                 self._handle_healthz(head_only=head_only)
                 return
-            if path != "/v1/sync/payload":
+            is_payload_path = path == "/v1/sync/payload"
+            is_versions_path = path == "/v1/sync/versions"
+            version_id = None
+            if path.startswith("/v1/sync/versions/"):
+                raw_version_id = path.removeprefix("/v1/sync/versions/")
+                if not raw_version_id.isdigit():
+                    raise RequestError(HTTPStatus.NOT_FOUND, "NOT_FOUND", "接口不存在。")
+                version_id = int(raw_version_id)
+            if not (is_payload_path or is_versions_path or version_id is not None):
                 raise RequestError(HTTPStatus.NOT_FOUND, "NOT_FOUND", "接口不存在。")
 
             scope = self.server.resolve_scope(self.headers.get("Authorization"))
+            if is_versions_path:
+                if self.command not in {"GET", "HEAD"}:
+                    raise RequestError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "请求方法不支持。")
+                self._handle_list_versions(scope=scope, head_only=head_only)
+                return
+            if version_id is not None:
+                if self.command not in {"GET", "HEAD"}:
+                    raise RequestError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "请求方法不支持。")
+                self._handle_get_version(scope=scope, version_id=version_id, head_only=head_only)
+                return
             if self.command == "GET" or self.command == "HEAD":
                 self._handle_get_payload(scope=scope, head_only=head_only)
                 return
@@ -280,7 +363,7 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_options(self) -> None:
         path = self.path.split("?", 1)[0]
-        if path not in {"/healthz", "/v1/sync/payload"}:
+        if path not in {"/healthz", "/v1/sync/payload", "/v1/sync/versions"}:
             self._send_json(
                 HTTPStatus.NOT_FOUND,
                 {"error": "NOT_FOUND", "message": "接口不存在。"},
@@ -320,6 +403,39 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             "ETag": stored.etag,
             "X-Payload-Sha256": stored.payload_sha256,
             "X-Sync-Scope": scope,
+            "Cache-Control": "no-store",
+        }
+        self._send_bytes(HTTPStatus.OK, body_bytes, headers=headers, head_only=head_only)
+
+    def _handle_list_versions(self, scope: str, head_only: bool) -> None:
+        versions = self.server.repository.list_versions(scope)
+        payload = {
+            "scope": scope,
+            "versions": [
+                {
+                    "versionId": item.version_id,
+                    "etag": item.etag,
+                    "payloadSha256": item.payload_sha256,
+                    "exportedAtMs": item.exported_at_ms,
+                    "updatedAtMs": item.updated_at_ms,
+                    "savedAtMs": item.saved_at_ms,
+                }
+                for item in versions
+            ],
+        }
+        self._send_json(HTTPStatus.OK, payload, head_only=head_only)
+
+    def _handle_get_version(self, scope: str, version_id: int, head_only: bool) -> None:
+        stored = self.server.repository.get_version(scope, version_id)
+        if stored is None:
+            raise RequestError(HTTPStatus.NOT_FOUND, "VERSION_NOT_FOUND", "同步快照版本不存在。")
+        body_bytes = stored.payload_json.encode("utf-8")
+        headers = {
+            "Content-Type": "application/json; charset=utf-8",
+            "ETag": stored.etag,
+            "X-Payload-Sha256": stored.payload_sha256,
+            "X-Sync-Scope": scope,
+            "X-Sync-Version": str(stored.version_id),
             "Cache-Control": "no-store",
         }
         self._send_bytes(HTTPStatus.OK, body_bytes, headers=headers, head_only=head_only)

@@ -4,6 +4,8 @@
 
 - `GET /v1/sync/payload`
 - `PUT /v1/sync/payload`
+- `GET /v1/sync/versions`
+- `GET /v1/sync/versions/{versionId}`（只读恢复下载）
 
 服务端只负责认证、版本控制和持久化 `pass.sync.encrypted.v1` 密文信封，无法读取账号、密码、TOTP、恢复码或 Passkey。
 
@@ -15,6 +17,7 @@
 - 可选 Bearer Token 认证
 - 返回 `ETag`，并支持 `If-Match` 并发保护
 - `GET /healthz` 健康检查
+- 通过受保护的版本接口读取最近保存的加密快照，不会在服务端解密
 
 ## 快速启动
 
