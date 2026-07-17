@@ -293,56 +293,88 @@ async function touchDataBump(reason) {
   }
 }
 
-async function migrateLegacyStorageIfNeeded() {
-  const result = await chrome.storage.local.get([STORAGE_KEY_MIGRATION_DONE]);
-  if (Boolean(result[STORAGE_KEY_MIGRATION_DONE])) {
-    // Safari can clone the old IndexedDB rows into a new extension origin while
-    // keeping this stable chrome.storage.local flag. Reading the collections
-    // here lets readCollection convert those legacy array rows in place. Do not
-    // fail startup when encrypted data is currently locked.
-    try {
-      await Promise.all([
-        readCollection(COLLECTION_ACCOUNTS),
-        readCollection(COLLECTION_PASSKEYS),
-        readCollection(COLLECTION_FOLDERS),
-        readCollection(COLLECTION_HISTORY),
-      ]);
-    } catch (error) {
-      if (String(error?.message || "") === "扩展已锁定，无法读取本地数据") return;
-      throw error;
+function legacyCollectionValue(legacy, key) {
+  const value = legacy[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function collectionRecordIdentity(value, collectionKey, index) {
+  if (!value || typeof value !== "object") return `index:${index}`;
+  const candidates = collectionKey === COLLECTION_ACCOUNTS
+    ? [value.accountId, value.recordId, value.id]
+    : collectionKey === COLLECTION_PASSKEYS
+      ? [value.credentialIdB64u, value.credentialId, value.id]
+      : [value.id, value.folderId];
+  const identity = candidates.find((candidate) => String(candidate || "").trim());
+  if (!identity) return `index:${index}`;
+  const normalized = String(identity).trim();
+  return collectionKey === COLLECTION_FOLDERS ? normalized.toLowerCase() : normalized;
+}
+
+function collectionRecordUpdatedAt(value) {
+  const timestamp = Number(value?.updatedAtMs ?? value?.createdAtMs ?? 0);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function mergeLegacyCollection(current, legacy, collectionKey) {
+  const merged = new Map();
+  const order = [];
+  const add = (value, index, preferOnEqual) => {
+    const identity = collectionRecordIdentity(value, collectionKey, index);
+    const existing = merged.get(identity);
+    if (!existing) {
+      merged.set(identity, { value, updatedAtMs: collectionRecordUpdatedAt(value) });
+      order.push(identity);
+      return;
     }
-    return;
-  }
+    const updatedAtMs = collectionRecordUpdatedAt(value);
+    if (updatedAtMs > existing.updatedAtMs || (preferOnEqual && updatedAtMs === existing.updatedAtMs)) {
+      merged.set(identity, { value, updatedAtMs });
+    }
+  };
+  legacy.forEach((value, index) => add(value, index, false));
+  current.forEach((value, index) => add(value, index, true));
+  return order.map((identity) => merged.get(identity).value);
+}
 
-  const [accounts, passkeys, folders] = await Promise.all([
-    readCollection(COLLECTION_ACCOUNTS),
-    readCollection(COLLECTION_PASSKEYS),
-    readCollection(COLLECTION_FOLDERS),
-  ]);
-  const idbHasData = accounts.length > 0 || passkeys.length > 0 || folders.length > 0;
-  if (idbHasData) {
-    await chrome.storage.local.set({ [STORAGE_KEY_MIGRATION_DONE]: true });
-    return;
+async function migrateLegacyCollections(currentCollections, legacy) {
+  const collectionPairs = [
+    [COLLECTION_ACCOUNTS, currentCollections.accounts, legacyCollectionValue(legacy, LEGACY_STORAGE_KEY_ACCOUNTS)],
+    [COLLECTION_PASSKEYS, currentCollections.passkeys, legacyCollectionValue(legacy, LEGACY_STORAGE_KEY_PASSKEYS)],
+    [COLLECTION_FOLDERS, currentCollections.folders, legacyCollectionValue(legacy, LEGACY_STORAGE_KEY_FOLDERS)],
+  ];
+  let changed = false;
+  for (const [collectionKey, current, legacyValue] of collectionPairs) {
+    if (legacyValue.length === 0) continue;
+    const merged = mergeLegacyCollection(current, legacyValue, collectionKey);
+    if (JSON.stringify(merged) === JSON.stringify(current)) continue;
+    await writeCollection(collectionKey, merged);
+    changed = true;
   }
+  if (changed) await touchDataBump("legacy-migration");
+  return changed;
+}
 
+async function migrateLegacyStorageIfNeeded() {
   const legacy = await chrome.storage.local.get([
     LEGACY_STORAGE_KEY_ACCOUNTS,
     LEGACY_STORAGE_KEY_PASSKEYS,
     LEGACY_STORAGE_KEY_FOLDERS,
   ]);
-  const legacyAccounts = Array.isArray(legacy[LEGACY_STORAGE_KEY_ACCOUNTS]) ? legacy[LEGACY_STORAGE_KEY_ACCOUNTS] : [];
-  const legacyPasskeys = Array.isArray(legacy[LEGACY_STORAGE_KEY_PASSKEYS]) ? legacy[LEGACY_STORAGE_KEY_PASSKEYS] : [];
-  const legacyFolders = Array.isArray(legacy[LEGACY_STORAGE_KEY_FOLDERS]) ? legacy[LEGACY_STORAGE_KEY_FOLDERS] : [];
-
-  if (legacyAccounts.length > 0 || legacyPasskeys.length > 0 || legacyFolders.length > 0) {
-    await Promise.all([
-      writeCollection(COLLECTION_ACCOUNTS, legacyAccounts),
-      writeCollection(COLLECTION_PASSKEYS, legacyPasskeys),
-      writeCollection(COLLECTION_FOLDERS, legacyFolders),
+  // Always read the IndexedDB rows before marking migration complete. A browser
+  // origin can retain the flag while its new IndexedDB contains only a partial
+  // dataset; merge the legacy rows by record timestamp instead of discarding them.
+  try {
+    const [accounts, passkeys, folders] = await Promise.all([
+      readCollection(COLLECTION_ACCOUNTS),
+      readCollection(COLLECTION_PASSKEYS),
+      readCollection(COLLECTION_FOLDERS),
     ]);
-    await touchDataBump("legacy-migration");
+    await migrateLegacyCollections({ accounts, passkeys, folders }, legacy);
+  } catch (error) {
+    if (String(error?.message || "") === "扩展已锁定，无法读取本地数据") return;
+    throw error;
   }
-
   await chrome.storage.local.set({ [STORAGE_KEY_MIGRATION_DONE]: true });
 }
 
