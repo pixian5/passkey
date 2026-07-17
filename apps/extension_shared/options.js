@@ -83,6 +83,9 @@ function normalizeLegacySelfHostedServerBaseUrl(value) {
     if ((host === "127.0.0.1" || host === "localhost") && port === 53333) {
       return DEFAULT_SELF_HOSTED_SERVER_BASE_URL;
     }
+    if (host === "or.sbbz.tech" && port === 5443) {
+      return DEFAULT_SELF_HOSTED_SERVER_BASE_URL;
+    }
   } catch {
     return trimmed;
   }
@@ -563,6 +566,9 @@ async function loadSyncSettings() {
     result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL
   );
   dom.syncServerBaseUrl.value = normalizedServerBaseUrl;
+  if (normalizedServerBaseUrl !== String(result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || "").trim()) {
+    await chrome.storage.local.set({ [STORAGE_KEY_SYNC_SERVER_BASE_URL]: normalizedServerBaseUrl });
+  }
   dom.syncServerToken.value = secrets.serverToken;
   const syncEncryptionKey = normalizeSyncEncryptionKey(secrets.encryptionKey);
   dom.syncEncryptionKey.value = syncEncryptionKey;

@@ -102,6 +102,9 @@ function normalizeLegacySelfHostedServerBaseUrl(value) {
     if ((host === "127.0.0.1" || host === "localhost") && port === 53333) {
       return DEFAULT_SELF_HOSTED_SERVER_BASE_URL;
     }
+    if (host === "or.sbbz.tech" && port === 5443) {
+      return DEFAULT_SELF_HOSTED_SERVER_BASE_URL;
+    }
   } catch {
     return trimmed;
   }
