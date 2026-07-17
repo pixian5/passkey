@@ -243,7 +243,7 @@ final class AccountStore: ObservableObject {
     static let fixedNewAccountFolderName = "新账号"
     static let fixedNewAccountFolderId = UUID(uuidString: "F16A2C4E-4A2A-43D5-A670-3F1767D41001")!
     static let syncBundleSchemaV2 = "pass.sync.bundle.v2"
-    static let defaultSelfHostedServerBaseURL = "https://or.sbbz.tech:5443"
+    static let defaultSelfHostedServerBaseURL = "https://uk.sbbz.tech:5443"
     private static let maxHistoryEntries = 500
     private static let installedFontFamilies: Set<String> = Set(NSFontManager.shared.availableFontFamilies)
 

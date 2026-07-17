@@ -66,6 +66,8 @@ python3 pass_sync_server.py
   - 默认 `INFO`
 - `PASS_SYNC_MAX_BODY_BYTES`
   - 默认 `2097152`（2 MiB）
+- `PASS_SYNC_TLS_CERT` / `PASS_SYNC_TLS_KEY`
+  - 同时配置后启用 TLS；生产环境应使用证书和私钥文件，并将 `PASS_SYNC_PORT` 设置为 HTTPS 监听端口
 
 ## 客户端接入
 

@@ -9,6 +9,7 @@ import logging
 import os
 import signal
 import sqlite3
+import ssl
 import threading
 import time
 from dataclasses import dataclass
@@ -28,6 +29,8 @@ class AppConfig:
     db_path: Path
     token_scopes: dict[str, str]
     max_body_bytes: int = 2 * 1024 * 1024
+    tls_cert_path: Path | None = None
+    tls_key_path: Path | None = None
 
     @property
     def auth_enabled(self) -> bool:
@@ -801,17 +804,29 @@ def load_config() -> AppConfig:
     script_dir = Path(__file__).resolve().parent
     db_path = Path(os.environ.get("PASS_SYNC_DB_PATH", script_dir / "data" / "pass_sync.sqlite3")).expanduser()
     token_scopes = parse_token_scopes(os.environ.get("PASS_SYNC_BEARER_TOKENS", ""))
+    cert_value = os.environ.get("PASS_SYNC_TLS_CERT", "").strip()
+    key_value = os.environ.get("PASS_SYNC_TLS_KEY", "").strip()
+    if bool(cert_value) != bool(key_value):
+        raise RuntimeError("PASS_SYNC_TLS_CERT 和 PASS_SYNC_TLS_KEY 必须同时配置")
     return AppConfig(
         host=os.environ.get("PASS_SYNC_HOST", "127.0.0.1"),
         port=int(os.environ.get("PASS_SYNC_PORT", "53333")),
         db_path=db_path,
         token_scopes=token_scopes,
         max_body_bytes=max(1024, int(os.environ.get("PASS_SYNC_MAX_BODY_BYTES", str(2 * 1024 * 1024)))),
+        tls_cert_path=Path(cert_value).expanduser() if cert_value else None,
+        tls_key_path=Path(key_value).expanduser() if key_value else None,
     )
 
 
 def build_server(config: AppConfig) -> PassSyncHTTPServer:
-    return PassSyncHTTPServer((config.host, config.port), SyncRequestHandler, config)
+    server = PassSyncHTTPServer((config.host, config.port), SyncRequestHandler, config)
+    if config.tls_cert_path and config.tls_key_path:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(certfile=config.tls_cert_path, keyfile=config.tls_key_path)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+    return server
 
 
 def main() -> None:
