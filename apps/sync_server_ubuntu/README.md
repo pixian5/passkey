@@ -15,10 +15,22 @@
 - 返回 `ETag`，并支持 `If-Match` 并发保护
 - `GET /healthz` 健康检查
 
-## 启动
+## 快速启动
 
 ```bash
 cd /Users/x/code/pass/apps/sync_server_ubuntu
+./start.sh
+```
+
+脚本会自动生成随机 Bearer Token、监听 `0.0.0.0:53333` 并打印配置信息。
+
+```bash
+./stop.sh    # 停止服务
+```
+
+也可以直接运行 Python 文件：
+
+```bash
 python3 pass_sync_server.py
 ```
 
@@ -70,7 +82,19 @@ https://your-domain.example/v1/sync/payload
 - 通过 `systemd` 管理进程
 - 定期备份 `pass_sync.sqlite3`
 
-## systemd 示例
+## systemd 部署（生产推荐）
+
+复制服务文件并修改 Token：
+
+```bash
+sudo cp pass-sync-server.service /etc/systemd/system/
+sudo editor /etc/systemd/system/pass-sync-server.service
+# 修改 PASS_SYNC_BEARER_TOKENS 和路径
+sudo systemctl daemon-reload
+sudo systemctl enable --now pass-sync-server
+```
+
+服务文件模板见 [`pass-sync-server.service`](./pass-sync-server.service)。
 
 ```ini
 [Unit]
