@@ -74,11 +74,19 @@ async function readCollection(key) {
     throw new Error(`IndexedDB 集合格式无效: ${key}`);
   }
   const cryptoKey = await loadOrCreateEncryptionKey();
-  const plaintext = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: base64ToBytes(row.nonceBase64), additionalData: new TextEncoder().encode(key) },
-    cryptoKey,
-    base64ToBytes(row.ciphertextBase64)
-  );
+  let plaintext;
+  try {
+    plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: base64ToBytes(row.nonceBase64), additionalData: new TextEncoder().encode(key) },
+      cryptoKey,
+      base64ToBytes(row.ciphertextBase64)
+    );
+  } catch (error) {
+    // History is auxiliary data. A stale browser-origin key must not prevent
+    // the account store from starting; the next history write uses the current key.
+    if (key === COLLECTION_HISTORY && String(error?.name || "") === "OperationError") return [];
+    throw error;
+  }
   const decoded = JSON.parse(new TextDecoder().decode(plaintext));
   return Array.isArray(decoded) ? decoded : [];
 }
@@ -355,6 +363,17 @@ async function migrateLegacyCollections(currentCollections, legacy) {
   return changed;
 }
 
+async function readCollectionForMigration(key, legacyValue) {
+  try {
+    return await readCollection(key);
+  } catch (error) {
+    // A browser update can leave a collection encrypted with a discarded
+    // origin key. If a legacy collection exists, rewrite it with the current key.
+    if (legacyValue.length > 0 && String(error?.name || "") === "OperationError") return [];
+    throw error;
+  }
+}
+
 async function migrateLegacyStorageIfNeeded() {
   const legacy = await chrome.storage.local.get([
     LEGACY_STORAGE_KEY_ACCOUNTS,
@@ -365,10 +384,13 @@ async function migrateLegacyStorageIfNeeded() {
   // origin can retain the flag while its new IndexedDB contains only a partial
   // dataset; merge the legacy rows by record timestamp instead of discarding them.
   try {
+    const legacyAccounts = legacyCollectionValue(legacy, LEGACY_STORAGE_KEY_ACCOUNTS);
+    const legacyPasskeys = legacyCollectionValue(legacy, LEGACY_STORAGE_KEY_PASSKEYS);
+    const legacyFolders = legacyCollectionValue(legacy, LEGACY_STORAGE_KEY_FOLDERS);
     const [accounts, passkeys, folders] = await Promise.all([
-      readCollection(COLLECTION_ACCOUNTS),
-      readCollection(COLLECTION_PASSKEYS),
-      readCollection(COLLECTION_FOLDERS),
+      readCollectionForMigration(COLLECTION_ACCOUNTS, legacyAccounts),
+      readCollectionForMigration(COLLECTION_PASSKEYS, legacyPasskeys),
+      readCollectionForMigration(COLLECTION_FOLDERS, legacyFolders),
     ]);
     await migrateLegacyCollections({ accounts, passkeys, folders }, legacy);
   } catch (error) {
@@ -467,7 +489,18 @@ export async function setSyncSecrets(value) {
 }
 
 export async function migrateLegacySyncSecrets() {
-  const existing = await getSyncSecrets();
+  let existing = normalizeSyncSecrets(null);
+  let existingCollectionUnreadable = false;
+  try {
+    existing = await getSyncSecrets();
+  } catch (error) {
+    // A browser-origin migration can leave this auxiliary collection encrypted
+    // with a discarded origin key. Do not let stale sync credentials prevent
+    // the options page or popup from initializing; legacy storage below is
+    // still available as the recovery source.
+    if (String(error?.name || "") !== "OperationError") throw error;
+    existingCollectionUnreadable = true;
+  }
   const legacy = await chrome.storage.local.get([
     LEGACY_STORAGE_KEY_SYNC_WEBDAV_PASSWORD,
     LEGACY_STORAGE_KEY_SYNC_SERVER_TOKEN,
@@ -478,7 +511,7 @@ export async function migrateLegacySyncSecrets() {
     serverToken: existing.serverToken || legacy[LEGACY_STORAGE_KEY_SYNC_SERVER_TOKEN],
     encryptionKey: existing.encryptionKey || legacy[LEGACY_STORAGE_KEY_SYNC_ENCRYPTION_KEY],
   });
-  if (migrated.webdavPassword || migrated.serverToken || migrated.encryptionKey) {
+  if (existingCollectionUnreadable || migrated.webdavPassword || migrated.serverToken || migrated.encryptionKey) {
     await setSyncSecrets(migrated);
   }
   await chrome.storage.local.remove([

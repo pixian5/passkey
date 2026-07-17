@@ -118,7 +118,12 @@ let lockLastActivityAtMs = Date.now();
 let lockOperationInFlight = false;
 
 init().catch((error) => {
-  setStatus(`初始化失败: ${error.message}`);
+  console.error("[Pass popup] 初始化失败", error);
+  const detail = [error?.name, error?.message, String(error)]
+    .map((value) => String(value || "").trim())
+    .filter((value, index, values) => value && values.indexOf(value) === index)
+    .join(" | ");
+  setStatus(`初始化失败: ${detail || "未知错误，请查看扩展 Service Worker 控制台"}`);
 });
 
 async function init() {

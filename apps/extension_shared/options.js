@@ -206,7 +206,12 @@ let lockSettingsSaveTimer = null;
 const AUTO_SYNC_INTERVAL_OPTIONS = new Set(["0", "1", "3", "5", "10", "15", "30", "60"]);
 
 init().catch((error) => {
-  setStatus(`初始化失败: ${error.message}`);
+  console.error("[Pass options] 初始化失败", error);
+  const detail = [error?.name, error?.message, String(error)]
+    .map((value) => String(value || "").trim())
+    .filter((value, index, values) => value && values.indexOf(value) === index)
+    .join(" | ");
+  setStatus(`初始化失败: ${detail || "未知错误，请查看扩展 Service Worker 控制台"}`);
 });
 
 async function init() {

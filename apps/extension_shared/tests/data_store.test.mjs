@@ -286,3 +286,35 @@ test("同步秘密迁移到加密数据库后，锁定状态无法读取且明�
   await setSyncSecrets({ ...migrated, serverToken: "updated token" });
   assert.equal((await getSyncSecrets()).serverToken, "updated token");
 });
+
+test("同步秘密旧密钥失配时仍可从旧明文键恢复并完成初始化", async () => {
+  const oldRawKey = crypto.getRandomValues(new Uint8Array(32));
+  const currentRawKey = crypto.getRandomValues(new Uint8Array(32));
+  await local.set({ [LEGACY_KEY]: bytesToBase64(oldRawKey) });
+  await setSyncSecrets({
+    webdavPassword: "stale webdav",
+    serverToken: "stale server",
+    encryptionKey: "stale encryption",
+  });
+  await lockDataEncryption();
+
+  await local.set({
+    [LEGACY_KEY]: bytesToBase64(currentRawKey),
+    [WEBDAV_PASSWORD_KEY]: "recovered webdav",
+    [SERVER_TOKEN_KEY]: "recovered server",
+    [SYNC_ENCRYPTION_KEY]: "recovered encryption",
+  });
+
+  const migrated = await migrateLegacySyncSecrets();
+  assert.deepEqual(migrated, {
+    webdavPassword: "recovered webdav",
+    serverToken: "recovered server",
+    encryptionKey: "recovered encryption",
+  });
+  assert.deepEqual(await getSyncSecrets(), migrated);
+  assert.deepEqual(await local.get([
+    WEBDAV_PASSWORD_KEY,
+    SERVER_TOKEN_KEY,
+    SYNC_ENCRYPTION_KEY,
+  ]), {});
+});
