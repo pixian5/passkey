@@ -102,6 +102,7 @@ struct SettingsView: View {
                                     .frame(width: labelColumnWidth, alignment: .leading)
                                 TextField("部署服务器时配置的 Bearer Token", text: $store.serverAuthToken)
                                     .textFieldStyle(.roundedBorder)
+                                    .onTapGesture { store.loadSyncSecretsForUI() }
                             }
                             Text("服务端接口固定为 /v1/sync/payload，使用 GET/PUT 交换 pass.sync.bundle.v2。")
                                 .font(.caption)
@@ -132,6 +133,7 @@ struct SettingsView: View {
                                     .frame(width: labelColumnWidth, alignment: .leading)
                                 TextField("可选（写入本机 Keychain）", text: $store.webdavPassword)
                                     .textFieldStyle(.roundedBorder)
+                                    .onTapGesture { store.loadSyncSecretsForUI() }
                             }
                         }
 
@@ -140,6 +142,7 @@ struct SettingsView: View {
                                 .frame(width: labelColumnWidth, alignment: .leading)
                             TextField("留空则不同步加密", text: $store.syncEncryptionKey)
                                 .textFieldStyle(.roundedBorder)
+                                .onTapGesture { store.loadSyncSecretsForUI() }
                             Button("生成") {
                                 store.generateSyncEncryptionKey()
                             }

@@ -322,6 +322,7 @@ final class AccountStore: ObservableObject {
     private var cloudObserver: NSObjectProtocol?
     private var suppressCloudPush: Bool = false
     private var isLoadingSyncPreferences: Bool = false
+    private var syncSecretsLoaded: Bool = false
     private var syncNowTask: Task<Void, Never>?
     private var autoSyncTimer: Timer?
     private lazy var localSQLiteStore = LocalSQLiteStore(
@@ -1629,6 +1630,7 @@ final class AccountStore: ObservableObject {
 
     func exportSyncBundle(to fileURL: URL) {
         do {
+            loadSyncSecretsIfNeeded()
             let parentDirectory = fileURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(
                 at: parentDirectory,
@@ -1644,6 +1646,7 @@ final class AccountStore: ObservableObject {
 
     func importSyncBundle(from fileURL: URL) {
         do {
+            loadSyncSecretsIfNeeded()
             let previousAccounts = accounts
             let data = try Data(contentsOf: fileURL)
             let parsed = try decodeSyncBundle(data)
@@ -2206,6 +2209,7 @@ final class AccountStore: ObservableObject {
             return
         }
 
+        loadSyncSecretsIfNeeded()
         let localPayload = buildCurrentSyncPayload()
         do {
             try saveLocalSyncSafetySnapshot(localPayload, reason: "同步前自动备份")
@@ -2537,6 +2541,7 @@ final class AccountStore: ObservableObject {
     }
 
     func loadSyncVersions() async {
+        loadSyncSecretsIfNeeded()
         guard syncEnableSelfHostedServer else {
             syncVersionsStatus = "请先启用自建服务器"
             syncVersionSummaries = []
@@ -2580,6 +2585,7 @@ final class AccountStore: ObservableObject {
     }
 
     func restoreSyncVersion(_ version: SyncVersionSummary) async {
+        loadSyncSecretsIfNeeded()
         guard syncEnableSelfHostedServer else {
             syncVersionsStatus = "请先启用自建服务器"
             return
@@ -3053,6 +3059,24 @@ final class AccountStore: ObservableObject {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
+    func loadSyncSecretsForUI() {
+        loadSyncSecretsIfNeeded()
+    }
+
+    private func loadSyncSecretsIfNeeded() {
+        guard !syncSecretsLoaded else { return }
+        isLoadingSyncPreferences = true
+        webdavPassword = readSecret(account: SecretKeys.webdavPasswordAccount)
+        serverAuthToken = readSecret(account: SecretKeys.serverTokenAccount)
+        syncEncryptionKey = readSecret(account: SecretKeys.syncEncryptionKeyAccount)
+        if !PassSyncCrypto.isValidKeyString(syncEncryptionKey) {
+            syncEncryptionKey = ""
+            _ = saveSecret(syncEncryptionKey, account: SecretKeys.syncEncryptionKeyAccount)
+        }
+        isLoadingSyncPreferences = false
+        syncSecretsLoaded = true
+    }
+
     func currentTotpCode(for account: PasswordAccount, at date: Date = Date()) -> String? {
         let secret = account.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !secret.isEmpty else { return nil }
@@ -3079,16 +3103,13 @@ final class AccountStore: ObservableObject {
         webdavBaseURL = defaults.string(forKey: Keys.webdavBaseURL) ?? ""
         webdavRemotePath = defaults.string(forKey: Keys.webdavRemotePath) ?? "pass-sync-bundle-v2.json"
         webdavUsername = defaults.string(forKey: Keys.webdavUsername) ?? ""
-        webdavPassword = readSecret(account: SecretKeys.webdavPasswordAccount)
+        webdavPassword = ""
         serverBaseURL = normalizedSelfHostedServerBaseURL(
             defaults.string(forKey: Keys.serverBaseURL) ?? Self.defaultSelfHostedServerBaseURL
         )
-        serverAuthToken = readSecret(account: SecretKeys.serverTokenAccount)
-        syncEncryptionKey = readSecret(account: SecretKeys.syncEncryptionKeyAccount)
-        if !PassSyncCrypto.isValidKeyString(syncEncryptionKey) {
-            syncEncryptionKey = ""
-            _ = saveSecret(syncEncryptionKey, account: SecretKeys.syncEncryptionKeyAccount)
-        }
+        serverAuthToken = ""
+        syncEncryptionKey = ""
+        syncSecretsLoaded = false
         isLoadingSyncPreferences = false
 
         let foldersDataFromDatabase = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.folders)
@@ -3754,6 +3775,7 @@ final class AccountStore: ObservableObject {
     }
 
     private func fetchRemotePayloadFromICloud() throws -> SyncBundlePayload? {
+        loadSyncSecretsIfNeeded()
         guard iCloudAvailable() else {
             throw NSError(
                 domain: "AccountStore.ICloudSync",
@@ -3778,6 +3800,7 @@ final class AccountStore: ObservableObject {
     }
 
     private func pushPayloadToICloud(_ payload: SyncBundlePayload) throws -> Bool {
+        loadSyncSecretsIfNeeded()
         guard iCloudAvailable() else {
             throw NSError(
                 domain: "AccountStore.ICloudSync",
