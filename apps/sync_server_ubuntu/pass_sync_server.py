@@ -72,6 +72,20 @@ class PayloadRepository:
                 );
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS payload_versions (
+                  version_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  scope TEXT NOT NULL,
+                  etag TEXT NOT NULL,
+                  payload_json TEXT NOT NULL,
+                  payload_sha256 TEXT NOT NULL,
+                  exported_at_ms INTEGER NOT NULL,
+                  updated_at_ms INTEGER NOT NULL,
+                  saved_at_ms INTEGER NOT NULL
+                );
+                """
+            )
             rows = connection.execute("SELECT scope, payload_json FROM payloads;").fetchall()
             plaintext_scopes = []
             for row in rows:
@@ -124,6 +138,24 @@ class PayloadRepository:
                 raise PreconditionFailedError()
 
             with self._connect() as connection:
+                if current is not None:
+                    connection.execute(
+                        """
+                        INSERT INTO payload_versions (
+                          scope, etag, payload_json, payload_sha256,
+                          exported_at_ms, updated_at_ms, saved_at_ms
+                        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);
+                        """,
+                        (
+                            current.scope,
+                            current.etag,
+                            current.payload_json,
+                            current.payload_sha256,
+                            current.exported_at_ms,
+                            current.updated_at_ms,
+                            now_ms,
+                        ),
+                    )
                 connection.execute(
                     """
                     INSERT INTO payloads (
@@ -142,6 +174,28 @@ class PayloadRepository:
                       updated_at_ms = excluded.updated_at_ms;
                     """,
                     (scope, next_etag, payload_json, payload_sha256, exported_at_ms, now_ms),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO payload_versions (
+                      scope, etag, payload_json, payload_sha256,
+                      exported_at_ms, updated_at_ms, saved_at_ms
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);
+                    """,
+                    (scope, next_etag, payload_json, payload_sha256, exported_at_ms, now_ms, now_ms),
+                )
+                connection.execute(
+                    """
+                    DELETE FROM payload_versions
+                    WHERE scope = ?1
+                      AND version_id NOT IN (
+                        SELECT version_id FROM payload_versions
+                        WHERE scope = ?1
+                        ORDER BY version_id DESC
+                        LIMIT 50
+                      );
+                    """,
+                    (scope,),
                 )
 
             return StoredPayload(

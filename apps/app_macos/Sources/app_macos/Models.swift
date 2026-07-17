@@ -38,6 +38,7 @@ struct PasswordAccount: Codable, Identifiable, Hashable {
     var passkeyUpdatedDeviceName: String
     var updatedAtMs: Int64
     var isDeleted: Bool
+    var isPermanentlyDeleted: Bool
     var deletedAtMs: Int64?
     var deletedDeviceName: String
     var lastOperatedDeviceName: String
@@ -106,6 +107,7 @@ extension PasswordAccount {
         case passkeyUpdatedDeviceName
         case updatedAtMs
         case isDeleted
+        case isPermanentlyDeleted
         case deletedAtMs
         case deletedDeviceName
         case lastOperatedDeviceName
@@ -184,6 +186,7 @@ extension PasswordAccount {
             ?? fallbackDeviceName
         updatedAtMs = updatedAt
         isDeleted = try container.decodeIfPresent(Bool.self, forKey: .isDeleted) ?? false
+        isPermanentlyDeleted = try container.decodeIfPresent(Bool.self, forKey: .isPermanentlyDeleted) ?? false
         deletedAtMs = try container.decodeIfPresent(Int64.self, forKey: .deletedAtMs)
         deletedDeviceName = try container.decodeIfPresent(String.self, forKey: .deletedDeviceName)
             ?? (deletedAtMs == nil ? "" : fallbackDeviceName)
@@ -227,6 +230,7 @@ extension PasswordAccount {
         try container.encode(passkeyUpdatedDeviceName, forKey: .passkeyUpdatedDeviceName)
         try container.encode(updatedAtMs, forKey: .updatedAtMs)
         try container.encode(isDeleted, forKey: .isDeleted)
+        try container.encode(isPermanentlyDeleted, forKey: .isPermanentlyDeleted)
         try container.encode(deletedAtMs, forKey: .deletedAtMs)
         try container.encode(deletedDeviceName, forKey: .deletedDeviceName)
         try container.encode(lastOperatedDeviceName, forKey: .lastOperatedDeviceName)
@@ -282,6 +286,7 @@ enum AccountFactory {
             passkeyUpdatedDeviceName: deviceName,
             updatedAtMs: nowMs,
             isDeleted: false,
+            isPermanentlyDeleted: false,
             deletedAtMs: nil,
             deletedDeviceName: "",
             lastOperatedDeviceName: deviceName,

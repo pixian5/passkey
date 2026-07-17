@@ -1202,6 +1202,7 @@ function normalizeAccountShape(account) {
     passkeyUpdatedAtMs: asTimestamp(account?.passkeyUpdatedAtMs, createdAtMs),
     passkeyUpdatedDeviceName: normalizeUsername(account?.passkeyUpdatedDeviceName || account?.lastOperatedDeviceName || "") || "ChromeMac",
     isDeleted: Boolean(account?.isDeleted),
+    isPermanentlyDeleted: Boolean(account?.isPermanentlyDeleted),
     deletedAtMs: account?.deletedAtMs == null ? null : asTimestamp(account.deletedAtMs, 0),
     deletedDeviceName: normalizeUsername(account?.deletedDeviceName || "") || "",
     lastOperatedDeviceName: normalizeUsername(account?.lastOperatedDeviceName || "") || "ChromeMac",

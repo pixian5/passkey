@@ -815,11 +815,11 @@ async function persistSyncSettings({ showStatus = true } = {}) {
   const autoSyncIntervalMinutes = normalizeAutoSyncIntervalMinutes(dom.syncAutoInterval.value);
   if (enableWebdav && !isSecureSyncEndpointValue(dom.syncWebdavBaseUrl.value)) {
     if (showStatus) setStatus("WebDAV 地址必须使用 HTTPS（本机回环地址可使用 HTTP）");
-    return;
+    return false;
   }
   if (enableServer && !normalizeLegacySelfHostedServerBaseUrl(dom.syncServerBaseUrl.value || "")) {
     if (showStatus) setStatus("服务器地址必须使用 HTTPS（本机回环地址可使用 HTTP）");
-    return;
+    return false;
   }
   const nextSettings = {
     [STORAGE_KEY_SYNC_ENABLE_WEBDAV]: enableWebdav,
@@ -837,7 +837,7 @@ async function persistSyncSettings({ showStatus = true } = {}) {
   };
   if (dom.syncEncryptionKey.value.trim() && !nextSecrets.encryptionKey) {
     if (showStatus) setStatus("同步加密密钥无效，留空将不使用加密");
-    return;
+    return false;
   }
   await chrome.storage.local.set(nextSettings);
   await setSyncSecrets(nextSecrets);
@@ -866,10 +866,11 @@ async function persistSyncSettings({ showStatus = true } = {}) {
       ? `同步源配置已保存（已启用：${enabledLabels.join(" + ")}；${autoSyncLabel}）`
       : `同步源配置已保存（当前未启用任何远端源；${autoSyncLabel}）`
   );
+  return true;
 }
 
 async function saveSyncSettings() {
-  await persistSyncSettings({ showStatus: true });
+  return persistSyncSettings({ showStatus: true });
 }
 
 async function refresh({ silent = false } = {}) {
@@ -1272,7 +1273,7 @@ async function importGoogleAuthenticatorMigration(migration, folderPlan = null) 
 }
 
 async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
-  await saveSyncSettings();
+  if (!(await saveSyncSettings())) return;
   const targets = buildRemoteSyncTargetsFromDom();
   if (!targets || targets.length === 0) return;
   const normalizedSyncMode = normalizeSyncMode(syncMode);
@@ -2085,6 +2086,7 @@ function applyImportedBrowserEntryToAccount(account, entry, nowMs) {
   }
   if (next.isDeleted) {
     next.isDeleted = false;
+    next.isPermanentlyDeleted = false;
     next.deletedAtMs = null;
     changed = true;
   }
@@ -2165,7 +2167,7 @@ async function clearActiveAccounts() {
 }
 
 async function clearRecycleBin() {
-  const deletedCount = accountsRaw.filter((item) => item.isDeleted).length;
+  const deletedCount = accountsRaw.filter((item) => item.isDeleted && !item.isPermanentlyDeleted).length;
   if (deletedCount === 0) {
     setStatus("回收站为空，无需清空");
     return;
@@ -2178,7 +2180,19 @@ async function clearRecycleBin() {
     return;
   }
 
-  const next = cloneAccounts(accountsRaw).filter((account) => !account.isDeleted);
+  const now = Date.now();
+  const deviceName = await getDeviceName();
+  const next = cloneAccounts(accountsRaw).map((account) => account.isDeleted && !account.isPermanentlyDeleted
+    ? {
+      ...account,
+      isDeleted: true,
+      isPermanentlyDeleted: true,
+      deletedAtMs: now,
+      deletedDeviceName: deviceName,
+      updatedAtMs: now,
+      lastOperatedDeviceName: deviceName,
+    }
+    : account);
   editingAccountId = null;
   await setAccountsToDataStore(next);
   await appendHistory(`清空回收站：永久删除 ${deletedCount} 条账号`);
@@ -2498,7 +2512,7 @@ function renderAllAccounts(inputAccounts) {
 function renderRecycleAccounts(inputAccounts) {
   const accounts = (Array.isArray(inputAccounts) ? inputAccounts : [])
     .map(normalizeAccountShape)
-    .filter((account) => account.isDeleted)
+    .filter((account) => account.isDeleted && !account.isPermanentlyDeleted)
     .sort(
       (a, b) =>
         Number(b.deletedAtMs || b.updatedAtMs || 0) - Number(a.deletedAtMs || a.updatedAtMs || 0)
@@ -2568,7 +2582,7 @@ function renderRecycleAccounts(inputAccounts) {
 function renderSidebar(inputAccounts) {
   const accounts = (Array.isArray(inputAccounts) ? inputAccounts : []).map(normalizeAccountShape);
   const active = accounts.filter((item) => !item.isDeleted);
-  const recycle = accounts.filter((item) => item.isDeleted);
+  const recycle = accounts.filter((item) => item.isDeleted && !item.isPermanentlyDeleted);
   const passkeys = active.filter((item) => (item.passkeyCredentialIds || []).length > 0);
   const totp = active.filter((item) => hasTotpSecret(item.totpSecret));
 
@@ -2652,7 +2666,7 @@ function buildSettingsAccountMetaHtml(account) {
 function currentViewAccounts(inputAccounts) {
   const accounts = (Array.isArray(inputAccounts) ? inputAccounts : []).map(normalizeAccountShape);
   const active = accounts.filter((item) => !item.isDeleted);
-  const recycle = accounts.filter((item) => item.isDeleted);
+  const recycle = accounts.filter((item) => item.isDeleted && !item.isPermanentlyDeleted);
 
   if (activeAccountView === "recycle") {
     return recycle;
@@ -3752,7 +3766,21 @@ async function deleteAccountFromAll(accountId) {
 
   const target = next[index];
   if (target.isDeleted) {
-    next.splice(index, 1);
+    if (target.isPermanentlyDeleted) {
+      setStatus("该账号已永久删除");
+      return;
+    }
+    const now = Date.now();
+    const deviceName = await getDeviceName();
+    next[index] = {
+      ...target,
+      isDeleted: true,
+      isPermanentlyDeleted: true,
+      deletedAtMs: now,
+      deletedDeviceName: deviceName,
+      updatedAtMs: now,
+      lastOperatedDeviceName: deviceName,
+    };
     if (editingAccountId === target.accountId) {
       editingAccountId = null;
     }
@@ -3789,6 +3817,10 @@ async function restoreDeletedAccount(accountId) {
     setStatus("该账号不在回收站");
     return;
   }
+  if (target.isPermanentlyDeleted) {
+    setStatus("该账号已永久删除，不能恢复");
+    return;
+  }
 
   const confirmed = window.confirm(`将恢复账号：${target.accountId}\n是否继续？`);
   if (!confirmed) return;
@@ -3822,8 +3854,22 @@ async function permanentlyDeleteAccount(accountId) {
     setStatus("仅支持在回收站中永久删除");
     return;
   }
+  if (target.isPermanentlyDeleted) {
+    setStatus("该账号已永久删除");
+    return;
+  }
 
-  next.splice(index, 1);
+  const now = Date.now();
+  const deviceName = await getDeviceName();
+  next[index] = {
+    ...target,
+    isDeleted: true,
+    isPermanentlyDeleted: true,
+    deletedAtMs: now,
+    deletedDeviceName: deviceName,
+    updatedAtMs: now,
+    lastOperatedDeviceName: deviceName,
+  };
   if (editingAccountId === target.accountId) {
     editingAccountId = null;
   }
@@ -4049,6 +4095,7 @@ function normalizeAccountShape(account) {
     passkeyUpdatedAtMs: Number(account?.passkeyUpdatedAtMs || createdAtMs),
     passkeyUpdatedDeviceName: String(account?.passkeyUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
     isDeleted: Boolean(account?.isDeleted),
+    isPermanentlyDeleted: Boolean(account?.isPermanentlyDeleted),
     deletedAtMs: account?.deletedAtMs == null ? null : Number(account.deletedAtMs),
     deletedDeviceName: String(account?.deletedDeviceName || "").trim(),
     lastOperatedDeviceName: String(account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
@@ -4868,6 +4915,7 @@ function applyImportedTotpEntryToAccount(account, entry, nowMs, targetFolderId =
   }
   if (next.isDeleted) {
     next.isDeleted = false;
+    next.isPermanentlyDeleted = false;
     next.deletedAtMs = null;
     changed = true;
   }

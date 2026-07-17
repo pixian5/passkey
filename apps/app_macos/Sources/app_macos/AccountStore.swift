@@ -1310,10 +1310,15 @@ final class AccountStore: ObservableObject {
             statusMessage = "该账号不在回收站"
             return
         }
+        guard !accounts[index].isPermanentlyDeleted else {
+            statusMessage = "该账号已永久删除，不能恢复"
+            return
+        }
 
         let beforeAccount = accounts[index]
         let now = nowMs()
         accounts[index].isDeleted = false
+        accounts[index].isPermanentlyDeleted = false
         accounts[index].deletedAtMs = nil
         accounts[index].deletedDeviceName = ""
         statusMessage = "账号已从回收站恢复"
@@ -1329,7 +1334,9 @@ final class AccountStore: ObservableObject {
     }
 
     func restoreFromRecycleBin(accountIds: Set<UUID>) {
-        let targetIndexes = accounts.indices.filter { accountIds.contains(accounts[$0].id) && accounts[$0].isDeleted }
+        let targetIndexes = accounts.indices.filter {
+            accountIds.contains(accounts[$0].id) && accounts[$0].isDeleted && !accounts[$0].isPermanentlyDeleted
+        }
         guard !targetIndexes.isEmpty else {
             statusMessage = "未找到可恢复账号"
             return
@@ -1340,6 +1347,7 @@ final class AccountStore: ObservableObject {
         let device = currentDeviceName()
         for index in targetIndexes {
             accounts[index].isDeleted = false
+            accounts[index].isPermanentlyDeleted = false
             accounts[index].deletedAtMs = nil
             accounts[index].deletedDeviceName = ""
             accounts[index].touchUpdatedAt(now, deviceName: device)
@@ -1368,9 +1376,16 @@ final class AccountStore: ObservableObject {
             return
         }
 
-        let removedAccount = accounts[index]
-        let removedId = removedAccount.accountId
-        accounts.remove(at: index)
+        let beforeAccount = accounts[index]
+        let removedId = beforeAccount.accountId
+        let now = nowMs()
+        let device = currentDeviceName()
+        accounts[index].isDeleted = true
+        accounts[index].isPermanentlyDeleted = true
+        accounts[index].deletedAtMs = now
+        accounts[index].deletedDeviceName = device
+        accounts[index].touchUpdatedAt(now, deviceName: device)
+        let afterAccount = accounts[index]
         if editingAccountId == account.id {
             cancelEditing()
         }
@@ -1378,21 +1393,31 @@ final class AccountStore: ObservableObject {
         appendAccountHistoryBatch(
             category: .local,
             title: "永久删除账号：\(removedId)",
-            beforeAccounts: [removedAccount],
-            afterAccounts: []
+            beforeAccounts: [beforeAccount],
+            afterAccounts: [afterAccount]
         )
         statusMessage = "账号已永久删除: \(removedId)"
     }
 
     func permanentlyDeleteFromRecycleBin(accountIds: Set<UUID>) {
-        let beforeAccounts = accounts.filter { accountIds.contains($0.id) && $0.isDeleted }
+        let beforeAccounts = accounts.filter {
+            accountIds.contains($0.id) && $0.isDeleted && !$0.isPermanentlyDeleted
+        }
         let targetIds = Set(beforeAccounts.map(\.id))
         guard !targetIds.isEmpty else {
             statusMessage = "未找到可永久删除账号"
             return
         }
 
-        accounts.removeAll { targetIds.contains($0.id) }
+        let now = nowMs()
+        let device = currentDeviceName()
+        for index in accounts.indices where targetIds.contains(accounts[index].id) {
+            accounts[index].isDeleted = true
+            accounts[index].isPermanentlyDeleted = true
+            accounts[index].deletedAtMs = now
+            accounts[index].deletedDeviceName = device
+            accounts[index].touchUpdatedAt(now, deviceName: device)
+        }
         if let editingAccountId, targetIds.contains(editingAccountId) {
             cancelEditing()
         }
@@ -1401,7 +1426,7 @@ final class AccountStore: ObservableObject {
             category: .local,
             title: "批量永久删除账号：\(targetIds.count) 条",
             beforeAccounts: beforeAccounts,
-            afterAccounts: []
+            afterAccounts: accounts.filter { targetIds.contains($0.id) }
         )
         statusMessage = "已永久删除 \(targetIds.count) 个账号"
     }
@@ -1415,7 +1440,7 @@ final class AccountStore: ObservableObject {
     }
 
     func restoreAllFromRecycleBin() {
-        let deletedIndexes = accounts.indices.filter { accounts[$0].isDeleted }
+        let deletedIndexes = accounts.indices.filter { accounts[$0].isDeleted && !accounts[$0].isPermanentlyDeleted }
         guard !deletedIndexes.isEmpty else {
             statusMessage = "回收站为空"
             return
@@ -1426,6 +1451,7 @@ final class AccountStore: ObservableObject {
         let device = currentDeviceName()
         for index in deletedIndexes {
             accounts[index].isDeleted = false
+            accounts[index].isPermanentlyDeleted = false
             accounts[index].deletedAtMs = nil
             accounts[index].deletedDeviceName = ""
             accounts[index].touchUpdatedAt(now, deviceName: device)
@@ -1444,15 +1470,23 @@ final class AccountStore: ObservableObject {
     }
 
     func permanentlyDeleteAllFromRecycleBin() {
-        let deletedCount = accounts.filter(\.isDeleted).count
+        let deletedCount = accounts.filter { $0.isDeleted && !$0.isPermanentlyDeleted }.count
         guard deletedCount > 0 else {
             statusMessage = "回收站为空"
             return
         }
 
-        let beforeAccounts = accounts.filter(\.isDeleted)
+        let beforeAccounts = accounts.filter { $0.isDeleted && !$0.isPermanentlyDeleted }
         let deletedIds = Set(beforeAccounts.map(\.id))
-        accounts.removeAll(where: \.isDeleted)
+        let now = nowMs()
+        let device = currentDeviceName()
+        for index in accounts.indices where deletedIds.contains(accounts[index].id) {
+            accounts[index].isDeleted = true
+            accounts[index].isPermanentlyDeleted = true
+            accounts[index].deletedAtMs = now
+            accounts[index].deletedDeviceName = device
+            accounts[index].touchUpdatedAt(now, deviceName: device)
+        }
         if let editingAccountId, deletedIds.contains(editingAccountId) {
             cancelEditing()
         }
@@ -1461,7 +1495,7 @@ final class AccountStore: ObservableObject {
             category: .local,
             title: "清空回收站：永久删除 \(deletedCount) 条账号",
             beforeAccounts: beforeAccounts,
-            afterAccounts: []
+            afterAccounts: accounts.filter { deletedIds.contains($0.id) }
         )
         statusMessage = "已永久删除 \(deletedCount) 个账号"
     }
@@ -2010,7 +2044,9 @@ final class AccountStore: ObservableObject {
     }
 
     func filteredAccounts() -> [PasswordAccount] {
-        showDeletedAccounts ? accounts.filter(\.isDeleted) : accounts.filter { !$0.isDeleted }
+        showDeletedAccounts
+            ? accounts.filter { $0.isDeleted && !$0.isPermanentlyDeleted }
+            : accounts.filter { !$0.isDeleted }
     }
 
     func displaySortedAccounts(_ source: [PasswordAccount], scopeKey: String = "all") -> [PasswordAccount] {
@@ -3673,7 +3709,10 @@ final class AccountStore: ObservableObject {
         let lhsDeletedAt = lhs.isDeleted ? (lhs.deletedAtMs ?? 0) : 0
         let rhsDeletedAt = rhs.isDeleted ? (rhs.deletedAtMs ?? 0) : 0
         let latestDeletedAt = max(lhsDeletedAt, rhsDeletedAt)
-        let keepDeleted = latestDeletedAt > 0 && latestDeletedAt >= latestContentUpdatedAt
+        // A restore clears deletedAtMs but updates the account timestamp. Include
+        // that activity timestamp so a later restore can beat an older tombstone.
+        let latestActivityAt = max(latestContentUpdatedAt, lhs.updatedAtMs, rhs.updatedAtMs)
+        let keepDeleted = latestDeletedAt > 0 && latestDeletedAt >= latestActivityAt
 
         let latestUpdatedAt = max(
             lhs.updatedAtMs,
@@ -3727,9 +3766,12 @@ final class AccountStore: ObservableObject {
             passkeyUpdatedAtMs: passkeyUpdatedAtMs,
             passkeyUpdatedDeviceName: passkeyUpdatedDeviceName,
             updatedAtMs: latestUpdatedAt,
-            isDeleted: keepDeleted,
-            deletedAtMs: keepDeleted ? latestDeletedAt : nil,
-            deletedDeviceName: keepDeleted ? deletedDeviceName : "",
+            isDeleted: lhs.isPermanentlyDeleted || rhs.isPermanentlyDeleted || keepDeleted,
+            isPermanentlyDeleted: lhs.isPermanentlyDeleted || rhs.isPermanentlyDeleted,
+            deletedAtMs: lhs.isPermanentlyDeleted || rhs.isPermanentlyDeleted || keepDeleted
+                ? (latestDeletedAt == 0 ? latestUpdatedAt : latestDeletedAt)
+                : nil,
+            deletedDeviceName: lhs.isPermanentlyDeleted || rhs.isPermanentlyDeleted || keepDeleted ? deletedDeviceName : "",
             lastOperatedDeviceName: lastOperatedDeviceName,
             createdDeviceName: createdDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? currentDeviceName() : createdDeviceName,
             createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs)
@@ -4011,7 +4053,16 @@ final class AccountStore: ObservableObject {
         if lhsValue.isEmpty, !rhsValue.isEmpty {
             return (rhsValue, rhsUpdatedAt, rhsDeviceName)
         }
-        return (lhsValue, lhsUpdatedAt, lhsDeviceName)
+        let lhsDevice = lhsDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let rhsDevice = rhsDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lhsDevice != rhsDevice {
+            return lhsDevice > rhsDevice
+                ? (lhsValue, lhsUpdatedAt, lhsDeviceName)
+                : (rhsValue, rhsUpdatedAt, rhsDeviceName)
+        }
+        return lhsValue >= rhsValue
+            ? (lhsValue, lhsUpdatedAt, lhsDeviceName)
+            : (rhsValue, rhsUpdatedAt, rhsDeviceName)
     }
 
     // 对所有账号做连通分量并集同步：
@@ -4263,6 +4314,7 @@ final class AccountStore: ObservableObject {
 
         if updated.isDeleted {
             updated.isDeleted = false
+            updated.isPermanentlyDeleted = false
             updated.deletedAtMs = nil
             changed = true
         }
@@ -4875,6 +4927,7 @@ final class AccountStore: ObservableObject {
 
         if updated.isDeleted {
             updated.isDeleted = false
+            updated.isPermanentlyDeleted = false
             updated.deletedAtMs = nil
             changed = true
         }
@@ -5267,6 +5320,7 @@ private extension LegacyPasswordAccount {
             passkeyUpdatedDeviceName: deviceName,
             updatedAtMs: updatedAtMs,
             isDeleted: isDeleted,
+            isPermanentlyDeleted: false,
             deletedAtMs: isDeleted ? updatedAtMs : nil,
             deletedDeviceName: isDeleted ? deviceName : "",
             lastOperatedDeviceName: deviceName,

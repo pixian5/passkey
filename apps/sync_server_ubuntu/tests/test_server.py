@@ -251,6 +251,26 @@ class PassSyncServerTests(unittest.TestCase):
         self.assertEqual(context.exception.code, 412)
         context.exception.close()
 
+    def test_successful_writes_keep_version_history(self) -> None:
+        headers = {
+            "Authorization": "Bearer secret-token",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        with self.request("PUT", "/v1/sync/payload", body=sample_bundle(4000), headers=headers) as response:
+            self.assertEqual(response.status, 200)
+        with self.request("PUT", "/v1/sync/payload", body=sample_bundle(5000), headers=headers) as response:
+            self.assertEqual(response.status, 200)
+
+        with sqlite3.connect(self.server.config.db_path) as connection:
+            rows = connection.execute(
+                "SELECT payload_sha256 FROM payload_versions WHERE scope = ? ORDER BY version_id",
+                ("default",),
+            ).fetchall()
+        self.assertEqual(len(rows), 3)
+        self.assertNotEqual(rows[0][0], rows[-1][0])
+
     def test_rejects_payload_larger_than_configured_limit(self) -> None:
         self.server.config = AppConfig(
             host="127.0.0.1",

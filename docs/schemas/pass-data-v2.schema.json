@@ -215,6 +215,9 @@
         "isDeleted": {
           "type": "boolean"
         },
+        "isPermanentlyDeleted": {
+          "type": "boolean"
+        },
         "deletedAtMs": {
           "type": [
             "integer",

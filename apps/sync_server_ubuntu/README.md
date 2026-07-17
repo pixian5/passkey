@@ -11,6 +11,7 @@
 
 - 单文件 Python 服务，零第三方依赖
 - SQLite 持久化，默认启用 WAL
+- 自动保留每个同步 scope 最近 50 个快照版本，便于误覆盖后的人工恢复
 - 可选 Bearer Token 认证
 - 返回 `ETag`，并支持 `If-Match` 并发保护
 - `GET /healthz` 健康检查
@@ -81,6 +82,7 @@ https://your-domain.example/v1/sync/payload
 - 只开放 `443`
 - 通过 `systemd` 管理进程
 - 定期备份 `pass_sync.sqlite3`
+- `payload_versions` 表保存最近 50 个密文快照；备份时应同时保留整个 SQLite 文件
 
 ## systemd 部署（生产推荐）
 

@@ -7,6 +7,10 @@ function asString(value) {
   return String(value || "");
 }
 
+function stableTieValue(value) {
+  return asString(value).trim().toLocaleLowerCase();
+}
+
 function requireFunction(helpers, name) {
   const candidate = helpers?.[name];
   if (typeof candidate !== "function") {
@@ -71,7 +75,16 @@ function newerField(
   if (!leftValue && rightValue) {
     return { value: rightValue, updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
   }
-  return { value: leftValue, updatedAtMs: leftUpdated, deviceName: asString(lhsDeviceName) };
+  const leftDevice = stableTieValue(lhsDeviceName);
+  const rightDevice = stableTieValue(rhsDeviceName);
+  if (leftDevice !== rightDevice) {
+    return leftDevice > rightDevice
+      ? { value: leftValue, updatedAtMs: leftUpdated, deviceName: asString(lhsDeviceName) }
+      : { value: rightValue, updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
+  }
+  return leftValue.localeCompare(rightValue) >= 0
+    ? { value: leftValue, updatedAtMs: leftUpdated, deviceName: asString(lhsDeviceName) }
+    : { value: rightValue, updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
 }
 
 function mergeSameAccount(lhs, rhs, h) {
@@ -163,7 +176,12 @@ function mergeSameAccount(lhs, rhs, h) {
   const leftDeletedAt = left.isDeleted ? asNumber(left.deletedAtMs) : 0;
   const rightDeletedAt = right.isDeleted ? asNumber(right.deletedAtMs) : 0;
   const latestDeletedAt = Math.max(leftDeletedAt, rightDeletedAt);
-  const keepDeleted = latestDeletedAt > 0 && latestDeletedAt >= latestContentUpdatedAt;
+  // A restore updates the record's account timestamp but clears deletedAtMs.
+  // Include that timestamp so a later restore can deterministically beat an
+  // older deletion tombstone.
+  const latestActivityAt = Math.max(latestContentUpdatedAt, left.updatedAtMs, right.updatedAtMs);
+  const keepDeleted = latestDeletedAt > 0 && latestDeletedAt >= latestActivityAt;
+  const keepPermanentlyDeleted = Boolean(left.isPermanentlyDeleted || right.isPermanentlyDeleted);
   const deletedDeviceName = leftDeletedAt >= rightDeletedAt
     ? asString(left.deletedDeviceName).trim()
     : asString(right.deletedDeviceName).trim();
@@ -228,9 +246,10 @@ function mergeSameAccount(lhs, rhs, h) {
     noteUpdatedDeviceName: noteField.deviceName,
     passkeyUpdatedAtMs,
     passkeyUpdatedDeviceName,
-    isDeleted: keepDeleted,
-    deletedAtMs: keepDeleted ? latestDeletedAt : null,
-    deletedDeviceName: keepDeleted ? (deletedDeviceName || lastOperatedDeviceName) : "",
+    isDeleted: keepPermanentlyDeleted || keepDeleted,
+    isPermanentlyDeleted: keepPermanentlyDeleted,
+    deletedAtMs: keepPermanentlyDeleted || keepDeleted ? latestDeletedAt || updatedAtMs : null,
+    deletedDeviceName: keepPermanentlyDeleted || keepDeleted ? (deletedDeviceName || lastOperatedDeviceName) : "",
     createdAtMs,
     updatedAtMs,
     lastOperatedDeviceName,

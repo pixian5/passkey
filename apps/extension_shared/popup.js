@@ -744,6 +744,7 @@ function normalizeAccountShape(account) {
     passkeyUpdatedAtMs: Number(account.passkeyUpdatedAtMs || createdAtMs),
     passkeyUpdatedDeviceName: String(account.passkeyUpdatedDeviceName || account.lastOperatedDeviceName || "").trim() || "ChromeMac",
     isDeleted: Boolean(account.isDeleted),
+    isPermanentlyDeleted: Boolean(account.isPermanentlyDeleted),
     deletedAtMs: account.deletedAtMs == null ? null : Number(account.deletedAtMs),
     deletedDeviceName: String(account.deletedDeviceName || "").trim(),
     lastOperatedDeviceName: account.lastOperatedDeviceName || "ChromeMac",
@@ -936,7 +937,7 @@ function getVisibleAccountsForCurrentMode({ includeSearch = true } = {}) {
   const showRecycleBinMode = viewMode === "recycle";
   const showAllAccountsMode = viewMode === "all";
   let visibleAccounts = showRecycleBinMode
-    ? accounts.filter((account) => account.isDeleted)
+    ? accounts.filter((account) => account.isDeleted && !account.isPermanentlyDeleted)
     : accounts.filter((account) => !account.isDeleted);
 
   if (!showAllAccountsMode) {
@@ -1667,10 +1668,15 @@ async function restoreFromRecycleBin(accountId) {
     setStatus("该账号不在回收站");
     return;
   }
+  if (target.isPermanentlyDeleted) {
+    setStatus("该账号已永久删除，不能恢复");
+    return;
+  }
 
   const now = Date.now();
   const deviceName = await getDeviceName();
   target.isDeleted = false;
+  target.isPermanentlyDeleted = false;
   target.deletedAtMs = null;
   target.updatedAtMs = now;
   target.lastOperatedDeviceName = deviceName;
@@ -1690,8 +1696,24 @@ async function permanentlyDelete(accountId) {
     setStatus("仅支持在回收站中永久删除");
     return;
   }
+  if (target.isPermanentlyDeleted) {
+    setStatus("该账号已永久删除");
+    return;
+  }
 
-  const next = accounts.filter((item) => item.accountId !== accountId);
+  const now = Date.now();
+  const deviceName = await getDeviceName();
+  const next = accounts.map((item) => item.accountId === accountId
+    ? {
+      ...item,
+      isDeleted: true,
+      isPermanentlyDeleted: true,
+      deletedAtMs: now,
+      deletedDeviceName: deviceName,
+      updatedAtMs: now,
+      lastOperatedDeviceName: deviceName,
+    }
+    : item);
   if (editingAccountId === accountId) {
     editingAccountId = null;
   }

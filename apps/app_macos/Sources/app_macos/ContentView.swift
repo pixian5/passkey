@@ -124,7 +124,7 @@ struct ContentView: View {
     var body: some View {
         let allAccounts = store.accounts
         let activeAccounts = allAccounts.filter { !$0.isDeleted }
-        let deletedAccounts = allAccounts.filter(\.isDeleted)
+        let deletedAccounts = allAccounts.filter { $0.isDeleted && !$0.isPermanentlyDeleted }
         let passkeyAccounts = activeAccounts.filter(accountHasPasskey)
         let totpAccounts = activeAccounts.filter { !$0.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let accounts = filteredAccounts(from: allAccounts)
@@ -640,7 +640,7 @@ struct ContentView: View {
                 !$0.isDeleted && !$0.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
         case .recycle:
-            scopedAccounts = allAccounts.filter(\.isDeleted)
+            scopedAccounts = allAccounts.filter { $0.isDeleted && !$0.isPermanentlyDeleted }
         case .folder(let folderId):
             scopedAccounts = allAccounts.filter { !$0.isDeleted && $0.isInFolder(folderId) }
         }
@@ -1492,7 +1492,7 @@ struct ContentView: View {
     }
 
     private func confirmAndClearRecycleBin() {
-        let deletedCount = store.accounts.filter(\.isDeleted).count
+        let deletedCount = store.accounts.filter { $0.isDeleted && !$0.isPermanentlyDeleted }.count
         guard deletedCount > 0 else {
             store.statusMessage = "回收站为空"
             return
