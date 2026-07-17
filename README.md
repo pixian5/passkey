@@ -95,6 +95,7 @@ pass/
 
 共享 JS 模块：
 - `core/pass_core/js/sync_merge_core.js`：浏览器扩展侧合并/冲突内核
+- `scripts/audit_sync_data.py`：只读审计本机数据库、导出 JSON 和扩展存储目录（只输出数量、时间与哈希，不输出密码）
 
 ---
 
