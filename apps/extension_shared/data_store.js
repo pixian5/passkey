@@ -295,7 +295,24 @@ async function touchDataBump(reason) {
 
 async function migrateLegacyStorageIfNeeded() {
   const result = await chrome.storage.local.get([STORAGE_KEY_MIGRATION_DONE]);
-  if (Boolean(result[STORAGE_KEY_MIGRATION_DONE])) return;
+  if (Boolean(result[STORAGE_KEY_MIGRATION_DONE])) {
+    // Safari can clone the old IndexedDB rows into a new extension origin while
+    // keeping this stable chrome.storage.local flag. Reading the collections
+    // here lets readCollection convert those legacy array rows in place. Do not
+    // fail startup when encrypted data is currently locked.
+    try {
+      await Promise.all([
+        readCollection(COLLECTION_ACCOUNTS),
+        readCollection(COLLECTION_PASSKEYS),
+        readCollection(COLLECTION_FOLDERS),
+        readCollection(COLLECTION_HISTORY),
+      ]);
+    } catch (error) {
+      if (String(error?.message || "") === "扩展已锁定，无法读取本地数据") return;
+      throw error;
+    }
+    return;
+  }
 
   const [accounts, passkeys, folders] = await Promise.all([
     readCollection(COLLECTION_ACCOUNTS),

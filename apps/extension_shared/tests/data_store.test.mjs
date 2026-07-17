@@ -34,6 +34,7 @@ globalThis.chrome = { storage: { local, session } };
 
 const {
   disableDataEncryption,
+  getAccounts,
   getSyncSecrets,
   lockDataEncryption,
   migrateLegacySyncSecrets,
@@ -210,6 +211,43 @@ test("更新主密码、关闭保护和重新启用都会保持 v3 包装可用"
   stored = await local.get([WRAPPED_KEY, LEGACY_KEY]);
   assert.equal(stored[WRAPPED_KEY].version, 3);
   assert.equal(stored[LEGACY_KEY], undefined);
+});
+
+test("迁移标记已存在时仍会转换 Safari 新来源中的旧集合", async () => {
+  await new Promise((resolve, reject) => {
+    const request = indexedDB.deleteDatabase("pass.local.db.v1");
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error("数据库删除被阻塞"));
+  });
+  const database = await new Promise((resolve, reject) => {
+    const request = indexedDB.open("pass.local.db.v1", 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore("collections", { keyPath: "key" });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  await new Promise((resolve, reject) => {
+    const transaction = database.transaction("collections", "readwrite");
+    transaction.objectStore("collections").put({
+      key: "accounts",
+      value: [{ accountId: "safari-origin-account", username: "user@example.com" }],
+    });
+    transaction.oncomplete = resolve;
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+  database.close();
+
+  await local.set({ "pass.data.migratedToIndexedDb.v1": true });
+  assert.deepEqual(await getAccounts(), [
+    { accountId: "safari-origin-account", username: "user@example.com" },
+  ]);
+  const migratedRow = await readEncryptedCollectionRow("accounts");
+  assert.equal(migratedRow.version, 1);
+  assert.equal(typeof migratedRow.nonceBase64, "string");
+  assert.equal(typeof migratedRow.ciphertextBase64, "string");
 });
 
 test("同步秘密迁移到加密数据库后，锁定状态无法读取且明文键被删除", async () => {

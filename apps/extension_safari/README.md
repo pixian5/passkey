@@ -50,6 +50,14 @@ What it does:
 4. Enable `PassSafari Extension`.
 5. If needed, allow it on all websites.
 
+## Data safety during development reinstall
+
+Safari development installs can assign a new `safari-web-extension://` storage
+origin. Do not clear Safari website data or delete the Safari profile while
+updating this app. The extension now detects legacy collection rows copied to a
+new origin and re-encrypts them automatically, but the old website-data folder
+should still be kept until the updated extension has been opened and verified.
+
 ## Notes
 - The generated Safari project references files from `/Users/x/code/pass/apps/extension_shared` instead of copying them, so we keep one extension codebase.
 - Before building Safari, rebuild the shared web extension bundle if JS changed:
