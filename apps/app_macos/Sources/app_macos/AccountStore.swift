@@ -147,6 +147,8 @@ final class AccountStore: ObservableObject {
     @Published private(set) var isUndoMoveToastVisible: Bool = false
     @Published private(set) var selectAllAccountsSignal: Int = 0
     @Published private(set) var cloudSyncStatus: String = "iCloud 未连接，使用本机数据"
+    @Published private(set) var syncVersionSummaries: [SyncVersionSummary] = []
+    @Published private(set) var syncVersionsStatus: String = ""
     @Published private(set) var accounts: [PasswordAccount] = []
     @Published private(set) var passkeys: [PasskeyRecord] = []
     @Published private(set) var historyEntries: [OperationHistoryEntry] = []
@@ -259,6 +261,26 @@ final class AccountStore: ObservableObject {
         let payload: SyncBundlePayload
         let changedLocalData: Bool
         let etag: String?
+    }
+
+    struct SyncVersionSummary: Identifiable {
+        let id: Int
+        let exportedAtMs: Int64
+        let updatedAtMs: Int64
+        let savedAtMs: Int64
+        let payloadSha256: String
+    }
+
+    private struct SyncVersionsResponse: Decodable {
+        let versions: [SyncVersionRecord]
+    }
+
+    private struct SyncVersionRecord: Decodable {
+        let versionId: Int
+        let exportedAtMs: Int64
+        let updatedAtMs: Int64
+        let savedAtMs: Int64
+        let payloadSha256: String
     }
 
     struct RemoteOverwritePreflightResult {
@@ -2185,6 +2207,13 @@ final class AccountStore: ObservableObject {
         }
 
         let localPayload = buildCurrentSyncPayload()
+        do {
+            try saveLocalSyncSafetySnapshot(localPayload, reason: "同步前自动备份")
+        } catch {
+            cloudSyncStatus = "同步已停止：无法创建本地安全备份"
+            statusMessage = "同步已停止，无法创建本地安全备份：(error.localizedDescription)"
+            return
+        }
         var mergedPayload = localPayload
         var selfHostedETag: String?
         var webDAVETag: String?
@@ -2507,6 +2536,98 @@ final class AccountStore: ObservableObject {
         )
     }
 
+    func loadSyncVersions() async {
+        guard syncEnableSelfHostedServer else {
+            syncVersionsStatus = "请先启用自建服务器"
+            syncVersionSummaries = []
+            return
+        }
+        guard let versionsURL = buildSelfHostedVersionsURL() else {
+            syncVersionsStatus = "服务器地址配置不完整"
+            syncVersionSummaries = []
+            return
+        }
+        do {
+            var request = URLRequest(url: versionsURL)
+            request.httpMethod = "GET"
+            request.timeoutInterval = 30
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            if let authorization = buildBearerAuthorization(serverAuthToken) {
+                request.setValue(authorization, forHTTPHeaderField: "Authorization")
+            }
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200 ... 299).contains(http.statusCode)
+            else {
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                throw NSError(domain: "AccountStore.SyncVersions", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "服务器返回 HTTP \(statusCode)"])
+            }
+            let decoded = try decoder.decode(SyncVersionsResponse.self, from: data)
+            syncVersionSummaries = decoded.versions.map {
+                SyncVersionSummary(
+                    id: $0.versionId,
+                    exportedAtMs: $0.exportedAtMs,
+                    updatedAtMs: $0.updatedAtMs,
+                    savedAtMs: $0.savedAtMs,
+                    payloadSha256: $0.payloadSha256
+                )
+            }
+            syncVersionsStatus = "共 \(syncVersionSummaries.count) 个服务器快照"
+        } catch {
+            syncVersionSummaries = []
+            syncVersionsStatus = "读取快照失败：\(error.localizedDescription)"
+        }
+    }
+
+    func restoreSyncVersion(_ version: SyncVersionSummary) async {
+        guard syncEnableSelfHostedServer else {
+            syncVersionsStatus = "请先启用自建服务器"
+            return
+        }
+        guard let payloadURL = buildSelfHostedPayloadURL(),
+              let versionsURL = buildSelfHostedVersionsURL()
+        else {
+            syncVersionsStatus = "服务器地址配置不完整"
+            return
+        }
+        do {
+            let authorization = buildBearerAuthorization(serverAuthToken)
+            let currentResponse = try await fetchRemotePayload(from: payloadURL, authorization: authorization)
+            guard currentResponse.payload != nil, let currentETag = currentResponse.etag else {
+                throw NSError(domain: "AccountStore.SyncVersions", code: 1, userInfo: [NSLocalizedDescriptionKey: "服务器当前数据没有 ETag，无法安全恢复"])
+            }
+            try saveLocalSyncSafetySnapshot(buildCurrentSyncPayload(), reason: "恢复服务器快照版本 \(version.id) 前")
+
+            var request = URLRequest(url: versionsURL.appendingPathComponent(String(version.id)).appendingPathComponent("restore"))
+            request.httpMethod = "POST"
+            request.timeoutInterval = 30
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue(currentETag, forHTTPHeaderField: "If-Match")
+            if let authorization {
+                request.setValue(authorization, forHTTPHeaderField: "Authorization")
+            }
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw NSError(domain: "AccountStore.SyncVersions", code: 2, userInfo: [NSLocalizedDescriptionKey: "恢复响应不可识别"])
+            }
+            if http.statusCode == 412 {
+                throw SyncRemoteError.preconditionFailed
+            }
+            guard (200 ... 299).contains(http.statusCode) else {
+                throw NSError(domain: "AccountStore.SyncVersions", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "恢复失败，HTTP \(http.statusCode)"])
+            }
+            let restoredResponse = try await fetchRemotePayload(from: payloadURL, authorization: authorization)
+            guard let restoredPayload = restoredResponse.payload else {
+                throw NSError(domain: "AccountStore.SyncVersions", code: 3, userInfo: [NSLocalizedDescriptionKey: "恢复后服务器数据为空"])
+            }
+            _ = applyMergedPayloadIfNeeded(restoredPayload, historyTitle: "恢复服务器快照版本 \(version.id)")
+            syncVersionsStatus = "版本 \(version.id) 恢复完成"
+            await loadSyncVersions()
+        } catch {
+            syncVersionsStatus = "恢复失败：\(error.localizedDescription)"
+        }
+    }
+
     func isCurrentLocalPayloadEmpty() -> Bool {
         let payload = buildCurrentSyncPayload()
         return payload.accounts.isEmpty && payload.folders.isEmpty && payload.passkeys.isEmpty
@@ -2709,6 +2830,11 @@ final class AccountStore: ObservableObject {
         guard !base.isEmpty, let baseURL = URL(string: base), isSecureSyncEndpoint(baseURL) else { return nil }
         let normalizedBase = base.hasSuffix("/") ? base : "\(base)/"
         return URL(string: "v1/sync/payload", relativeTo: URL(string: normalizedBase))?.absoluteURL
+    }
+
+    private func buildSelfHostedVersionsURL() -> URL? {
+        guard let payloadURL = buildSelfHostedPayloadURL() else { return nil }
+        return payloadURL.deletingLastPathComponent().appendingPathComponent("versions")
     }
 
     private func isSecureSyncEndpoint(_ url: URL) -> Bool {
@@ -5155,6 +5281,30 @@ final class AccountStore: ObservableObject {
 
     private func dataDirectoryURL() -> URL {
         PassSharedData.dataDirectoryURL()
+    }
+
+    private func saveLocalSyncSafetySnapshot(_ payload: SyncBundlePayload, reason: String) throws {
+        let directory = dataDirectoryURL().appendingPathComponent("sync-safety-snapshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileName = "pass-sync-safety-\(timestampForFile())-\(UUID().uuidString).json"
+        let fileURL = directory.appendingPathComponent(fileName, isDirectory: false)
+        let data = try encodeEncryptedSyncBundle(payload: payload)
+        try data.write(to: fileURL, options: [.atomic])
+
+        let files = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.creationDateKey],
+            options: [.skipsHiddenFiles]
+        )
+        let sortedFiles = files.sorted { lhs, rhs in
+            let leftDate = (try? lhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            let rightDate = (try? rhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            return leftDate > rightDate
+        }
+        for staleURL in sortedFiles.dropFirst(5) {
+            try? FileManager.default.removeItem(at: staleURL)
+        }
+        _ = reason
     }
 
     private func dataFileURL() -> URL {

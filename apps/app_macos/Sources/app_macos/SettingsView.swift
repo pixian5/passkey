@@ -200,6 +200,46 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
+                        HStack(alignment: .top, spacing: 8) {
+                            Text("服务器快照")
+                                .frame(width: labelColumnWidth, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 8) {
+                                    Button("读取快照") {
+                                        Task { await store.loadSyncVersions() }
+                                    }
+                                    .font(store.buttonFont())
+                                    .buttonStyle(.bordered)
+                                    Text(store.syncVersionsStatus)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                if !store.syncVersionSummaries.isEmpty {
+                                    ForEach(store.syncVersionSummaries) { version in
+                                        HStack(spacing: 8) {
+                                            Text("版本 \(version.id) · 导出 \(store.displayTime(version.exportedAtMs)) · 保存 \(store.displayTime(version.savedAtMs)) · \(version.payloadSha256.prefix(12))")
+                                                .font(.caption)
+                                                .lineLimit(1)
+                                            Spacer(minLength: 8)
+                                            Button("恢复") {
+                                                let alert = NSAlert()
+                                                alert.messageText = "恢复服务器快照？"
+                                                alert.informativeText = "恢复前会自动保存本机安全快照，恢复后本机数据将替换为版本 \(version.id)。"
+                                                alert.alertStyle = .warning
+                                                alert.addButton(withTitle: "恢复")
+                                                alert.addButton(withTitle: "取消")
+                                                if alert.runModal() == .alertFirstButtonReturn {
+                                                    Task { await store.restoreSyncVersion(version) }
+                                                }
+                                            }
+                                            .font(store.buttonFont())
+                                            .buttonStyle(.bordered)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         HStack(spacing: 8) {
                             Button("导出同步包") {
                                 exportSyncBundleWithPanel()
