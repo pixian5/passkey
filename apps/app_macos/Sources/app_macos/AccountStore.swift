@@ -3483,19 +3483,45 @@ final class AccountStore: ObservableObject {
     }
 
     private func loadHistoryFromLocalDisk() -> [OperationHistoryEntry] {
-        guard let data = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.history),
-              let decoded = try? decoder.decode([OperationHistoryEntry].self, from: data)
-        else {
+        do {
+            guard let data = try localSQLiteStore.readData(for: LocalDatabaseKeys.history) else {
+                return []
+            }
+            guard let decoded = try? decoder.decode([OperationHistoryEntry].self, from: data) else {
+                throw PassSharedCryptoError.invalidCiphertext
+            }
+            return decoded
+                .filter { !$0.action.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .sorted { lhs, rhs in
+                    if lhs.timestampMs != rhs.timestampMs {
+                        return lhs.timestampMs > rhs.timestampMs
+                    }
+                    return lhs.id.uuidString < rhs.id.uuidString
+                }
+        } catch {
+            // history 是可丢弃的派生审计记录，不能阻塞账号、文件夹或 Passkey 加载。
+            // 先把原始密文隔离到独立文件，再用当前密钥写入空数组，避免每次启动重复报错。
+            let backupDirectory = dataDirectoryURL().appendingPathComponent(
+                "corrupt-data-backups",
+                isDirectory: true
+            )
+            do {
+                let backupURL = try localSQLiteStore.quarantineAndReplaceData(
+                    for: LocalDatabaseKeys.history,
+                    with: Data("[]".utf8),
+                    backupDirectory: backupDirectory,
+                    updatedAtMs: nowMs()
+                )
+                if let backupURL {
+                    statusMessage = "历史记录解密失败，已备份损坏数据并重建为空（\(backupURL.lastPathComponent)）"
+                } else {
+                    statusMessage = "历史记录解密失败，已重建为空"
+                }
+            } catch {
+                statusMessage = "历史记录解密失败，原始数据未改动：\(error.localizedDescription)"
+            }
             return []
         }
-        return decoded
-            .filter { !$0.action.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .sorted { lhs, rhs in
-                if lhs.timestampMs != rhs.timestampMs {
-                    return lhs.timestampMs > rhs.timestampMs
-                }
-                return lhs.id.uuidString < rhs.id.uuidString
-            }
     }
 
     private func saveHistoryToLocalDisk() {

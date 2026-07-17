@@ -76,8 +76,15 @@ RUN_AFTER_INSTALL=0 ./scripts/package_app.sh
 ```
 
 ## Data files
-- SQLite (WAL) data: `~/Library/Application Support/pass-mac/pass.db`
-- CSV export: `~/Library/Application Support/pass-mac/pass-export-*.csv`
+- SQLite (WAL) data: `~/Library/Group Containers/group.com.pass.desktop.shared/pass-mac/pass.db`
+- CSV export: `~/Library/Group Containers/group.com.pass.desktop.shared/pass-mac/pass-export-*.csv`
+- If a historical audit record cannot be authenticated, the app leaves accounts,
+  folders, and passkeys untouched, copies the original encrypted BLOB to
+  `~/Library/Group Containers/group.com.pass.desktop.shared/pass-mac/corrupt-data-backups/`,
+  and rebuilds only `history` as an empty encrypted collection. This prevents a
+  startup error from recurring while retaining the damaged bytes for offline
+  investigation. Always copy `pass.db`, `pass.db-wal`, and `pass.db-shm` before
+  any manual recovery.
 - Legacy bootstrap (one-time migration source, if present):
   - `~/Library/Application Support/pass-mac/accounts.json`
   - `~/Library/Application Support/pass-mac/passkeys.json`

@@ -109,6 +109,66 @@ final class LocalSQLiteStore {
         }
     }
 
+    /// 将无法解密或无法解析的值先以原始 BLOB 形式隔离备份，再替换为新的加密值。
+    ///
+    /// 该方法只用于单个损坏的集合（目前是 history）。它不会触碰其它 key，且只有在
+    /// 备份文件成功写入后才会更新数据库中的值；因此即使重建失败，原始数据仍然保留在
+    /// 数据库和备份文件中，便于后续离线恢复。
+    @discardableResult
+    func quarantineAndReplaceData(
+        for key: String,
+        with replacement: Data,
+        backupDirectory: URL,
+        updatedAtMs: Int64
+    ) throws -> URL? {
+        try openIfNeeded()
+        let sql = "SELECT value FROM kv WHERE key = ?1 LIMIT 1;"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw LocalSQLiteStoreError.prepareFailed(lastErrorMessage())
+        }
+        defer {
+            if let statement {
+                sqlite3_finalize(statement)
+            }
+        }
+
+        _ = key.withCString { pointer in
+            sqlite3_bind_text(statement, 1, pointer, -1, SQLITE_TRANSIENT)
+        }
+
+        let step = sqlite3_step(statement)
+        guard step == SQLITE_ROW else {
+            if step == SQLITE_DONE { return nil }
+            throw LocalSQLiteStoreError.stepFailed(lastErrorMessage())
+        }
+
+        let length = Int(sqlite3_column_bytes(statement, 0))
+        guard let bytes = sqlite3_column_blob(statement, 0), length > 0 else {
+            return nil
+        }
+        let rawData = Data(bytes: bytes, count: length)
+
+        try FileManager.default.createDirectory(
+            at: backupDirectory,
+            withIntermediateDirectories: true
+        )
+        let safeKey = key.replacingOccurrences(
+            of: "[^A-Za-z0-9._-]",
+            with: "_",
+            options: .regularExpression
+        )
+        let backupURL = backupDirectory.appendingPathComponent(
+            "\(safeKey)-\(updatedAtMs)-\(UUID().uuidString).blob",
+            isDirectory: false
+        )
+        try rawData.write(to: backupURL, options: [.atomic])
+
+        // 备份完成后才写入替代值。writeData 会使用当前有效的本地数据库密钥加密。
+        try writeData(replacement, for: key, updatedAtMs: updatedAtMs)
+        return backupURL
+    }
+
     private func openIfNeeded() throws {
         if db != nil { return }
 
