@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mergeAccountCollections } from "../../../core/pass_core/js/sync_merge_core.js";
+import {
+  evaluateSyncSafety,
+  mergeAccountCollections,
+} from "../../../core/pass_core/js/sync_merge_core.js";
 
 const helpers = {
   normalizeAccountShape: (value) => ({
@@ -112,4 +115,47 @@ test("同一稳定 recordId 但历史 accountId 不同的记录会合并", () =>
   assert.equal(merged.length, 1);
   assert.equal(merged[0].recordId, "stable-record-1");
   assert.equal(merged[0].password, "right");
+});
+
+test("181 条本地账号与 23 条远端账号合并时不能丢失本地账号", () => {
+  const local = Array.from({ length: 181 }, (_, index) => helpers.normalizeAccountShape({
+    accountId: `local-${index}`,
+    recordId: `record-${index}`,
+    username: `local-${index}`,
+    updatedAtMs: 100,
+  }));
+  const remote = local.slice(0, 23).map((account) => helpers.normalizeAccountShape({
+    ...account,
+    password: "remote",
+    updatedAtMs: 200,
+  }));
+  const merged = mergeAccountCollections(local, remote, helpers);
+  const safety = evaluateSyncSafety(
+    { local: { accounts: local }, remote: { accounts: remote }, merged: { accounts: merged }, mode: "merge" },
+    helpers
+  );
+  assert.equal(merged.length, 181);
+  assert.equal(safety.safe, true);
+  assert.deepEqual(safety.reasons, []);
+});
+
+test("空远端不能替换非空本地", () => {
+  const local = [helpers.normalizeAccountShape({ recordId: "record-1" })];
+  const safety = evaluateSyncSafety(
+    { local: { accounts: local }, remote: { accounts: [] }, merged: { accounts: [] }, mode: "remoteOverwriteLocal" },
+    helpers
+  );
+  assert.equal(safety.safe, false);
+  assert.deepEqual(safety.reasons, ["REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL"]);
+});
+
+test("合并结果缺少本地稳定 ID 时必须阻止写入", () => {
+  const local = [helpers.normalizeAccountShape({ recordId: "record-1" })];
+  const remote = [helpers.normalizeAccountShape({ recordId: "record-2" })];
+  const safety = evaluateSyncSafety(
+    { local: { accounts: local }, remote: { accounts: remote }, merged: { accounts: remote }, mode: "merge" },
+    helpers
+  );
+  assert.equal(safety.safe, false);
+  assert.deepEqual(safety.reasons, ["LOCAL_ACCOUNTS_DROPPED"]);
 });

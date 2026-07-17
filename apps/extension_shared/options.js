@@ -10,6 +10,7 @@ import {
   syncAliasGroups,
 } from "./account_core.js";
 import {
+  evaluateSyncSafety,
   mergeAccountCollections as mergeAccountCollectionsCore,
   mergeFolderCollections as mergeFolderCollectionsCore,
   mergePasskeyCollections as mergePasskeyCollectionsCore,
@@ -1406,6 +1407,19 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
     }
   }
 
+  if (normalizedSyncMode === SYNC_MODE_MERGE && remoteAggregate) {
+    const safety = validateSyncSafety(
+      { accounts: localAccounts, folders: localFolders, passkeys: localPasskeys },
+      remoteAggregate,
+      { accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys },
+      SYNC_MODE_MERGE
+    );
+    if (!safety.safe) {
+      setStatus(`同步已停止，安全检查未通过：${safety.reasons.join("、")}`);
+      return;
+    }
+  }
+
   await writeBusinessDataToStore({
     accounts: mergedAccounts,
     passkeys: mergedPasskeys,
@@ -1529,7 +1543,7 @@ function buildRemoteSyncTargetsFromDom() {
     let url;
     try {
       const normalizedBase = serverBaseUrl.endsWith("/") ? serverBaseUrl : `${serverBaseUrl}/`;
-      url = new URL("v1/sync/payload", normalizedBase).toString();
+      url = new URL("v2/sync/state", normalizedBase).toString();
     } catch {
       setStatus("服务器地址格式不正确");
       return null;
@@ -1785,7 +1799,17 @@ async function pushRemotePayloadRemotePreferred(target, payload) {
     }
     const latestResponse = await pullRemotePayload(target);
     updateRemoteConcurrencyState(target, latestResponse.etag);
-    candidate = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
+    const latestPayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
+    const safety = validateSyncSafety(
+      candidate,
+      latestPayload,
+      latestPayload,
+      SYNC_MODE_REMOTE_OVERWRITE_LOCAL
+    );
+    if (!safety.safe) {
+      throw new Error(`并发重试的云端覆盖被安全检查阻止: ${safety.reasons.join(",")}`);
+    }
+    candidate = latestPayload;
     target.remotePayload = candidate;
     await writeBusinessDataToStore(candidate);
   }
@@ -4506,6 +4530,10 @@ function syncMergeHelpers() {
     fixedNewAccountFolderId: FIXED_NEW_ACCOUNT_FOLDER_ID,
     fixedNewAccountFolderName: FIXED_NEW_ACCOUNT_FOLDER_NAME,
   };
+}
+
+function validateSyncSafety(local, remote, merged, mode = SYNC_MODE_MERGE) {
+  return evaluateSyncSafety({ local, remote, merged, mode }, syncMergeHelpers());
 }
 
 function formatTime(ms) {

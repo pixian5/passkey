@@ -111,6 +111,61 @@ class PassSyncServerTests(unittest.TestCase):
             parsed = json.loads(response.read().decode("utf-8"))
         self.assertEqual(parsed["schema"], "pass.sync.encrypted.v1")
 
+    def test_v2_state_alias_exposes_revision_and_etag(self) -> None:
+        headers = {
+            "Authorization": "Bearer secret-token",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Idempotency-Key": "v2-state-1",
+        }
+        with self.request("PUT", "/v2/sync/state", body=sample_bundle(10), headers=headers) as response:
+            self.assertEqual(response.status, 200)
+            self.assertGreaterEqual(int(response.headers["X-Sync-Revision"]), 1)
+            put_body = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(put_body["revision"], int(response.headers["X-Sync-Revision"]))
+
+        with self.request(
+            "GET",
+            "/v2/sync/state",
+            headers={"Authorization": "Bearer secret-token"},
+        ) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers["ETag"], put_body["etag"])
+            self.assertEqual(int(response.headers["X-Sync-Revision"]), put_body["revision"])
+            self.assertEqual(json.loads(response.read().decode("utf-8"))["exportedAtMs"], 10)
+
+    def test_v2_version_and_audit_aliases(self) -> None:
+        headers = {
+            "Authorization": "Bearer secret-token",
+            "Content-Type": "application/json",
+            "Idempotency-Key": "v2-version-alias-1",
+        }
+        with self.request("PUT", "/v2/sync/state", body=sample_bundle(20), headers=headers):
+            pass
+        with self.request(
+            "GET",
+            "/v2/sync/versions",
+            headers={"Authorization": "Bearer secret-token"},
+        ) as response:
+            self.assertEqual(response.status, 200)
+            versions = json.loads(response.read().decode("utf-8"))["versions"]
+        self.assertTrue(versions)
+        version_id = versions[0]["versionId"]
+        with self.request(
+            "GET",
+            f"/v2/sync/versions/{version_id}",
+            headers={"Authorization": "Bearer secret-token"},
+        ) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(json.loads(response.read().decode("utf-8"))["exportedAtMs"], 20)
+        with self.request(
+            "GET",
+            "/v2/sync/audit",
+            headers={"Authorization": "Bearer secret-token"},
+        ) as response:
+            self.assertEqual(response.status, 200)
+            self.assertTrue(json.loads(response.read().decode("utf-8"))["operations"])
+
     def test_idempotency_key_replays_original_write(self) -> None:
         headers = {
             "Authorization": "Bearer secret-token",

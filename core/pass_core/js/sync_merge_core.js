@@ -426,3 +426,114 @@ export function reconcileAccountFolders(accounts, folders, helpers) {
     };
   });
 }
+
+function identitySet(values, identityFn) {
+  const result = new Set();
+  for (const value of Array.isArray(values) ? values : []) {
+    const identity = identityFn(value);
+    if (identity) result.add(identity);
+  }
+  return result;
+}
+
+function missingIdentities(source, target, identityFn) {
+  const sourceIds = identitySet(source, identityFn);
+  const targetIds = identitySet(target, identityFn);
+  return Array.from(sourceIds).filter((identity) => !targetIds.has(identity));
+}
+
+export function summarizeSyncPayload(payload, helpers) {
+  const h = resolveHelpers(helpers);
+  const accounts = Array.isArray(payload?.accounts)
+    ? payload.accounts.map(h.normalizeAccountShape)
+    : [];
+  const folders = Array.isArray(payload?.folders)
+    ? payload.folders.map(h.normalizeFolderShape)
+    : [];
+  const passkeys = Array.isArray(payload?.passkeys)
+    ? payload.passkeys.map(h.normalizePasskeyShape)
+    : [];
+  return {
+    accounts: accounts.length,
+    activeAccounts: accounts.filter((item) => !item?.isDeleted).length,
+    deletedAccounts: accounts.filter((item) => Boolean(item?.isDeleted)).length,
+    folders: folders.length,
+    passkeys: passkeys.length,
+    accountIds: identitySet(accounts, (item) => asString(item?.recordId || item?.id || item?.accountId).trim().toLowerCase()),
+    folderIds: identitySet(folders, (item) => h.normalizeFolderId(item?.id)),
+    passkeyIds: identitySet(passkeys, (item) => asString(item?.credentialIdB64u || item?.id).trim()),
+  };
+}
+
+/**
+ * Validate a merged payload before it is written locally or uploaded.
+ * This is intentionally conservative: a normal merge must never lose an
+ * entity that was already present locally. Remote-overwrite is allowed only
+ * when the caller explicitly opts into that mode and the remote is non-empty.
+ */
+export function evaluateSyncSafety({ local, remote, merged, mode = "merge" }, helpers) {
+  const localSummary = summarizeSyncPayload(local, helpers);
+  const remoteSummary = remote == null ? null : summarizeSyncPayload(remote, helpers);
+  const mergedSummary = summarizeSyncPayload(merged, helpers);
+  const reasons = [];
+  const localNonEmpty = localSummary.accounts + localSummary.folders + localSummary.passkeys > 0;
+  const remoteNonEmpty = Boolean(remoteSummary) && (
+    remoteSummary.accounts + remoteSummary.folders + remoteSummary.passkeys > 0
+  );
+
+  if (mode === "merge") {
+    if (localNonEmpty && remoteSummary && !remoteNonEmpty) {
+      reasons.push("REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL");
+    }
+    const missingAccounts = missingIdentities(
+      local?.accounts,
+      merged?.accounts,
+      (item) => asString(item?.recordId || item?.id || item?.accountId).trim().toLowerCase()
+    );
+    const missingFolders = missingIdentities(
+      local?.folders,
+      merged?.folders,
+      (item) => asString(item?.id).trim().toLowerCase()
+    );
+    const missingPasskeys = missingIdentities(
+      local?.passkeys,
+      merged?.passkeys,
+      (item) => asString(item?.credentialIdB64u || item?.id).trim()
+    );
+    if (missingAccounts.length > 0) reasons.push("LOCAL_ACCOUNTS_DROPPED");
+    if (missingFolders.length > 0) reasons.push("LOCAL_FOLDERS_DROPPED");
+    if (missingPasskeys.length > 0) reasons.push("LOCAL_PASSKEYS_DROPPED");
+    return {
+      safe: reasons.length === 0,
+      reasons,
+      local: { ...localSummary, accountIds: undefined, folderIds: undefined, passkeyIds: undefined },
+      remote: remoteSummary
+        ? { ...remoteSummary, accountIds: undefined, folderIds: undefined, passkeyIds: undefined }
+        : null,
+      merged: { ...mergedSummary, accountIds: undefined, folderIds: undefined, passkeyIds: undefined },
+    };
+  }
+
+  if (mode === "remoteOverwriteLocal") {
+    if (!remoteNonEmpty && localNonEmpty) reasons.push("REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL");
+    return {
+      safe: reasons.length === 0,
+      reasons,
+      local: { ...localSummary, accountIds: undefined, folderIds: undefined, passkeyIds: undefined },
+      remote: remoteSummary
+        ? { ...remoteSummary, accountIds: undefined, folderIds: undefined, passkeyIds: undefined }
+        : null,
+      merged: { ...mergedSummary, accountIds: undefined, folderIds: undefined, passkeyIds: undefined },
+    };
+  }
+
+  return {
+    safe: true,
+    reasons,
+    local: { ...localSummary, accountIds: undefined, folderIds: undefined, passkeyIds: undefined },
+    remote: remoteSummary
+      ? { ...remoteSummary, accountIds: undefined, folderIds: undefined, passkeyIds: undefined }
+      : null,
+    merged: { ...mergedSummary, accountIds: undefined, folderIds: undefined, passkeyIds: undefined },
+  };
+}

@@ -2236,10 +2236,9 @@ final class AccountStore: ObservableObject {
         var selfHostedRemotePayload: SyncBundlePayload?
         var webDAVRemotePayload: SyncBundlePayload?
         var conflictCount = 0
+        var remoteAggregate: SyncBundlePayload?
 
         if mode != .localOverwriteRemote {
-            var remoteAggregate: SyncBundlePayload?
-
             if syncEnableICloud {
                 do {
                     if let remotePayload = try fetchRemotePayloadFromICloud() {
@@ -2318,6 +2317,18 @@ final class AccountStore: ObservableObject {
             case .localOverwriteRemote:
                 break
             }
+        }
+
+        let safetyReasons = syncSafetyReasons(
+            local: localPayload,
+            remote: mode == .localOverwriteRemote ? nil : remoteAggregate,
+            merged: mergedPayload,
+            mode: mode
+        )
+        if !safetyReasons.isEmpty {
+            cloudSyncStatus = "同步已停止：安全检查未通过（\(safetyReasons.joined(separator: ", "))）"
+            statusMessage = "同步已停止，未修改本地数据：\(safetyReasons.joined(separator: "、"))"
+            return
         }
 
         let conflictSuffix = conflictCount > 0 ? "，检测到 \(conflictCount) 个字段冲突并按时间/设备规则裁决" : ""
@@ -2523,6 +2534,42 @@ final class AccountStore: ObservableObject {
 
     private func isSyncPayloadEmpty(_ payload: SyncBundlePayload) -> Bool {
         payload.accounts.isEmpty && payload.passkeys.isEmpty && payload.folders.isEmpty
+    }
+
+    private func syncSafetyReasons(
+        local: SyncBundlePayload,
+        remote: SyncBundlePayload?,
+        merged: SyncBundlePayload,
+        mode: SyncMode
+    ) -> [String] {
+        guard mode == .merge || mode == .remoteOverwriteLocal else { return [] }
+        let localNonEmpty = !isSyncPayloadEmpty(local)
+        let remoteNonEmpty = remote.map { !isSyncPayloadEmpty($0) } ?? false
+        var reasons: [String] = []
+        if mode == .remoteOverwriteLocal, localNonEmpty, !remoteNonEmpty {
+            reasons.append("REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL")
+        }
+        guard mode == .merge else { return reasons }
+        if localNonEmpty, remote != nil, !remoteNonEmpty {
+            reasons.append("REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL")
+        }
+
+        let localAccountIds = Set(local.accounts.map { $0.id.uuidString.lowercased() })
+        let mergedAccountIds = Set(merged.accounts.map { $0.id.uuidString.lowercased() })
+        if !localAccountIds.isSubset(of: mergedAccountIds) {
+            reasons.append("LOCAL_ACCOUNTS_DROPPED")
+        }
+        let localFolderIds = Set(local.folders.map { $0.id.uuidString.lowercased() })
+        let mergedFolderIds = Set(merged.folders.map { $0.id.uuidString.lowercased() })
+        if !localFolderIds.isSubset(of: mergedFolderIds) {
+            reasons.append("LOCAL_FOLDERS_DROPPED")
+        }
+        let localPasskeyIds = Set(local.passkeys.map(\.credentialIdB64u).filter { !$0.isEmpty })
+        let mergedPasskeyIds = Set(merged.passkeys.map(\.credentialIdB64u).filter { !$0.isEmpty })
+        if !localPasskeyIds.isSubset(of: mergedPasskeyIds) {
+            reasons.append("LOCAL_PASSKEYS_DROPPED")
+        }
+        return reasons
     }
 
     private func activeSyncSourceNames() -> [String] {
@@ -2914,7 +2961,7 @@ final class AccountStore: ObservableObject {
         let base = normalizedSelfHostedServerBaseURL(serverBaseURL).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !base.isEmpty, let baseURL = URL(string: base), isSecureSyncEndpoint(baseURL) else { return nil }
         let normalizedBase = base.hasSuffix("/") ? base : "\(base)/"
-        return URL(string: "v1/sync/payload", relativeTo: URL(string: normalizedBase))?.absoluteURL
+        return URL(string: "v2/sync/state", relativeTo: URL(string: normalizedBase))?.absoluteURL
     }
 
     private func buildSelfHostedVersionsURL() -> URL? {
@@ -3032,6 +3079,7 @@ final class AccountStore: ObservableObject {
         historyTitle: String
     ) async throws -> SelfHostedPushResult {
         var candidate = payload
+        let safetyBaseline = payload
         var currentETag = etag
         var changed = false
         let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
@@ -3045,6 +3093,19 @@ final class AccountStore: ObservableObject {
                 let latestPayload = latestResponse.payload ?? emptySyncPayload()
                 currentETag = latestResponse.etag
                 candidate = mergePayloads(local: candidate, remote: latestPayload)
+                let safetyReasons = syncSafetyReasons(
+                    local: safetyBaseline,
+                    remote: latestPayload,
+                    merged: candidate,
+                    mode: .merge
+                )
+                if !safetyReasons.isEmpty {
+                    throw NSError(
+                        domain: "AccountStore.SyncSafety",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "并发重试合并被安全检查阻止：\(safetyReasons.joined(separator: ", "))"]
+                    )
+                }
                 let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
                 changed = changed || applied
             }
@@ -3060,6 +3121,7 @@ final class AccountStore: ObservableObject {
         historyTitle: String
     ) async throws -> ETagPushResult {
         var candidate = payload
+        let safetyBaseline = payload
         var currentETag = etag
         var changed = false
         let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
@@ -3071,7 +3133,21 @@ final class AccountStore: ObservableObject {
                 guard attempt < 2 else { throw SyncRemoteError.preconditionFailed }
                 let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
                 currentETag = latestResponse.etag
-                candidate = mergePayloads(local: candidate, remote: latestResponse.payload ?? emptySyncPayload())
+                let latestPayload = latestResponse.payload ?? emptySyncPayload()
+                candidate = mergePayloads(local: candidate, remote: latestPayload)
+                let safetyReasons = syncSafetyReasons(
+                    local: safetyBaseline,
+                    remote: latestPayload,
+                    merged: candidate,
+                    mode: .merge
+                )
+                if !safetyReasons.isEmpty {
+                    throw NSError(
+                        domain: "AccountStore.SyncSafety",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "并发重试合并被安全检查阻止：\(safetyReasons.joined(separator: ", "))"]
+                    )
+                }
                 let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
                 changed = changed || applied
             }
@@ -3098,7 +3174,21 @@ final class AccountStore: ObservableObject {
                 guard attempt < 2 else { throw SyncRemoteError.preconditionFailed }
                 let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
                 currentETag = latestResponse.etag
-                candidate = latestResponse.payload ?? emptySyncPayload()
+                let latestPayload = latestResponse.payload ?? emptySyncPayload()
+                let safetyReasons = syncSafetyReasons(
+                    local: candidate,
+                    remote: latestPayload,
+                    merged: latestPayload,
+                    mode: .remoteOverwriteLocal
+                )
+                if !safetyReasons.isEmpty {
+                    throw NSError(
+                        domain: "AccountStore.SyncSafety",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "并发重试的云端覆盖被安全检查阻止：\(safetyReasons.joined(separator: ", "))"]
+                    )
+                }
+                candidate = latestPayload
                 let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
                 changed = changed || applied
             }
@@ -3125,7 +3215,21 @@ final class AccountStore: ObservableObject {
                 guard attempt < 2 else { throw SyncRemoteError.preconditionFailed }
                 let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
                 currentETag = latestResponse.etag
-                candidate = latestResponse.payload ?? emptySyncPayload()
+                let latestPayload = latestResponse.payload ?? emptySyncPayload()
+                let safetyReasons = syncSafetyReasons(
+                    local: candidate,
+                    remote: latestPayload,
+                    merged: latestPayload,
+                    mode: .remoteOverwriteLocal
+                )
+                if !safetyReasons.isEmpty {
+                    throw NSError(
+                        domain: "AccountStore.SyncSafety",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "并发重试的云端覆盖被安全检查阻止：\(safetyReasons.joined(separator: ", "))"]
+                    )
+                }
+                candidate = latestPayload
                 let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
                 changed = changed || applied
             }
@@ -3854,7 +3958,23 @@ final class AccountStore: ObservableObject {
         }
 
         let localPayload = buildCurrentSyncPayload()
+        do {
+            try saveLocalSyncSafetySnapshot(localPayload, reason: "iCloud 同步前自动备份")
+        } catch {
+            cloudSyncStatus = "iCloud 同步已停止：无法创建本地安全备份"
+            return false
+        }
         let mergedPayload = mergePayloads(local: localPayload, remote: remotePayload)
+        let safetyReasons = syncSafetyReasons(
+            local: localPayload,
+            remote: remotePayload,
+            merged: mergedPayload,
+            mode: .merge
+        )
+        if !safetyReasons.isEmpty {
+            cloudSyncStatus = "iCloud 同步已停止：安全检查未通过（\(safetyReasons.joined(separator: ", "))）"
+            return false
+        }
         let changed = applyMergedPayloadIfNeeded(
             mergedPayload,
             historyTitle: "iCloud 自动合并并更新本地"

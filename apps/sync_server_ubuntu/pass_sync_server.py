@@ -186,6 +186,14 @@ class PayloadRepository:
             updated_at_ms=row["updated_at_ms"],
         )
 
+    def current_revision(self, scope: str) -> int:
+        with self._managed_connect() as connection:
+            row = connection.execute(
+                "SELECT COALESCE(MAX(version_id), 0) AS revision FROM payload_versions WHERE scope = ? LIMIT 1;",
+                (scope,),
+            ).fetchone()
+        return int(row["revision"] if row is not None else 0)
+
     def list_versions(self, scope: str, limit: int = 50) -> list[StoredVersion]:
         safe_limit = min(max(int(limit), 1), 50)
         with self._managed_connect() as connection:
@@ -491,13 +499,14 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             if path == "/healthz":
                 self._handle_healthz(head_only=head_only)
                 return
-            is_payload_path = path == "/v1/sync/payload"
-            is_versions_path = path == "/v1/sync/versions"
-            is_audit_path = path == "/v1/sync/audit"
+            is_payload_path = path in {"/v1/sync/payload", "/v2/sync/state"}
+            is_versions_path = path in {"/v1/sync/versions", "/v2/sync/versions"}
+            is_audit_path = path in {"/v1/sync/audit", "/v2/sync/audit"}
             version_id = None
             restore_version_id = None
-            if path.startswith("/v1/sync/versions/"):
-                raw_version_id = path.removeprefix("/v1/sync/versions/")
+            version_prefix = "/v2/sync/versions/" if path.startswith("/v2/sync/versions/") else "/v1/sync/versions/"
+            if path.startswith(version_prefix):
+                raw_version_id = path.removeprefix(version_prefix)
                 if raw_version_id.endswith("/restore"):
                     raw_version_id = raw_version_id.removesuffix("/restore")
                     restore_version_id = int(raw_version_id) if raw_version_id.isdigit() else None
@@ -556,10 +565,19 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_options(self) -> None:
         path = self.path.split("?", 1)[0]
-        version_path = path.startswith("/v1/sync/versions/")
-        version_suffix = path.removeprefix("/v1/sync/versions/") if version_path else ""
+        version_path = path.startswith("/v1/sync/versions/") or path.startswith("/v2/sync/versions/")
+        version_prefix = "/v2/sync/versions/" if path.startswith("/v2/sync/versions/") else "/v1/sync/versions/"
+        version_suffix = path.removeprefix(version_prefix) if version_path else ""
         restore_path = version_suffix.endswith("/restore") and version_suffix.removesuffix("/restore").isdigit()
-        if path not in {"/healthz", "/v1/sync/payload", "/v1/sync/versions", "/v1/sync/audit"} and not (
+        if path not in {
+            "/healthz",
+            "/v1/sync/payload",
+            "/v2/sync/state",
+            "/v1/sync/versions",
+            "/v2/sync/versions",
+            "/v1/sync/audit",
+            "/v2/sync/audit",
+        } and not (
             version_path and (version_suffix.isdigit() or restore_path)
         ):
             self._send_json(
@@ -602,6 +620,7 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             "X-Payload-Sha256": stored.payload_sha256,
             "X-Sync-Scope": scope,
             "Cache-Control": "no-store",
+            "X-Sync-Revision": str(self.server.repository.current_revision(scope)),
         }
         self._send_bytes(HTTPStatus.OK, body_bytes, headers=headers, head_only=head_only)
 
@@ -679,6 +698,7 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 "etag": restored.etag,
                 "payloadSha256": restored.payload_sha256,
                 "updatedAtMs": restored.updated_at_ms,
+                "revision": self.server.repository.current_revision(scope),
             },
             extra_headers={
                 "ETag": restored.etag,
@@ -730,11 +750,13 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 "etag": stored.etag,
                 "payloadSha256": stored.payload_sha256,
                 "updatedAtMs": stored.updated_at_ms,
+                "revision": self.server.repository.current_revision(scope),
             },
             extra_headers={
                 "ETag": stored.etag,
                 "X-Payload-Sha256": stored.payload_sha256,
                 "X-Sync-Scope": scope,
+                "X-Sync-Revision": str(self.server.repository.current_revision(scope)),
                 "Cache-Control": "no-store",
             },
         )

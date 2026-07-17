@@ -2,8 +2,11 @@
 
 一个可直接部署到 Ubuntu 的自建同步服务，实现本项目当前客户端已经使用的：
 
-- `GET /v1/sync/payload`
-- `PUT /v1/sync/payload`
+- `GET /v2/sync/state`（主接口；兼容 `GET /v1/sync/payload`）
+- `PUT /v2/sync/state`（主接口；兼容 `PUT /v1/sync/payload`）
+- `GET /v2/sync/versions`、`GET /v2/sync/versions/{versionId}`（兼容 v1 路径）
+- `POST /v2/sync/versions/{versionId}/restore`（兼容 v1 路径）
+- `GET /v2/sync/audit`（兼容 v1 路径）
 - `GET /v1/sync/versions`
 - `GET /v1/sync/versions/{versionId}`（只读恢复下载）
 - `POST /v1/sync/versions/{versionId}/restore`（使用当前 `If-Match` 原子恢复）
@@ -57,7 +60,7 @@ python3 pass_sync_server.py
 - `PASS_SYNC_DB_PATH`
   - 默认 `./data/pass_sync.sqlite3`
 - `PASS_SYNC_BEARER_TOKENS`
-  - 必填；未配置时 `/v1/sync/payload` 会拒绝所有请求
+  - 必填；未配置时 `/v2/sync/state`（以及兼容的 `/v1/sync/payload`）会拒绝所有请求
   - 支持：
     - `token-value`
     - `default=token-value`
@@ -83,7 +86,7 @@ python3 pass_sync_server.py
 客户端会自动访问：
 
 ```text
-https://your-domain.example/v1/sync/payload
+https://your-domain.example/v2/sync/state
 ```
 
 ## 建议部署

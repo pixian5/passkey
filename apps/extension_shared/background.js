@@ -8,6 +8,7 @@ import {
   syncAliasGroups,
 } from "./account_core.js";
 import {
+  evaluateSyncSafety,
   mergeAccountCollections as mergeAccountCollectionsCore,
   mergeFolderCollections as mergeFolderCollectionsCore,
   mergePasskeyCollections as mergePasskeyCollectionsCore,
@@ -375,6 +376,24 @@ async function runAutoSync() {
     mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
   }
 
+  if (remoteAggregate) {
+    const safety = validateSyncSafety(
+      { accounts: localAccounts, folders: localFolders, passkeys: localPasskeys },
+      remoteAggregate,
+      { accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys },
+      SYNC_MODE_MERGE
+    );
+    if (!safety.safe) {
+      logSyncFlow("auto-sync-aborted-safety-check", {
+        reasons: safety.reasons,
+        local: safety.local,
+        remote: safety.remote,
+        merged: safety.merged,
+      });
+      return;
+    }
+  }
+
   await writeBusinessDataToStore({
     accounts: mergedAccounts,
     passkeys: mergedPasskeys,
@@ -530,7 +549,7 @@ async function buildRemoteSyncTargetsFromStorage() {
     );
     if (!serverBaseUrl) throw new Error("服务器同步地址必须使用 HTTPS（本机回环地址可使用 HTTP）");
     const normalizedBase = serverBaseUrl.endsWith("/") ? serverBaseUrl : `${serverBaseUrl}/`;
-    const url = new URL("v1/sync/payload", normalizedBase).toString();
+    const url = new URL("v2/sync/state", normalizedBase).toString();
     const token = secrets.serverToken;
     const authHeader = token ? `Bearer ${token}` : null;
     targets.push({ label: "服务器", kind: "server", url, authHeader, supportsEtag: true, remoteEtag: null });
@@ -1432,6 +1451,10 @@ function syncMergeHelpers() {
   };
 }
 
+function validateSyncSafety(local, remote, merged, mode = SYNC_MODE_MERGE) {
+  return evaluateSyncSafety({ local, remote, merged, mode }, syncMergeHelpers());
+}
+
 function parseSyncBundlePayload(input, { requireBundleSchema = false } = {}) {
   if (!input || typeof input !== "object") return null;
   const schema = String(input?.schema || "");
@@ -1625,6 +1648,16 @@ async function pushRemotePayloadWithRetry(target, payload) {
     let mergedPasskeys = mergePasskeyCollections(localPasskeys, remotePasskeys);
     mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
     candidate = { accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders };
+    const safety = validateSyncSafety(
+      { accounts: localAccounts, folders: localFolders, passkeys: localPasskeys },
+      remotePayload,
+      candidate,
+      SYNC_MODE_MERGE
+    );
+    if (!safety.safe) {
+      logSyncFlow("push-retry-aborted-safety-check", { reasons: safety.reasons });
+      throw new Error(`并发重试合并被安全检查阻止: ${safety.reasons.join(",")}`);
+    }
     await writeBusinessDataToStore(candidate);
   }
   throw new Error("远端并发冲突重试次数已用尽");
