@@ -56,6 +56,17 @@ class StoredVersion:
     saved_at_ms: int
 
 
+@dataclass(frozen=True)
+class StoredOperation:
+    operation_id: int
+    scope: str
+    operation: str
+    status: str
+    etag: str | None
+    version_id: int | None
+    created_at_ms: int
+
+
 class PayloadRepository:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -81,6 +92,19 @@ class PayloadRepository:
                   payload_sha256 TEXT NOT NULL,
                   exported_at_ms INTEGER NOT NULL,
                   updated_at_ms INTEGER NOT NULL
+                );
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sync_operations (
+                  operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  scope TEXT NOT NULL,
+                  operation TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  etag TEXT,
+                  version_id INTEGER,
+                  created_at_ms INTEGER NOT NULL
                 );
                 """
             )
@@ -193,6 +217,7 @@ class PayloadRepository:
         payload_sha256: str,
         exported_at_ms: int,
         if_match: str | None,
+        operation: str = "put",
     ) -> StoredPayload:
         next_etag = f"\"{payload_sha256}\""
         now_ms = current_time_ms()
@@ -200,6 +225,7 @@ class PayloadRepository:
         with self._write_lock:
             current = self.get(scope)
             if not etag_matches(current.etag if current else None, if_match):
+                self.record_operation(scope, operation, "conflict", current.etag if current else None, None)
                 raise PreconditionFailedError()
 
             with self._connect() as connection:
@@ -263,6 +289,7 @@ class PayloadRepository:
                     (scope,),
                 )
 
+            self.record_operation(scope, operation, "success", next_etag, None)
             return StoredPayload(
                 scope=scope,
                 etag=next_etag,
@@ -282,7 +309,52 @@ class PayloadRepository:
             payload_sha256=version.payload_sha256,
             exported_at_ms=version.exported_at_ms,
             if_match=if_match,
+            operation="restore",
         )
+
+    def record_operation(
+        self,
+        scope: str,
+        operation: str,
+        status: str,
+        etag: str | None,
+        version_id: int | None,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO sync_operations (
+                  scope, operation, status, etag, version_id, created_at_ms
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6);
+                """,
+                (scope, operation, status, etag, version_id, current_time_ms()),
+            )
+
+    def list_operations(self, scope: str, limit: int = 100) -> list[StoredOperation]:
+        safe_limit = min(max(int(limit), 1), 100)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT operation_id, scope, operation, status, etag, version_id, created_at_ms
+                FROM sync_operations
+                WHERE scope = ?1
+                ORDER BY operation_id DESC
+                LIMIT ?2;
+                """,
+                (scope, safe_limit),
+            ).fetchall()
+        return [
+            StoredOperation(
+                operation_id=row["operation_id"],
+                scope=row["scope"],
+                operation=row["operation"],
+                status=row["status"],
+                etag=row["etag"],
+                version_id=row["version_id"],
+                created_at_ms=row["created_at_ms"],
+            )
+            for row in rows
+        ]
 
 
 class RequestError(Exception):
@@ -332,6 +404,7 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 return
             is_payload_path = path == "/v1/sync/payload"
             is_versions_path = path == "/v1/sync/versions"
+            is_audit_path = path == "/v1/sync/audit"
             version_id = None
             restore_version_id = None
             if path.startswith("/v1/sync/versions/"):
@@ -344,7 +417,7 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                         raise RequestError(HTTPStatus.NOT_FOUND, "NOT_FOUND", "接口不存在。")
                 elif restore_version_id is None:
                     version_id = int(raw_version_id)
-            if not (is_payload_path or is_versions_path or version_id is not None or restore_version_id is not None):
+            if not (is_payload_path or is_versions_path or is_audit_path or version_id is not None or restore_version_id is not None):
                 raise RequestError(HTTPStatus.NOT_FOUND, "NOT_FOUND", "接口不存在。")
 
             scope = self.server.resolve_scope(self.headers.get("Authorization"))
@@ -352,6 +425,11 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 if self.command not in {"GET", "HEAD"}:
                     raise RequestError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "请求方法不支持。")
                 self._handle_list_versions(scope=scope, head_only=head_only)
+                return
+            if is_audit_path:
+                if self.command not in {"GET", "HEAD"}:
+                    raise RequestError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "请求方法不支持。")
+                self._handle_list_audit(scope=scope, head_only=head_only)
                 return
             if version_id is not None:
                 if self.command not in {"GET", "HEAD"}:
@@ -392,7 +470,7 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
         version_path = path.startswith("/v1/sync/versions/")
         version_suffix = path.removeprefix("/v1/sync/versions/") if version_path else ""
         restore_path = version_suffix.endswith("/restore") and version_suffix.removesuffix("/restore").isdigit()
-        if path not in {"/healthz", "/v1/sync/payload", "/v1/sync/versions"} and not (
+        if path not in {"/healthz", "/v1/sync/payload", "/v1/sync/versions", "/v1/sync/audit"} and not (
             version_path and (version_suffix.isdigit() or restore_path)
         ):
             self._send_json(
@@ -452,6 +530,24 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                     "savedAtMs": item.saved_at_ms,
                 }
                 for item in versions
+            ],
+        }
+        self._send_json(HTTPStatus.OK, payload, head_only=head_only)
+
+    def _handle_list_audit(self, scope: str, head_only: bool) -> None:
+        operations = self.server.repository.list_operations(scope)
+        payload = {
+            "scope": scope,
+            "operations": [
+                {
+                    "operationId": item.operation_id,
+                    "operation": item.operation,
+                    "status": item.status,
+                    "etag": item.etag,
+                    "versionId": item.version_id,
+                    "createdAtMs": item.created_at_ms,
+                }
+                for item in operations
             ],
         }
         self._send_json(HTTPStatus.OK, payload, head_only=head_only)

@@ -346,6 +346,44 @@ class PassSyncServerTests(unittest.TestCase):
             self.assertIn("POST", response.headers["Access-Control-Allow-Methods"])
             self.assertIn("if-match", response.headers["Access-Control-Allow-Headers"])
 
+    def test_audit_lists_success_and_conflict_operations(self) -> None:
+        headers = {
+            "Authorization": "Bearer secret-token",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        with self.request("PUT", "/v1/sync/payload", body=sample_bundle(8000), headers=headers) as response:
+            first_etag = response.headers["ETag"]
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            self.request(
+                "PUT",
+                "/v1/sync/payload",
+                body=sample_bundle(9000),
+                headers={**headers, "If-Match": '"stale"'},
+            )
+        self.assertEqual(context.exception.code, 412)
+        context.exception.close()
+        with self.request("GET", "/v1/sync/audit", headers=headers) as response:
+            operations = json.loads(response.read().decode("utf-8"))["operations"]
+        self.assertGreaterEqual(len(operations), 2)
+        self.assertEqual(operations[0]["status"], "conflict")
+        self.assertEqual(operations[1]["operation"], "put")
+        self.assertEqual(operations[1]["etag"], first_etag)
+
+    def test_options_allows_audit_path(self) -> None:
+        request = urllib.request.Request(
+            f"{self.base_url}/v1/sync/audit",
+            method="OPTIONS",
+            headers={
+                "Origin": "chrome-extension://test",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "authorization",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertEqual(response.status, 204)
+            self.assertEqual(response.headers["Access-Control-Allow-Origin"], "chrome-extension://test")
+
     def test_rejects_payload_larger_than_configured_limit(self) -> None:
         self.server.config = AppConfig(
             host="127.0.0.1",

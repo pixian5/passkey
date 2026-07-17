@@ -7,6 +7,7 @@
 - `GET /v1/sync/versions`
 - `GET /v1/sync/versions/{versionId}`（只读恢复下载）
 - `POST /v1/sync/versions/{versionId}/restore`（使用当前 `If-Match` 原子恢复）
+- `GET /v1/sync/audit`（读取当前 scope 的同步操作审计记录）
 
 服务端只负责认证、版本控制和持久化 `pass.sync.encrypted.v1` 密文信封，无法读取账号、密码、TOTP、恢复码或 Passkey。
 
@@ -20,6 +21,7 @@
 - `GET /healthz` 健康检查
 - 通过受保护的版本接口读取最近保存的加密快照，不会在服务端解密
 - 恢复接口要求携带当前数据的 `If-Match`，恢复动作会再次写入版本历史，避免并发覆盖
+- 审计接口只返回操作类型、状态、ETag、版本号和时间，不包含同步密文内容
 
 ## 快速启动
 
