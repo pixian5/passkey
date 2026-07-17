@@ -6,6 +6,7 @@ on:
     paths:
       - "apps/sync_server_ubuntu/**"
       - ".github/workflows/deploy-sync-server.yml"
+  workflow_dispatch:
 
 jobs:
   deploy:
