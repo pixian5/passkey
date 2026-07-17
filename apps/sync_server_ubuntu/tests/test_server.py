@@ -277,6 +277,20 @@ class PassSyncServerTests(unittest.TestCase):
             restored = json.loads(response.read().decode("utf-8"))
         self.assertEqual(restored["exportedAtMs"], 4000)
 
+    def test_options_allows_version_download_path(self) -> None:
+        request = urllib.request.Request(
+            f"{self.base_url}/v1/sync/versions/1",
+            method="OPTIONS",
+            headers={
+                "Origin": "chrome-extension://test",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "authorization",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertEqual(response.status, 204)
+            self.assertEqual(response.headers["Access-Control-Allow-Origin"], "chrome-extension://test")
+
     def test_rejects_payload_larger_than_configured_limit(self) -> None:
         self.server.config = AppConfig(
             host="127.0.0.1",

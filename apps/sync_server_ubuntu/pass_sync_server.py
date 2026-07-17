@@ -363,7 +363,11 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_options(self) -> None:
         path = self.path.split("?", 1)[0]
-        if path not in {"/healthz", "/v1/sync/payload", "/v1/sync/versions"}:
+        version_path = path.startswith("/v1/sync/versions/")
+        version_suffix = path.removeprefix("/v1/sync/versions/") if version_path else ""
+        if path not in {"/healthz", "/v1/sync/payload", "/v1/sync/versions"} and not (
+            version_path and version_suffix.isdigit()
+        ):
             self._send_json(
                 HTTPStatus.NOT_FOUND,
                 {"error": "NOT_FOUND", "message": "接口不存在。"},
