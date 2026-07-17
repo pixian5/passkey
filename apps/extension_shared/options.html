@@ -68,7 +68,7 @@
             </div>
             <div class="row">
               <label for="syncWebdavPassword">密码</label>
-              <input id="syncWebdavPassword" type="password" placeholder="可选" />
+              <input id="syncWebdavPassword" type="text" placeholder="可选" />
               <span></span>
             </div>
           </div>
@@ -80,13 +80,13 @@
             </div>
             <div class="row">
               <label for="syncServerToken">访问令牌</label>
-              <input id="syncServerToken" type="password" placeholder="部署服务器时配置的 Bearer Token" />
+              <input id="syncServerToken" type="text" placeholder="部署服务器时配置的 Bearer Token" />
               <span></span>
             </div>
           </div>
           <div class="row">
             <label for="syncEncryptionKey">同步加密密钥</label>
-            <input id="syncEncryptionKey" type="password" autocomplete="off" placeholder="所有设备必须填写同一密钥" />
+            <input id="syncEncryptionKey" type="text" autocomplete="off" placeholder="所有设备必须填写同一密钥" />
             <button id="generateSyncEncryptionKeyBtn" type="button">生成</button>
           </div>
           <p class="hint">该密钥只保存在客户端，用于 AES-256-GCM 端到端加密；跨平台同步时需在各设备填写同一值。</p>

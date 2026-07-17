@@ -100,7 +100,7 @@ struct SettingsView: View {
                             HStack(spacing: 8) {
                                 Text("访问令牌")
                                     .frame(width: labelColumnWidth, alignment: .leading)
-                                SecureField("部署服务器时配置的 Bearer Token", text: $store.serverAuthToken)
+                                TextField("部署服务器时配置的 Bearer Token", text: $store.serverAuthToken)
                                     .textFieldStyle(.roundedBorder)
                             }
                             Text("服务端接口固定为 /v1/sync/payload，使用 GET/PUT 交换 pass.sync.bundle.v2。")
@@ -130,7 +130,7 @@ struct SettingsView: View {
                             HStack(spacing: 8) {
                                 Text("密码")
                                     .frame(width: labelColumnWidth, alignment: .leading)
-                                SecureField("可选（写入本机 Keychain）", text: $store.webdavPassword)
+                                TextField("可选（写入本机 Keychain）", text: $store.webdavPassword)
                                     .textFieldStyle(.roundedBorder)
                             }
                         }
@@ -138,7 +138,7 @@ struct SettingsView: View {
                         HStack(spacing: 8) {
                             Text("同步加密密钥")
                                 .frame(width: labelColumnWidth, alignment: .leading)
-                            SecureField("所有设备必须填写同一密钥", text: $store.syncEncryptionKey)
+                            TextField("所有设备必须填写同一密钥", text: $store.syncEncryptionKey)
                                 .textFieldStyle(.roundedBorder)
                             Button("生成") {
                                 store.generateSyncEncryptionKey()
