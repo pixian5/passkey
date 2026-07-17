@@ -24,17 +24,27 @@
             </div>
             <span></span>
           </div>
+          <div class="row">
+            <label for="syncPrimarySource">主同步源</label>
+            <select id="syncPrimarySource">
+              <option value="server">自建服务器（推荐）</option>
+              <option value="webdav">WebDAV</option>
+            </select>
+            <span></span>
+          </div>
           <div class="row sync-actions-row">
             <label>同步操作</label>
             <div class="sync-action-buttons">
+              <button id="syncPreviewBtn" type="button">预览合并</button>
               <button id="syncMergeBtn" type="button">合并已启用源</button>
               <button id="syncRemoteOverwriteLocalBtn" type="button">云端覆盖本地</button>
               <button id="syncLocalOverwriteRemoteBtn" type="button">本地覆盖云端</button>
             </div>
             <span></span>
           </div>
+          <p id="syncPreviewStatus" class="hint"></p>
           <p class="hint">
-            合并：保留双方变更；云端覆盖本地：用所有已启用远端的汇总结果替换本机；本地覆盖云端：直接把本机数据推到所有已启用远端。
+            主同步源用于“云端覆盖本地”和冲突裁决；其他已启用源作为镜像备份。合并会保留双方变更，本地覆盖云端会写入所有已启用源。
           </p>
           <div class="sync-restore-panel">
             <div class="sync-restore-toolbar">

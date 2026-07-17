@@ -81,9 +81,21 @@ struct SettingsView: View {
                             leadingToggle("自建服务器", isOn: $store.syncEnableSelfHostedServer)
                         }
 
-                        Text("可同时启用多个同步源；点击“同步已启用源”会依次拉取并回写所有已启用源。")
+                        Text("主同步源用于“云端覆盖本地”和冲突裁决；其他已启用源作为镜像备份，合并结果会回写所有源。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+
+                        HStack(spacing: 8) {
+                            Text("主同步源")
+                                .frame(width: labelColumnWidth, alignment: .leading)
+                            Picker("主同步源", selection: $store.syncPrimarySource) {
+                                ForEach(AccountStore.SyncPrimarySource.allCases) { source in
+                                    Text(source.label).tag(source)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                        }
 
                         Text(store.cloudSyncStatus)
                             .font(.caption)
@@ -104,7 +116,7 @@ struct SettingsView: View {
                                     .textFieldStyle(.roundedBorder)
                                     .onTapGesture { store.loadSyncSecretsForUI() }
                             }
-                            Text("服务端接口固定为 /v1/sync/payload，使用 GET/PUT 交换 pass.sync.bundle.v2。")
+                            Text("服务端主接口为 /v2/sync/state，使用 GET/PUT 交换 pass.sync.bundle.v2；/v1 仅兼容旧客户端。")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -178,6 +190,12 @@ struct SettingsView: View {
                                 .frame(width: labelColumnWidth, alignment: .leading)
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack(spacing: 8) {
+                                    Button("预览合并") {
+                                        Task { await store.previewSync() }
+                                    }
+                                    .font(store.buttonFont())
+                                    .buttonStyle(.bordered)
+
                                     Button("合并已启用源") {
                                         store.syncNow(modeOverride: .merge)
                                     }
@@ -196,6 +214,9 @@ struct SettingsView: View {
                                     .font(store.buttonFont())
                                     .buttonStyle(.bordered)
                                 }
+                                Text(store.syncPreviewStatus)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
                         }
 

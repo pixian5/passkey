@@ -66,6 +66,7 @@ const STORAGE_KEY_SYNC_WEBDAV_BASE_URL = "pass.sync.webdav.baseUrl.v2";
 const STORAGE_KEY_SYNC_WEBDAV_PATH = "pass.sync.webdav.path.v2";
 const STORAGE_KEY_SYNC_WEBDAV_USERNAME = "pass.sync.webdav.username.v2";
 const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
+const STORAGE_KEY_SYNC_PRIMARY_SOURCE = "pass.sync.primarySource.v1";
 const STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
 const STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS = "pass.localSafetySnapshots.v1";
@@ -75,6 +76,8 @@ const FIXED_NEW_ACCOUNT_FOLDER_NAME = "新账号";
 const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "https://uk.sbbz.tech:5443";
 const SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
 const SYNC_MODE_MERGE = "merge";
+const SYNC_PRIMARY_SERVER = "server";
+const SYNC_PRIMARY_WEBDAV = "webdav";
 const AUTO_SYNC_ALARM_NAME = "pass.sync.auto";
 const PASS_EXTENSION_VERSION = "0.2.3";
 const STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
@@ -400,7 +403,10 @@ async function runAutoSync() {
     folders: mergedFolders,
   });
 
-  const pushTargets = [...targets].sort((left, right) => Number(right.supportsEtag) - Number(left.supportsEtag));
+  const pushTargets = [...targets].sort((left, right) =>
+    Number(right.isPrimary) - Number(left.isPrimary)
+      || Number(right.supportsEtag) - Number(left.supportsEtag)
+  );
   const pushErrors = [];
   for (const target of pushTargets) {
     logSyncFlow("push-start", {
@@ -515,8 +521,12 @@ async function buildRemoteSyncTargetsFromStorage() {
     STORAGE_KEY_SYNC_WEBDAV_PATH,
     STORAGE_KEY_SYNC_WEBDAV_USERNAME,
     STORAGE_KEY_SYNC_SERVER_BASE_URL,
+    STORAGE_KEY_SYNC_PRIMARY_SOURCE,
   ]);
   const secrets = await migrateLegacySyncSecrets();
+  const primarySource = String(result[STORAGE_KEY_SYNC_PRIMARY_SOURCE] || "").trim() === SYNC_PRIMARY_WEBDAV
+    ? SYNC_PRIMARY_WEBDAV
+    : SYNC_PRIMARY_SERVER;
 
   const targets = [];
   if (Boolean(result[STORAGE_KEY_SYNC_ENABLE_WEBDAV])) {
@@ -540,7 +550,7 @@ async function buildRemoteSyncTargetsFromStorage() {
     if (username || password) {
       authHeader = `Basic ${base64EncodeUtf8(`${username}:${password}`)}`;
     }
-    targets.push({ label: "WebDAV", kind: "webdav", url, authHeader, supportsEtag: false, remoteEtag: null });
+    targets.push({ label: "WebDAV", kind: "webdav", url, authHeader, supportsEtag: false, remoteEtag: null, isPrimary: primarySource === SYNC_PRIMARY_WEBDAV });
   }
 
   if (Boolean(result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER])) {
@@ -552,8 +562,13 @@ async function buildRemoteSyncTargetsFromStorage() {
     const url = new URL("v2/sync/state", normalizedBase).toString();
     const token = secrets.serverToken;
     const authHeader = token ? `Bearer ${token}` : null;
-    targets.push({ label: "服务器", kind: "server", url, authHeader, supportsEtag: true, remoteEtag: null });
+    targets.push({ label: "服务器", kind: "server", url, authHeader, supportsEtag: true, remoteEtag: null, isPrimary: primarySource === SYNC_PRIMARY_SERVER });
   }
+
+  const primaryTarget = targets.find((target) => target.kind === primarySource)
+    || targets.find((target) => target.kind === SYNC_PRIMARY_SERVER)
+    || targets[0];
+  for (const target of targets) target.isPrimary = target === primaryTarget;
 
   logSyncFlow("targets-built", {
     webdavEnabled: Boolean(result[STORAGE_KEY_SYNC_ENABLE_WEBDAV]),

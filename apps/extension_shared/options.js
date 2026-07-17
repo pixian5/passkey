@@ -46,6 +46,7 @@ const STORAGE_KEY_SYNC_WEBDAV_BASE_URL = "pass.sync.webdav.baseUrl.v2";
 const STORAGE_KEY_SYNC_WEBDAV_PATH = "pass.sync.webdav.path.v2";
 const STORAGE_KEY_SYNC_WEBDAV_USERNAME = "pass.sync.webdav.username.v2";
 const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
+const STORAGE_KEY_SYNC_PRIMARY_SOURCE = "pass.sync.primarySource.v1";
 const STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
 const STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS = "pass.localSafetySnapshots.v1";
@@ -53,6 +54,8 @@ const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "https://uk.sbbz.tech:5443";
 const SYNC_MODE_MERGE = "merge";
 const SYNC_MODE_REMOTE_OVERWRITE_LOCAL = "remoteOverwriteLocal";
 const SYNC_MODE_LOCAL_OVERWRITE_REMOTE = "localOverwriteRemote";
+const SYNC_PRIMARY_SERVER = "server";
+const SYNC_PRIMARY_WEBDAV = "webdav";
 const STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
 const STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
 const STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
@@ -111,7 +114,10 @@ const dom = {
   deviceName: document.getElementById("deviceName"),
   syncEnableWebdav: document.getElementById("syncEnableWebdav"),
   syncEnableServer: document.getElementById("syncEnableServer"),
+  syncPrimarySource: document.getElementById("syncPrimarySource"),
   syncMergeBtn: document.getElementById("syncMergeBtn"),
+  syncPreviewBtn: document.getElementById("syncPreviewBtn"),
+  syncPreviewStatus: document.getElementById("syncPreviewStatus"),
   syncRemoteOverwriteLocalBtn: document.getElementById("syncRemoteOverwriteLocalBtn"),
   syncLocalOverwriteRemoteBtn: document.getElementById("syncLocalOverwriteRemoteBtn"),
   syncLoadVersionsBtn: document.getElementById("syncLoadVersionsBtn"),
@@ -232,6 +238,7 @@ async function init() {
   startTotpRefreshTicker();
 
   dom.syncMergeBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE));
+  dom.syncPreviewBtn.addEventListener("click", () => void previewSyncWithRemote());
   dom.syncRemoteOverwriteLocalBtn.addEventListener("click", async () => {
     const shouldContinue = await confirmRemoteOverwriteLocalIfNeeded();
     if (!shouldContinue) return;
@@ -257,6 +264,7 @@ async function init() {
     renderSyncBackendFields();
     void persistSyncSettings({ showStatus: false });
   });
+  dom.syncPrimarySource.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.syncAutoInterval.addEventListener("change", () => {
     renderAutoSyncStatus();
     void persistSyncSettings({ showStatus: false });
@@ -562,6 +570,7 @@ async function loadSyncSettings() {
     STORAGE_KEY_SYNC_WEBDAV_PATH,
     STORAGE_KEY_SYNC_WEBDAV_USERNAME,
     STORAGE_KEY_SYNC_SERVER_BASE_URL,
+    STORAGE_KEY_SYNC_PRIMARY_SOURCE,
     STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES,
   ]);
   const secrets = await migrateLegacySyncSecrets();
@@ -576,6 +585,7 @@ async function loadSyncSettings() {
 
   dom.syncEnableWebdav.checked = enableWebdav;
   dom.syncEnableServer.checked = enableServer;
+  dom.syncPrimarySource.value = normalizeSyncPrimarySource(result[STORAGE_KEY_SYNC_PRIMARY_SOURCE]);
   dom.syncWebdavBaseUrl.value = String(result[STORAGE_KEY_SYNC_WEBDAV_BASE_URL] || "");
   dom.syncWebdavPath.value = String(result[STORAGE_KEY_SYNC_WEBDAV_PATH] || "pass-sync-bundle-v2.json");
   dom.syncWebdavUsername.value = String(result[STORAGE_KEY_SYNC_WEBDAV_USERNAME] || "");
@@ -609,6 +619,16 @@ function renderSyncBackendFields() {
 function normalizeAutoSyncIntervalMinutes(value) {
   const normalized = String(value ?? "0").trim();
   return AUTO_SYNC_INTERVAL_OPTIONS.has(normalized) ? normalized : "0";
+}
+
+function normalizeSyncPrimarySource(value) {
+  return String(value || "").trim() === SYNC_PRIMARY_WEBDAV
+    ? SYNC_PRIMARY_WEBDAV
+    : SYNC_PRIMARY_SERVER;
+}
+
+function primarySourceLabel(value) {
+  return normalizeSyncPrimarySource(value) === SYNC_PRIMARY_WEBDAV ? "WebDAV" : "服务器";
 }
 
 function renderAutoSyncStatus() {
@@ -841,6 +861,7 @@ async function saveLockSettings({ showStatus = true } = {}) {
 async function persistSyncSettings({ showStatus = true } = {}) {
   const enableWebdav = Boolean(dom.syncEnableWebdav.checked);
   const enableServer = Boolean(dom.syncEnableServer.checked);
+  const primarySource = normalizeSyncPrimarySource(dom.syncPrimarySource.value);
   const autoSyncIntervalMinutes = normalizeAutoSyncIntervalMinutes(dom.syncAutoInterval.value);
   if (enableWebdav && !isSecureSyncEndpointValue(dom.syncWebdavBaseUrl.value)) {
     if (showStatus) setStatus("WebDAV 地址必须使用 HTTPS（本机回环地址可使用 HTTP）");
@@ -853,6 +874,7 @@ async function persistSyncSettings({ showStatus = true } = {}) {
   const nextSettings = {
     [STORAGE_KEY_SYNC_ENABLE_WEBDAV]: enableWebdav,
     [STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]: enableServer,
+    [STORAGE_KEY_SYNC_PRIMARY_SOURCE]: primarySource,
     [STORAGE_KEY_SYNC_WEBDAV_BASE_URL]: String(dom.syncWebdavBaseUrl.value || "").trim(),
     [STORAGE_KEY_SYNC_WEBDAV_PATH]: String(dom.syncWebdavPath.value || "").trim() || "pass-sync-bundle-v2.json",
     [STORAGE_KEY_SYNC_WEBDAV_USERNAME]: String(dom.syncWebdavUsername.value || "").trim(),
@@ -879,6 +901,7 @@ async function persistSyncSettings({ showStatus = true } = {}) {
     persisted[STORAGE_KEY_SYNC_SERVER_BASE_URL] || nextSettings[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL
   );
   dom.syncServerToken.value = nextSecrets.serverToken;
+  dom.syncPrimarySource.value = primarySource;
   dom.syncAutoInterval.value = normalizeAutoSyncIntervalMinutes(
     persisted[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES] ?? nextSettings[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]
   );
@@ -892,7 +915,7 @@ async function persistSyncSettings({ showStatus = true } = {}) {
   const autoSyncLabel = autoSyncIntervalMinutes === "0" ? "自动同步关闭" : `自动同步每 ${autoSyncIntervalMinutes} 分钟`;
   setDeviceStatus(
     enabledLabels.length > 0
-      ? `同步源配置已保存（已启用：${enabledLabels.join(" + ")}；${autoSyncLabel}）`
+      ? `同步源配置已保存（主源：${primarySourceLabel(primarySource)}；已启用：${enabledLabels.join(" + ")}；${autoSyncLabel}）`
       : `同步源配置已保存（当前未启用任何远端源；${autoSyncLabel}）`
   );
   return true;
@@ -1306,6 +1329,62 @@ async function importGoogleAuthenticatorMigration(migration, folderPlan = null) 
   );
 }
 
+async function previewSyncWithRemote() {
+  dom.syncPreviewStatus.textContent = "正在拉取远端并计算预览…";
+  try {
+    if (!(await saveSyncSettings())) throw new Error("同步配置无效");
+    if (!normalizeSyncEncryptionKey(dom.syncEncryptionKey.value)) {
+      throw new Error("请先配置 256 位同步加密密钥");
+    }
+    const targets = buildRemoteSyncTargetsFromDom();
+    if (!targets || targets.length === 0) throw new Error("请先启用同步源");
+    const localStored = await readBusinessDataFromStore();
+    const localAccounts = Array.isArray(localStored.accounts) ? localStored.accounts.map(normalizeAccountShape) : [];
+    const localPasskeys = buildUnifiedPasskeys(localAccounts, Array.isArray(localStored.passkeys) ? localStored.passkeys : []);
+    const localFolders = Array.isArray(localStored.folders) ? localStored.folders.map(normalizeFolderShape) : [];
+    let remoteAggregate = null;
+    for (const target of targets) {
+      const response = await pullRemotePayload(target);
+      target.remotePayload = response.payload;
+      if (!response.payload) continue;
+      const remoteAccounts = response.payload.accounts.map(normalizeAccountShape);
+      const remoteFolders = response.payload.folders.map(normalizeFolderShape);
+      const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, response.payload.passkeys);
+      if (!remoteAggregate) {
+        remoteAggregate = { accounts: remoteAccounts, folders: remoteFolders, passkeys: remotePasskeys };
+        continue;
+      }
+      remoteAggregate.folders = mergeFolderCollections(remoteAggregate.folders, remoteFolders);
+      remoteAggregate.accounts = syncAliasGroups(mergeAccountCollections(remoteAggregate.accounts, remoteAccounts));
+      remoteAggregate.accounts = reconcileAccountFolders(remoteAggregate.accounts, remoteAggregate.folders);
+      remoteAggregate.passkeys = buildUnifiedPasskeys(
+        remoteAggregate.accounts,
+        mergePasskeyCollections(remoteAggregate.passkeys, remotePasskeys)
+      );
+    }
+    const mergedFolders = mergeFolderCollections(localFolders, remoteAggregate?.folders || []);
+    let mergedAccounts = syncAliasGroups(mergeAccountCollections(localAccounts, remoteAggregate?.accounts || []));
+    mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
+    const mergedPasskeys = buildUnifiedPasskeys(
+      mergedAccounts,
+      mergePasskeyCollections(localPasskeys, remoteAggregate?.passkeys || [])
+    );
+    const safety = validateSyncSafety(
+      { accounts: localAccounts, folders: localFolders, passkeys: localPasskeys },
+      remoteAggregate,
+      { accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys },
+      SYNC_MODE_MERGE
+    );
+    if (!safety.safe) throw new Error(`安全检查未通过：${safety.reasons.join("、")}`);
+    dom.syncPreviewStatus.textContent =
+      `预览（未写入）：账号 ${localAccounts.length}->${mergedAccounts.length}，` +
+      `通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}，` +
+      `文件夹 ${localFolders.length}->${mergedFolders.length}；远端源 ${targets.length} 个`;
+  } catch (error) {
+    dom.syncPreviewStatus.textContent = `预览失败：${error.message}`;
+  }
+}
+
 async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
   if (!(await saveSyncSettings())) return;
   if (!normalizeSyncEncryptionKey(dom.syncEncryptionKey.value)) {
@@ -1377,6 +1456,7 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
       remoteAggregate.passkeys = buildUnifiedPasskeys(remoteAggregate.accounts, remoteAggregate.passkeys);
     }
 
+    const primaryTarget = targets.find((target) => target.isPrimary) || targets[0];
     if (normalizedSyncMode === SYNC_MODE_MERGE) {
       if (remoteAggregate) {
         conflictCount = countSyncAccountConflicts(localAccounts, remoteAggregate.accounts);
@@ -1391,19 +1471,20 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
         mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
       }
     } else if (normalizedSyncMode === SYNC_MODE_REMOTE_OVERWRITE_LOCAL) {
-      const remoteIsEmpty = !remoteAggregate || (
-        remoteAggregate.accounts.length === 0 &&
-        remoteAggregate.passkeys.length === 0 &&
-        remoteAggregate.folders.length === 0
+      const primaryPayload = primaryTarget?.remotePayload || null;
+      const remoteIsEmpty = !primaryPayload || (
+        primaryPayload.accounts.length === 0 &&
+        primaryPayload.passkeys.length === 0 &&
+        primaryPayload.folders.length === 0
       );
       const localIsNonEmpty = localAccounts.length > 0 || localPasskeys.length > 0 || localFolders.length > 0;
       if (remoteIsEmpty && localIsNonEmpty) {
-        setStatus("云端覆盖本地已停止：所有远端为空，避免清空本地数据");
+        setStatus("云端覆盖本地已停止：主同步源为空，避免清空本地数据");
         return;
       }
-      mergedAccounts = remoteAggregate?.accounts || [];
-      mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, remoteAggregate?.passkeys || []);
-      mergedFolders = remoteAggregate?.folders || [];
+      mergedAccounts = primaryPayload?.accounts || [];
+      mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, primaryPayload?.passkeys || []);
+      mergedFolders = primaryPayload?.folders || [];
     }
   }
 
@@ -1431,7 +1512,10 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
   );
 
   const pushErrors = [];
-  const pushTargets = [...targets].sort((left, right) => Number(right.supportsEtag) - Number(left.supportsEtag));
+  const pushTargets = [...targets].sort((left, right) =>
+    Number(right.isPrimary) - Number(left.isPrimary)
+      || Number(right.supportsEtag) - Number(left.supportsEtag)
+  );
   for (const target of pushTargets) {
     try {
       const result = await pushRemotePayloadWithMode(target, {
@@ -1510,6 +1594,7 @@ async function confirmLocalOverwriteRemoteIfNeeded() {
 
 function buildRemoteSyncTargetsFromDom() {
   const targets = [];
+  const primarySource = normalizeSyncPrimarySource(dom.syncPrimarySource.value);
   if (dom.syncEnableWebdav.checked) {
     const baseUrl = String(dom.syncWebdavBaseUrl.value || "").trim();
     const remotePath = String(dom.syncWebdavPath.value || "").trim() || "pass-sync-bundle-v2.json";
@@ -1531,7 +1616,7 @@ function buildRemoteSyncTargetsFromDom() {
     if (username || password) {
       authHeader = `Basic ${base64EncodeUtf8(`${username}:${password}`)}`;
     }
-    targets.push({ label: "WebDAV", kind: "webdav", url, authHeader, supportsEtag: false, remoteEtag: null });
+    targets.push({ label: "WebDAV", kind: "webdav", url, authHeader, supportsEtag: false, remoteEtag: null, isPrimary: primarySource === SYNC_PRIMARY_WEBDAV });
   }
 
   if (dom.syncEnableServer.checked) {
@@ -1554,10 +1639,11 @@ function buildRemoteSyncTargetsFromDom() {
       label: "服务器",
       kind: "server",
       url,
-      versionsUrl: new URL("v1/sync/versions", normalizedBase).toString(),
+      versionsUrl: new URL("v2/sync/versions", normalizedBase).toString(),
       authHeader,
       supportsEtag: true,
       remoteEtag: null,
+      isPrimary: primarySource === SYNC_PRIMARY_SERVER,
     });
   }
 
@@ -1565,6 +1651,10 @@ function buildRemoteSyncTargetsFromDom() {
     setStatus("请至少启用一个远端同步源（WebDAV 或 自建服务器）");
     return null;
   }
+  const primaryTarget = targets.find((target) => target.kind === primarySource)
+    || targets.find((target) => target.kind === SYNC_PRIMARY_SERVER)
+    || targets[0];
+  for (const target of targets) target.isPrimary = target === primaryTarget;
   return targets;
 }
 

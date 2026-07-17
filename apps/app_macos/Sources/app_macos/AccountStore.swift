@@ -69,6 +69,22 @@ final class AccountStore: ObservableObject {
         }
     }
 
+    enum SyncPrimarySource: String, CaseIterable, Identifiable {
+        case selfHostedServer
+        case webDAV
+        case iCloud
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .selfHostedServer: return "自建服务器（推荐）"
+            case .webDAV: return "WebDAV"
+            case .iCloud: return "iCloud"
+            }
+        }
+    }
+
     @Published var deviceName: String = ""
     @Published var statusMessage: String = "" {
         didSet {
@@ -149,6 +165,7 @@ final class AccountStore: ObservableObject {
     @Published private(set) var cloudSyncStatus: String = "iCloud 未连接，使用本机数据"
     @Published private(set) var syncVersionSummaries: [SyncVersionSummary] = []
     @Published private(set) var syncVersionsStatus: String = ""
+    @Published private(set) var syncPreviewStatus: String = ""
     @Published private(set) var accounts: [PasswordAccount] = []
     @Published private(set) var passkeys: [PasskeyRecord] = []
     @Published private(set) var historyEntries: [OperationHistoryEntry] = []
@@ -171,6 +188,13 @@ final class AccountStore: ObservableObject {
             guard !isLoadingSyncPreferences else { return }
             setSyncPreference(syncEnableSelfHostedServer, forKey: Keys.syncEnableSelfHostedServer)
             handleSyncSourceSelectionChanged()
+        }
+    }
+    @Published var syncPrimarySource: SyncPrimarySource = .selfHostedServer {
+        didSet {
+            guard !isLoadingSyncPreferences else { return }
+            setSyncPreference(syncPrimarySource.rawValue, forKey: Keys.syncPrimarySource)
+            refreshSyncSourceStatusHint()
         }
     }
     @Published var webdavBaseURL: String = "" {
@@ -2237,11 +2261,14 @@ final class AccountStore: ObservableObject {
         var webDAVRemotePayload: SyncBundlePayload?
         var conflictCount = 0
         var remoteAggregate: SyncBundlePayload?
+        var primaryRemotePayload: SyncBundlePayload?
+        let primarySource = resolvedPrimarySyncSource()
 
         if mode != .localOverwriteRemote {
             if syncEnableICloud {
                 do {
                     if let remotePayload = try fetchRemotePayloadFromICloud() {
+                        if primarySource == .iCloud { primaryRemotePayload = remotePayload }
                         remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: remotePayload)
                     }
                 } catch {
@@ -2267,6 +2294,7 @@ final class AccountStore: ObservableObject {
                     webDAVETag = remoteResponse.etag
                     webDAVRemotePayload = remoteResponse.payload
                     if let remotePayload = remoteResponse.payload {
+                        if primarySource == .webDAV { primaryRemotePayload = remotePayload }
                         remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: remotePayload)
                     }
                 } catch {
@@ -2289,6 +2317,7 @@ final class AccountStore: ObservableObject {
                     selfHostedETag = remoteResponse.etag
                     selfHostedRemotePayload = remoteResponse.payload
                     if let remotePayload = remoteResponse.payload {
+                        if primarySource == .selfHostedServer { primaryRemotePayload = remotePayload }
                         remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: remotePayload)
                     }
                 } catch {
@@ -2307,13 +2336,13 @@ final class AccountStore: ObservableObject {
                     mergedPayload = mergePayloads(local: localPayload, remote: remoteAggregate)
                 }
             case .remoteOverwriteLocal:
-                guard let remoteAggregate,
-                      !isSyncPayloadEmpty(remoteAggregate)
+                guard let primaryRemotePayload,
+                      !isSyncPayloadEmpty(primaryRemotePayload)
                 else {
-                    statusMessage = "云端覆盖本地已停止：所有远端为空，避免清空本地数据"
+                    statusMessage = "云端覆盖本地已停止：主同步源为空，避免清空本地数据"
                     return
                 }
-                mergedPayload = remoteAggregate
+                mergedPayload = primaryRemotePayload
             case .localOverwriteRemote:
                 break
             }
@@ -2574,10 +2603,29 @@ final class AccountStore: ObservableObject {
 
     private func activeSyncSourceNames() -> [String] {
         var names: [String] = []
-        if syncEnableICloud { names.append("iCloud") }
-        if syncEnableWebDAV { names.append("WebDAV") }
-        if syncEnableSelfHostedServer { names.append("服务器") }
+        let primary = resolvedPrimarySyncSource()
+        if syncEnableSelfHostedServer && primary == .selfHostedServer { names.append("主：服务器") }
+        if syncEnableWebDAV && primary == .webDAV { names.append("主：WebDAV") }
+        if syncEnableICloud && primary == .iCloud { names.append("主：iCloud") }
+        if syncEnableICloud && primary != .iCloud { names.append("iCloud 镜像") }
+        if syncEnableWebDAV && primary != .webDAV { names.append("WebDAV 镜像") }
+        if syncEnableSelfHostedServer && primary != .selfHostedServer { names.append("服务器镜像") }
         return names
+    }
+
+    private func resolvedPrimarySyncSource() -> SyncPrimarySource {
+        switch syncPrimarySource {
+        case .selfHostedServer where syncEnableSelfHostedServer:
+            return .selfHostedServer
+        case .webDAV where syncEnableWebDAV:
+            return .webDAV
+        case .iCloud where syncEnableICloud:
+            return .iCloud
+        default:
+            if syncEnableSelfHostedServer { return .selfHostedServer }
+            if syncEnableWebDAV { return .webDAV }
+            return .iCloud
+        }
     }
 
     var autoSyncIntervalOptions: [AutoSyncInterval] {
@@ -2602,6 +2650,40 @@ final class AccountStore: ObservableObject {
             folders: folders,
             passkeys: passkeys
         )
+    }
+
+    func previewSync() async {
+        loadSyncSecretsIfNeeded()
+        guard PassSyncCrypto.isEncryptionKeyConfigured(syncEncryptionKey) else {
+            syncPreviewStatus = "预览失败：请先配置 256 位同步加密密钥"
+            return
+        }
+        let localPayload = buildCurrentSyncPayload()
+        var remoteAggregate: SyncBundlePayload?
+        do {
+            if syncEnableICloud, let payload = try fetchRemotePayloadFromICloud() {
+                remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: payload)
+            }
+            if syncEnableWebDAV {
+                guard let url = buildWebDAVResourceURL() else { throw NSError(domain: "AccountStore.SyncPreview", code: 1, userInfo: [NSLocalizedDescriptionKey: "WebDAV 配置不完整"]) }
+                let response = try await fetchRemotePayload(from: url, authorization: buildBasicAuthorization(username: webdavUsername, password: webdavPassword))
+                if let payload = response.payload { remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: payload) }
+            }
+            if syncEnableSelfHostedServer {
+                guard let url = buildSelfHostedPayloadURL() else { throw NSError(domain: "AccountStore.SyncPreview", code: 2, userInfo: [NSLocalizedDescriptionKey: "服务器配置不完整"]) }
+                let response = try await fetchRemotePayload(from: url, authorization: buildBearerAuthorization(serverAuthToken))
+                if let payload = response.payload { remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: payload) }
+            }
+            let merged = mergePayloads(local: localPayload, remote: remoteAggregate ?? emptySyncPayload())
+            let safetyReasons = syncSafetyReasons(local: localPayload, remote: remoteAggregate, merged: merged, mode: .merge)
+            guard safetyReasons.isEmpty else {
+                syncPreviewStatus = "预览停止：安全检查未通过（\(safetyReasons.joined(separator: ", "))）"
+                return
+            }
+            syncPreviewStatus = "预览（未写入）：账号 \(localPayload.accounts.count)->\(merged.accounts.count)，通行密钥 \(localPayload.passkeys.count)->\(merged.passkeys.count)，文件夹 \(localPayload.folders.count)->\(merged.folders.count)"
+        } catch {
+            syncPreviewStatus = "预览失败：\(error.localizedDescription)"
+        }
     }
 
     func remoteOverwritePreflight() async -> RemoteOverwritePreflightResult {
@@ -2904,6 +2986,7 @@ final class AccountStore: ObservableObject {
             Keys.syncEnableICloud,
             Keys.syncEnableWebDAV,
             Keys.syncEnableSelfHostedServer,
+            Keys.syncPrimarySource,
             Keys.syncMode,
             Keys.autoSyncIntervalMinutes,
             Keys.webdavBaseURL,
@@ -3295,6 +3378,7 @@ final class AccountStore: ObservableObject {
         syncEnableICloud = defaults.object(forKey: Keys.syncEnableICloud) as? Bool ?? true
         syncEnableWebDAV = defaults.object(forKey: Keys.syncEnableWebDAV) as? Bool ?? false
         syncEnableSelfHostedServer = defaults.object(forKey: Keys.syncEnableSelfHostedServer) as? Bool ?? false
+        syncPrimarySource = SyncPrimarySource(rawValue: defaults.string(forKey: Keys.syncPrimarySource) ?? "") ?? .selfHostedServer
         syncMode = SyncMode(rawValue: defaults.string(forKey: Keys.syncMode) ?? "") ?? .merge
         autoSyncIntervalMinutes = AutoSyncInterval(rawValue: defaults.integer(forKey: Keys.autoSyncIntervalMinutes))?.rawValue ?? AutoSyncInterval.disabled.rawValue
         webdavBaseURL = defaults.string(forKey: Keys.webdavBaseURL) ?? ""
@@ -5735,6 +5819,7 @@ private enum Keys {
     static let syncEnableICloud = "pass.sync.enableICloud.v3"
     static let syncEnableWebDAV = "pass.sync.enableWebDAV.v3"
     static let syncEnableSelfHostedServer = "pass.sync.enableSelfHostedServer.v3"
+    static let syncPrimarySource = "pass.sync.primarySource.v1"
     static let syncMode = "pass.sync.mode.v1"
     static let autoSyncIntervalMinutes = "pass.sync.autoIntervalMinutes.v1"
     static let webdavBaseURL = "pass.sync.webdav.baseURL.v2"
