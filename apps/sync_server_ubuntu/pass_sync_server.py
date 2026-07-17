@@ -151,7 +151,7 @@ class PayloadRepository:
                 if schema not in {"pass.sync.encrypted.v1", "pass.sync.bundle.v2"}:
                     plaintext_scopes.append(row["scope"])
             if plaintext_scopes:
-                connection.executemany("DELETE FROM payloads WHERE scope = ?1;", [(scope,) for scope in plaintext_scopes])
+                connection.executemany("DELETE FROM payloads WHERE scope = ?;", [(scope,) for scope in plaintext_scopes])
                 LOGGER.warning("Removed %s legacy unsupported payload(s)", len(plaintext_scopes))
 
     def get(self, scope: str) -> StoredPayload | None:
@@ -160,7 +160,7 @@ class PayloadRepository:
                 """
                 SELECT scope, etag, payload_json, payload_sha256, exported_at_ms, updated_at_ms
                 FROM payloads
-                WHERE scope = ?1
+                WHERE scope = ?
                 LIMIT 1;
                 """,
                 (scope,),
@@ -184,9 +184,9 @@ class PayloadRepository:
                 SELECT version_id, scope, etag, payload_json, payload_sha256,
                        exported_at_ms, updated_at_ms, saved_at_ms
                 FROM payload_versions
-                WHERE scope = ?1
+                WHERE scope = ?
                 ORDER BY version_id DESC
-                LIMIT ?2;
+                LIMIT ?;
                 """,
                 (scope, safe_limit),
             ).fetchall()
@@ -211,7 +211,7 @@ class PayloadRepository:
                 SELECT version_id, scope, etag, payload_json, payload_sha256,
                        exported_at_ms, updated_at_ms, saved_at_ms
                 FROM payload_versions
-                WHERE scope = ?1 AND version_id = ?2
+                WHERE scope = ? AND version_id = ?
                 LIMIT 1;
                 """,
                 (scope, version_id),
@@ -249,7 +249,7 @@ class PayloadRepository:
                         """
                         SELECT etag, payload_json, payload_sha256, exported_at_ms, updated_at_ms
                         FROM sync_idempotency
-                        WHERE scope = ?1 AND idempotency_key = ?2
+                        WHERE scope = ? AND idempotency_key = ?
                         LIMIT 1;
                         """,
                         (scope, idempotency_key),
@@ -282,7 +282,7 @@ class PayloadRepository:
                         INSERT INTO payload_versions (
                           scope, etag, payload_json, payload_sha256,
                           exported_at_ms, updated_at_ms, saved_at_ms
-                        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?);
                         """,
                         (
                             current.scope,
@@ -303,7 +303,7 @@ class PayloadRepository:
                       payload_sha256,
                       exported_at_ms,
                       updated_at_ms
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                    ) VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT(scope) DO UPDATE SET
                       etag = excluded.etag,
                       payload_json = excluded.payload_json,
@@ -318,7 +318,7 @@ class PayloadRepository:
                     INSERT INTO payload_versions (
                       scope, etag, payload_json, payload_sha256,
                       exported_at_ms, updated_at_ms, saved_at_ms
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?);
                     """,
                     (scope, next_etag, payload_json, payload_sha256, exported_at_ms, now_ms, now_ms),
                 )
@@ -328,7 +328,7 @@ class PayloadRepository:
                         INSERT OR IGNORE INTO sync_idempotency (
                           scope, idempotency_key, etag, payload_json, payload_sha256,
                           exported_at_ms, updated_at_ms, created_at_ms
-                        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8);
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
                         """,
                         (
                             scope,
@@ -344,28 +344,28 @@ class PayloadRepository:
                     connection.execute(
                         """
                         DELETE FROM sync_idempotency
-                        WHERE scope = ?1
+                        WHERE scope = ?
                           AND rowid NOT IN (
                             SELECT rowid FROM sync_idempotency
-                            WHERE scope = ?1
+                            WHERE scope = ?
                             ORDER BY created_at_ms DESC
                             LIMIT 500
                           );
                         """,
-                        (scope,),
+                        (scope, scope),
                     )
                 connection.execute(
                     """
                     DELETE FROM payload_versions
-                    WHERE scope = ?1
+                    WHERE scope = ?
                       AND version_id NOT IN (
                         SELECT version_id FROM payload_versions
-                        WHERE scope = ?1
+                        WHERE scope = ?
                         ORDER BY version_id DESC
                         LIMIT 50
                       );
                     """,
-                    (scope,),
+                    (scope, scope),
                 )
 
             self.record_operation(scope, operation, "success", next_etag, None)
@@ -404,7 +404,7 @@ class PayloadRepository:
                 """
                 INSERT INTO sync_operations (
                   scope, operation, status, etag, version_id, created_at_ms
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6);
+                ) VALUES (?, ?, ?, ?, ?, ?);
                 """,
                 (scope, operation, status, etag, version_id, current_time_ms()),
             )
@@ -416,9 +416,9 @@ class PayloadRepository:
                 """
                 SELECT operation_id, scope, operation, status, etag, version_id, created_at_ms
                 FROM sync_operations
-                WHERE scope = ?1
+                WHERE scope = ?
                 ORDER BY operation_id DESC
-                LIMIT ?2;
+                LIMIT ?;
                 """,
                 (scope, safe_limit),
             ).fetchall()
