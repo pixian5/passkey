@@ -6,7 +6,7 @@
   const REQUEST_TIMEOUT_MS = 10000;
   const FALLBACK_NOTICE_DELAY_MS = 1200;
   const PASSKEY_LOG_PREFIX = "[Pass injected]";
-  const PASS_EXTENSION_VERSION = "0.2.0";
+  const PASS_EXTENSION_VERSION = "0.2.1";
   const FALLBACK_TOAST_ID = "pass-injected-fallback-toast";
   const FALLBACK_OVERLAY_ID = "pass-injected-fallback-overlay";
 

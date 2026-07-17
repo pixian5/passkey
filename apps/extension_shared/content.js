@@ -10,7 +10,7 @@ const PASS_PAGE_TOAST_ID = "pass-page-toast";
 const PASS_PAGE_TOAST_DURATION_MS = 3000;
 const PASSKEY_USE_BROWSER_FALLBACK = "__PASSKEY_USE_BROWSER_FALLBACK__";
 const PASSKEY_LOG_PREFIX = "[Pass content]";
-const PASS_EXTENSION_VERSION = "0.2.0";
+const PASS_EXTENSION_VERSION = "0.2.1";
 
 let lastPromptKey = "";
 let lastPromptAt = 0;
