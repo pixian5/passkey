@@ -107,6 +107,7 @@ final class AppLockStore: ObservableObject {
         lockMessage = ""
         unlockPasswordInput = ""
         UserDefaults.standard.set(false, forKey: AppLockKeys.isUnlockEnabled)
+        _ = PassSharedFileSecretStore.remove(named: AppLockKeys.fileName)
         settingsMessage = "应用解锁已关闭"
     }
 
@@ -215,11 +216,7 @@ final class AppLockStore: ObservableObject {
         guard let encoded = try? JSONEncoder().encode(credential) else {
             return false
         }
-        let saved = LocalKeychain.save(
-            service: AppLockKeys.keychainService,
-            account: AppLockKeys.keychainAccount,
-            data: encoded
-        )
+        let saved = PassSharedFileSecretStore.write(encoded, named: AppLockKeys.fileName)
         if saved {
             let defaults = UserDefaults.standard
             defaults.removeObject(forKey: AppLockKeys.masterPasswordSalt)
@@ -329,13 +326,25 @@ final class AppLockStore: ObservableObject {
     }
 
     private func loadMasterCredential() -> MasterPasswordCredential? {
+        if let encoded = PassSharedFileSecretStore.read(named: AppLockKeys.fileName),
+           let credential = try? JSONDecoder().decode(MasterPasswordCredential.self, from: encoded)
+        {
+            return credential
+        }
+
+        // One-time, non-interactive migration from the old Keychain item.
         guard let encoded = LocalKeychain.read(
             service: AppLockKeys.keychainService,
             account: AppLockKeys.keychainAccount
-        ) else {
+        ),
+        let credential = try? JSONDecoder().decode(MasterPasswordCredential.self, from: encoded)
+        else {
             return nil
         }
-        return try? JSONDecoder().decode(MasterPasswordCredential.self, from: encoded)
+        guard PassSharedFileSecretStore.write(encoded, named: AppLockKeys.fileName) else {
+            return nil
+        }
+        return credential
     }
 
 }
@@ -348,6 +357,7 @@ private enum AppLockKeys {
 
     static let keychainService = "com.pass.desktop"
     static let keychainAccount = "app_lock.master_password.v1"
+    static let fileName = "app-lock-credential-v1.json"
 
     // legacy keys kept for one-time migration
     static let masterPasswordSalt = "pass.lock.password.salt"

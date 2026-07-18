@@ -172,6 +172,7 @@ final class LocalSQLiteStore {
     private func openIfNeeded() throws {
         if db != nil { return }
 
+        try PassSharedCrypto.ensureKeyAvailable()
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true

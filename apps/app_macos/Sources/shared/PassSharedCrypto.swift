@@ -3,14 +3,14 @@ import Foundation
 
 enum PassSharedCryptoError: Error, LocalizedError {
     case invalidCiphertext
-    case keychainUnavailable
+    case localKeyUnavailable
 
     var errorDescription: String? {
         switch self {
         case .invalidCiphertext:
             return "本地数据无法解密"
-        case .keychainUnavailable:
-            return "无法读取本机加密密钥"
+        case .localKeyUnavailable:
+            return "无法读取本地加密密钥"
         }
     }
 }
@@ -18,6 +18,7 @@ enum PassSharedCryptoError: Error, LocalizedError {
 enum PassSharedCrypto {
     private static let keyService = "com.pass.desktop.shared.database"
     private static let keyAccount = "aes-gcm-key-v1"
+    private static let keyFileName = "pass-db-key-v1"
 
     static func encrypt(_ data: Data) throws -> Data {
         let sealed = try AES.GCM.seal(data, using: try loadOrCreateKey())
@@ -31,6 +32,13 @@ enum PassSharedCrypto {
         data.first == 1
     }
 
+    /// Loads the key before SQLite creates a new database file. This preserves
+    /// the distinction between a genuinely new store and an existing store
+    /// whose key is unavailable.
+    static func ensureKeyAvailable() throws {
+        _ = try loadOrCreateKey()
+    }
+
     static func decrypt(_ data: Data) throws -> Data {
         guard data.first == 1 else {
             throw PassSharedCryptoError.invalidCiphertext
@@ -40,24 +48,41 @@ enum PassSharedCrypto {
     }
 
     private static func loadOrCreateKey() throws -> SymmetricKey {
-        let accessGroup = LocalKeychain.sharedAccessGroup()
+        let databaseURL = PassSharedData.databaseURL()
+        if let stored = PassSharedFileSecretStore.read(named: keyFileName) {
+            guard stored.count == 32 else {
+                throw PassSharedCryptoError.localKeyUnavailable
+            }
+            return SymmetricKey(data: stored)
+        }
+
+        // Migrate an existing database key once. The migration read is
+        // explicitly non-interactive; failure must never create a replacement
+        // key for an existing database because that would make all data
+        // undecryptable.
         if let stored = LocalKeychain.read(
             service: keyService,
-            account: keyAccount,
-            accessGroup: accessGroup
+            account: keyAccount
         ), stored.count == 32 {
+            guard PassSharedFileSecretStore.write(stored, named: keyFileName) else {
+                throw PassSharedCryptoError.localKeyUnavailable
+            }
             return SymmetricKey(data: stored)
+        }
+
+        let databaseExists = FileManager.default.fileExists(atPath: databaseURL.path)
+            || FileManager.default.fileExists(atPath: databaseURL.deletingLastPathComponent()
+                .appendingPathComponent(databaseURL.lastPathComponent + "-wal").path)
+            || FileManager.default.fileExists(atPath: databaseURL.deletingLastPathComponent()
+                .appendingPathComponent(databaseURL.lastPathComponent + "-shm").path)
+        guard !databaseExists else {
+            throw PassSharedCryptoError.localKeyUnavailable
         }
 
         let key = SymmetricKey(size: .bits256)
         let rawKey = key.withUnsafeBytes { Data($0) }
-        guard LocalKeychain.save(
-            service: keyService,
-            account: keyAccount,
-            data: rawKey,
-            accessGroup: accessGroup
-        ) else {
-            throw PassSharedCryptoError.keychainUnavailable
+        guard PassSharedFileSecretStore.write(rawKey, named: keyFileName) else {
+            throw PassSharedCryptoError.localKeyUnavailable
         }
         return key
     }

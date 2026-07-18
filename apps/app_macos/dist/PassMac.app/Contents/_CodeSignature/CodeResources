@@ -15,10 +15,10 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			9LbXnMv31DR0bz/BxIpfV4ldddY=
+			9AvTI9OPXX28DXQ1KJA097YsK7A=
 			</data>
 			<key>requirement</key>
-			<string>cdhash H"f4b6d79ccbf7d434746f3fc1c48a5f57895d75d6" or cdhash H"8f5b07d18f29f52007cc4041bab1ff3660e3eee7"</string>
+			<string>cdhash H"f40bd323d38f5d7dbc0d7435289034f7b62c2bb0" or cdhash H"28797525037a713cb263e59fda8ff932e555d78c"</string>
 		</dict>
 		<key>Resources/PassMac.icns</key>
 		<dict>

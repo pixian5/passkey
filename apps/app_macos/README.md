@@ -2,7 +2,7 @@
 
 Runnable macOS desktop app (SwiftUI) for local password management demo.
 
-Remote sync bundles use AES-256-GCM with an independent Keychain-held sync key. The key is never sent to the server; browser extensions and other platforms must be configured with the same key. Remote sync and sync-bundle export are blocked until a valid 256-bit key is configured. The self-hosted server is the default primary source; WebDAV/iCloud can be selected as mirrors or the primary source, and preview never writes data.
+Remote sync bundles use AES-256-GCM with an independent local sync key. Secrets are stored as 0600 files in the shared app-group directory, so normal launches do not access or prompt for the macOS Keychain. A legacy Keychain item, when present, is read once without UI and migrated to the file store. The key is never sent to the server; browser extensions and other platforms must be configured with the same key. Remote sync and sync-bundle export are blocked until a valid 256-bit key is configured. The self-hosted server is the default primary source; WebDAV/iCloud can be selected as mirrors or the primary source, and preview never writes data.
 
 The app-lock password verifier uses PBKDF2-SHA-256 (310000 iterations). Existing legacy password verifiers are upgraded after the next successful password unlock. Sync endpoints must use HTTPS; HTTP is accepted only for `localhost`, `127.0.0.1`, and `::1` during local development, so network credentials are not sent in plaintext.
 
@@ -57,11 +57,10 @@ Generated bundle:
 `PassAutoFillExtension.appex`. The AutoFill/Credential Exchange path requires the
 `project.autofill.yml` generated Xcode project and real Developer ID/App Store
 signing before macOS will treat the app as a system credential provider. The
-same signing is required for the app and extension to share the Keychain-held
-database encryption key. Local verification can use `CODE_SIGNING_ALLOWED=NO`;
-the packaging script removes the shared Keychain entitlement from that ad-hoc
-development bundle so it can launch, but AutoFill cannot read the encrypted
-database in that mode.
+app and extension share the database key through the app-group file store.
+Local verification can use `CODE_SIGNING_ALLOWED=NO`; the packaging script
+still removes the obsolete shared Keychain entitlement from ad-hoc development
+bundles.
 
 Skip installation:
 ```bash
@@ -77,6 +76,10 @@ RUN_AFTER_INSTALL=0 ./scripts/package_app.sh
 
 ## Data files
 - SQLite (WAL) data: `~/Library/Group Containers/group.com.pass.desktop.shared/pass-mac/pass.db`
+- Local database key: `~/Library/Group Containers/group.com.pass.desktop.shared/pass-mac/pass-db-key-v1` (0600)
+- Sync credentials: `~/Library/Group Containers/group.com.pass.desktop.shared/pass-mac/sync-credentials-v1.json` (0600)
+- App Lock verifier: `~/Library/Group Containers/group.com.pass.desktop.shared/pass-mac/app-lock-credential-v1.json` (0600)
+- Existing `sync-secrets.json` is migrated first and deleted only after the new file is written successfully.
 - CSV export: `~/Library/Group Containers/group.com.pass.desktop.shared/pass-mac/pass-export-*.csv`
 - If a historical audit record cannot be authenticated, the app leaves accounts,
   folders, and passkeys untouched, copies the original encrypted BLOB to

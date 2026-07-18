@@ -348,6 +348,8 @@ final class AccountStore: ObservableObject {
     private var suppressCloudPush: Bool = false
     private var isLoadingSyncPreferences: Bool = false
     private var syncSecretsLoaded: Bool = false
+    private var syncSecretFileLoaded: Bool = false
+    private var syncSecrets: [String: String] = [:]
     private var syncNowTask: Task<Void, Never>?
     private var autoSyncTimer: Timer?
     private lazy var localSQLiteStore = LocalSQLiteStore(
@@ -368,11 +370,11 @@ final class AccountStore: ObservableObject {
     }
 
     init() {
-        // Legacy versions wrote remote credentials as plaintext JSON.
-        try? FileManager.default.removeItem(
-            at: dataDirectoryURL().appendingPathComponent("sync-secrets.json", isDirectory: false)
-        )
         load()
+        // Perform the legacy credential migration once during startup. The
+        // migration query is non-interactive; after the file is written no
+        // normal launch touches the Keychain again.
+        loadSyncSecretsIfNeeded()
         handleSyncSourceSelectionChanged()
     }
 
@@ -3332,22 +3334,19 @@ final class AccountStore: ObservableObject {
     }
 
     private func saveSecret(_ secret: String, account: String) -> Bool {
+        loadSyncSecretFileIfNeeded()
         let normalized = secret.trimmingCharacters(in: .newlines)
         if normalized.isEmpty {
-            return LocalKeychain.delete(service: SecretKeys.service, account: account)
+            syncSecrets.removeValue(forKey: account)
+        } else {
+            syncSecrets[account] = secret
         }
-        return LocalKeychain.save(
-            service: SecretKeys.service,
-            account: account,
-            data: Data(secret.utf8)
-        )
+        return persistSyncSecretFile()
     }
 
     private func readSecret(account: String) -> String {
-        guard let data = LocalKeychain.read(service: SecretKeys.service, account: account) else {
-            return ""
-        }
-        return String(data: data, encoding: .utf8) ?? ""
+        loadSyncSecretFileIfNeeded()
+        return syncSecrets[account] ?? ""
     }
 
     func loadSyncSecretsForUI() {
@@ -3357,6 +3356,7 @@ final class AccountStore: ObservableObject {
     private func loadSyncSecretsIfNeeded() {
         guard !syncSecretsLoaded else { return }
         isLoadingSyncPreferences = true
+        loadSyncSecretFileIfNeeded()
         webdavPassword = readSecret(account: SecretKeys.webdavPasswordAccount)
         serverAuthToken = readSecret(account: SecretKeys.serverTokenAccount)
         syncEncryptionKey = readSecret(account: SecretKeys.syncEncryptionKeyAccount)
@@ -3366,6 +3366,58 @@ final class AccountStore: ObservableObject {
         }
         isLoadingSyncPreferences = false
         syncSecretsLoaded = true
+    }
+
+    private func loadSyncSecretFileIfNeeded() {
+        guard !syncSecretFileLoaded else { return }
+        let fileName = SecretKeys.fileName
+        if let data = PassSharedFileSecretStore.read(named: fileName),
+           let stored = try? decoder.decode(SyncSecretFile.self, from: data),
+           stored.version == SyncSecretFile.currentVersion
+        {
+            syncSecrets = stored.values
+            syncSecretFileLoaded = true
+            return
+        }
+
+        // Migrate the old plaintext file before probing the legacy Keychain.
+        // It is removed only after the replacement file has been written.
+        let legacyURL = dataDirectoryURL().appendingPathComponent(
+            SecretKeys.legacyFileName,
+            isDirectory: false
+        )
+        if let data = try? Data(contentsOf: legacyURL),
+           let legacy = try? decoder.decode([String: String].self, from: data)
+        {
+            syncSecrets = legacy.filter { SecretKeys.allAccounts.contains($0.key) }
+            if persistSyncSecretFile() {
+                try? FileManager.default.removeItem(at: legacyURL)
+                syncSecretFileLoaded = true
+                return
+            }
+        }
+
+        // One-time, non-interactive migration from the old Keychain entries.
+        // Write the new file even when it is empty so subsequent launches never
+        // probe the Keychain again.
+        var migrated: [String: String] = [:]
+        for account in SecretKeys.allAccounts {
+            if let data = LocalKeychain.read(service: SecretKeys.service, account: account),
+               let value = String(data: data, encoding: .utf8),
+               !value.isEmpty
+            {
+                migrated[account] = value
+            }
+        }
+        syncSecrets = migrated
+        syncSecretFileLoaded = persistSyncSecretFile()
+    }
+
+    @discardableResult
+    private func persistSyncSecretFile() -> Bool {
+        let file = SyncSecretFile(version: SyncSecretFile.currentVersion, values: syncSecrets)
+        guard let data = try? encoder.encode(file) else { return false }
+        return PassSharedFileSecretStore.write(data, named: SecretKeys.fileName)
     }
 
     func currentTotpCode(for account: PasswordAccount, at date: Date = Date()) -> String? {
@@ -3402,6 +3454,7 @@ final class AccountStore: ObservableObject {
         serverAuthToken = ""
         syncEncryptionKey = ""
         syncSecretsLoaded = false
+        syncSecretFileLoaded = false
         isLoadingSyncPreferences = false
 
         let foldersDataFromDatabase = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.folders)
@@ -5845,9 +5898,23 @@ private enum Keys {
 
 private enum SecretKeys {
     static let service = "pass.sync.credentials.v2"
+    static let fileName = "sync-credentials-v1.json"
+    static let legacyFileName = "sync-secrets.json"
     static let webdavPasswordAccount = "sync.webdav.password"
     static let serverTokenAccount = "sync.server.token"
     static let syncEncryptionKeyAccount = "sync.encryption.key.v1"
+    static let allAccounts = [
+        webdavPasswordAccount,
+        serverTokenAccount,
+        syncEncryptionKeyAccount,
+    ]
+}
+
+private struct SyncSecretFile: Codable {
+    static let currentVersion = 1
+
+    let version: Int
+    let values: [String: String]
 }
 
 private enum ICloudKeys {

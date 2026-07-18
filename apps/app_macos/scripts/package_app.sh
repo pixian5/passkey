@@ -51,8 +51,12 @@ if command -v codesign >/dev/null 2>&1; then
     EXTENSION_ENTITLEMENTS="${TEMP_ENTITLEMENTS_DIR}/AutoFillExtension.entitlements"
     cp "${APP_ROOT}/PassMac.entitlements" "${APP_ENTITLEMENTS}"
     cp "${APP_ROOT}/AutofillExtension/AutoFillExtension.entitlements" "${EXTENSION_ENTITLEMENTS}"
-    plutil -remove keychain-access-groups "${APP_ENTITLEMENTS}"
-    plutil -remove keychain-access-groups "${EXTENSION_ENTITLEMENTS}"
+    if plutil -extract keychain-access-groups raw -o /dev/null "${APP_ENTITLEMENTS}" >/dev/null 2>&1; then
+      plutil -remove keychain-access-groups "${APP_ENTITLEMENTS}"
+    fi
+    if plutil -extract keychain-access-groups raw -o /dev/null "${EXTENSION_ENTITLEMENTS}" >/dev/null 2>&1; then
+      plutil -remove keychain-access-groups "${EXTENSION_ENTITLEMENTS}"
+    fi
   fi
   if [[ -d "${APP_BUNDLE}/Contents/PlugIns/PassAutoFillExtension.appex" ]]; then
     codesign \

@@ -143,7 +143,7 @@ struct SettingsView: View {
                             HStack(spacing: 8) {
                                 Text("密码")
                                     .frame(width: labelColumnWidth, alignment: .leading)
-                                TextField("可选（写入本机 Keychain）", text: $store.webdavPassword)
+                                TextField("可选（仅保存于本机）", text: $store.webdavPassword)
                                     .textFieldStyle(.roundedBorder)
                                     .onTapGesture { store.loadSyncSecretsForUI() }
                             }
