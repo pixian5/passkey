@@ -1617,14 +1617,7 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
     Number(right.isPrimary) - Number(left.isPrimary)
       || Number(right.supportsEtag) - Number(left.supportsEtag)
   );
-  const existingOutbox = new Map((await getSyncOutbox()).map((item) => [item.targetKey, item]));
   for (const target of pushTargets) {
-    const pending = existingOutbox.get(syncTargetKey(target));
-    if (pending && Number(pending.nextRetryAtMs || 0) > Date.now()) {
-      const waitSeconds = Math.max(1, Math.ceil((pending.nextRetryAtMs - Date.now()) / 1000));
-      pushErrors.push(`${target.label}: 补偿任务将在 ${waitSeconds} 秒后重试`);
-      continue;
-    }
     try {
       const result = await pushRemotePayloadWithMode(target, {
         accounts: mergedAccounts,
