@@ -4,6 +4,7 @@ import {
   LOCK_PBKDF2_ITERATIONS,
   normalizeLockMasterCredential,
 } from "./lock_crypto.js";
+import { normalizeSyncOutbox } from "./sync_outbox.js";
 
 const DB_NAME = "pass.local.db.v1";
 const DB_VERSION = 1;
@@ -532,29 +533,6 @@ export async function setSafetySnapshots(value) {
   await writeCollection(COLLECTION_SYNC_SAFETY_SNAPSHOTS, normalized);
   await chrome.storage.local.remove(LEGACY_STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS);
   return normalized;
-}
-
-function normalizeSyncOutbox(value) {
-  const byTarget = new Map();
-  const nonNegativeNumber = (raw, fallback) => {
-    const parsed = Number(raw);
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-  };
-  for (const item of Array.isArray(value) ? value : []) {
-    const targetKey = String(item?.targetKey || "").trim();
-    const payload = item?.payload;
-    if (!targetKey || !payload || typeof payload !== "object") continue;
-    byTarget.set(targetKey, {
-      targetKey,
-      payload,
-      createdAtMs: nonNegativeNumber(item?.createdAtMs, Date.now()),
-      attempts: Math.floor(nonNegativeNumber(item?.attempts, 0)),
-      lastAttemptAtMs: nonNegativeNumber(item?.lastAttemptAtMs, 0),
-      nextRetryAtMs: nonNegativeNumber(item?.nextRetryAtMs, 0),
-      lastError: String(item?.lastError || ""),
-    });
-  }
-  return [...byTarget.values()].sort((left, right) => left.createdAtMs - right.createdAtMs);
 }
 
 export async function getSyncOutbox() {

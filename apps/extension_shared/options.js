@@ -42,6 +42,10 @@ import {
   generateSyncEncryptionKey,
   normalizeSyncEncryptionKey,
 } from "./sync_crypto.js";
+import {
+  upsertSyncOutbox,
+  syncTargetKey,
+} from "./sync_outbox.js";
 
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
 const STORAGE_KEY_SYNC_ENABLE_WEBDAV = "pass.sync.enableWebDAV.v3";
@@ -78,9 +82,6 @@ const TOTP_PERIOD_SECONDS = 30;
 const TOTP_DIGITS = 6;
 const TOTP_REFRESH_INTERVAL_MS = 1000;
 const OPTIONS_TOAST_DURATION_MS = 3000;
-const SYNC_OUTBOX_MAX_ATTEMPTS = 12;
-const SYNC_OUTBOX_BASE_DELAY_MS = 5_000;
-const SYNC_OUTBOX_MAX_DELAY_MS = 60 * 60 * 1000;
 
 function normalizeLegacySelfHostedServerBaseUrl(value) {
   const trimmed = String(value || "").trim();
@@ -690,15 +691,6 @@ function renderAutoSyncStatus() {
   dom.syncAutoStatus.textContent = `自动按“合并”模式执行，每 ${interval} 分钟同步一次（${enabledLabels.join(" + ")}）`;
 }
 
-function syncTargetKey(target) {
-  return `${String(target?.kind || "").trim()}|${String(target?.url || "").trim()}`;
-}
-
-function syncOutboxRetryDelayMs(attempts) {
-  const exponent = Math.max(0, Math.min(Number(attempts || 1) - 1, 8));
-  return Math.min(SYNC_OUTBOX_MAX_DELAY_MS, SYNC_OUTBOX_BASE_DELAY_MS * (2 ** exponent));
-}
-
 async function refreshSyncOutboxStatus() {
   if (!dom.syncOutboxStatus) return;
   try {
@@ -721,19 +713,11 @@ async function refreshSyncOutboxStatus() {
 async function recordSyncOutboxFailure(target, payload, error) {
   const targetKey = syncTargetKey(target);
   const items = await getSyncOutbox();
-  const previous = items.find((item) => item.targetKey === targetKey);
-  const attempts = Math.min(Number(previous?.attempts || 0) + 1, SYNC_OUTBOX_MAX_ATTEMPTS);
-  const now = Date.now();
-  const next = {
+  await setSyncOutbox(upsertSyncOutbox(items, {
     targetKey,
     payload: normalizeSyncPayloadShape(payload),
-    createdAtMs: Number(previous?.createdAtMs || now),
-    attempts,
-    lastAttemptAtMs: now,
-    nextRetryAtMs: now + syncOutboxRetryDelayMs(attempts),
-    lastError: String(error?.message || error || ""),
-  };
-  await setSyncOutbox(items.filter((item) => item.targetKey !== targetKey).concat(next));
+    error,
+  }));
 }
 
 async function clearSyncOutbox(target) {
