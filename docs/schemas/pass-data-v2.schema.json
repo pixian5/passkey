@@ -166,6 +166,12 @@
           },
           "uniqueItems": true
         },
+        "folderMembershipStates": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/relationState"
+          }
+        },
         "sites": {
           "type": "array",
           "items": {
@@ -338,6 +344,16 @@
         "pinned": { "type": "boolean" },
         "pinnedSortOrder": { "type": ["integer", "null"] },
         "regularSortOrder": { "type": ["integer", "null"] }
+      }
+    },
+    "relationState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["isDeleted", "updatedAtMs", "deviceName"],
+      "properties": {
+        "isDeleted": { "type": "boolean" },
+        "updatedAtMs": { "type": "integer", "minimum": 0 },
+        "deviceName": { "type": "string" }
       }
     },
     "passkey": {

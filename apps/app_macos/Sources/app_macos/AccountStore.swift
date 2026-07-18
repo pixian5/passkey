@@ -4380,7 +4380,38 @@ final class AccountStore: ObservableObject {
         ).sorted()
         let canonicalBySites = DomainUtils.etldPlusOne(for: mergedSites.first ?? "")
         let canonicalSite = canonicalBySites.isEmpty ? primary.canonicalSite : canonicalBySites
-        let mergedFolderIds = normalizeFolderIds(lhs.resolvedFolderIds + rhs.resolvedFolderIds)
+        var folderMembershipStates = lhs.folderMembershipStates
+        for id in lhs.resolvedFolderIds.map({ $0.uuidString.lowercased() }) where folderMembershipStates[id] == nil {
+            folderMembershipStates[id] = AccountFolderMembershipState(isDeleted: false, updatedAtMs: lhs.updatedAtMs, deviceName: lhs.lastOperatedDeviceName)
+        }
+        for id in rhs.resolvedFolderIds.map({ $0.uuidString.lowercased() }) {
+            let incoming = rhs.folderMembershipStates[id]
+                ?? AccountFolderMembershipState(isDeleted: false, updatedAtMs: rhs.updatedAtMs, deviceName: rhs.lastOperatedDeviceName)
+            guard let current = folderMembershipStates[id] else {
+                folderMembershipStates[id] = incoming
+                continue
+            }
+            if incoming.updatedAtMs > current.updatedAtMs ||
+                (incoming.updatedAtMs == current.updatedAtMs && incoming.isDeleted && !current.isDeleted) ||
+                (incoming.updatedAtMs == current.updatedAtMs && incoming.isDeleted == current.isDeleted && incoming.deviceName > current.deviceName) {
+                folderMembershipStates[id] = incoming
+            }
+        }
+        for (id, incoming) in rhs.folderMembershipStates {
+            guard let current = folderMembershipStates[id] else {
+                folderMembershipStates[id] = incoming
+                continue
+            }
+            if incoming.updatedAtMs > current.updatedAtMs ||
+                (incoming.updatedAtMs == current.updatedAtMs && incoming.isDeleted && !current.isDeleted) ||
+                (incoming.updatedAtMs == current.updatedAtMs && incoming.isDeleted == current.isDeleted && incoming.deviceName > current.deviceName) {
+                folderMembershipStates[id] = incoming
+            }
+        }
+        let mergedFolderIds = folderMembershipStates
+            .filter { !$0.value.isDeleted }
+            .compactMap { UUID(uuidString: $0.key) }
+            .sorted { $0.uuidString < $1.uuidString }
 
         let usernameField = newerField(
             lhs.username,
@@ -4491,6 +4522,7 @@ final class AccountStore: ObservableObject {
             pinnedViews: newerAccount.pinnedViews,
             folderId: mergedFolderIds.first ?? newerAccount.folderId,
             folderIds: mergedFolderIds,
+            folderMembershipStates: folderMembershipStates,
             sites: mergedSites.isEmpty ? primary.sites : mergedSites,
             username: usernameField.value,
             password: passwordField.value,

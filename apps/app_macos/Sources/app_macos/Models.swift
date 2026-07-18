@@ -6,6 +6,12 @@ struct AccountPinnedViewState: Codable, Hashable {
     var regularSortOrder: Int64?
 }
 
+struct AccountFolderMembershipState: Codable, Hashable {
+    var isDeleted: Bool
+    var updatedAtMs: Int64
+    var deviceName: String
+}
+
 struct PasswordAccount: Codable, Identifiable, Hashable {
     let id: UUID
     let accountId: String
@@ -17,6 +23,7 @@ struct PasswordAccount: Codable, Identifiable, Hashable {
     var pinnedViews: [String: AccountPinnedViewState]?
     var folderId: UUID?
     var folderIds: [UUID]?
+    var folderMembershipStates: [String: AccountFolderMembershipState] = [:]
     var sites: [String]
     var username: String
     var password: String
@@ -63,7 +70,18 @@ struct PasswordAccount: Codable, Identifiable, Hashable {
     }
 
     mutating func setResolvedFolderIds(_ ids: [UUID]) {
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        let oldIds = Set(resolvedFolderIds.map { $0.uuidString.lowercased() })
         let normalized = Array(Set(ids)).sorted { $0.uuidString < $1.uuidString }
+        let newIds = Set(normalized.map { $0.uuidString.lowercased() })
+        for id in oldIds.subtracting(newIds) {
+            folderMembershipStates[id] = AccountFolderMembershipState(isDeleted: true, updatedAtMs: nowMs, deviceName: lastOperatedDeviceName)
+        }
+        for id in newIds {
+            if !oldIds.contains(id) {
+                folderMembershipStates[id] = AccountFolderMembershipState(isDeleted: false, updatedAtMs: nowMs, deviceName: lastOperatedDeviceName)
+            }
+        }
         folderIds = normalized
         folderId = normalized.first
     }
@@ -86,6 +104,7 @@ extension PasswordAccount {
         case pinnedViews
         case folderId
         case folderIds
+        case folderMembershipStates
         case sites
         case username
         case password
@@ -153,6 +172,7 @@ extension PasswordAccount {
         pinnedViews = try container.decodeIfPresent([String: AccountPinnedViewState].self, forKey: .pinnedViews)
         folderId = try container.decodeIfPresent(UUID.self, forKey: .folderId)
         folderIds = try container.decodeIfPresent([UUID].self, forKey: .folderIds)
+        folderMembershipStates = try container.decodeIfPresent([String: AccountFolderMembershipState].self, forKey: .folderMembershipStates) ?? [:]
         sites = normalizedSites
         username = decodedUsername
         password = try container.decodeIfPresent(String.self, forKey: .password) ?? ""
@@ -209,6 +229,7 @@ extension PasswordAccount {
         try container.encode(pinnedViews, forKey: .pinnedViews)
         try container.encode(folderId, forKey: .folderId)
         try container.encode(folderIds, forKey: .folderIds)
+        try container.encode(folderMembershipStates, forKey: .folderMembershipStates)
         try container.encode(sites, forKey: .sites)
         try container.encode(username, forKey: .username)
         try container.encode(password, forKey: .password)

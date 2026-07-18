@@ -1285,6 +1285,7 @@ function normalizeAccountShape(account) {
     folderIds: Array.isArray(account?.folderIds)
       ? account.folderIds.map((id) => String(id || "").trim().toLowerCase()).filter(Boolean)
       : (account?.folderId == null ? [] : [String(account.folderId).trim().toLowerCase()]),
+    folderMembershipStates: account?.folderMembershipStates && typeof account.folderMembershipStates === "object" ? account.folderMembershipStates : {},
     sites,
     username,
     password: String(account?.password || ""),

@@ -2722,6 +2722,10 @@ async function deleteFolder(folderId) {
       ...account,
       folderId: nextFolderIds[0] || null,
       folderIds: nextFolderIds,
+      folderMembershipStates: {
+        ...(account.folderMembershipStates || {}),
+        [normalizedFolderId]: { isDeleted: true, updatedAtMs: now, deviceName },
+      },
       updatedAtMs: now,
       lastOperatedDeviceName: deviceName,
     };
@@ -2795,6 +2799,10 @@ async function toggleAccountFolderMembership(accountId, folderId) {
 
   target.folderId = nextFolderIds[0] || null;
   target.folderIds = nextFolderIds;
+  target.folderMembershipStates = {
+    ...(target.folderMembershipStates || {}),
+    [normalizedFolderId]: { isDeleted: exists, updatedAtMs: now, deviceName },
+  };
   target.updatedAtMs = now;
   target.lastOperatedDeviceName = deviceName;
 
@@ -4462,6 +4470,7 @@ function normalizeAccountShape(account) {
     folderIds: Array.isArray(account?.folderIds)
       ? account.folderIds.map((id) => String(id))
       : (account?.folderId == null ? [] : [String(account.folderId)]),
+    folderMembershipStates: account?.folderMembershipStates && typeof account.folderMembershipStates === "object" ? account.folderMembershipStates : {},
     sites,
     username,
     password: String(account?.password || ""),

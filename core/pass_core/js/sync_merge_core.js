@@ -87,6 +87,39 @@ function newerField(
     : { value: rightValue, updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
 }
 
+function mergeFolderMembershipStates(left, right) {
+  const collect = (account) => {
+    const states = account?.folderMembershipStates && typeof account.folderMembershipStates === "object"
+      ? account.folderMembershipStates
+      : {};
+    const result = new Map();
+    for (const [rawId, rawState] of Object.entries(states)) {
+      const id = asString(rawId).trim().toLowerCase();
+      if (!id) continue;
+      result.set(id, {
+        isDeleted: Boolean(rawState?.isDeleted),
+        updatedAtMs: asNumber(rawState?.updatedAtMs || account?.updatedAtMs || account?.createdAtMs),
+        deviceName: asString(rawState?.deviceName || account?.lastOperatedDeviceName).trim(),
+      });
+    }
+    for (const rawId of account?.folderIds || []) {
+      const id = asString(rawId).trim().toLowerCase();
+      if (id && !result.has(id)) result.set(id, { isDeleted: false, updatedAtMs: asNumber(account?.updatedAtMs || account?.createdAtMs), deviceName: asString(account?.lastOperatedDeviceName).trim() });
+    }
+    return result;
+  };
+  const merged = collect(left);
+  for (const [id, incoming] of collect(right)) {
+    const current = merged.get(id);
+    if (!current || incoming.updatedAtMs > current.updatedAtMs ||
+        (incoming.updatedAtMs === current.updatedAtMs && incoming.isDeleted && !current.isDeleted) ||
+        (incoming.updatedAtMs === current.updatedAtMs && incoming.isDeleted === current.isDeleted && incoming.deviceName > current.deviceName)) {
+      merged.set(id, incoming);
+    }
+  }
+  return Object.fromEntries([...merged.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+}
+
 function mergeSameAccount(lhs, rhs, h) {
   const left = h.normalizeAccountShape(lhs);
   const right = h.normalizeAccountShape(rhs);
@@ -96,10 +129,10 @@ function mergeSameAccount(lhs, rhs, h) {
   const mergedSites = h.normalizeSites([...(left.sites || []), ...(right.sites || [])]);
   const canonicalBySites = h.etldPlusOne(mergedSites[0] || "");
   const canonicalSite = canonicalBySites || primary.canonicalSite || secondary.canonicalSite || "";
-  const mergedFolderIds = h.normalizeFolderIdList([
-    ...h.extractAccountFolderIds(left),
-    ...h.extractAccountFolderIds(right),
-  ]);
+  const folderMembershipStates = mergeFolderMembershipStates(left, right);
+  const mergedFolderIds = h.normalizeFolderIdList(Object.entries(folderMembershipStates)
+    .filter(([, state]) => !state.isDeleted)
+    .map(([id]) => id));
 
   const usernameField = newerField(
     left.username,
@@ -231,6 +264,7 @@ function mergeSameAccount(lhs, rhs, h) {
     pinnedViews: newerAccount.pinnedViews || olderAccount.pinnedViews || null,
     folderId: mergedFolderIds[0] || (newerAccount.folderId == null ? null : h.normalizeFolderId(newerAccount.folderId)),
     folderIds: mergedFolderIds,
+    folderMembershipStates,
     sites: mergedSites.length > 0 ? mergedSites : primary.sites,
     username: usernameField.value,
     password: passwordField.value,

@@ -301,6 +301,23 @@ test("文件夹永久删除墓碑不会被旧设备记录重新生成", () => {
   );
 });
 
+test("移出文件夹的关系墓碑会阻止旧设备重新加入", () => {
+  const local = helpers.normalizeAccountShape({
+    folderIds: [],
+    folderMembershipStates: {
+      "folder-1": { isDeleted: true, updatedAtMs: 20, deviceName: "Device-A" },
+    },
+    updatedAtMs: 20,
+  });
+  const staleRemote = helpers.normalizeAccountShape({
+    folderIds: ["folder-1"],
+    updatedAtMs: 10,
+  });
+  const merged = mergeAccountCollections([local], [staleRemote], helpers)[0];
+  assert.deepEqual(merged.folderIds, []);
+  assert.equal(merged.folderMembershipStates["folder-1"].isDeleted, true);
+});
+
 test("通行密钥永久删除墓碑不会被旧设备记录重新生成", () => {
   const deleted = helpers.normalizePasskeyShape({
     credentialIdB64u: "credential-1",
