@@ -1,0 +1,186 @@
+{
+  "version": 2,
+  "cases": [
+    {
+      "name": "field-and-entity-merge",
+      "local": {
+        "accounts": [
+          {
+            "accountId": "example-user",
+            "recordId": "record-example",
+            "canonicalSite": "example.com",
+            "createdAtMs": 100,
+            "updatedAtMs": 100,
+            "username": "alice",
+            "usernameAtCreate": "alice",
+            "password": "old-password",
+            "passwordUpdatedAtMs": 100,
+            "passwordUpdatedDeviceName": "Mac",
+            "note": "local note",
+            "noteUpdatedAtMs": 100,
+            "noteUpdatedDeviceName": "Mac",
+            "sites": ["example.com"],
+            "folderIds": ["folder-main"],
+            "passkeyCredentialIds": ["credential-local"]
+          },
+          {
+            "accountId": "local-only",
+            "recordId": "record-local-only",
+            "createdAtMs": 110,
+            "updatedAtMs": 110,
+            "username": "local",
+            "password": "local-password"
+          }
+        ],
+        "folders": [
+          {
+            "id": "folder-main",
+            "name": "Main",
+            "matchedSites": ["example.com"],
+            "autoAddMatchingSites": false,
+            "createdAtMs": 90,
+            "updatedAtMs": 100
+          }
+        ],
+        "passkeys": [
+          {
+            "credentialIdB64u": "credential-local",
+            "rpId": "example.com",
+            "userName": "alice",
+            "createdAtMs": 100,
+            "updatedAtMs": 100,
+            "signCount": 2
+          }
+        ]
+      },
+      "remote": {
+        "accounts": [
+          {
+            "accountId": "example-user",
+            "recordId": "record-example",
+            "canonicalSite": "example.com",
+            "createdAtMs": 100,
+            "updatedAtMs": 200,
+            "username": "alice",
+            "usernameAtCreate": "alice",
+            "password": "new-password",
+            "passwordUpdatedAtMs": 200,
+            "passwordUpdatedDeviceName": "Chrome",
+            "note": "local note",
+            "noteUpdatedAtMs": 100,
+            "noteUpdatedDeviceName": "Mac",
+            "sites": ["login.example.com"],
+            "folderIds": ["folder-main"],
+            "passkeyCredentialIds": ["credential-remote"]
+          },
+          {
+            "accountId": "remote-only",
+            "recordId": "record-remote-only",
+            "createdAtMs": 120,
+            "updatedAtMs": 120,
+            "username": "remote",
+            "password": "remote-password"
+          }
+        ],
+        "folders": [
+          {
+            "id": "folder-main",
+            "name": "Updated Main",
+            "matchedSites": ["login.example.com"],
+            "autoAddMatchingSites": true,
+            "createdAtMs": 90,
+            "updatedAtMs": 200
+          },
+          {
+            "id": "folder-remote",
+            "name": "Remote",
+            "matchedSites": [],
+            "autoAddMatchingSites": false,
+            "createdAtMs": 130,
+            "updatedAtMs": 130
+          }
+        ],
+        "passkeys": [
+          {
+            "credentialIdB64u": "credential-local",
+            "rpId": "example.com",
+            "userName": "alice",
+            "createdAtMs": 100,
+            "updatedAtMs": 200,
+            "signCount": 9
+          },
+          {
+            "credentialIdB64u": "credential-remote",
+            "rpId": "example.com",
+            "userName": "alice",
+            "createdAtMs": 200,
+            "updatedAtMs": 200,
+            "signCount": 1
+          }
+        ]
+      },
+      "expected": {
+        "accounts": [
+          {
+            "recordId": "record-example",
+            "accountId": "example-user",
+            "password": "new-password",
+            "note": "local note",
+            "sites": ["example.com", "login.example.com"],
+            "folderIds": ["folder-main"],
+            "passkeyCredentialIds": ["credential-local", "credential-remote"]
+          },
+          {
+            "recordId": "record-local-only",
+            "accountId": "local-only",
+            "password": "local-password"
+          },
+          {
+            "recordId": "record-remote-only",
+            "accountId": "remote-only",
+            "password": "remote-password"
+          }
+        ],
+        "folders": [
+          {
+            "id": "folder-main",
+            "name": "Updated Main",
+            "autoAddMatchingSites": true
+          },
+          {
+            "id": "folder-remote",
+            "name": "Remote",
+            "autoAddMatchingSites": false
+          },
+          {
+            "id": "fixed",
+            "name": "新账号"
+          }
+        ],
+        "passkeys": [
+          {
+            "credentialIdB64u": "credential-local",
+            "signCount": 9,
+            "updatedAtMs": 200
+          },
+          {
+            "credentialIdB64u": "credential-remote",
+            "signCount": 1,
+            "updatedAtMs": 200
+          }
+        ]
+      }
+    },
+    {
+      "name": "empty-remote-safety",
+      "local": {
+        "accounts": [{"accountId": "local", "recordId": "record-local"}],
+        "folders": [],
+        "passkeys": []
+      },
+      "remote": {"accounts": [], "folders": [], "passkeys": []},
+      "expectedSafe": false,
+      "reason": "REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL"
+    }
+  ]
+}

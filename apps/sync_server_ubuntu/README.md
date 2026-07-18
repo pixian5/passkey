@@ -22,6 +22,7 @@
 - 可选 Bearer Token 认证
 - 返回 `ETag`，并支持 `If-Match` 并发保护
 - `GET /healthz` 健康检查
+- `GET /metrics`（需要 Bearer Token）返回请求数、限流数、数据库大小等运维指标
 - 通过受保护的版本接口读取最近保存的加密快照，不会在服务端解密
 - 恢复接口要求携带当前数据的 `If-Match`，恢复动作会再次写入版本历史，避免并发覆盖
 - 审计接口只返回操作类型、状态、ETag、版本号和时间，不包含同步密文内容
@@ -67,6 +68,9 @@ python3 pass_sync_server.py
     - `token-value`
     - `default=token-value`
     - `family=token-a,work=token-b`
+- `PASS_SYNC_BEARER_TOKENS_FILE`
+  - 可选；从权限为 `0600` 的文件读取同样的 `scope=token` 列表，便于轮换令牌
+  - 文件不存在时会回退到 `PASS_SYNC_BEARER_TOKENS`；两者都未配置时服务启动但所有同步请求返回 `AUTH_NOT_CONFIGURED`
 - `PASS_SYNC_LOG_LEVEL`
   - 默认 `INFO`
 - `PASS_SYNC_MAX_BODY_BYTES`
@@ -74,6 +78,8 @@ python3 pass_sync_server.py
 - `PASS_SYNC_ALLOW_PLAINTEXT`
   - 默认关闭（`0`）；生产服务器拒绝未加密的 `pass.sync.bundle.v2`
   - 仅本地开发测试可显式设置为 `1`
+- `PASS_SYNC_RATE_LIMIT_PER_MINUTE`
+  - 每个客户端 IP 每分钟最大请求数，默认 `120`
 - `PASS_SYNC_TLS_CERT` / `PASS_SYNC_TLS_KEY`
   - 同时配置后启用 TLS；生产环境应使用证书和私钥文件，并将 `PASS_SYNC_PORT` 设置为 HTTPS 监听端口
 
@@ -99,6 +105,7 @@ https://your-domain.example/v2/sync/state
 - 只开放 `443`
 - 通过 `systemd` 管理进程
 - 定期备份 `pass_sync.sqlite3`
+- 备份脚本会执行 SQLite `integrity_check`，校验失败时以非零状态退出
 - `payload_versions` 表保存最近 50 个密文快照；备份时应同时保留整个 SQLite 文件
 
 ## systemd 部署（生产推荐）
@@ -111,6 +118,9 @@ sudo editor /etc/systemd/system/pass-sync-server.service
 # 修改 PASS_SYNC_BEARER_TOKENS 和路径
 sudo systemctl daemon-reload
 sudo systemctl enable --now pass-sync-server
+
+# 轮换令牌（保留旧令牌，确认客户端迁移后再删除旧行）
+sudo ./rotate_token.sh /etc/pass-sync/tokens.conf default
 
 # 安装每日数据库备份（推荐）
 sudo cp pass-sync-server-backup.service pass-sync-server-backup.timer /etc/systemd/system/

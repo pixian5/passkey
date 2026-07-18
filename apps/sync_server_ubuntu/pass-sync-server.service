@@ -10,9 +10,13 @@ WorkingDirectory=/opt/pass-sync-server
 Environment=PASS_SYNC_HOST=127.0.0.1
 Environment=PASS_SYNC_PORT=5443
 Environment=PASS_SYNC_DB_PATH=/var/lib/pass-sync/pass_sync.sqlite3
-Environment=PASS_SYNC_BEARER_TOKENS=default=REPLACE_WITH_LONG_RANDOM_TOKEN
+Environment=PASS_SYNC_BEARER_TOKENS_FILE=/etc/pass-sync/tokens.conf
+# 创建并 chmod 600 /etc/pass-sync/tokens.conf 后启用文件令牌；
+# 未创建前可通过 EnvironmentFile 或环境变量注入 PASS_SYNC_BEARER_TOKENS。
+EnvironmentFile=-/etc/pass-sync/pass-sync-server.env
 Environment=PASS_SYNC_LOG_LEVEL=INFO
 Environment=PASS_SYNC_ALLOW_PLAINTEXT=0
+Environment=PASS_SYNC_RATE_LIMIT_PER_MINUTE=120
 Environment=PASS_SYNC_TLS_CERT=/etc/bz/certs/server.crt
 Environment=PASS_SYNC_TLS_KEY=/etc/bz/certs/server.key
 ExecStart=/usr/bin/python3 /opt/pass-sync-server/pass_sync_server.py

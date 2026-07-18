@@ -511,7 +511,15 @@ export async function migrateLegacySyncSecrets() {
     serverToken: existing.serverToken || legacy[LEGACY_STORAGE_KEY_SYNC_SERVER_TOKEN],
     encryptionKey: existing.encryptionKey || legacy[LEGACY_STORAGE_KEY_SYNC_ENCRYPTION_KEY],
   });
-  if (existingCollectionUnreadable || migrated.webdavPassword || migrated.serverToken || migrated.encryptionKey) {
+  const hasLegacyRecoverySecrets = Boolean(
+    migrated.webdavPassword || migrated.serverToken || migrated.encryptionKey
+  );
+  if (existingCollectionUnreadable && !hasLegacyRecoverySecrets) {
+    const error = new Error("同步凭据集合无法解密，且没有可用旧凭据；原数据未覆盖");
+    error.code = "SYNC_SECRETS_UNREADABLE";
+    throw error;
+  }
+  if (existingCollectionUnreadable || hasLegacyRecoverySecrets) {
     await setSyncSecrets(migrated);
   }
   await chrome.storage.local.remove([

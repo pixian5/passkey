@@ -33,6 +33,7 @@ class AppConfig:
     allow_plaintext: bool = False
     tls_cert_path: Path | None = None
     tls_key_path: Path | None = None
+    rate_limit_per_minute: int = 120
 
     @property
     def auth_enabled(self) -> bool:
@@ -495,9 +496,13 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
 
     def _dispatch(self, expect_body: bool, head_only: bool = False) -> None:
         try:
+            self.server.enforce_rate_limit(self.client_address[0])
             path = self.path.split("?", 1)[0]
             if path == "/healthz":
                 self._handle_healthz(head_only=head_only)
+                return
+            if path == "/metrics":
+                self._handle_metrics(head_only=head_only)
                 return
             is_payload_path = path in {"/v1/sync/payload", "/v2/sync/state"}
             is_versions_path = path in {"/v1/sync/versions", "/v2/sync/versions"}
@@ -551,12 +556,14 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 "请求方法不支持。",
             )
         except RequestError as error:
+            self.server.record_error()
             self._send_json(
                 error.status,
                 {"error": error.code, "message": error.message},
                 head_only=head_only if expect_body is False else False,
             )
         except Exception:
+            self.server.record_error()
             LOGGER.exception("Unhandled request failure")
             self._send_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
@@ -571,6 +578,7 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
         restore_path = version_suffix.endswith("/restore") and version_suffix.removesuffix("/restore").isdigit()
         if path not in {
             "/healthz",
+            "/metrics",
             "/v1/sync/payload",
             "/v2/sync/state",
             "/v1/sync/versions",
@@ -606,6 +614,11 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             "service": "pass-sync-server",
             "timeMs": current_time_ms(),
         }
+        self._send_json(HTTPStatus.OK, payload, head_only=head_only)
+
+    def _handle_metrics(self, head_only: bool) -> None:
+        self.server.require_metrics_token(self.headers.get("Authorization"))
+        payload = self.server.metrics_snapshot()
         self._send_json(HTTPStatus.OK, payload, head_only=head_only)
 
     def _handle_get_payload(self, scope: str, head_only: bool) -> None:
@@ -825,6 +838,39 @@ class PassSyncHTTPServer(ThreadingHTTPServer):
         super().__init__(server_address, handler_cls)
         self.config = config
         self.repository = PayloadRepository(config.db_path)
+        self._rate_lock = threading.Lock()
+        self._rate_windows: dict[str, tuple[int, int]] = {}
+        self._metrics_lock = threading.Lock()
+        self._metrics: dict[str, int] = {"requests": 0, "errors": 0, "rateLimited": 0}
+
+    def enforce_rate_limit(self, client: str) -> None:
+        now = int(time.time() // 60)
+        with self._rate_lock:
+            window, count = self._rate_windows.get(client, (now, 0))
+            if window != now:
+                window, count = now, 0
+            count += 1
+            self._rate_windows[client] = (window, count)
+            if count > self.config.rate_limit_per_minute:
+                with self._metrics_lock:
+                    self._metrics["rateLimited"] += 1
+                raise RequestError(HTTPStatus.TOO_MANY_REQUESTS, "RATE_LIMITED", "请求过于频繁，请稍后重试。")
+        with self._metrics_lock:
+            self._metrics["requests"] += 1
+
+    def metrics_snapshot(self) -> dict[str, object]:
+        with self._metrics_lock:
+            metrics = dict(self._metrics)
+        metrics["dbBytes"] = self.config.db_path.stat().st_size if self.config.db_path.exists() else 0
+        metrics["timeMs"] = current_time_ms()
+        return {"ok": True, "service": "pass-sync-server", "metrics": metrics}
+
+    def record_error(self) -> None:
+        with self._metrics_lock:
+            self._metrics["errors"] += 1
+
+    def require_metrics_token(self, authorization_header: str | None) -> None:
+        self.resolve_scope(authorization_header)
 
     def resolve_scope(self, authorization_header: str | None) -> str:
         if not self.config.auth_enabled:
@@ -925,7 +971,21 @@ def current_time_ms() -> int:
 def load_config() -> AppConfig:
     script_dir = Path(__file__).resolve().parent
     db_path = Path(os.environ.get("PASS_SYNC_DB_PATH", script_dir / "data" / "pass_sync.sqlite3")).expanduser()
-    token_scopes = parse_token_scopes(os.environ.get("PASS_SYNC_BEARER_TOKENS", ""))
+    token_file = os.environ.get("PASS_SYNC_BEARER_TOKENS_FILE", "").strip()
+    token_value = os.environ.get("PASS_SYNC_BEARER_TOKENS", "")
+    if token_file:
+        token_path = Path(token_file).expanduser()
+        if token_path.is_file():
+            mode = token_path.stat().st_mode & 0o777
+            if mode & 0o077:
+                raise RuntimeError(f"PASS_SYNC_BEARER_TOKENS_FILE 权限必须为 0600 或更严格: {token_path}")
+            token_value = token_path.read_text(encoding="utf-8").strip()
+        elif not token_value:
+            # Keep deployment backward-compatible when a service template is
+            # installed before its token file. Payload requests remain fail
+            # closed with AUTH_NOT_CONFIGURED until an operator adds tokens.
+            LOGGER.warning("令牌文件不存在，服务将以未配置认证状态启动: %s", token_path)
+    token_scopes = parse_token_scopes(token_value)
     cert_value = os.environ.get("PASS_SYNC_TLS_CERT", "").strip()
     key_value = os.environ.get("PASS_SYNC_TLS_KEY", "").strip()
     if bool(cert_value) != bool(key_value):
@@ -936,6 +996,7 @@ def load_config() -> AppConfig:
         db_path=db_path,
         token_scopes=token_scopes,
         max_body_bytes=max(1024, int(os.environ.get("PASS_SYNC_MAX_BODY_BYTES", str(2 * 1024 * 1024)))),
+        rate_limit_per_minute=max(10, int(os.environ.get("PASS_SYNC_RATE_LIMIT_PER_MINUTE", "120"))),
         allow_plaintext=os.environ.get("PASS_SYNC_ALLOW_PLAINTEXT", "0").strip().lower() in {"1", "true", "yes"},
         tls_cert_path=Path(cert_value).expanduser() if cert_value else None,
         tls_key_path=Path(key_value).expanduser() if key_value else None,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import tempfile
 import threading
@@ -9,7 +10,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from pass_sync_server import AppConfig, build_server
+from pass_sync_server import AppConfig, build_server, load_config
 
 
 def sample_bundle(exported_at_ms: int = 1_777_777_777_777) -> bytes:
@@ -45,6 +46,28 @@ class PassSyncServerTests(unittest.TestCase):
         self.thread.join(timeout=5)
         self.temp_dir.cleanup()
 
+    def test_missing_token_file_falls_back_to_environment_token(self) -> None:
+        previous = {
+            key: os.environ.get(key)
+            for key in (
+                "PASS_SYNC_BEARER_TOKENS_FILE",
+                "PASS_SYNC_BEARER_TOKENS",
+                "PASS_SYNC_DB_PATH",
+            )
+        }
+        try:
+            os.environ["PASS_SYNC_BEARER_TOKENS_FILE"] = str(Path(self.temp_dir.name) / "not-created.conf")
+            os.environ["PASS_SYNC_BEARER_TOKENS"] = "default=environment-token"
+            os.environ["PASS_SYNC_DB_PATH"] = str(Path(self.temp_dir.name) / "config.sqlite3")
+            config = load_config()
+            self.assertEqual(config.token_scopes, {"environment-token": "default"})
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
     def request(self, method: str, path: str, body: bytes | None = None, headers: dict[str, str] | None = None):
         request = urllib.request.Request(
             f"{self.base_url}{path}",
@@ -59,6 +82,37 @@ class PassSyncServerTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             payload = json.loads(response.read().decode("utf-8"))
         self.assertTrue(payload["ok"])
+
+    def test_metrics_options_path_is_available(self) -> None:
+        with self.request("OPTIONS", "/metrics") as response:
+            self.assertEqual(response.status, 204)
+
+    def test_metrics_requires_auth_and_reports_requests(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            self.request("GET", "/metrics")
+        self.assertEqual(context.exception.code, 401)
+        context.exception.close()
+        with self.request("GET", "/metrics", headers={"Authorization": "Bearer secret-token"}) as response:
+            self.assertEqual(response.status, 200)
+            payload = json.loads(response.read().decode("utf-8"))
+        self.assertTrue(payload["metrics"]["requests"] >= 1)
+
+    def test_rate_limit_rejects_excessive_requests(self) -> None:
+        self.server.config = AppConfig(
+            host=self.server.config.host,
+            port=self.server.config.port,
+            db_path=self.server.config.db_path,
+            token_scopes=self.server.config.token_scopes,
+            allow_plaintext=self.server.config.allow_plaintext,
+            rate_limit_per_minute=10,
+        )
+        for _ in range(10):
+            with self.request("GET", "/healthz") as response:
+                self.assertEqual(response.status, 200)
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            self.request("GET", "/healthz")
+        self.assertEqual(context.exception.code, 429)
+        context.exception.close()
 
     def test_requires_token_when_configured(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as context:

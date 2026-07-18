@@ -135,6 +135,10 @@ const dom = {
   generateSyncEncryptionKeyBtn: document.getElementById("generateSyncEncryptionKeyBtn"),
   syncAutoInterval: document.getElementById("syncAutoInterval"),
   syncAutoStatus: document.getElementById("syncAutoStatus"),
+  storageSelfCheckBtn: document.getElementById("storageSelfCheckBtn"),
+  exportDiagnosticsBtn: document.getElementById("exportDiagnosticsBtn"),
+  restoreLatestSnapshotBtn: document.getElementById("restoreLatestSnapshotBtn"),
+  storageDiagnosticsStatus: document.getElementById("storageDiagnosticsStatus"),
   deviceStatus: document.getElementById("deviceStatus"),
   lockEnabled: document.getElementById("lockEnabled"),
   lockAdvancedFields: document.getElementById("lockAdvancedFields"),
@@ -238,6 +242,9 @@ async function init() {
   startTotpRefreshTicker();
 
   dom.syncMergeBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE));
+  dom.storageSelfCheckBtn.addEventListener("click", () => void runStorageSelfCheck());
+  dom.exportDiagnosticsBtn.addEventListener("click", () => void exportStorageDiagnostics());
+  dom.restoreLatestSnapshotBtn.addEventListener("click", () => void restoreLatestSafetySnapshot());
   dom.syncPreviewBtn.addEventListener("click", () => void previewSyncWithRemote());
   dom.syncRemoteOverwriteLocalBtn.addEventListener("click", async () => {
     const shouldContinue = await confirmRemoteOverwriteLocalIfNeeded();
@@ -573,7 +580,16 @@ async function loadSyncSettings() {
     STORAGE_KEY_SYNC_PRIMARY_SOURCE,
     STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES,
   ]);
-  const secrets = await migrateLegacySyncSecrets();
+  let secrets;
+  try {
+    secrets = await migrateLegacySyncSecrets();
+  } catch (error) {
+    if (error?.code !== "SYNC_SECRETS_UNREADABLE") throw error;
+    // Keep the options page usable for recovery/self-check. The encrypted
+    // collection remains untouched; only the editable fields are blank.
+    secrets = { webdavPassword: "", serverToken: "", encryptionKey: "" };
+    dom.storageDiagnosticsStatus.textContent = "同步凭据集合无法解密，原数据未覆盖；请先导出诊断或重新配置同步凭据";
+  }
   const hasEnableWebdav = typeof result[STORAGE_KEY_SYNC_ENABLE_WEBDAV] === "boolean";
   const hasEnableServer = typeof result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER] === "boolean";
   const enableWebdav = hasEnableWebdav
@@ -1761,6 +1777,65 @@ async function saveLocalSafetySnapshot(reason, payloadOverride = null) {
   await chrome.storage.local.set({
     [STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]: snapshots.slice(0, 5),
   });
+}
+
+async function runStorageSelfCheck() {
+  dom.storageDiagnosticsStatus.textContent = "正在检查…";
+  try {
+    const data = await readBusinessDataFromStore();
+    const secrets = await migrateLegacySyncSecrets();
+    const snapshotResult = await chrome.storage.local.get([STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]);
+    const snapshots = Array.isArray(snapshotResult[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS])
+      ? snapshotResult[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]
+      : [];
+    const invalidSnapshots = snapshots.filter((item) => !item || !item.payload || !Number(item.createdAtMs));
+    if (invalidSnapshots.length > 0) throw new Error(`发现 ${invalidSnapshots.length} 个损坏本地快照`);
+    dom.storageDiagnosticsStatus.textContent = `自检通过：账号 ${data.accounts.length}、通行密钥 ${data.passkeys.length}、文件夹 ${data.folders.length}、快照 ${snapshots.length}、同步密钥 ${secrets.encryptionKey ? "已配置" : "未配置"}`;
+  } catch (error) {
+    dom.storageDiagnosticsStatus.textContent = `自检失败${error.code ? `（${error.code}）` : ""}：${error.message}；未修改数据`;
+  }
+}
+
+async function exportStorageDiagnostics() {
+  try {
+    const data = await readBusinessDataFromStore();
+    const result = await chrome.storage.local.get([STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS, STORAGE_KEY_SYNC_DEVICE_ID]);
+    const payload = {
+      exportedAtMs: Date.now(),
+      deviceId: String(result[STORAGE_KEY_SYNC_DEVICE_ID] || ""),
+      counts: {
+        accounts: data.accounts.length,
+        passkeys: data.passkeys.length,
+        folders: data.folders.length,
+      },
+      snapshotCount: Array.isArray(result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]) ? result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS].length : 0,
+      note: "诊断导出不包含密码字段、同步令牌或同步加密密钥",
+    };
+    downloadTextFile(`pass-diagnostics-${formatFileTimestamp(payload.exportedAtMs)}.json`, JSON.stringify(payload, null, 2), "application/json");
+    dom.storageDiagnosticsStatus.textContent = "诊断文件已导出（不含敏感字段）";
+  } catch (error) {
+    dom.storageDiagnosticsStatus.textContent = `导出失败：${error.message}`;
+  }
+}
+
+async function restoreLatestSafetySnapshot() {
+  const result = await chrome.storage.local.get([STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]);
+  const snapshots = Array.isArray(result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]) ? result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS] : [];
+  const latest = snapshots[0];
+  if (!latest?.payload) {
+    dom.storageDiagnosticsStatus.textContent = "没有可恢复的本地安全快照";
+    return;
+  }
+  if (!window.confirm(`恢复最近快照（${latest.reason || "同步前备份"}）？恢复前会再保存当前数据。`)) return;
+  try {
+    await saveLocalSafetySnapshot("恢复最近快照前");
+    await writeBusinessDataToStore(latest.payload);
+    await appendHistory(`恢复最近本地安全快照：账号 ${latest.payload.accounts.length}`);
+    await refresh({ silent: true });
+    dom.storageDiagnosticsStatus.textContent = `已恢复快照：账号 ${latest.payload.accounts.length}、通行密钥 ${latest.payload.passkeys.length}`;
+  } catch (error) {
+    dom.storageDiagnosticsStatus.textContent = `恢复失败：${error.message}`;
+  }
 }
 
 async function restoreServerSyncVersion(target, version) {

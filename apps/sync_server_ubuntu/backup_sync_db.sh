@@ -16,5 +16,16 @@ else
   [ -e "${DB_PATH}-shm" ] && cp -a "${DB_PATH}-shm" "${DEST}/" || true
 fi
 
+python3 - "${DEST}/pass_sync.sqlite3" <<'PY'
+import sqlite3
+import sys
+path = sys.argv[1]
+with sqlite3.connect(path) as connection:
+    result = connection.execute("PRAGMA integrity_check;").fetchone()[0]
+if result != "ok":
+    raise SystemExit(f"backup integrity check failed: {result}")
+print(f"backup integrity: {result}")
+PY
+
 find "${BACKUP_ROOT}" -mindepth 1 -maxdepth 1 -type d -mtime +30 -exec rm -rf {} +
 echo "同步数据库备份完成：${DEST}"

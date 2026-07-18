@@ -318,3 +318,31 @@ test("同步秘密旧密钥失配时仍可从旧明文键恢复并完成初始�
     SYNC_ENCRYPTION_KEY,
   ]), {});
 });
+
+test("同步秘密集合损坏且没有旧凭据时拒绝覆盖原始数据", async () => {
+  const password = "unreadable sync secrets password";
+  const credential = await createLockMasterCredential(password);
+  const originalRawKey = crypto.getRandomValues(new Uint8Array(32));
+  await local.set({ [LEGACY_KEY]: bytesToBase64(originalRawKey) });
+  await setSyncSecrets({
+    webdavPassword: "original webdav",
+    serverToken: "original server",
+    encryptionKey: "original encryption",
+  });
+  const before = await readEncryptedCollectionRow("syncSecrets");
+
+  await lockDataEncryption();
+  await local.set({ [LEGACY_KEY]: bytesToBase64(crypto.getRandomValues(new Uint8Array(32))) });
+
+  await assert.rejects(
+    () => migrateLegacySyncSecrets(),
+    (error) => error?.code === "SYNC_SECRETS_UNREADABLE"
+  );
+  const after = await readEncryptedCollectionRow("syncSecrets");
+  assert.deepEqual(after, before);
+  assert.deepEqual(await local.get([
+    WEBDAV_PASSWORD_KEY,
+    SERVER_TOKEN_KEY,
+    SYNC_ENCRYPTION_KEY,
+  ]), {});
+});

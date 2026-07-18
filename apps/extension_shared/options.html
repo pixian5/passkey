@@ -68,6 +68,15 @@
             </select>
             <span id="syncAutoStatus" class="hint"></span>
           </div>
+          <div class="row sync-actions-row">
+            <label>本地数据</label>
+            <div class="sync-action-buttons">
+              <button id="storageSelfCheckBtn" type="button">本地自检</button>
+              <button id="exportDiagnosticsBtn" type="button">导出诊断</button>
+              <button id="restoreLatestSnapshotBtn" type="button">恢复最近快照</button>
+            </div>
+            <span id="storageDiagnosticsStatus" class="hint"></span>
+          </div>
           <div id="syncWebdavFields">
             <div class="row">
               <label for="syncWebdavBaseUrl">WebDAV</label>

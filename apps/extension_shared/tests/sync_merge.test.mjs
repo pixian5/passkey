@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
 import {
   evaluateSyncSafety,
   mergeAccountCollections,
+  mergeFolderCollections,
+  mergePasskeyCollections,
 } from "../../../core/pass_core/js/sync_merge_core.js";
 
 const helpers = {
@@ -47,6 +51,11 @@ const helpers = {
   fixedNewAccountFolderId: "fixed",
   fixedNewAccountFolderName: "新账号",
 };
+
+const goldenVectors = JSON.parse(fs.readFileSync(
+  path.resolve(process.cwd(), "../../docs/sync-golden-vectors.json"),
+  "utf8"
+));
 
 test("相同时间戳的字段冲突按设备名确定性裁决", () => {
   const left = helpers.normalizeAccountShape({
@@ -191,6 +200,56 @@ test("空远端不能替换非空本地", () => {
   );
   assert.equal(safety.safe, false);
   assert.deepEqual(safety.reasons, ["REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL"]);
+});
+
+test("Golden Vector: 空远端安全闸门", () => {
+  const vector = goldenVectors.cases.find((item) => item.name === "empty-remote-safety");
+  const local = [helpers.normalizeAccountShape({ recordId: "golden-local" })];
+  const safety = evaluateSyncSafety(
+    { local: { accounts: local }, remote: { accounts: [] }, merged: { accounts: [] }, mode: "remoteOverwriteLocal" },
+    helpers
+  );
+  assert.equal(safety.safe, vector.expectedSafe);
+  assert.equal(safety.reasons[0], vector.reason);
+});
+
+test("Golden Vector: 真实账号、文件夹和 Passkey 合并结果稳定", () => {
+  const vector = goldenVectors.cases.find((item) => item.name === "field-and-entity-merge");
+  assert.ok(vector);
+  const mergedAccounts = mergeAccountCollections(
+    vector.local.accounts,
+    vector.remote.accounts,
+    helpers
+  );
+  const mergedFolders = mergeFolderCollections(
+    vector.local.folders,
+    vector.remote.folders,
+    helpers
+  );
+  const mergedPasskeys = mergePasskeyCollections(
+    vector.local.passkeys,
+    vector.remote.passkeys,
+    helpers
+  );
+
+  const accountsByRecordId = new Map(mergedAccounts.map((item) => [item.recordId, item]));
+  for (const expected of vector.expected.accounts) {
+    const actual = accountsByRecordId.get(expected.recordId);
+    assert.ok(actual, `missing account ${expected.recordId}`);
+    for (const [key, value] of Object.entries(expected)) assert.deepEqual(actual[key], value);
+  }
+  const foldersById = new Map(mergedFolders.map((item) => [item.id, item]));
+  for (const expected of vector.expected.folders) {
+    const actual = foldersById.get(expected.id);
+    assert.ok(actual, `missing folder ${expected.id}`);
+    for (const [key, value] of Object.entries(expected)) assert.deepEqual(actual[key], value);
+  }
+  const passkeysById = new Map(mergedPasskeys.map((item) => [item.credentialIdB64u, item]));
+  for (const expected of vector.expected.passkeys) {
+    const actual = passkeysById.get(expected.credentialIdB64u);
+    assert.ok(actual, `missing passkey ${expected.credentialIdB64u}`);
+    for (const [key, value] of Object.entries(expected)) assert.deepEqual(actual[key], value);
+  }
 });
 
 test("合并结果缺少本地稳定 ID 时必须阻止写入", () => {

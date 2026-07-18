@@ -109,6 +109,26 @@ def summarize_sqlite(path: Path) -> dict[str, Any]:
     return result
 
 
+def summarize_sqlite_integrity(path: Path) -> dict[str, Any]:
+    """Return encrypted-row structure and SQLite integrity without decryption."""
+    result = {"path": str(path), "sha256": sha256_file(path), "readable": False}
+    try:
+        with sqlite3.connect(path) as connection:
+            integrity = connection.execute("PRAGMA integrity_check;").fetchone()[0]
+            rows = connection.execute("SELECT key, length(value), updated_at_ms FROM kv ORDER BY key").fetchall()
+    except (OSError, sqlite3.Error) as error:
+        result["error"] = type(error).__name__
+        return result
+    result["readable"] = integrity == "ok"
+    result["integrity"] = integrity
+    result["collections"] = {
+        str(key): {"bytes": int(size), "updatedAtMs": int(updated)}
+        for key, size, updated in rows
+    }
+    result["encryptedRows"] = bool(rows) and all(int(size) > 0 for _, size, _ in rows)
+    return result
+
+
 def iter_candidate_files(paths: Iterable[Path]) -> Iterable[Path]:
     seen: set[Path] = set()
     for raw_path in paths:
@@ -142,6 +162,7 @@ def audit(paths: Iterable[Path]) -> list[dict[str, Any]]:
 def default_paths() -> list[Path]:
     home = Path.home()
     return [
+        home / "Library/Group Containers/group.com.pass.desktop.shared/pass-mac/pass.db",
         home / "Library/Application Support/pass-mac/pass.db",
         home / "Library/Application Support/pass-mac/accounts.json",
         home / "Library/Application Support/pass-mac/passkeys.json",
@@ -154,8 +175,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="只读审计 Pass 本地数据和导出同步包")
     parser.add_argument("paths", nargs="*", type=Path, help="要审计的文件或目录；不填则使用 macOS 默认路径")
     parser.add_argument("--json", action="store_true", dest="as_json", help="输出 JSON")
+    parser.add_argument("--integrity", action="store_true", help="对 pass.db 只做 SQLite 完整性和加密行结构检查")
     args = parser.parse_args()
-    reports = audit(args.paths or default_paths())
+    paths = args.paths or default_paths()
+    reports = []
+    for path in iter_candidate_files(paths):
+        reports.append(summarize_sqlite_integrity(path) if args.integrity and (path.name == "pass.db" or path.name.endswith(".sqlite3")) else (summarize_sqlite(path) if path.name == "pass.db" or path.name.endswith(".sqlite3") else summarize_json(path)))
     if args.as_json:
         json.dump(reports, sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")

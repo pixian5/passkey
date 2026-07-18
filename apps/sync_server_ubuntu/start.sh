@@ -11,8 +11,8 @@ HOST="${PASS_SYNC_HOST:-0.0.0.0}"
 
 mkdir -p "${DATA_DIR}"
 
-# 如果未设置 Token，自动生成
-if [[ -z "${PASS_SYNC_BEARER_TOKENS:-}" ]]; then
+# 如果未设置 Token，自动生成；已有令牌文件时沿用文件配置。
+if [[ -z "${PASS_SYNC_BEARER_TOKENS:-}" && -z "${PASS_SYNC_BEARER_TOKENS_FILE:-}" ]]; then
   TOKEN=$(openssl rand -base64 32 | tr -d '=+/')
   export PASS_SYNC_BEARER_TOKENS="default=${TOKEN}"
   GENERATED_TOKEN="${TOKEN}"

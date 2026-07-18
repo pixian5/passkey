@@ -280,7 +280,7 @@ final class AccountStore: ObservableObject {
         let revision: Int?
     }
 
-    struct SyncDiagnostics {
+    struct SyncDiagnostics: Codable {
         let localAccounts: Int
         let localPasskeys: Int
         let localFolders: Int
@@ -306,6 +306,18 @@ final class AccountStore: ObservableObject {
             lastSyncAtMs: nil,
             sourceSummary: "未同步"
         )
+    }
+
+    private func persistSyncDiagnostics() {
+        guard let data = try? JSONEncoder().encode(syncDiagnostics) else { return }
+        UserDefaults.standard.set(data, forKey: Keys.syncDiagnostics)
+    }
+
+    private func loadSyncDiagnostics() {
+        guard let data = UserDefaults.standard.data(forKey: Keys.syncDiagnostics),
+              let decoded = try? JSONDecoder().decode(SyncDiagnostics.self, from: data)
+        else { return }
+        syncDiagnostics = decoded
     }
 
     private struct SelfHostedPushResult {
@@ -404,6 +416,7 @@ final class AccountStore: ObservableObject {
 
     init() {
         load()
+        loadSyncDiagnostics()
         // Perform the legacy credential migration once during startup. The
         // migration query is non-interactive; after the file is written no
         // normal launch touches the Keychain again.
@@ -2423,6 +2436,7 @@ final class AccountStore: ObservableObject {
             lastSyncAtMs: nowMs(),
             sourceSummary: enabledSourceNames.joined(separator: " + ")
         )
+        persistSyncDiagnostics()
 
         let conflictSuffix = conflictCount > 0 ? "，检测到 \(conflictCount) 个字段冲突并按时间/设备规则裁决" : ""
         let syncTitle = "同步并更新本地（\(enabledSourceNames.joined(separator: " + "))，\(mode.label)）\(conflictSuffix)"
@@ -5994,6 +6008,7 @@ private enum Keys {
     static let uiTextFontSize = "pass.ui.font.textSize"
     static let uiButtonFontSize = "pass.ui.font.buttonSize"
     static let uiToastDurationSeconds = "pass.ui.toast.duration"
+    static let syncDiagnostics = "pass.sync.diagnostics.v1"
 }
 
 private enum SecretKeys {
