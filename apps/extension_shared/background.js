@@ -83,6 +83,9 @@ const SYNC_PRIMARY_SERVER = "server";
 const SYNC_PRIMARY_WEBDAV = "webdav";
 const AUTO_SYNC_ALARM_NAME = "pass.sync.auto";
 const PASS_EXTENSION_VERSION = "0.2.3";
+const SYNC_OUTBOX_MAX_ATTEMPTS = 12;
+const SYNC_OUTBOX_BASE_DELAY_MS = 5_000;
+const SYNC_OUTBOX_MAX_DELAY_MS = 60 * 60 * 1000;
 const STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
 const STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
 const STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
@@ -415,6 +418,17 @@ async function runAutoSync() {
   const outboxByTarget = new Map((await getSyncOutbox()).map((item) => [item.targetKey, item]));
   for (const target of pushTargets) {
     const targetKey = syncTargetKey(target);
+    const pendingOutbox = outboxByTarget.get(targetKey);
+    if (pendingOutbox && Number(pendingOutbox.nextRetryAtMs || 0) > Date.now()) {
+      const waitSeconds = Math.max(1, Math.ceil((pendingOutbox.nextRetryAtMs - Date.now()) / 1000));
+      pushErrors.push(`${target.label}: 补偿任务将在 ${waitSeconds} 秒后重试`);
+      logSyncFlow("push-skipped-backoff", {
+        label: target.label,
+        nextRetryAtMs: pendingOutbox.nextRetryAtMs,
+        attempts: pendingOutbox.attempts,
+      });
+      continue;
+    }
     logSyncFlow("push-start", {
       label: target.label,
       url: target.url,
@@ -434,7 +448,9 @@ async function runAutoSync() {
         targetKey,
         payload: { accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders },
         createdAtMs: outboxByTarget.get(targetKey)?.createdAtMs || Date.now(),
-        attempts: Number(outboxByTarget.get(targetKey)?.attempts || 0) + 1,
+        attempts: Math.min(Number(outboxByTarget.get(targetKey)?.attempts || 0) + 1, SYNC_OUTBOX_MAX_ATTEMPTS),
+        lastAttemptAtMs: Date.now(),
+        nextRetryAtMs: Date.now() + syncOutboxRetryDelayMs(Number(outboxByTarget.get(targetKey)?.attempts || 0) + 1),
         lastError: error?.message || String(error || ""),
       });
       logSyncFlow("auto-sync-push-failed", {
@@ -479,6 +495,11 @@ async function runAutoSync() {
 
 function syncTargetKey(target) {
   return `${String(target?.kind || "").trim()}|${String(target?.url || "").trim()}`;
+}
+
+function syncOutboxRetryDelayMs(attempts) {
+  const exponent = Math.max(0, Math.min(Number(attempts || 1) - 1, 8));
+  return Math.min(SYNC_OUTBOX_MAX_DELAY_MS, SYNC_OUTBOX_BASE_DELAY_MS * (2 ** exponent));
 }
 
 async function readBusinessDataFromStore() {

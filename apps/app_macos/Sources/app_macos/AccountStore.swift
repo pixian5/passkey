@@ -169,6 +169,8 @@ final class AccountStore: ObservableObject {
     @Published private(set) var syncVersionSummaries: [SyncVersionSummary] = []
     @Published private(set) var syncVersionsStatus: String = ""
     @Published private(set) var syncPreviewStatus: String = ""
+    @Published private(set) var syncOutboxCount: Int = 0
+    @Published private(set) var syncOutboxStatus: String = ""
     @Published private(set) var storageIntegrityStatus: String = ""
     @Published private(set) var syncDiagnostics: SyncDiagnostics = .empty
     @Published private(set) var accounts: [PasswordAccount] = []
@@ -334,6 +336,15 @@ final class AccountStore: ObservableObject {
         let etag: String?
     }
 
+    private struct SyncOutboxItem: Codable {
+        let sourceKey: String
+        let payload: SyncBundlePayload
+        let createdAtMs: Int64
+        let attempts: Int
+        let nextRetryAtMs: Int64
+        let lastError: String
+    }
+
     struct SyncVersionSummary: Identifiable {
         let id: Int
         let exportedAtMs: Int64
@@ -409,6 +420,7 @@ final class AccountStore: ObservableObject {
         static let folders = "folders"
         static let passkeys = "passkeys"
         static let history = "history"
+        static let syncOutbox = "syncOutbox"
     }
 
     private struct FolderMoveOperation {
@@ -420,6 +432,7 @@ final class AccountStore: ObservableObject {
     init() {
         load()
         loadSyncDiagnostics()
+        loadSyncOutbox()
         // Perform the legacy credential migration once during startup. The
         // migration query is non-interactive; after the file is written no
         // normal launch touches the Keychain again.
@@ -2293,12 +2306,15 @@ final class AccountStore: ObservableObject {
         }
         syncNowTask = Task { [weak self] in
             guard let self else { return }
-            await self.performSyncNow(mode: modeOverride ?? self.syncMode)
+            await self.performSyncNow(
+                mode: modeOverride ?? self.syncMode,
+                forceOutboxRetry: !suppressBusyMessage
+            )
             self.syncNowTask = nil
         }
     }
 
-    private func performSyncNow(mode: SyncMode) async {
+    private func performSyncNow(mode: SyncMode, forceOutboxRetry: Bool) async {
         let enabledSourceNames = activeSyncSourceNames()
         guard !enabledSourceNames.isEmpty else {
             cloudSyncStatus = "未启用同步源"
@@ -2461,7 +2477,16 @@ final class AccountStore: ObservableObject {
         var pushErrors: [String] = []
 
         if syncEnableSelfHostedServer {
-            guard let resourceURL = buildSelfHostedPayloadURL() else {
+            let sourceKey = syncOutboxSourceKey(kind: "server", url: buildSelfHostedPayloadURL())
+            if !shouldAttemptSyncOutbox(sourceKey: sourceKey, force: forceOutboxRetry) {
+                pushErrors.append("服务器: 补偿任务等待退避时间")
+            } else {
+                guard let resourceURL = buildSelfHostedPayloadURL() else {
+                recordSyncOutboxFailure(
+                    sourceKey: sourceKey,
+                    payload: mergedPayload,
+                    error: NSError(domain: "AccountStore.SyncRemote", code: 400, userInfo: [NSLocalizedDescriptionKey: "配置不完整"])
+                )
                 pushErrors.append("服务器: 配置不完整")
                 updateSyncStatusAfterSync(
                     changed: changed,
@@ -2473,8 +2498,8 @@ final class AccountStore: ObservableObject {
                     conflictCount: conflictCount
                 )
                 return
-            }
-            do {
+                }
+                do {
                 let authorization = buildBearerAuthorization(serverAuthToken)
                 switch mode {
                 case .merge:
@@ -2482,6 +2507,7 @@ final class AccountStore: ObservableObject {
                        let selfHostedRemotePayload,
                        syncPayloadEquals(mergedPayload, selfHostedRemotePayload)
                     {
+                        clearSyncOutbox(sourceKey: sourceKey)
                         break
                     }
                     let pushResult = try await pushSelfHostedPayloadWithRetry(
@@ -2493,11 +2519,13 @@ final class AccountStore: ObservableObject {
                     )
                     mergedPayload = pushResult.payload
                     changed = changed || pushResult.changedLocalData
+                    clearSyncOutbox(sourceKey: sourceKey)
                 case .remoteOverwriteLocal:
                     if selfHostedRemoteEncrypted,
                        let selfHostedRemotePayload,
                        syncPayloadEquals(mergedPayload, selfHostedRemotePayload)
                     {
+                        clearSyncOutbox(sourceKey: sourceKey)
                         break
                     }
                     let pushResult = try await pushSelfHostedRemotePayloadWithRetry(
@@ -2509,6 +2537,7 @@ final class AccountStore: ObservableObject {
                     )
                     mergedPayload = pushResult.payload
                     changed = changed || pushResult.changedLocalData
+                    clearSyncOutbox(sourceKey: sourceKey)
                 case .localOverwriteRemote:
                     _ = try await pushRemotePayload(
                         mergedPayload,
@@ -2516,22 +2545,41 @@ final class AccountStore: ObservableObject {
                         authorization: authorization,
                         idempotencyKey: "pass-\(syncDeviceId())-\(UUID().uuidString)"
                     )
+                    clearSyncOutbox(sourceKey: sourceKey)
                 }
-            } catch {
-                pushErrors.append("服务器: \(error.localizedDescription)")
+                } catch {
+                    recordSyncOutboxFailure(sourceKey: sourceKey, payload: mergedPayload, error: error)
+                    pushErrors.append("服务器: \(error.localizedDescription)")
+                }
             }
         }
 
         if syncEnableICloud {
-            do {
-                _ = try pushPayloadToICloud(mergedPayload)
-            } catch {
-                pushErrors.append("iCloud: \(error.localizedDescription)")
+            let sourceKey = syncOutboxSourceKey(kind: "icloud")
+            if !shouldAttemptSyncOutbox(sourceKey: sourceKey, force: forceOutboxRetry) {
+                pushErrors.append("iCloud: 补偿任务等待退避时间")
+            } else {
+                do {
+                    _ = try pushPayloadToICloud(mergedPayload)
+                    clearSyncOutbox(sourceKey: sourceKey)
+                } catch {
+                    recordSyncOutboxFailure(sourceKey: sourceKey, payload: mergedPayload, error: error)
+                    pushErrors.append("iCloud: \(error.localizedDescription)")
+                }
             }
         }
 
         if syncEnableWebDAV {
-            guard let resourceURL = buildWebDAVResourceURL() else {
+            let sourceKey = syncOutboxSourceKey(kind: "webdav", url: buildWebDAVResourceURL())
+            if !shouldAttemptSyncOutbox(sourceKey: sourceKey, force: forceOutboxRetry) {
+                pushErrors.append("WebDAV: 补偿任务等待退避时间")
+            } else {
+                guard let resourceURL = buildWebDAVResourceURL() else {
+                recordSyncOutboxFailure(
+                    sourceKey: sourceKey,
+                    payload: mergedPayload,
+                    error: NSError(domain: "AccountStore.SyncRemote", code: 400, userInfo: [NSLocalizedDescriptionKey: "配置不完整"])
+                )
                 pushErrors.append("WebDAV: 配置不完整")
                 updateSyncStatusAfterSync(
                     changed: changed,
@@ -2543,8 +2591,8 @@ final class AccountStore: ObservableObject {
                     conflictCount: conflictCount
                 )
                 return
-            }
-            do {
+                }
+                do {
                 let authorization = buildBasicAuthorization(
                     username: webdavUsername,
                     password: webdavPassword
@@ -2555,6 +2603,7 @@ final class AccountStore: ObservableObject {
                        let webDAVRemotePayload,
                        syncPayloadEquals(mergedPayload, webDAVRemotePayload)
                     {
+                        clearSyncOutbox(sourceKey: sourceKey)
                         break
                     }
                     let pushResult = try await pushWebDAVPayloadWithRetry(
@@ -2567,11 +2616,13 @@ final class AccountStore: ObservableObject {
                     webDAVETag = pushResult.etag
                     mergedPayload = pushResult.payload
                     changed = changed || pushResult.changedLocalData
+                    clearSyncOutbox(sourceKey: sourceKey)
                 case .remoteOverwriteLocal:
                     if webDAVRemoteEncrypted,
                        let webDAVRemotePayload,
                        syncPayloadEquals(mergedPayload, webDAVRemotePayload)
                     {
+                        clearSyncOutbox(sourceKey: sourceKey)
                         break
                     }
                     let pushResult = try await pushWebDAVRemotePayloadWithRetry(
@@ -2584,6 +2635,7 @@ final class AccountStore: ObservableObject {
                     webDAVETag = pushResult.etag
                     mergedPayload = pushResult.payload
                     changed = changed || pushResult.changedLocalData
+                    clearSyncOutbox(sourceKey: sourceKey)
                 case .localOverwriteRemote:
                     webDAVETag = try await pushRemotePayload(
                         mergedPayload,
@@ -2591,9 +2643,12 @@ final class AccountStore: ObservableObject {
                         authorization: authorization,
                         idempotencyKey: "pass-\(syncDeviceId())-\(UUID().uuidString)"
                     )
+                    clearSyncOutbox(sourceKey: sourceKey)
                 }
-            } catch {
-                pushErrors.append("WebDAV: \(error.localizedDescription)")
+                } catch {
+                    recordSyncOutboxFailure(sourceKey: sourceKey, payload: mergedPayload, error: error)
+                    pushErrors.append("WebDAV: \(error.localizedDescription)")
+                }
             }
         }
 
@@ -4161,6 +4216,113 @@ final class AccountStore: ObservableObject {
         try localSQLiteStore.writeData(data, for: key, updatedAtMs: nowMs())
     }
 
+    private func loadSyncOutbox() {
+        do {
+            guard let data = try localSQLiteStore.readData(for: LocalDatabaseKeys.syncOutbox) else {
+                syncOutboxCount = 0
+                syncOutboxStatus = ""
+                return
+            }
+            let items = try decoder.decode([SyncOutboxItem].self, from: data)
+            syncOutboxCount = items.count
+            syncOutboxStatus = syncOutboxStatusText(items)
+        } catch {
+            syncOutboxCount = 0
+            syncOutboxStatus = "同步补偿队列读取失败：\(error.localizedDescription)"
+            statusMessage = syncOutboxStatus
+        }
+    }
+
+    private func saveSyncOutbox(_ items: [SyncOutboxItem]) {
+        let normalized = Dictionary(items.map { ($0.sourceKey, $0) }) { first, second in
+            first.nextRetryAtMs >= second.nextRetryAtMs ? first : second
+        }.values.sorted { lhs, rhs in
+            if lhs.nextRetryAtMs != rhs.nextRetryAtMs {
+                return lhs.nextRetryAtMs < rhs.nextRetryAtMs
+            }
+            return lhs.sourceKey < rhs.sourceKey
+        }
+        do {
+            let data = try encoder.encode(normalized)
+            try saveCollectionDataToLocalDatabase(data, for: LocalDatabaseKeys.syncOutbox)
+            syncOutboxCount = normalized.count
+            syncOutboxStatus = syncOutboxStatusText(normalized)
+        } catch {
+            syncOutboxStatus = "同步补偿队列保存失败：\(error.localizedDescription)"
+            statusMessage = syncOutboxStatus
+        }
+    }
+
+    private func syncOutboxStatusText(_ items: [SyncOutboxItem]) -> String {
+        guard !items.isEmpty else { return "" }
+        let waiting = items.filter { $0.nextRetryAtMs > nowMs() }.count
+        if waiting == items.count {
+            return "有 \(items.count) 个同步补偿任务等待重试"
+        }
+        return "有 \(items.count) 个同步补偿任务（\(items.count - waiting) 个可立即重试）"
+    }
+
+    private func syncOutboxSourceKey(kind: String, url: URL? = nil) -> String {
+        let fallback: String
+        switch kind {
+        case "server":
+            fallback = normalizedSelfHostedServerBaseURL(serverBaseURL)
+        case "webdav":
+            fallback = "\(webdavBaseURL.trimmingCharacters(in: .whitespacesAndNewlines))/\(webdavRemotePath.trimmingCharacters(in: .whitespacesAndNewlines))"
+        default:
+            fallback = kind
+        }
+        let target = url?.absoluteString ?? fallback
+        return "\(kind)|\(target)"
+    }
+
+    private func shouldAttemptSyncOutbox(sourceKey: String, force: Bool) -> Bool {
+        guard !force else { return true }
+        do {
+            guard let data = try localSQLiteStore.readData(for: LocalDatabaseKeys.syncOutbox),
+                  let items = try? decoder.decode([SyncOutboxItem].self, from: data),
+                  let item = items.first(where: { $0.sourceKey == sourceKey })
+            else { return true }
+            return item.nextRetryAtMs <= nowMs()
+        } catch {
+            return true
+        }
+    }
+
+    private func recordSyncOutboxFailure(
+        sourceKey: String,
+        payload: SyncBundlePayload,
+        error: Error
+    ) {
+        let now = nowMs()
+        var items: [SyncOutboxItem] = []
+        if let data = try? localSQLiteStore.readData(for: LocalDatabaseKeys.syncOutbox),
+           let decoded = try? decoder.decode([SyncOutboxItem].self, from: data)
+        {
+            items = decoded
+        }
+        let previousAttempts = items.first(where: { $0.sourceKey == sourceKey })?.attempts ?? 0
+        let attempts = min(previousAttempts + 1, 12)
+        let delaySeconds = min(60 * 60, 5 * (1 << min(attempts - 1, 8)))
+        let item = SyncOutboxItem(
+            sourceKey: sourceKey,
+            payload: canonicalSyncPayload(payload),
+            createdAtMs: items.first(where: { $0.sourceKey == sourceKey })?.createdAtMs ?? now,
+            attempts: attempts,
+            nextRetryAtMs: now + Int64(delaySeconds * 1000),
+            lastError: error.localizedDescription
+        )
+        saveSyncOutbox(items.filter { $0.sourceKey != sourceKey } + [item])
+    }
+
+    private func clearSyncOutbox(sourceKey: String) {
+        guard let data = try? localSQLiteStore.readData(for: LocalDatabaseKeys.syncOutbox),
+              let items = try? decoder.decode([SyncOutboxItem].self, from: data),
+              items.contains(where: { $0.sourceKey == sourceKey })
+        else { return }
+        saveSyncOutbox(items.filter { $0.sourceKey != sourceKey })
+    }
+
     private func handleSyncSourceSelectionChanged() {
         if syncEnableICloud {
             if cloudObserver == nil {
@@ -4283,7 +4445,13 @@ final class AccountStore: ObservableObject {
 
         do {
             _ = try pushPayloadToICloud(buildCurrentSyncPayload())
+            clearSyncOutbox(sourceKey: syncOutboxSourceKey(kind: "icloud"))
         } catch {
+            recordSyncOutboxFailure(
+                sourceKey: syncOutboxSourceKey(kind: "icloud"),
+                payload: buildCurrentSyncPayload(),
+                error: error
+            )
             cloudSyncStatus = "iCloud 合并后回写失败: \(error.localizedDescription)"
             return false
         }
@@ -4295,12 +4463,18 @@ final class AccountStore: ObservableObject {
         guard syncEnableICloud else { return }
         do {
             let requested = try pushPayloadToICloud(buildCurrentSyncPayload())
+            clearSyncOutbox(sourceKey: syncOutboxSourceKey(kind: "icloud"))
             if trigger == "manual" && requested {
                 cloudSyncStatus = "iCloud 同步已提交: \(displayTime(nowMs()))"
             } else if trigger == "manual" {
                 cloudSyncStatus = "iCloud 同步请求未完成，稍后自动重试"
             }
         } catch {
+            recordSyncOutboxFailure(
+                sourceKey: syncOutboxSourceKey(kind: "icloud"),
+                payload: buildCurrentSyncPayload(),
+                error: error
+            )
             cloudSyncStatus = "iCloud 同步失败: \(error.localizedDescription)"
         }
     }

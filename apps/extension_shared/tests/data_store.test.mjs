@@ -282,10 +282,15 @@ test("同步 outbox 在 IndexedDB 中加密保存，并按远端覆盖旧任务"
   await setSyncOutbox([
     { targetKey: "server|https://sync.example", payload: { accounts: [{ password: "queued-secret" }] }, createdAtMs: 1, attempts: 1, lastError: "offline" },
     { targetKey: "server|https://sync.example", payload: { accounts: [{ password: "latest-secret" }] }, createdAtMs: 2, attempts: 2, lastError: "timeout" },
+    { targetKey: "webdav|https://dav.example", payload: { accounts: [] }, attempts: "not-a-number", nextRetryAtMs: -1 },
   ]);
   const outbox = await getSyncOutbox();
-  assert.equal(outbox.length, 1);
-  assert.equal(outbox[0].attempts, 2);
+  assert.equal(outbox.length, 2);
+  const server = outbox.find((item) => item.targetKey === "server|https://sync.example");
+  assert.equal(server.attempts, 2);
+  const sanitized = outbox.find((item) => item.targetKey === "webdav|https://dav.example");
+  assert.equal(sanitized.attempts, 0);
+  assert.equal(sanitized.nextRetryAtMs, 0);
   const row = await readEncryptedCollectionRow("syncOutbox");
   assert.equal(JSON.stringify(row).includes("latest-secret"), false);
 });

@@ -22,11 +22,13 @@ import {
   getAllData as getAllDataFromDataStore,
   getHistory as getHistoryFromDataStore,
   getSafetySnapshots,
+  getSyncOutbox,
   migrateLegacySyncSecrets,
   setAccounts as setAccountsToDataStore,
   setAllData as setAllDataToDataStore,
   setFolders as setFoldersToDataStore,
   setSafetySnapshots,
+  setSyncOutbox,
   setSyncSecrets,
 } from "./data_store.js";
 import {
@@ -76,6 +78,9 @@ const TOTP_PERIOD_SECONDS = 30;
 const TOTP_DIGITS = 6;
 const TOTP_REFRESH_INTERVAL_MS = 1000;
 const OPTIONS_TOAST_DURATION_MS = 3000;
+const SYNC_OUTBOX_MAX_ATTEMPTS = 12;
+const SYNC_OUTBOX_BASE_DELAY_MS = 5_000;
+const SYNC_OUTBOX_MAX_DELAY_MS = 60 * 60 * 1000;
 
 function normalizeLegacySelfHostedServerBaseUrl(value) {
   const trimmed = String(value || "").trim();
@@ -136,6 +141,7 @@ const dom = {
   generateSyncEncryptionKeyBtn: document.getElementById("generateSyncEncryptionKeyBtn"),
   syncAutoInterval: document.getElementById("syncAutoInterval"),
   syncAutoStatus: document.getElementById("syncAutoStatus"),
+  syncOutboxStatus: document.getElementById("syncOutboxStatus"),
   storageSelfCheckBtn: document.getElementById("storageSelfCheckBtn"),
   exportDiagnosticsBtn: document.getElementById("exportDiagnosticsBtn"),
   restoreLatestSnapshotBtn: document.getElementById("restoreLatestSnapshotBtn"),
@@ -238,6 +244,7 @@ async function init() {
   await loadLockSettings();
   await ensureOptionsUnlocked();
   await ensureDataStorageReady();
+  await refreshSyncOutboxStatus();
   await loadSyncSettings();
   await refresh();
   startTotpRefreshTicker();
@@ -683,6 +690,59 @@ function renderAutoSyncStatus() {
   dom.syncAutoStatus.textContent = `自动按“合并”模式执行，每 ${interval} 分钟同步一次（${enabledLabels.join(" + ")}）`;
 }
 
+function syncTargetKey(target) {
+  return `${String(target?.kind || "").trim()}|${String(target?.url || "").trim()}`;
+}
+
+function syncOutboxRetryDelayMs(attempts) {
+  const exponent = Math.max(0, Math.min(Number(attempts || 1) - 1, 8));
+  return Math.min(SYNC_OUTBOX_MAX_DELAY_MS, SYNC_OUTBOX_BASE_DELAY_MS * (2 ** exponent));
+}
+
+async function refreshSyncOutboxStatus() {
+  if (!dom.syncOutboxStatus) return;
+  try {
+    const items = await getSyncOutbox();
+    if (!items.length) {
+      dom.syncOutboxStatus.textContent = "同步补偿队列为空";
+      return;
+    }
+    const now = Date.now();
+    const waiting = items.filter((item) => Number(item.nextRetryAtMs || 0) > now).length;
+    const lastError = items.find((item) => String(item.lastError || "").trim())?.lastError || "";
+    dom.syncOutboxStatus.textContent = waiting === items.length
+      ? `有 ${items.length} 个同步补偿任务等待重试${lastError ? `：${lastError}` : ""}`
+      : `有 ${items.length} 个同步补偿任务（${items.length - waiting} 个可立即重试）${lastError ? `：${lastError}` : ""}`;
+  } catch (error) {
+    dom.syncOutboxStatus.textContent = `同步补偿队列读取失败：${error.message}`;
+  }
+}
+
+async function recordSyncOutboxFailure(target, payload, error) {
+  const targetKey = syncTargetKey(target);
+  const items = await getSyncOutbox();
+  const previous = items.find((item) => item.targetKey === targetKey);
+  const attempts = Math.min(Number(previous?.attempts || 0) + 1, SYNC_OUTBOX_MAX_ATTEMPTS);
+  const now = Date.now();
+  const next = {
+    targetKey,
+    payload: normalizeSyncPayloadShape(payload),
+    createdAtMs: Number(previous?.createdAtMs || now),
+    attempts,
+    lastAttemptAtMs: now,
+    nextRetryAtMs: now + syncOutboxRetryDelayMs(attempts),
+    lastError: String(error?.message || error || ""),
+  };
+  await setSyncOutbox(items.filter((item) => item.targetKey !== targetKey).concat(next));
+}
+
+async function clearSyncOutbox(target) {
+  const targetKey = syncTargetKey(target);
+  const items = await getSyncOutbox();
+  if (!items.some((item) => item.targetKey === targetKey)) return;
+  await setSyncOutbox(items.filter((item) => item.targetKey !== targetKey));
+}
+
 async function loadLockSettings() {
   const result = await chrome.storage.local.get([
     STORAGE_KEY_LOCK_ENABLED,
@@ -990,6 +1050,7 @@ async function clearAll() {
   await appendHistory("清空全部数据：账号、通行密钥、文件夹");
   editingAccountId = null;
   await refresh({ silent: true });
+  await refreshSyncOutboxStatus();
   setStatus("账号、通行密钥与文件夹已清空");
 }
 
@@ -1556,7 +1617,14 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
     Number(right.isPrimary) - Number(left.isPrimary)
       || Number(right.supportsEtag) - Number(left.supportsEtag)
   );
+  const existingOutbox = new Map((await getSyncOutbox()).map((item) => [item.targetKey, item]));
   for (const target of pushTargets) {
+    const pending = existingOutbox.get(syncTargetKey(target));
+    if (pending && Number(pending.nextRetryAtMs || 0) > Date.now()) {
+      const waitSeconds = Math.max(1, Math.ceil((pending.nextRetryAtMs - Date.now()) / 1000));
+      pushErrors.push(`${target.label}: 补偿任务将在 ${waitSeconds} 秒后重试`);
+      continue;
+    }
     try {
       const result = await pushRemotePayloadWithMode(target, {
         accounts: mergedAccounts,
@@ -1566,13 +1634,20 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
       mergedAccounts = result.payload.accounts.map(normalizeAccountShape);
       mergedFolders = result.payload.folders.map(normalizeFolderShape);
       mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, result.payload.passkeys);
+      await clearSyncOutbox(target);
     } catch (error) {
       pushErrors.push(`${target.label}: ${error.message}`);
+      await recordSyncOutboxFailure(target, {
+        accounts: mergedAccounts,
+        passkeys: mergedPasskeys,
+        folders: mergedFolders,
+      }, error);
     }
   }
 
   editingAccountId = null;
   await refresh({ silent: true });
+  await refreshSyncOutboxStatus();
   const sourceSummary = targets.map((item) => item.label).join(" + ");
   if (pushErrors.length > 0) {
     setStatus(

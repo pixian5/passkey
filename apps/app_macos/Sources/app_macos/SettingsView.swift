@@ -114,6 +114,13 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
 
+                        if !store.syncOutboxStatus.isEmpty {
+                            Text(store.syncOutboxStatus)
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                                .textSelection(.enabled)
+                        }
+
                         if store.syncEnableSelfHostedServer {
                             HStack(spacing: 8) {
                                 Text("服务地址")

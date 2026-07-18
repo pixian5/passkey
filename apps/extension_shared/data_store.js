@@ -536,6 +536,10 @@ export async function setSafetySnapshots(value) {
 
 function normalizeSyncOutbox(value) {
   const byTarget = new Map();
+  const nonNegativeNumber = (raw, fallback) => {
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+  };
   for (const item of Array.isArray(value) ? value : []) {
     const targetKey = String(item?.targetKey || "").trim();
     const payload = item?.payload;
@@ -543,8 +547,10 @@ function normalizeSyncOutbox(value) {
     byTarget.set(targetKey, {
       targetKey,
       payload,
-      createdAtMs: Number(item?.createdAtMs || Date.now()),
-      attempts: Math.max(0, Number(item?.attempts || 0)),
+      createdAtMs: nonNegativeNumber(item?.createdAtMs, Date.now()),
+      attempts: Math.floor(nonNegativeNumber(item?.attempts, 0)),
+      lastAttemptAtMs: nonNegativeNumber(item?.lastAttemptAtMs, 0),
+      nextRetryAtMs: nonNegativeNumber(item?.nextRetryAtMs, 0),
       lastError: String(item?.lastError || ""),
     });
   }
