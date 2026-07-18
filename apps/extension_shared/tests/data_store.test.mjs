@@ -36,12 +36,14 @@ const {
   disableDataEncryption,
   getAccounts,
   getSafetySnapshots,
+  getSyncOutbox,
   getSyncSecrets,
   lockDataEncryption,
   migrateLegacySyncSecrets,
   rewrapDataEncryption,
   setSyncSecrets,
   setSafetySnapshots,
+  setSyncOutbox,
   unlockDataEncryption,
 } = await import("../data_store.js");
 const {
@@ -274,6 +276,18 @@ test("安全快照使用 IndexedDB 加密存储，并迁移后删除旧明文副
   assert.equal((await local.get([LEGACY_SNAPSHOTS_KEY]))[LEGACY_SNAPSHOTS_KEY], undefined);
   const migratedRow = await readEncryptedCollectionRow("syncSafetySnapshots");
   assert.equal(JSON.stringify(migratedRow).includes("do-not-leak"), false);
+});
+
+test("同步 outbox 在 IndexedDB 中加密保存，并按远端覆盖旧任务", async () => {
+  await setSyncOutbox([
+    { targetKey: "server|https://sync.example", payload: { accounts: [{ password: "queued-secret" }] }, createdAtMs: 1, attempts: 1, lastError: "offline" },
+    { targetKey: "server|https://sync.example", payload: { accounts: [{ password: "latest-secret" }] }, createdAtMs: 2, attempts: 2, lastError: "timeout" },
+  ]);
+  const outbox = await getSyncOutbox();
+  assert.equal(outbox.length, 1);
+  assert.equal(outbox[0].attempts, 2);
+  const row = await readEncryptedCollectionRow("syncOutbox");
+  assert.equal(JSON.stringify(row).includes("latest-secret"), false);
 });
 
 test("同步秘密迁移到加密数据库后，锁定状态无法读取且明文键被删除", async () => {

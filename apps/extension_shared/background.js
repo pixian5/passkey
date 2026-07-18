@@ -21,12 +21,14 @@ import {
   getAllData as getAllDataFromDataStore,
   getAccounts as getAccountsFromDataStore,
   getSafetySnapshots,
+  getSyncOutbox,
   lockDataEncryption,
   migrateLegacySyncSecrets,
   rewrapDataEncryption,
   setAllData as setAllDataToDataStore,
   setAccounts as setAccountsToDataStore,
   setSafetySnapshots,
+  setSyncOutbox,
   setSyncSecrets,
   unlockDataEncryption,
 } from "./data_store.js";
@@ -410,7 +412,9 @@ async function runAutoSync() {
       || Number(right.supportsEtag) - Number(left.supportsEtag)
   );
   const pushErrors = [];
+  const outboxByTarget = new Map((await getSyncOutbox()).map((item) => [item.targetKey, item]));
   for (const target of pushTargets) {
+    const targetKey = syncTargetKey(target);
     logSyncFlow("push-start", {
       label: target.label,
       url: target.url,
@@ -426,12 +430,20 @@ async function runAutoSync() {
       }, SYNC_MODE_MERGE);
     } catch (error) {
       pushErrors.push(`${target.label}: ${error?.message || String(error || "")}`);
+      outboxByTarget.set(targetKey, {
+        targetKey,
+        payload: { accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders },
+        createdAtMs: outboxByTarget.get(targetKey)?.createdAtMs || Date.now(),
+        attempts: Number(outboxByTarget.get(targetKey)?.attempts || 0) + 1,
+        lastError: error?.message || String(error || ""),
+      });
       logSyncFlow("auto-sync-push-failed", {
         label: target.label,
         message: error?.message || String(error || ""),
       });
       continue;
     }
+    outboxByTarget.delete(targetKey);
     logSyncFlow("push-success", {
       label: target.label,
       url: target.url,
@@ -445,6 +457,8 @@ async function runAutoSync() {
     mergedFolders = result.payload.folders.map(normalizeFolderShape);
     mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, result.payload.passkeys);
   }
+
+  await setSyncOutbox([...outboxByTarget.values()]);
 
   await writeBusinessDataToStore({
     accounts: mergedAccounts,
@@ -461,6 +475,10 @@ async function runAutoSync() {
     targetLabels: targets.map((item) => item.label),
     pushErrors,
   });
+}
+
+function syncTargetKey(target) {
+  return `${String(target?.kind || "").trim()}|${String(target?.url || "").trim()}`;
 }
 
 async function readBusinessDataFromStore() {

@@ -15,6 +15,7 @@ const COLLECTION_FOLDERS = "folders";
 const COLLECTION_HISTORY = "history";
 const COLLECTION_SYNC_SECRETS = "syncSecrets";
 const COLLECTION_SYNC_SAFETY_SNAPSHOTS = "syncSafetySnapshots";
+const COLLECTION_SYNC_OUTBOX = "syncOutbox";
 const HISTORY_MAX_ENTRIES = 500;
 const SAFETY_SNAPSHOT_MAX_ENTRIES = 5;
 
@@ -530,6 +531,35 @@ export async function setSafetySnapshots(value) {
   const normalized = normalizeSafetySnapshots(value);
   await writeCollection(COLLECTION_SYNC_SAFETY_SNAPSHOTS, normalized);
   await chrome.storage.local.remove(LEGACY_STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS);
+  return normalized;
+}
+
+function normalizeSyncOutbox(value) {
+  const byTarget = new Map();
+  for (const item of Array.isArray(value) ? value : []) {
+    const targetKey = String(item?.targetKey || "").trim();
+    const payload = item?.payload;
+    if (!targetKey || !payload || typeof payload !== "object") continue;
+    byTarget.set(targetKey, {
+      targetKey,
+      payload,
+      createdAtMs: Number(item?.createdAtMs || Date.now()),
+      attempts: Math.max(0, Number(item?.attempts || 0)),
+      lastError: String(item?.lastError || ""),
+    });
+  }
+  return [...byTarget.values()].sort((left, right) => left.createdAtMs - right.createdAtMs);
+}
+
+export async function getSyncOutbox() {
+  await ensureDataStorageReady();
+  return normalizeSyncOutbox(await readCollection(COLLECTION_SYNC_OUTBOX));
+}
+
+export async function setSyncOutbox(value) {
+  await ensureDataStorageReady();
+  const normalized = normalizeSyncOutbox(value);
+  await writeCollection(COLLECTION_SYNC_OUTBOX, normalized);
   return normalized;
 }
 
