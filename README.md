@@ -410,4 +410,4 @@ Electron 安装包过大（>100 MB），内存占用高，且安全隔离模型�
 
 ---
 
-*详细技术规范请参考 [`docs/cross-platform-architecture-zh.md`](docs/cross-platform-architecture-zh.md)*
+*详细技术规范请参考 [`docs/cross-platform-architecture-zh.md`](docs/cross-platform-architecture-zh.md) 和 [`docs/sync-protocol-v2.md`](docs/sync-protocol-v2.md)*

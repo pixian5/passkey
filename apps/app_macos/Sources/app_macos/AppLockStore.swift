@@ -216,7 +216,18 @@ final class AppLockStore: ObservableObject {
         guard let encoded = try? JSONEncoder().encode(credential) else {
             return false
         }
-        let saved = PassSharedFileSecretStore.write(encoded, named: AppLockKeys.fileName)
+        // An unreadable existing verifier must never be overwritten by a new
+        // password, otherwise the user could lose the only valid credential.
+        if let existing = PassSharedFileSecretStore.read(named: AppLockKeys.fileName),
+           (try? PassSharedCrypto.decryptLocalSecret(existing)) == nil,
+           (try? JSONDecoder().decode(MasterPasswordCredential.self, from: existing)) == nil
+        {
+            return false
+        }
+        guard let protected = try? PassSharedCrypto.encryptLocalSecret(encoded) else {
+            return false
+        }
+        let saved = PassSharedFileSecretStore.write(protected, named: AppLockKeys.fileName)
         if saved {
             let defaults = UserDefaults.standard
             defaults.removeObject(forKey: AppLockKeys.masterPasswordSalt)
@@ -326,8 +337,19 @@ final class AppLockStore: ObservableObject {
     }
 
     private func loadMasterCredential() -> MasterPasswordCredential? {
-        if let encoded = PassSharedFileSecretStore.read(named: AppLockKeys.fileName),
+        if let data = PassSharedFileSecretStore.read(named: AppLockKeys.fileName),
+           let encoded = try? PassSharedCrypto.decryptLocalSecret(data),
            let credential = try? JSONDecoder().decode(MasterPasswordCredential.self, from: encoded)
+        {
+            return credential
+        }
+
+        // Migrate the short-lived plaintext file format produced before local
+        // secret encryption was enabled.
+        if let encoded = PassSharedFileSecretStore.read(named: AppLockKeys.fileName),
+           let credential = try? JSONDecoder().decode(MasterPasswordCredential.self, from: encoded),
+           let protected = try? PassSharedCrypto.encryptLocalSecret(encoded),
+           PassSharedFileSecretStore.write(protected, named: AppLockKeys.fileName)
         {
             return credential
         }
@@ -341,7 +363,8 @@ final class AppLockStore: ObservableObject {
         else {
             return nil
         }
-        guard PassSharedFileSecretStore.write(encoded, named: AppLockKeys.fileName) else {
+        guard let protected = try? PassSharedCrypto.encryptLocalSecret(encoded),
+              PassSharedFileSecretStore.write(protected, named: AppLockKeys.fileName) else {
             return nil
         }
         return credential

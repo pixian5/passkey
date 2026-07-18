@@ -139,6 +139,50 @@ test("181 条本地账号与 23 条远端账号合并时不能丢失本地账号
   assert.deepEqual(safety.reasons, []);
 });
 
+test("200 条本地账号与 23 条远端账号合并后稳定 ID、字段和计数保持完整", () => {
+  const local = Array.from({ length: 200 }, (_, index) => helpers.normalizeAccountShape({
+    accountId: `local-${index}`,
+    recordId: `record-${index}`,
+    username: `local-user-${index}`,
+    password: `local-password-${index}`,
+    updatedAtMs: 1_000 + index,
+  }));
+  const remote = Array.from({ length: 23 }, (_, index) => helpers.normalizeAccountShape({
+    ...local[index],
+    password: `remote-password-${index}`,
+    passwordUpdatedAtMs: 10_000 + index,
+    updatedAtMs: 10_000 + index,
+    passwordUpdatedDeviceName: "ChromeMac",
+  }));
+  const merged = mergeAccountCollections(local, remote, helpers);
+  assert.equal(merged.length, 200);
+  assert.deepEqual(
+    new Set(merged.map((account) => account.recordId)),
+    new Set(local.map((account) => account.recordId))
+  );
+  const mergedByRecordId = new Map(merged.map((account) => [account.recordId, account]));
+  for (let index = 0; index < 23; index += 1) {
+    assert.equal(mergedByRecordId.get(`record-${index}`).password, `remote-password-${index}`);
+  }
+  for (let index = 23; index < 200; index += 1) {
+    assert.equal(mergedByRecordId.get(`record-${index}`).password, `local-password-${index}`);
+  }
+});
+
+test("多次合并具有结合性且不会重复账号", () => {
+  const a = [helpers.normalizeAccountShape({ accountId: "a", recordId: "r-a", updatedAtMs: 1 })];
+  const b = [helpers.normalizeAccountShape({ accountId: "b", recordId: "r-b", updatedAtMs: 2 })];
+  const c = [helpers.normalizeAccountShape({ accountId: "c", recordId: "r-c", updatedAtMs: 3 })];
+  const left = mergeAccountCollections(mergeAccountCollections(a, b, helpers), c, helpers);
+  const right = mergeAccountCollections(a, mergeAccountCollections(b, c, helpers), helpers);
+  assert.deepEqual(
+    new Set(left.map((account) => account.recordId)),
+    new Set(right.map((account) => account.recordId))
+  );
+  assert.equal(left.length, 3);
+  assert.equal(right.length, 3);
+});
+
 test("空远端不能替换非空本地", () => {
   const local = [helpers.normalizeAccountShape({ recordId: "record-1" })];
   const safety = evaluateSyncSafety(

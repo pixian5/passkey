@@ -80,6 +80,8 @@ RUN_AFTER_INSTALL=0 ./scripts/package_app.sh
 - Sync credentials: `~/Library/Group Containers/group.com.pass.desktop.shared/pass-mac/sync-credentials-v1.json` (0600)
 - App Lock verifier: `~/Library/Group Containers/group.com.pass.desktop.shared/pass-mac/app-lock-credential-v1.json` (0600)
 - Existing `sync-secrets.json` is migrated first and deleted only after the new file is written successfully.
+- Sync credentials and App Lock verifier are encrypted with the local database key before being written to their 0600 files.
+- If the database or its key cannot be read, the app does not fall back to the smaller legacy JSON store or create a replacement database key.
 - CSV export: `~/Library/Group Containers/group.com.pass.desktop.shared/pass-mac/pass-export-*.csv`
 - If a historical audit record cannot be authenticated, the app leaves accounts,
   folders, and passkeys untouched, copies the original encrypted BLOB to

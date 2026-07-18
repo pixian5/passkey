@@ -39,6 +39,18 @@ enum PassSharedCrypto {
         _ = try loadOrCreateKey()
     }
 
+    static func encryptLocalSecret(_ data: Data) throws -> Data {
+        let sealed = try AES.GCM.seal(data, using: try loadOrCreateKey(), authenticating: Data("pass.local.secret.v1".utf8))
+        guard let combined = sealed.combined else { throw PassSharedCryptoError.invalidCiphertext }
+        return Data([1]) + combined
+    }
+
+    static func decryptLocalSecret(_ data: Data) throws -> Data {
+        guard data.first == 1 else { throw PassSharedCryptoError.invalidCiphertext }
+        let sealed = try AES.GCM.SealedBox(combined: data.dropFirst())
+        return try AES.GCM.open(sealed, using: loadOrCreateKey(), authenticating: Data("pass.local.secret.v1".utf8))
+    }
+
     static func decrypt(_ data: Data) throws -> Data {
         guard data.first == 1 else {
             throw PassSharedCryptoError.invalidCiphertext

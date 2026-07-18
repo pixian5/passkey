@@ -166,6 +166,8 @@ final class AccountStore: ObservableObject {
     @Published private(set) var syncVersionSummaries: [SyncVersionSummary] = []
     @Published private(set) var syncVersionsStatus: String = ""
     @Published private(set) var syncPreviewStatus: String = ""
+    @Published private(set) var storageIntegrityStatus: String = ""
+    @Published private(set) var syncDiagnostics: SyncDiagnostics = .empty
     @Published private(set) var accounts: [PasswordAccount] = []
     @Published private(set) var passkeys: [PasskeyRecord] = []
     @Published private(set) var historyEntries: [OperationHistoryEntry] = []
@@ -275,6 +277,35 @@ final class AccountStore: ObservableObject {
         let payload: SyncBundlePayload?
         let etag: String?
         let isEncrypted: Bool
+        let revision: Int?
+    }
+
+    struct SyncDiagnostics {
+        let localAccounts: Int
+        let localPasskeys: Int
+        let localFolders: Int
+        let remoteAccounts: Int
+        let remotePasskeys: Int
+        let remoteFolders: Int
+        let conflictCount: Int
+        let revision: Int?
+        let etag: String?
+        let lastSyncAtMs: Int64?
+        let sourceSummary: String
+
+        static let empty = SyncDiagnostics(
+            localAccounts: 0,
+            localPasskeys: 0,
+            localFolders: 0,
+            remoteAccounts: 0,
+            remotePasskeys: 0,
+            remoteFolders: 0,
+            conflictCount: 0,
+            revision: nil,
+            etag: nil,
+            lastSyncAtMs: nil,
+            sourceSummary: "未同步"
+        )
     }
 
     private struct SelfHostedPushResult {
@@ -349,7 +380,9 @@ final class AccountStore: ObservableObject {
     private var isLoadingSyncPreferences: Bool = false
     private var syncSecretsLoaded: Bool = false
     private var syncSecretFileLoaded: Bool = false
+    private var syncSecretFileCorrupt: Bool = false
     private var syncSecrets: [String: String] = [:]
+    private var localDatabaseReadFailed: Bool = false
     private var syncNowTask: Task<Void, Never>?
     private var autoSyncTimer: Timer?
     private lazy var localSQLiteStore = LocalSQLiteStore(
@@ -2254,7 +2287,7 @@ final class AccountStore: ObservableObject {
             try saveLocalSyncSafetySnapshot(localPayload, reason: "同步前自动备份")
         } catch {
             cloudSyncStatus = "同步已停止：无法创建本地安全备份"
-            statusMessage = "同步已停止，无法创建本地安全备份：(error.localizedDescription)"
+            statusMessage = "同步已停止，无法创建本地安全备份：\(error.localizedDescription)"
             return
         }
         var mergedPayload = localPayload
@@ -2267,6 +2300,8 @@ final class AccountStore: ObservableObject {
         var conflictCount = 0
         var remoteAggregate: SyncBundlePayload?
         var primaryRemotePayload: SyncBundlePayload?
+        var primaryRemoteRevision: Int?
+        var primaryRemoteETag: String?
         let primarySource = resolvedPrimarySyncSource()
 
         if mode != .localOverwriteRemote {
@@ -2300,7 +2335,11 @@ final class AccountStore: ObservableObject {
                     webDAVRemotePayload = remoteResponse.payload
                     webDAVRemoteEncrypted = remoteResponse.isEncrypted
                     if let remotePayload = remoteResponse.payload {
-                        if primarySource == .webDAV { primaryRemotePayload = remotePayload }
+                        if primarySource == .webDAV {
+                            primaryRemotePayload = remotePayload
+                            primaryRemoteETag = remoteResponse.etag
+                            primaryRemoteRevision = remoteResponse.revision
+                        }
                         remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: remotePayload)
                     }
                 } catch {
@@ -2324,7 +2363,11 @@ final class AccountStore: ObservableObject {
                     selfHostedRemotePayload = remoteResponse.payload
                     selfHostedRemoteEncrypted = remoteResponse.isEncrypted
                     if let remotePayload = remoteResponse.payload {
-                        if primarySource == .selfHostedServer { primaryRemotePayload = remotePayload }
+                        if primarySource == .selfHostedServer {
+                            primaryRemotePayload = remotePayload
+                            primaryRemoteETag = remoteResponse.etag
+                            primaryRemoteRevision = remoteResponse.revision
+                        }
                         remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: remotePayload)
                     }
                 } catch {
@@ -2366,6 +2409,20 @@ final class AccountStore: ObservableObject {
             statusMessage = "同步已停止，未修改本地数据：\(safetyReasons.joined(separator: "、"))"
             return
         }
+
+        syncDiagnostics = SyncDiagnostics(
+            localAccounts: localPayload.accounts.count,
+            localPasskeys: localPayload.passkeys.count,
+            localFolders: localPayload.folders.count,
+            remoteAccounts: remoteAggregate?.accounts.count ?? 0,
+            remotePasskeys: remoteAggregate?.passkeys.count ?? 0,
+            remoteFolders: remoteAggregate?.folders.count ?? 0,
+            conflictCount: conflictCount,
+            revision: primaryRemoteRevision,
+            etag: primaryRemoteETag,
+            lastSyncAtMs: nowMs(),
+            sourceSummary: enabledSourceNames.joined(separator: " + ")
+        )
 
         let conflictSuffix = conflictCount > 0 ? "，检测到 \(conflictCount) 个字段冲突并按时间/设备规则裁决" : ""
         let syncTitle = "同步并更新本地（\(enabledSourceNames.joined(separator: " + "))，\(mode.label)）\(conflictSuffix)"
@@ -3099,7 +3156,7 @@ final class AccountStore: ObservableObject {
             )
         }
         if http.statusCode == 404 {
-            return RemotePayloadResponse(payload: nil, etag: nil, isEncrypted: false)
+            return RemotePayloadResponse(payload: nil, etag: nil, isEncrypted: false, revision: nil)
         }
         guard (200 ... 299).contains(http.statusCode) else {
             throw NSError(
@@ -3109,7 +3166,12 @@ final class AccountStore: ObservableObject {
             )
         }
         guard !data.isEmpty else {
-            return RemotePayloadResponse(payload: nil, etag: http.value(forHTTPHeaderField: "ETag"), isEncrypted: false)
+            return RemotePayloadResponse(
+                payload: nil,
+                etag: http.value(forHTTPHeaderField: "ETag"),
+                isEncrypted: false,
+                revision: http.value(forHTTPHeaderField: "X-Sync-Revision").flatMap(Int.init)
+            )
         }
         let isEncrypted = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["schema"] as? String == PassSyncCrypto.schema
         let parsed = try decodeSyncBundle(data)
@@ -3120,7 +3182,8 @@ final class AccountStore: ObservableObject {
                 passkeys: parsed.passkeys
             ),
             etag: http.value(forHTTPHeaderField: "ETag"),
-            isEncrypted: isEncrypted
+            isEncrypted: isEncrypted,
+            revision: http.value(forHTTPHeaderField: "X-Sync-Revision").flatMap(Int.init)
         )
     }
 
@@ -3335,6 +3398,7 @@ final class AccountStore: ObservableObject {
 
     private func saveSecret(_ secret: String, account: String) -> Bool {
         loadSyncSecretFileIfNeeded()
+        guard !syncSecretFileCorrupt else { return false }
         let normalized = secret.trimmingCharacters(in: .newlines)
         if normalized.isEmpty {
             syncSecrets.removeValue(forKey: account)
@@ -3371,8 +3435,10 @@ final class AccountStore: ObservableObject {
     private func loadSyncSecretFileIfNeeded() {
         guard !syncSecretFileLoaded else { return }
         let fileName = SecretKeys.fileName
-        if let data = PassSharedFileSecretStore.read(named: fileName),
-           let stored = try? decoder.decode(SyncSecretFile.self, from: data),
+        let existingFileData = PassSharedFileSecretStore.read(named: fileName)
+        if let data = existingFileData,
+           let plaintext = try? PassSharedCrypto.decryptLocalSecret(data),
+           let stored = try? decoder.decode(SyncSecretFile.self, from: plaintext),
            stored.version == SyncSecretFile.currentVersion
         {
             syncSecrets = stored.values
@@ -3397,6 +3463,24 @@ final class AccountStore: ObservableObject {
             }
         }
 
+        // A file written by an intermediate development build may still be
+        // plaintext JSON. Migrate it to the authenticated local-secret format
+        // before falling back to the legacy Keychain.
+        if let data = existingFileData,
+           let stored = try? decoder.decode(SyncSecretFile.self, from: data)
+        {
+            syncSecrets = stored.values
+            syncSecretFileLoaded = persistSyncSecretFile()
+            return
+        }
+
+        if existingFileData != nil {
+            syncSecretFileCorrupt = true
+            storageIntegrityStatus = "同步凭据文件无法解密，原文件未改动；请从备份恢复 sync-credentials-v1.json"
+            syncSecretFileLoaded = true
+            return
+        }
+
         // One-time, non-interactive migration from the old Keychain entries.
         // Write the new file even when it is empty so subsequent launches never
         // probe the Keychain again.
@@ -3410,13 +3494,19 @@ final class AccountStore: ObservableObject {
             }
         }
         syncSecrets = migrated
-        syncSecretFileLoaded = persistSyncSecretFile()
+        if syncSecretFileCorrupt {
+            syncSecretFileLoaded = true
+        } else {
+            syncSecretFileLoaded = persistSyncSecretFile()
+        }
     }
 
     @discardableResult
     private func persistSyncSecretFile() -> Bool {
         let file = SyncSecretFile(version: SyncSecretFile.currentVersion, values: syncSecrets)
-        guard let data = try? encoder.encode(file) else { return false }
+        guard let plaintext = try? encoder.encode(file),
+              let data = try? PassSharedCrypto.encryptLocalSecret(plaintext)
+        else { return false }
         return PassSharedFileSecretStore.write(data, named: SecretKeys.fileName)
     }
 
@@ -3463,7 +3553,8 @@ final class AccountStore: ObservableObject {
            let decodedFolders = try? decoder.decode([AccountFolder].self, from: foldersDataFromDatabase)
         {
             folders = decodedFolders
-        } else if let foldersData = defaults.data(forKey: Keys.foldersData),
+        } else if !localDatabaseReadFailed,
+                  let foldersData = defaults.data(forKey: Keys.foldersData),
                   let decodedFolders = try? decoder.decode([AccountFolder].self, from: foldersData)
         {
             folders = decodedFolders
@@ -3494,10 +3585,16 @@ final class AccountStore: ObservableObject {
 
         let accountDataFromDatabase = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.accounts)
         let fileURL = dataFileURL()
-        let accountDataFromLegacyFile = try? Data(contentsOf: fileURL)
+        let databaseExists = FileManager.default.fileExists(atPath: PassSharedData.databaseURL().path)
+        let accountDataFromLegacyFile = databaseExists && localDatabaseReadFailed
+            ? nil
+            : try? Data(contentsOf: fileURL)
         let accountDataCandidates = [accountDataFromDatabase, accountDataFromLegacyFile].compactMap { $0 }
         guard !accountDataCandidates.isEmpty else {
             accounts = []
+            if localDatabaseReadFailed {
+                storageIntegrityStatus = "本地数据库无法解密，已停止读取旧回退文件；请恢复 pass.db 与 pass-db-key-v1 备份"
+            }
             CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
             if folderNormalization.foldersChanged || migratedFoldersFromDefaults {
                 saveFoldersToDefaults()
@@ -3567,6 +3664,7 @@ final class AccountStore: ObservableObject {
             return decoded.map(normalizePasskeyRecord)
         }
 
+        guard !localDatabaseReadFailed else { return [] }
         let fileURL = passkeysFileURL()
         guard let data = try? Data(contentsOf: fileURL),
               let decoded = try? decoder.decode([PasskeyRecord].self, from: data)
@@ -4008,7 +4106,9 @@ final class AccountStore: ObservableObject {
         do {
             return try localSQLiteStore.readData(for: key)
         } catch {
-            statusMessage = "读取本地加密数据失败（\(key)）: \(error.localizedDescription)"
+            localDatabaseReadFailed = true
+            storageIntegrityStatus = "读取本地加密数据失败（\(key)）：\(error.localizedDescription)"
+            statusMessage = storageIntegrityStatus
             return nil
         }
     }

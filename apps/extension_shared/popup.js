@@ -119,11 +119,11 @@ let lockOperationInFlight = false;
 
 init().catch((error) => {
   console.error("[Pass popup] 初始化失败", error);
-  const detail = [error?.name, error?.message, String(error)]
+  const detail = [error?.name, error?.code, error?.message, String(error)]
     .map((value) => String(value || "").trim())
     .filter((value, index, values) => value && values.indexOf(value) === index)
     .join(" | ");
-  setStatus(`初始化失败: ${detail || "未知错误，请查看扩展 Service Worker 控制台"}`);
+  setStatus(`初始化失败: ${detail || "未知错误，请查看扩展 Service Worker 控制台"}；数据未被修改`);
 });
 
 async function init() {

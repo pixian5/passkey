@@ -102,6 +102,18 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
+                        if !store.storageIntegrityStatus.isEmpty {
+                            Text(store.storageIntegrityStatus)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
+                        }
+
+                        Text(syncDiagnosticsText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+
                         if store.syncEnableSelfHostedServer {
                             HStack(spacing: 8) {
                                 Text("服务地址")
@@ -459,6 +471,14 @@ struct SettingsView: View {
         .background(WindowAccessor { window in
             configureWindowIfNeeded(window)
         })
+    }
+
+    private var syncDiagnosticsText: String {
+        let d = store.syncDiagnostics
+        let revision = d.revision.map { String($0) } ?? "-"
+        let etag = d.etag ?? "-"
+        let conflict = d.conflictCount
+        return "诊断：本地账号 \(d.localAccounts)、远端账号 \(d.remoteAccounts)；本地通行密钥 \(d.localPasskeys)、远端通行密钥 \(d.remotePasskeys)；本地文件夹 \(d.localFolders)、远端文件夹 \(d.remoteFolders)；冲突 \(conflict)；修订 \(revision)；ETag \(etag.prefix(16))；来源 \(d.sourceSummary)"
     }
 
     private func configureWindowIfNeeded(_ window: NSWindow) {

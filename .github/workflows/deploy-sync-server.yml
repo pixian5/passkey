@@ -9,7 +9,11 @@ on:
   workflow_dispatch:
 
 jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - name: Deploy on the sync host
@@ -21,6 +25,7 @@ jobs:
           script: |
             set -eu
             cd /opt/pass-sync-server
+            previous_revision=$(git rev-parse HEAD)
             stamp=$(date +%Y%m%d-%H%M%S)
             sudo mkdir -p "/var/lib/pass-sync/backups/${stamp}-pre-deploy"
             if [ -x ./apps/sync_server_ubuntu/backup_sync_db.sh ]; then
@@ -31,3 +36,9 @@ jobs:
             git fetch origin master
             git checkout -f origin/master
             sudo systemctl restart pass-sync-server
+            if ! curl --fail --silent --show-error --insecure https://127.0.0.1:5443/healthz >/dev/null; then
+              echo "新版本健康检查失败，回滚到 ${previous_revision}" >&2
+              git checkout -f "${previous_revision}"
+              sudo systemctl restart pass-sync-server
+              exit 1
+            fi

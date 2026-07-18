@@ -221,11 +221,11 @@ const AUTO_SYNC_INTERVAL_OPTIONS = new Set(["0", "1", "3", "5", "10", "15", "30"
 
 init().catch((error) => {
   console.error("[Pass options] 初始化失败", error);
-  const detail = [error?.name, error?.message, String(error)]
+  const detail = [error?.name, error?.code, error?.message, String(error)]
     .map((value) => String(value || "").trim())
     .filter((value, index, values) => value && values.indexOf(value) === index)
     .join(" | ");
-  setStatus(`初始化失败: ${detail || "未知错误，请查看扩展 Service Worker 控制台"}`);
+  setStatus(`初始化失败: ${detail || "未知错误，请查看扩展 Service Worker 控制台"}；数据未被修改`);
 });
 
 async function init() {

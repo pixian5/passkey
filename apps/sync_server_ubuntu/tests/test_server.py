@@ -32,6 +32,7 @@ class PassSyncServerTests(unittest.TestCase):
             port=0,
             db_path=Path(self.temp_dir.name) / "sync.sqlite3",
             token_scopes={"secret-token": "default"},
+            allow_plaintext=True,
         )
         self.server = build_server(config)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)

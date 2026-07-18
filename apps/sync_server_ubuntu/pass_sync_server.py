@@ -30,7 +30,7 @@ class AppConfig:
     db_path: Path
     token_scopes: dict[str, str]
     max_body_bytes: int = 2 * 1024 * 1024
-    allow_plaintext: bool = True
+    allow_plaintext: bool = False
     tls_cert_path: Path | None = None
     tls_key_path: Path | None = None
 
