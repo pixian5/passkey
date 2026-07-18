@@ -159,6 +159,9 @@ final class AccountStore: ObservableObject {
     @Published private(set) var isToastVisible: Bool = false
     @Published private(set) var isTopToastUndoAvailable: Bool = false
     @Published private(set) var folders: [AccountFolder] = []
+    var activeFolders: [AccountFolder] {
+        folders.filter { !$0.isDeleted }
+    }
     @Published private(set) var undoMoveToastMessage: String = ""
     @Published private(set) var isUndoMoveToastVisible: Bool = false
     @Published private(set) var selectAllAccountsSignal: Int = 0
@@ -464,7 +467,7 @@ final class AccountStore: ObservableObject {
             statusMessage = "文件夹名称不能为空"
             return
         }
-        if folders.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+        if activeFolders.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
             statusMessage = "文件夹已存在: \(name)"
             return
         }
@@ -490,7 +493,7 @@ final class AccountStore: ObservableObject {
     ) -> UUID? {
         let normalizedNewFolderName = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
         if !normalizedNewFolderName.isEmpty {
-            if let existing = folders.first(where: {
+            if let existing = activeFolders.first(where: {
                 $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
                     .caseInsensitiveCompare(normalizedNewFolderName) == .orderedSame
             }) {
@@ -516,7 +519,7 @@ final class AccountStore: ObservableObject {
         guard let targetFolderId else {
             return nil
         }
-        guard folders.contains(where: { $0.id == targetFolderId }) else {
+        guard activeFolders.contains(where: { $0.id == targetFolderId }) else {
             statusMessage = "目标文件夹不存在"
             return nil
         }
@@ -524,7 +527,7 @@ final class AccountStore: ObservableObject {
     }
 
     func deleteFolder(id: UUID) {
-        guard let folder = folders.first(where: { $0.id == id }) else {
+        guard let folder = activeFolders.first(where: { $0.id == id }) else {
             statusMessage = "目标文件夹不存在"
             return
         }
@@ -533,12 +536,18 @@ final class AccountStore: ObservableObject {
             return
         }
 
-        folders.removeAll(where: { $0.id == id })
+        let now = nowMs()
+        let device = currentDeviceName()
+        if let index = folders.firstIndex(where: { $0.id == id }) {
+            folders[index].isDeleted = true
+            folders[index].isPermanentlyDeleted = true
+            folders[index].deletedAtMs = now
+            folders[index].deletedDeviceName = device
+            folders[index].updatedAtMs = now
+        }
         _ = normalizeFoldersEnsuringFixedNewAccountFolder()
         saveFoldersToDefaults()
 
-        let now = nowMs()
-        let device = currentDeviceName()
         var removedFromAccountCount = 0
 
         for index in accounts.indices {
@@ -561,15 +570,15 @@ final class AccountStore: ObservableObject {
     }
 
     func folderName(for id: UUID) -> String {
-        folders.first(where: { $0.id == id })?.name ?? "未命名文件夹"
+        activeFolders.first(where: { $0.id == id })?.name ?? "未命名文件夹"
     }
 
     func folderRuleSites(for id: UUID) -> [String] {
-        folders.first(where: { $0.id == id })?.matchedSites ?? []
+        activeFolders.first(where: { $0.id == id })?.matchedSites ?? []
     }
 
     func folderRuleAutoAddEnabled(for id: UUID) -> Bool {
-        folders.first(where: { $0.id == id })?.autoAddMatchingSites ?? false
+        activeFolders.first(where: { $0.id == id })?.autoAddMatchingSites ?? false
     }
 
     func checkedFolderIdsForAccounts(accountIds: [UUID]) -> [UUID] {
@@ -664,7 +673,7 @@ final class AccountStore: ObservableObject {
             statusMessage = "未选择账号"
             return
         }
-        guard folders.contains(where: { $0.id == folderId }) else {
+        guard activeFolders.contains(where: { $0.id == folderId }) else {
             statusMessage = "目标文件夹不存在"
             return
         }
@@ -739,7 +748,7 @@ final class AccountStore: ObservableObject {
             statusMessage = "未选择账号"
             return
         }
-        guard folders.contains(where: { $0.id == folderId }) else {
+        guard activeFolders.contains(where: { $0.id == folderId }) else {
             statusMessage = "目标文件夹不存在"
             return
         }
@@ -798,7 +807,7 @@ final class AccountStore: ObservableObject {
     }
 
     func addAccountsMatchingSitesToFolder(siteInputs: [String], folderId: UUID) {
-        guard folders.contains(where: { $0.id == folderId }) else {
+        guard activeFolders.contains(where: { $0.id == folderId }) else {
             statusMessage = "目标文件夹不存在"
             return
         }
@@ -974,7 +983,7 @@ final class AccountStore: ObservableObject {
         keptGroupCount: Int,
         operationLabel: String
     ) {
-        guard folders.contains(where: { $0.id == folderId }) else {
+        guard activeFolders.contains(where: { $0.id == folderId }) else {
             statusMessage = "目标文件夹不存在"
             return
         }
@@ -1239,7 +1248,7 @@ final class AccountStore: ObservableObject {
         var unchangedCount = 0
         var skippedCount = migration.skippedCount
         let normalizedTargetFolderId = resolvedFolderId.flatMap { folderId in
-            folders.contains(where: { $0.id == folderId }) ? folderId : nil
+            activeFolders.contains(where: { $0.id == folderId }) ? folderId : nil
         }
 
         for (offset, entry) in migration.entries.enumerated() {
@@ -1739,7 +1748,7 @@ final class AccountStore: ObservableObject {
             let localPasskeyCount = passkeys.count
 
             let mergedFolders = mergeFolderCollections(local: folders, remote: remoteFolders)
-            let validFolderIds = Set(mergedFolders.map(\.id))
+            let validFolderIds = Set(mergedFolders.filter { !$0.isDeleted }.map(\.id))
             var mergedAccounts = mergeAccountCollections(local: accounts, remote: remoteAccounts)
             mergedAccounts = reconcileAccountsWithValidFolderIds(mergedAccounts, validFolderIds: validFolderIds)
             let mergedPasskeys = mergePasskeyCollections(local: passkeys, remote: remotePasskeys)
@@ -2956,7 +2965,7 @@ final class AccountStore: ObservableObject {
 
     private func mergePayloads(local: SyncBundlePayload, remote: SyncBundlePayload) -> SyncBundlePayload {
         let mergedFolders = mergeFolderCollections(local: local.folders, remote: remote.folders)
-        let validFolderIds = Set(mergedFolders.map(\.id))
+        let validFolderIds = Set(mergedFolders.filter { !$0.isDeleted }.map(\.id))
         var mergedAccounts = mergeAccountCollections(
             local: normalizeDecodedAccounts(local.accounts),
             remote: normalizeDecodedAccounts(remote.accounts)
@@ -4546,6 +4555,12 @@ final class AccountStore: ObservableObject {
     private func mergeSameFolder(_ lhs: AccountFolder, _ rhs: AccountFolder) -> AccountFolder {
         let leftUpdatedAt = lhs.updatedAtMs
         let rightUpdatedAt = rhs.updatedAtMs
+        let leftDeletedAt = lhs.isDeleted ? (lhs.deletedAtMs ?? 0) : 0
+        let rightDeletedAt = rhs.isDeleted ? (rhs.deletedAtMs ?? 0) : 0
+        let latestDeletedAt = max(leftDeletedAt, rightDeletedAt)
+        let keepPermanentlyDeleted = lhs.isPermanentlyDeleted || rhs.isPermanentlyDeleted
+        let keepDeleted = keepPermanentlyDeleted || (latestDeletedAt > 0 && latestDeletedAt >= max(leftUpdatedAt, rightUpdatedAt))
+        let deletedDeviceName = leftDeletedAt >= rightDeletedAt ? lhs.deletedDeviceName : rhs.deletedDeviceName
         if lhs.id == Self.fixedNewAccountFolderId {
             return AccountFolder(
                 id: lhs.id,
@@ -4553,7 +4568,11 @@ final class AccountStore: ObservableObject {
                 matchedSites: rightUpdatedAt >= leftUpdatedAt ? rhs.matchedSites : lhs.matchedSites,
                 autoAddMatchingSites: rightUpdatedAt >= leftUpdatedAt ? rhs.autoAddMatchingSites : lhs.autoAddMatchingSites,
                 createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs),
-                updatedAtMs: max(leftUpdatedAt, rightUpdatedAt)
+                updatedAtMs: max(leftUpdatedAt, rightUpdatedAt),
+                isDeleted: false,
+                isPermanentlyDeleted: false,
+                deletedAtMs: nil,
+                deletedDeviceName: ""
             )
         }
 
@@ -4574,7 +4593,11 @@ final class AccountStore: ObservableObject {
             matchedSites: rightUpdatedAt > leftUpdatedAt ? rhs.matchedSites : lhs.matchedSites,
             autoAddMatchingSites: rightUpdatedAt > leftUpdatedAt ? rhs.autoAddMatchingSites : lhs.autoAddMatchingSites,
             createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs),
-            updatedAtMs: max(leftUpdatedAt, rightUpdatedAt)
+            updatedAtMs: max(leftUpdatedAt, rightUpdatedAt),
+            isDeleted: keepDeleted,
+            isPermanentlyDeleted: keepPermanentlyDeleted,
+            deletedAtMs: keepDeleted ? (latestDeletedAt == 0 ? max(leftUpdatedAt, rightUpdatedAt) : latestDeletedAt) : nil,
+            deletedDeviceName: keepDeleted ? (deletedDeviceName.isEmpty ? currentDeviceName() : deletedDeviceName) : ""
         )
     }
 
@@ -4603,7 +4626,11 @@ final class AccountStore: ObservableObject {
             updatedAtMs: updatedAt,
             lastUsedAtMs: lastUsedAt,
             mode: normalizedMode.isEmpty ? "managed" : normalizedMode,
-            createCompatMethod: normalizedCreateCompatMethod
+            createCompatMethod: normalizedCreateCompatMethod,
+            isDeleted: source.isDeleted ?? false,
+            isPermanentlyDeleted: source.isPermanentlyDeleted ?? false,
+            deletedAtMs: source.deletedAtMs,
+            deletedDeviceName: source.deletedDeviceName
         )
     }
 
@@ -4647,6 +4674,12 @@ final class AccountStore: ObservableObject {
         let right = normalizePasskeyRecord(rhs)
         let newer = left.updatedAtMs >= right.updatedAtMs ? left : right
         let older = left.updatedAtMs >= right.updatedAtMs ? right : left
+        let leftDeletedAt = left.isDeleted == true ? (left.deletedAtMs ?? 0) : 0
+        let rightDeletedAt = right.isDeleted == true ? (right.deletedAtMs ?? 0) : 0
+        let latestDeletedAt = max(leftDeletedAt, rightDeletedAt)
+        let keepPermanentlyDeleted = left.isPermanentlyDeleted == true || right.isPermanentlyDeleted == true
+        let keepDeleted = keepPermanentlyDeleted || (latestDeletedAt > 0 && latestDeletedAt >= max(left.updatedAtMs, right.updatedAtMs))
+        let deletedDeviceName = leftDeletedAt >= rightDeletedAt ? left.deletedDeviceName : right.deletedDeviceName
 
         return PasskeyRecord(
             credentialIdB64u: newer.credentialIdB64u.isEmpty ? older.credentialIdB64u : newer.credentialIdB64u,
@@ -4667,7 +4700,11 @@ final class AccountStore: ObservableObject {
             createCompatMethod: normalizePasskeyCreateCompatMethod(
                 newer.createCompatMethod ?? older.createCompatMethod,
                 alg: newer.alg == 0 ? older.alg : newer.alg
-            )
+            ),
+            isDeleted: keepDeleted,
+            isPermanentlyDeleted: keepPermanentlyDeleted,
+            deletedAtMs: keepDeleted ? (latestDeletedAt == 0 ? max(left.updatedAtMs, right.updatedAtMs) : latestDeletedAt) : nil,
+            deletedDeviceName: keepDeleted ? (deletedDeviceName ?? currentDeviceName()) : nil
         )
     }
 
@@ -4921,7 +4958,7 @@ final class AccountStore: ObservableObject {
     }
 
     private func migrateAccountFolderIdsFromLegacyNewAccountFolder(legacyFolderIds: Set<UUID>) -> Bool {
-        let validFolderIds = Set(folders.map(\.id))
+        let validFolderIds = Set(folders.filter { !$0.isDeleted }.map(\.id))
         let shouldMigrateLegacyIds = !legacyFolderIds.isEmpty
         var changed = false
 

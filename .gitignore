@@ -7,3 +7,7 @@ apps/extension_safari/PassSafari/build_apple/
 
 # OS noise
 .DS_Store
+
+# Python test/runtime caches
+__pycache__/
+*.py[cod]

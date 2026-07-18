@@ -40,6 +40,14 @@
           "type": "string",
           "minLength": 1
         },
+        "deviceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "logicalClockMs": {
+          "type": "integer",
+          "minimum": 0
+        },
         "formatVersion": {
           "type": "integer",
           "const": 2

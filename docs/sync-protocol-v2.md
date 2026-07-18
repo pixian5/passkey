@@ -19,6 +19,10 @@ extensions, and self-hosted sync server.
 - A newer timestamp wins. Equal timestamps use account timestamp, then stable
   device-name ordering, then lexical value ordering.
 - Sites, folder IDs, Passkey IDs, and aliases are unioned and normalized.
+- Folder and Passkey removals use `isDeleted`, `deletedAtMs`,
+  `deletedDeviceName`; permanent tombstones use `isPermanentlyDeleted` and
+  remain authoritative until a future protocol-defined garbage-collection
+  acknowledgement.
 - Permanent-delete tombstones cannot be recreated by stale active records.
 - A remote empty payload never replaces a non-empty local payload.
 - A merge is rejected if any local stable account, folder, or Passkey ID is

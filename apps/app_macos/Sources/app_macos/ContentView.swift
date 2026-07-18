@@ -260,7 +260,7 @@ struct ContentView: View {
                                                 Button("放入文件夹") {
                                                     prepareMoveToFolder(from: account.id)
                                                 }
-                                                .disabled(store.folders.isEmpty)
+                                                .disabled(store.activeFolders.isEmpty)
 
                                                 Divider()
 
@@ -448,7 +448,7 @@ struct ContentView: View {
             Divider()
 
             HStack {
-                Text("文件夹 (\(store.folders.count))")
+                Text("文件夹 (\(store.activeFolders.count))")
                 .font(store.textFont(size: store.scaledTextSize(13), weight: .semibold))
                 Spacer()
                 Button("新建") {
@@ -465,7 +465,7 @@ struct ContentView: View {
                 }
             }
 
-            if store.folders.isEmpty {
+            if store.activeFolders.isEmpty {
                 Text("暂无文件夹")
                     .font(store.textFont(size: store.scaledTextSize(12)))
                     .foregroundStyle(.secondary)
@@ -473,7 +473,7 @@ struct ContentView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 4) {
-                        ForEach(store.folders) { folder in
+                        ForEach(store.activeFolders) { folder in
                             sidebarItem(
                                 title: "\(folder.name) (\(activeFolderAccountCount(folder.id)))",
                                 selected: selectedSidebarFilter == .folder(folder.id)
@@ -884,7 +884,7 @@ struct ContentView: View {
     }
 
     private func prepareMoveToFolder(from contextAccountId: UUID) {
-        if store.folders.isEmpty {
+        if store.activeFolders.isEmpty {
             store.statusMessage = "请先创建文件夹"
             return
         }
@@ -1008,7 +1008,7 @@ struct ContentView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(store.folders) { folder in
+                    ForEach(store.activeFolders) { folder in
                         let checked = moveFolderCheckedIds.contains(folder.id)
                         Button {
                             if checked {

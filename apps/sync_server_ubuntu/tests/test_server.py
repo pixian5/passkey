@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pass_sync_server import AppConfig, build_server, load_config
 
@@ -34,6 +37,7 @@ class PassSyncServerTests(unittest.TestCase):
             db_path=Path(self.temp_dir.name) / "sync.sqlite3",
             token_scopes={"secret-token": "default"},
             allow_plaintext=True,
+            allowed_origins=("chrome-extension://test", "moz-extension://test"),
         )
         self.server = build_server(config)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -86,6 +90,15 @@ class PassSyncServerTests(unittest.TestCase):
     def test_metrics_options_path_is_available(self) -> None:
         with self.request("OPTIONS", "/metrics") as response:
             self.assertEqual(response.status, 204)
+
+    def test_cors_rejects_unconfigured_origin(self) -> None:
+        with self.request(
+            "GET",
+            "/healthz",
+            headers={"Origin": "https://untrusted.example"},
+        ) as response:
+            self.assertEqual(response.status, 200)
+            self.assertNotIn("Access-Control-Allow-Origin", response.headers)
 
     def test_metrics_requires_auth_and_reports_requests(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as context:

@@ -35,11 +35,13 @@ globalThis.chrome = { storage: { local, session } };
 const {
   disableDataEncryption,
   getAccounts,
+  getSafetySnapshots,
   getSyncSecrets,
   lockDataEncryption,
   migrateLegacySyncSecrets,
   rewrapDataEncryption,
   setSyncSecrets,
+  setSafetySnapshots,
   unlockDataEncryption,
 } = await import("../data_store.js");
 const {
@@ -54,6 +56,7 @@ const SESSION_KEY = "pass.data.sessionEncryptionKey.v2";
 const WEBDAV_PASSWORD_KEY = "pass.sync.webdav.password.v2";
 const SERVER_TOKEN_KEY = "pass.sync.server.token.v2";
 const SYNC_ENCRYPTION_KEY = "pass.sync.encryptionKey.v1";
+const LEGACY_SNAPSHOTS_KEY = "pass.localSafetySnapshots.v1";
 const V2_AAD = new TextEncoder().encode("pass.data.encryptionKey.v2");
 const V3_AAD = new TextEncoder().encode("pass.data.encryptionKey.v3");
 
@@ -248,6 +251,29 @@ test("迁移标记已存在时仍会转换 Safari 新来源中的旧集合", asy
   assert.equal(migratedRow.version, 1);
   assert.equal(typeof migratedRow.nonceBase64, "string");
   assert.equal(typeof migratedRow.ciphertextBase64, "string");
+});
+
+test("安全快照使用 IndexedDB 加密存储，并迁移后删除旧明文副本", async () => {
+  const secretPayload = {
+    accounts: [{ recordId: "secret-record", password: "do-not-leak" }],
+    passkeys: [],
+    folders: [],
+  };
+  await setSafetySnapshots([{ createdAtMs: 100, reason: "旧快照", payload: secretPayload }]);
+  const row = await readEncryptedCollectionRow("syncSafetySnapshots");
+  assert.equal(row.version, 1);
+  assert.equal(JSON.stringify(row).includes("do-not-leak"), false);
+  assert.deepEqual((await getSafetySnapshots())[0].payload, secretPayload);
+  assert.equal((await local.get([LEGACY_SNAPSHOTS_KEY]))[LEGACY_SNAPSHOTS_KEY], undefined);
+
+  await local.set({
+    [LEGACY_SNAPSHOTS_KEY]: [{ createdAtMs: 200, reason: "迁移快照", payload: secretPayload }],
+  });
+  const migrated = await getSafetySnapshots();
+  assert.equal(migrated[0].createdAtMs, 200);
+  assert.equal((await local.get([LEGACY_SNAPSHOTS_KEY]))[LEGACY_SNAPSHOTS_KEY], undefined);
+  const migratedRow = await readEncryptedCollectionRow("syncSafetySnapshots");
+  assert.equal(JSON.stringify(migratedRow).includes("do-not-leak"), false);
 });
 
 test("同步秘密迁移到加密数据库后，锁定状态无法读取且明文键被删除", async () => {

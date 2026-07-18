@@ -21,10 +21,12 @@ import {
   ensureDataStorageReady,
   getAllData as getAllDataFromDataStore,
   getHistory as getHistoryFromDataStore,
+  getSafetySnapshots,
   migrateLegacySyncSecrets,
   setAccounts as setAccountsToDataStore,
   setAllData as setAllDataToDataStore,
   setFolders as setFoldersToDataStore,
+  setSafetySnapshots,
   setSyncSecrets,
 } from "./data_store.js";
 import {
@@ -49,7 +51,6 @@ const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
 const STORAGE_KEY_SYNC_PRIMARY_SOURCE = "pass.sync.primarySource.v1";
 const STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
-const STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS = "pass.localSafetySnapshots.v1";
 const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "https://uk.sbbz.tech:5443";
 const SYNC_MODE_MERGE = "merge";
 const SYNC_MODE_REMOTE_OVERWRITE_LOCAL = "remoteOverwriteLocal";
@@ -504,7 +505,26 @@ function normalizeSyncPayloadShape(payload) {
 }
 
 function syncPayloadEquals(lhs, rhs) {
-  return JSON.stringify(normalizeSyncPayloadShape(lhs)) === JSON.stringify(normalizeSyncPayloadShape(rhs));
+  return JSON.stringify(sortSyncPayloadCollections(normalizeSyncPayloadShape(lhs)))
+    === JSON.stringify(sortSyncPayloadCollections(normalizeSyncPayloadShape(rhs)));
+}
+
+function sortSyncPayloadCollections(payload) {
+  const compare = (lhs, rhs, keys) => {
+    for (const key of keys) {
+      const left = String(lhs?.[key] || "").trim().toLowerCase();
+      const right = String(rhs?.[key] || "").trim().toLowerCase();
+      if (left < right) return -1;
+      if (left > right) return 1;
+    }
+    return 0;
+  };
+  return {
+    ...payload,
+    accounts: [...(payload?.accounts || [])].sort((lhs, rhs) => compare(lhs, rhs, ["recordId", "accountId"])),
+    passkeys: [...(payload?.passkeys || [])].sort((lhs, rhs) => compare(lhs, rhs, ["credentialIdB64u"])),
+    folders: [...(payload?.folders || [])].sort((lhs, rhs) => compare(lhs, rhs, ["id"])),
+  };
 }
 
 function countSyncAccountConflicts(localAccounts, remoteAccounts) {
@@ -947,7 +967,9 @@ async function refresh({ silent = false } = {}) {
 
   accountsRaw = cloneAccounts(accounts);
   passkeysRaw = passkeys.map(normalizePasskeyShape);
-  foldersRaw = sortFoldersForDisplay(withFixedFolder(folders.map(normalizeFolderShape)));
+  foldersRaw = sortFoldersForDisplay(withFixedFolder(
+    folders.filter((folder) => !folder?.isDeleted).map(normalizeFolderShape)
+  ));
   closeContextMenu();
 
   renderGoogleAuthenticatorImportFolderOptions();
@@ -1765,18 +1787,13 @@ function renderServerSyncVersions(target, versions) {
 
 async function saveLocalSafetySnapshot(reason, payloadOverride = null) {
   const payload = normalizeSyncPayloadShape(payloadOverride || await readBusinessDataFromStore());
-  const result = await chrome.storage.local.get([STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]);
-  const snapshots = Array.isArray(result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS])
-    ? result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]
-    : [];
+  const snapshots = await getSafetySnapshots();
   snapshots.unshift({
     createdAtMs: Date.now(),
     reason: String(reason || "同步前备份"),
     payload,
   });
-  await chrome.storage.local.set({
-    [STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]: snapshots.slice(0, 5),
-  });
+  await setSafetySnapshots(snapshots);
 }
 
 async function runStorageSelfCheck() {
@@ -1784,10 +1801,7 @@ async function runStorageSelfCheck() {
   try {
     const data = await readBusinessDataFromStore();
     const secrets = await migrateLegacySyncSecrets();
-    const snapshotResult = await chrome.storage.local.get([STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]);
-    const snapshots = Array.isArray(snapshotResult[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS])
-      ? snapshotResult[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]
-      : [];
+    const snapshots = await getSafetySnapshots();
     const invalidSnapshots = snapshots.filter((item) => !item || !item.payload || !Number(item.createdAtMs));
     if (invalidSnapshots.length > 0) throw new Error(`发现 ${invalidSnapshots.length} 个损坏本地快照`);
     dom.storageDiagnosticsStatus.textContent = `自检通过：账号 ${data.accounts.length}、通行密钥 ${data.passkeys.length}、文件夹 ${data.folders.length}、快照 ${snapshots.length}、同步密钥 ${secrets.encryptionKey ? "已配置" : "未配置"}`;
@@ -1799,7 +1813,8 @@ async function runStorageSelfCheck() {
 async function exportStorageDiagnostics() {
   try {
     const data = await readBusinessDataFromStore();
-    const result = await chrome.storage.local.get([STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS, STORAGE_KEY_SYNC_DEVICE_ID]);
+    const result = await chrome.storage.local.get([STORAGE_KEY_SYNC_DEVICE_ID]);
+    const snapshots = await getSafetySnapshots();
     const payload = {
       exportedAtMs: Date.now(),
       deviceId: String(result[STORAGE_KEY_SYNC_DEVICE_ID] || ""),
@@ -1808,7 +1823,7 @@ async function exportStorageDiagnostics() {
         passkeys: data.passkeys.length,
         folders: data.folders.length,
       },
-      snapshotCount: Array.isArray(result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]) ? result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS].length : 0,
+      snapshotCount: snapshots.length,
       note: "诊断导出不包含密码字段、同步令牌或同步加密密钥",
     };
     downloadTextFile(`pass-diagnostics-${formatFileTimestamp(payload.exportedAtMs)}.json`, JSON.stringify(payload, null, 2), "application/json");
@@ -1819,8 +1834,13 @@ async function exportStorageDiagnostics() {
 }
 
 async function restoreLatestSafetySnapshot() {
-  const result = await chrome.storage.local.get([STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]);
-  const snapshots = Array.isArray(result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]) ? result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS] : [];
+  let snapshots;
+  try {
+    snapshots = await getSafetySnapshots();
+  } catch (error) {
+    dom.storageDiagnosticsStatus.textContent = `读取本地安全快照失败：${error.message}`;
+    return;
+  }
   const latest = snapshots[0];
   if (!latest?.payload) {
     dom.storageDiagnosticsStatus.textContent = "没有可恢复的本地安全快照";
@@ -2067,11 +2087,7 @@ async function buildSyncBundleFromPayload(payload) {
       logicalClockMs: Date.now(),
       formatVersion: 2,
     },
-    payload: {
-      accounts,
-      passkeys,
-      folders,
-    },
+    payload: sortSyncPayloadCollections({ accounts, passkeys, folders }),
   };
 }
 
@@ -2113,11 +2129,7 @@ async function buildSyncBundle() {
       logicalClockMs: Date.now(),
       formatVersion: 2,
     },
-    payload: {
-      accounts,
-      passkeys,
-      folders,
-    },
+    payload: sortSyncPayloadCollections({ accounts, passkeys, folders }),
   };
 }
 
@@ -2581,8 +2593,10 @@ async function createFolderFromPrompt() {
 
   const now = Date.now();
   const nextFolderId = (globalThis.crypto?.randomUUID?.() || stableUuidFromText(`folder|${name}|${now}`)).toLowerCase();
+  const storedData = await readBusinessDataFromStore();
+  const storedFolders = Array.isArray(storedData.folders) ? storedData.folders : [];
   const nextFolders = sortFoldersForDisplay([
-    ...foldersRaw.map(normalizeFolderShape),
+    ...storedFolders.map(normalizeFolderShape),
     normalizeFolderShape({
       id: nextFolderId,
       name,
@@ -2693,6 +2707,8 @@ async function deleteFolder(folderId) {
 
   const now = Date.now();
   const deviceName = await getDeviceName();
+  const storedData = await readBusinessDataFromStore();
+  const storedFolders = Array.isArray(storedData.folders) ? storedData.folders : [];
   let removedFromAccountCount = 0;
 
   const nextAccounts = cloneAccounts(accountsRaw).map((account) => {
@@ -2713,9 +2729,19 @@ async function deleteFolder(folderId) {
     return nextAccount;
   });
   const nextFolders = sortFoldersForDisplay(
-    foldersRaw
-      .map(normalizeFolderShape)
-      .filter((item) => normalizeFolderId(item?.id) !== normalizedFolderId)
+    storedFolders
+      .map((item) => {
+        const normalized = normalizeFolderShape(item);
+        if (normalizeFolderId(normalized.id) !== normalizedFolderId) return normalized;
+        return {
+          ...normalized,
+          isDeleted: true,
+          isPermanentlyDeleted: true,
+          deletedAtMs: now,
+          deletedDeviceName: deviceName,
+          updatedAtMs: now,
+        };
+      })
   );
 
   await writeBusinessDataToStore({
@@ -3685,6 +3711,8 @@ async function addAccountsMatchingSitesToFolderFromModal() {
   }
   const sites = parseSites(dom.addSitesToFolderInput.value || "");
   const autoAddMatchingSites = Boolean(dom.addSitesToFolderAutoAdd.checked);
+  const storedData = await readBusinessDataFromStore();
+  const storedFolders = Array.isArray(storedData.folders) ? storedData.folders : [];
 
   const targetIds = accountsRaw
     .map(normalizeAccountShape)
@@ -3697,7 +3725,7 @@ async function addAccountsMatchingSitesToFolderFromModal() {
     .map((account) => account.accountId);
 
   const next = cloneAccounts(accountsRaw).map(normalizeAccountShape);
-  const nextFolders = foldersRaw.map((item) => {
+  const nextFolders = storedFolders.map((item) => {
     const folder = normalizeFolderShape(item);
     if (normalizeFolderId(folder.id) !== folderId) return folder;
     return {
@@ -4482,6 +4510,10 @@ function normalizePasskeyShape(item) {
     lastUsedAtMs: item?.lastUsedAtMs == null ? null : Number(item.lastUsedAtMs),
     mode: String(item?.mode || "managed"),
     createCompatMethod: normalizedCompat,
+    isDeleted: Boolean(item?.isDeleted),
+    isPermanentlyDeleted: Boolean(item?.isPermanentlyDeleted),
+    deletedAtMs: item?.deletedAtMs == null ? null : Number(item.deletedAtMs),
+    deletedDeviceName: String(item?.deletedDeviceName || "").trim(),
   };
 }
 
@@ -4514,6 +4546,10 @@ function normalizeFolderShape(item) {
     name: safeName,
     matchedSites: normalizeSites(item?.matchedSites || []),
     autoAddMatchingSites: Boolean(item?.autoAddMatchingSites),
+    isDeleted: Boolean(item?.isDeleted),
+    isPermanentlyDeleted: Boolean(item?.isPermanentlyDeleted),
+    deletedAtMs: item?.deletedAtMs == null ? null : Number(item.deletedAtMs),
+    deletedDeviceName: String(item?.deletedDeviceName || "").trim(),
     createdAtMs,
     updatedAtMs: Number(item?.updatedAtMs || createdAtMs),
   };

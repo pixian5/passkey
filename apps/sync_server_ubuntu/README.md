@@ -80,6 +80,9 @@ python3 pass_sync_server.py
   - 仅本地开发测试可显式设置为 `1`
 - `PASS_SYNC_RATE_LIMIT_PER_MINUTE`
   - 每个客户端 IP 每分钟最大请求数，默认 `120`
+- `PASS_SYNC_ALLOWED_ORIGINS`
+  - 可选，逗号分隔的精确 Origin 白名单（例如 `chrome-extension://<扩展ID>,moz-extension://<扩展ID>`）
+  - 默认为空，即不返回 CORS 允许头；服务端同步客户端不依赖 CORS 时无需配置
 - `PASS_SYNC_TLS_CERT` / `PASS_SYNC_TLS_KEY`
   - 同时配置后启用 TLS；生产环境应使用证书和私钥文件，并将 `PASS_SYNC_PORT` 设置为 HTTPS 监听端口
 

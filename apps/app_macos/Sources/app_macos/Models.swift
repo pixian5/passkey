@@ -310,6 +310,10 @@ struct AccountFolder: Codable, Identifiable, Hashable {
     var autoAddMatchingSites: Bool
     let createdAtMs: Int64
     var updatedAtMs: Int64
+    var isDeleted: Bool = false
+    var isPermanentlyDeleted: Bool = false
+    var deletedAtMs: Int64? = nil
+    var deletedDeviceName: String = ""
 }
 
 struct FolderDuplicateAccountGroup: Identifiable, Hashable {
@@ -337,6 +341,10 @@ extension AccountFolder {
         case autoAddMatchingSites
         case createdAtMs
         case updatedAtMs
+        case isDeleted
+        case isPermanentlyDeleted
+        case deletedAtMs
+        case deletedDeviceName
     }
 
     init(from decoder: Decoder) throws {
@@ -353,6 +361,10 @@ extension AccountFolder {
             ?? Int64(Date().timeIntervalSince1970 * 1000)
         updatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMs)
             ?? createdAtMs
+        isDeleted = try container.decodeIfPresent(Bool.self, forKey: .isDeleted) ?? false
+        isPermanentlyDeleted = try container.decodeIfPresent(Bool.self, forKey: .isPermanentlyDeleted) ?? false
+        deletedAtMs = try container.decodeIfPresent(Int64.self, forKey: .deletedAtMs)
+        deletedDeviceName = try container.decodeIfPresent(String.self, forKey: .deletedDeviceName) ?? ""
     }
 
     func encode(to encoder: Encoder) throws {
@@ -363,6 +375,10 @@ extension AccountFolder {
         try container.encode(autoAddMatchingSites, forKey: .autoAddMatchingSites)
         try container.encode(createdAtMs, forKey: .createdAtMs)
         try container.encode(updatedAtMs, forKey: .updatedAtMs)
+        try container.encode(isDeleted, forKey: .isDeleted)
+        try container.encode(isPermanentlyDeleted, forKey: .isPermanentlyDeleted)
+        try container.encode(deletedAtMs, forKey: .deletedAtMs)
+        try container.encode(deletedDeviceName, forKey: .deletedDeviceName)
     }
 }
 
@@ -481,6 +497,10 @@ struct PasskeyRecord: Codable, Hashable {
     var lastUsedAtMs: Int64?
     var mode: String
     var createCompatMethod: String?
+    var isDeleted: Bool? = nil
+    var isPermanentlyDeleted: Bool? = nil
+    var deletedAtMs: Int64? = nil
+    var deletedDeviceName: String? = nil
 }
 
 enum JSONValue: Codable, Hashable {

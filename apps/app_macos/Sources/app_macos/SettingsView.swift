@@ -672,9 +672,9 @@ struct SettingsView: View {
         let popupButton = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26), pullsDown: false)
         popupButton.addItem(withTitle: "不放入文件夹")
         popupButton.lastItem?.representedObject = ""
-        if !store.folders.isEmpty {
+        if !store.activeFolders.isEmpty {
             popupButton.menu?.addItem(.separator())
-            for folder in store.folders {
+            for folder in store.activeFolders {
                 let item = NSMenuItem(title: folder.name, action: nil, keyEquivalent: "")
                 item.representedObject = folder.id.uuidString.lowercased()
                 popupButton.menu?.addItem(item)

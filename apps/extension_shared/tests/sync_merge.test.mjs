@@ -7,6 +7,7 @@ import {
   mergeAccountCollections,
   mergeFolderCollections,
   mergePasskeyCollections,
+  reconcileAccountFolders,
 } from "../../../core/pass_core/js/sync_merge_core.js";
 
 const helpers = {
@@ -250,6 +251,53 @@ test("Golden Vector: 真实账号、文件夹和 Passkey 合并结果稳定", ()
     assert.ok(actual, `missing passkey ${expected.credentialIdB64u}`);
     for (const [key, value] of Object.entries(expected)) assert.deepEqual(actual[key], value);
   }
+});
+
+test("文件夹永久删除墓碑不会被旧设备记录重新生成", () => {
+  const deleted = helpers.normalizeFolderShape({
+    id: "folder-1",
+    name: "已删除",
+    updatedAtMs: 30,
+    isDeleted: true,
+    isPermanentlyDeleted: true,
+    deletedAtMs: 30,
+  });
+  const staleActive = helpers.normalizeFolderShape({
+    id: "folder-1",
+    name: "旧文件夹",
+    updatedAtMs: 10,
+    isDeleted: false,
+  });
+  const merged = mergeFolderCollections([deleted], [staleActive], helpers)
+    .find((item) => item.id === "folder-1");
+  assert.equal(merged.isDeleted, true);
+  assert.equal(merged.isPermanentlyDeleted, true);
+  assert.deepEqual(
+    reconcileAccountFolders(
+      [{ accountId: "a", recordId: "r", folderIds: ["folder-1"] }],
+      [merged],
+      helpers
+    )[0].folderIds,
+    []
+  );
+});
+
+test("通行密钥永久删除墓碑不会被旧设备记录重新生成", () => {
+  const deleted = helpers.normalizePasskeyShape({
+    credentialIdB64u: "credential-1",
+    updatedAtMs: 30,
+    isDeleted: true,
+    isPermanentlyDeleted: true,
+    deletedAtMs: 30,
+  });
+  const staleActive = helpers.normalizePasskeyShape({
+    credentialIdB64u: "credential-1",
+    updatedAtMs: 10,
+    isDeleted: false,
+  });
+  const merged = mergePasskeyCollections([deleted], [staleActive], helpers)[0];
+  assert.equal(merged.isDeleted, true);
+  assert.equal(merged.isPermanentlyDeleted, true);
 });
 
 test("合并结果缺少本地稳定 ID 时必须阻止写入", () => {

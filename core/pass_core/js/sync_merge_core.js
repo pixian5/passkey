@@ -262,6 +262,14 @@ function mergeSamePasskey(lhs, rhs, h) {
   const right = h.normalizePasskeyShape(rhs);
   const leftUpdated = asNumber(left.updatedAtMs || left.createdAtMs);
   const rightUpdated = asNumber(right.updatedAtMs || right.createdAtMs);
+  const leftDeletedAt = left.isDeleted ? asNumber(left.deletedAtMs) : 0;
+  const rightDeletedAt = right.isDeleted ? asNumber(right.deletedAtMs) : 0;
+  const latestDeletedAt = Math.max(leftDeletedAt, rightDeletedAt);
+  const keepPermanentlyDeleted = Boolean(left.isPermanentlyDeleted || right.isPermanentlyDeleted);
+  const keepDeleted = keepPermanentlyDeleted || (latestDeletedAt > 0 && latestDeletedAt >= Math.max(leftUpdated, rightUpdated));
+  const deletedDeviceName = leftDeletedAt >= rightDeletedAt
+    ? asString(left.deletedDeviceName).trim()
+    : asString(right.deletedDeviceName).trim();
   const newer = leftUpdated >= rightUpdated ? left : right;
   const older = newer === left ? right : left;
   const resolvedAlg = asNumber(newer.alg || older.alg || -7);
@@ -284,6 +292,10 @@ function mergeSamePasskey(lhs, rhs, h) {
       newer.createCompatMethod || older.createCompatMethod,
       resolvedAlg
     ),
+    isDeleted: keepDeleted,
+    isPermanentlyDeleted: keepPermanentlyDeleted,
+    deletedAtMs: keepDeleted ? (latestDeletedAt || Math.max(leftUpdated, rightUpdated)) : null,
+    deletedDeviceName: keepDeleted ? (deletedDeviceName || "ChromeMac") : "",
   };
 }
 
@@ -293,12 +305,24 @@ function mergeSameFolder(lhs, rhs, h) {
   const id = h.normalizeFolderId(left.id || right.id);
   const leftUpdatedAt = asNumber(left.updatedAtMs || left.createdAtMs);
   const rightUpdatedAt = asNumber(right.updatedAtMs || right.createdAtMs);
+  const leftDeletedAt = left.isDeleted ? asNumber(left.deletedAtMs) : 0;
+  const rightDeletedAt = right.isDeleted ? asNumber(right.deletedAtMs) : 0;
+  const latestDeletedAt = Math.max(leftDeletedAt, rightDeletedAt);
+  const keepPermanentlyDeleted = Boolean(left.isPermanentlyDeleted || right.isPermanentlyDeleted);
+  const keepDeleted = keepPermanentlyDeleted || (latestDeletedAt > 0 && latestDeletedAt >= Math.max(leftUpdatedAt, rightUpdatedAt));
+  const deletedDeviceName = leftDeletedAt >= rightDeletedAt
+    ? asString(left.deletedDeviceName).trim()
+    : asString(right.deletedDeviceName).trim();
   if (id === h.fixedNewAccountFolderId) {
     return {
       id,
       name: h.fixedNewAccountFolderName,
       matchedSites: rightUpdatedAt >= leftUpdatedAt ? right.matchedSites || [] : left.matchedSites || [],
       autoAddMatchingSites: rightUpdatedAt >= leftUpdatedAt ? Boolean(right.autoAddMatchingSites) : Boolean(left.autoAddMatchingSites),
+      isDeleted: false,
+      isPermanentlyDeleted: false,
+      deletedAtMs: null,
+      deletedDeviceName: "",
       createdAtMs: Math.min(asNumber(left.createdAtMs), asNumber(right.createdAtMs)),
       updatedAtMs: Math.max(leftUpdatedAt, rightUpdatedAt),
     };
@@ -318,6 +342,10 @@ function mergeSameFolder(lhs, rhs, h) {
     name,
     matchedSites: rightUpdatedAt > leftUpdatedAt ? right.matchedSites || [] : left.matchedSites || [],
     autoAddMatchingSites: rightUpdatedAt > leftUpdatedAt ? Boolean(right.autoAddMatchingSites) : Boolean(left.autoAddMatchingSites),
+    isDeleted: keepDeleted,
+    isPermanentlyDeleted: keepPermanentlyDeleted,
+    deletedAtMs: keepDeleted ? (latestDeletedAt || Math.max(leftUpdatedAt, rightUpdatedAt)) : null,
+    deletedDeviceName: keepDeleted ? (deletedDeviceName || "ChromeMac") : "",
     createdAtMs: Math.min(asNumber(left.createdAtMs), asNumber(right.createdAtMs)),
     updatedAtMs: Math.max(leftUpdatedAt, rightUpdatedAt),
   };
@@ -367,7 +395,11 @@ export function mergePasskeyCollections(local, remote, helpers) {
     const left = asNumber(a?.updatedAtMs || a?.createdAtMs);
     const right = asNumber(b?.updatedAtMs || b?.createdAtMs);
     if (left !== right) return right - left;
-    return asString(a?.credentialIdB64u).localeCompare(asString(b?.credentialIdB64u));
+    const leftId = asString(a?.credentialIdB64u);
+    const rightId = asString(b?.credentialIdB64u);
+    if (leftId < rightId) return -1;
+    if (leftId > rightId) return 1;
+    return 0;
   });
 }
 
@@ -412,7 +444,9 @@ export function mergeFolderCollections(local, remote, helpers) {
 
 export function reconcileAccountFolders(accounts, folders, helpers) {
   const h = resolveHelpers(helpers);
-  const validIds = new Set((Array.isArray(folders) ? folders : []).map((folder) => h.normalizeFolderId(folder?.id)));
+  const validIds = new Set((Array.isArray(folders) ? folders : [])
+    .filter((folder) => !folder?.isDeleted)
+    .map((folder) => h.normalizeFolderId(folder?.id)));
   const values = Array.isArray(accounts) ? accounts : [];
   return values.map((account) => {
     const normalized = h.normalizeAccountShape(account);

@@ -34,6 +34,7 @@ class AppConfig:
     tls_cert_path: Path | None = None
     tls_key_path: Path | None = None
     rate_limit_per_minute: int = 120
+    allowed_origins: tuple[str, ...] = ()
 
     @property
     def auth_enabled(self) -> bool:
@@ -820,8 +821,8 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
         return ", ".join(normalized)
 
     def _cors_response_headers(self) -> dict[str, str]:
-        origin = self.headers.get("Origin")
-        if not origin:
+        origin = self.headers.get("Origin", "").strip()
+        if not origin or origin not in self.server.config.allowed_origins:
             return {}
         return {
             "Access-Control-Allow-Origin": origin,
@@ -986,6 +987,9 @@ def load_config() -> AppConfig:
             # closed with AUTH_NOT_CONFIGURED until an operator adds tokens.
             LOGGER.warning("令牌文件不存在，服务将以未配置认证状态启动: %s", token_path)
     token_scopes = parse_token_scopes(token_value)
+    allowed_origins = tuple(
+        sorted({origin.strip() for origin in os.environ.get("PASS_SYNC_ALLOWED_ORIGINS", "").split(",") if origin.strip()})
+    )
     cert_value = os.environ.get("PASS_SYNC_TLS_CERT", "").strip()
     key_value = os.environ.get("PASS_SYNC_TLS_KEY", "").strip()
     if bool(cert_value) != bool(key_value):
@@ -1000,6 +1004,7 @@ def load_config() -> AppConfig:
         allow_plaintext=os.environ.get("PASS_SYNC_ALLOW_PLAINTEXT", "0").strip().lower() in {"1", "true", "yes"},
         tls_cert_path=Path(cert_value).expanduser() if cert_value else None,
         tls_key_path=Path(key_value).expanduser() if key_value else None,
+        allowed_origins=allowed_origins,
     )
 
 

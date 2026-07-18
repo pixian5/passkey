@@ -115,6 +115,9 @@
         "recordId": {
           "$ref": "#/$defs/uuidLower"
         },
+        "id": {
+          "$ref": "#/$defs/uuidLower"
+        },
         "accountId": {
           "type": "string",
           "minLength": 1
@@ -139,6 +142,12 @@
             "integer",
             "null"
           ]
+        },
+        "pinnedViews": {
+          "type": ["object", "null"],
+          "additionalProperties": {
+            "$ref": "#/$defs/pinnedView"
+          }
         },
         "folderId": {
           "anyOf": [
@@ -192,25 +201,49 @@
           "type": "integer",
           "minimum": 0
         },
+        "usernameUpdatedDeviceName": {
+          "type": "string",
+          "minLength": 1
+        },
         "passwordUpdatedAtMs": {
           "type": "integer",
           "minimum": 0
+        },
+        "passwordUpdatedDeviceName": {
+          "type": "string",
+          "minLength": 1
         },
         "totpUpdatedAtMs": {
           "type": "integer",
           "minimum": 0
         },
+        "totpUpdatedDeviceName": {
+          "type": "string",
+          "minLength": 1
+        },
         "recoveryCodesUpdatedAtMs": {
           "type": "integer",
           "minimum": 0
+        },
+        "recoveryCodesUpdatedDeviceName": {
+          "type": "string",
+          "minLength": 1
         },
         "noteUpdatedAtMs": {
           "type": "integer",
           "minimum": 0
         },
+        "noteUpdatedDeviceName": {
+          "type": "string",
+          "minLength": 1
+        },
         "passkeyUpdatedAtMs": {
           "type": "integer",
           "minimum": 0
+        },
+        "passkeyUpdatedDeviceName": {
+          "type": "string",
+          "minLength": 1
         },
         "isDeleted": {
           "type": "boolean"
@@ -225,7 +258,14 @@
           ],
           "minimum": 0
         },
+        "deletedDeviceName": {
+          "type": "string"
+        },
         "lastOperatedDeviceName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "createdDeviceName": {
           "type": "string",
           "minLength": 1
         },
@@ -256,6 +296,30 @@
           "type": "string",
           "minLength": 1
         },
+        "matchedSites": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "autoAddMatchingSites": {
+          "type": "boolean"
+        },
+        "isDeleted": {
+          "type": "boolean"
+        },
+        "isPermanentlyDeleted": {
+          "type": "boolean"
+        },
+        "deletedAtMs": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "deletedDeviceName": {
+          "type": "string"
+        },
         "createdAtMs": {
           "type": "integer",
           "minimum": 0
@@ -264,6 +328,16 @@
           "type": "integer",
           "minimum": 0
         }
+      }
+    },
+    "pinnedView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pinned", "pinnedSortOrder", "regularSortOrder"],
+      "properties": {
+        "pinned": { "type": "boolean" },
+        "pinnedSortOrder": { "type": ["integer", "null"] },
+        "regularSortOrder": { "type": ["integer", "null"] }
       }
     },
     "passkey": {
@@ -346,6 +420,19 @@
             "user_name_fallback+rs256",
             "unknown_linked"
           ]
+        },
+        "isDeleted": {
+          "type": ["boolean", "null"]
+        },
+        "isPermanentlyDeleted": {
+          "type": ["boolean", "null"]
+        },
+        "deletedAtMs": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "deletedDeviceName": {
+          "type": ["string", "null"]
         }
       }
     }

@@ -14,7 +14,9 @@ const COLLECTION_PASSKEYS = "passkeys";
 const COLLECTION_FOLDERS = "folders";
 const COLLECTION_HISTORY = "history";
 const COLLECTION_SYNC_SECRETS = "syncSecrets";
+const COLLECTION_SYNC_SAFETY_SNAPSHOTS = "syncSafetySnapshots";
 const HISTORY_MAX_ENTRIES = 500;
+const SAFETY_SNAPSHOT_MAX_ENTRIES = 5;
 
 const LEGACY_STORAGE_KEY_ACCOUNTS = "pass.accounts";
 const LEGACY_STORAGE_KEY_PASSKEYS = "pass.passkeys";
@@ -26,6 +28,7 @@ const STORAGE_KEY_SESSION_ENCRYPTION_KEY = "pass.data.sessionEncryptionKey.v2";
 const LEGACY_STORAGE_KEY_SYNC_WEBDAV_PASSWORD = "pass.sync.webdav.password.v2";
 const LEGACY_STORAGE_KEY_SYNC_SERVER_TOKEN = "pass.sync.server.token.v2";
 const LEGACY_STORAGE_KEY_SYNC_ENCRYPTION_KEY = "pass.sync.encryptionKey.v1";
+const LEGACY_STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS = "pass.localSafetySnapshots.v1";
 const LEGACY_DATA_KEY_WRAP_AAD = "pass.data.encryptionKey.v2";
 const DATA_KEY_WRAP_AAD = "pass.data.encryptionKey.v3";
 const DATA_KEY_WRAP_VERSION = 3;
@@ -485,6 +488,48 @@ export async function setSyncSecrets(value) {
   await ensureDataStorageReady();
   const normalized = normalizeSyncSecrets(value);
   await writeCollection(COLLECTION_SYNC_SECRETS, [normalized]);
+  return normalized;
+}
+
+function normalizeSafetySnapshots(value) {
+  return (Array.isArray(value) ? value : [])
+    .filter((item) => item && typeof item === "object" && item.payload && typeof item.payload === "object")
+    .map((item) => ({
+      createdAtMs: Number(item.createdAtMs || 0),
+      reason: String(item.reason || "同步前备份"),
+      payload: item.payload,
+    }))
+    .filter((item) => Number.isFinite(item.createdAtMs) && item.createdAtMs > 0)
+    .sort((lhs, rhs) => rhs.createdAtMs - lhs.createdAtMs)
+    .slice(0, SAFETY_SNAPSHOT_MAX_ENTRIES);
+}
+
+export async function getSafetySnapshots() {
+  await ensureDataStorageReady();
+  const legacyResult = await chrome.storage.local.get([LEGACY_STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]);
+  const legacy = normalizeSafetySnapshots(legacyResult[LEGACY_STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]);
+  let encrypted;
+  try {
+    encrypted = normalizeSafetySnapshots(await readCollection(COLLECTION_SYNC_SAFETY_SNAPSHOTS));
+  } catch (error) {
+    if (String(error?.name || "") !== "OperationError" || legacy.length === 0) throw error;
+    encrypted = [];
+  }
+  const merged = normalizeSafetySnapshots([...encrypted, ...legacy]);
+  if (legacy.length > 0 || JSON.stringify(merged) !== JSON.stringify(encrypted)) {
+    await writeCollection(COLLECTION_SYNC_SAFETY_SNAPSHOTS, merged);
+  }
+  if (legacyResult[LEGACY_STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS] !== undefined) {
+    await chrome.storage.local.remove(LEGACY_STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS);
+  }
+  return merged;
+}
+
+export async function setSafetySnapshots(value) {
+  await ensureDataStorageReady();
+  const normalized = normalizeSafetySnapshots(value);
+  await writeCollection(COLLECTION_SYNC_SAFETY_SNAPSHOTS, normalized);
+  await chrome.storage.local.remove(LEGACY_STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS);
   return normalized;
 }
 

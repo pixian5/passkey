@@ -20,11 +20,13 @@ import {
   ensureDataStorageReady,
   getAllData as getAllDataFromDataStore,
   getAccounts as getAccountsFromDataStore,
+  getSafetySnapshots,
   lockDataEncryption,
   migrateLegacySyncSecrets,
   rewrapDataEncryption,
   setAllData as setAllDataToDataStore,
   setAccounts as setAccountsToDataStore,
+  setSafetySnapshots,
   setSyncSecrets,
   unlockDataEncryption,
 } from "./data_store.js";
@@ -69,7 +71,6 @@ const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
 const STORAGE_KEY_SYNC_PRIMARY_SOURCE = "pass.sync.primarySource.v1";
 const STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
-const STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS = "pass.localSafetySnapshots.v1";
 const CONTEXT_MENU_ID_ALL_ACCOUNTS = "pass.context.all_accounts";
 const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
 const FIXED_NEW_ACCOUNT_FOLDER_NAME = "新账号";
@@ -473,14 +474,9 @@ async function readBusinessDataFromStore() {
 
 async function saveLocalSafetySnapshot(reason) {
   const payload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
-  const result = await chrome.storage.local.get([STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]);
-  const snapshots = Array.isArray(result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS])
-    ? result[STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]
-    : [];
+  const snapshots = await getSafetySnapshots();
   snapshots.unshift({ createdAtMs: Date.now(), reason: String(reason || "同步前备份"), payload });
-  await chrome.storage.local.set({
-    [STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]: snapshots.slice(0, 5),
-  });
+  await setSafetySnapshots(snapshots);
 }
 
 function normalizeSyncPayloadShape(payload) {
@@ -501,7 +497,26 @@ function normalizeSyncPayloadShape(payload) {
 }
 
 function syncPayloadEquals(lhs, rhs) {
-  return JSON.stringify(normalizeSyncPayloadShape(lhs)) === JSON.stringify(normalizeSyncPayloadShape(rhs));
+  return JSON.stringify(sortSyncPayloadCollections(normalizeSyncPayloadShape(lhs)))
+    === JSON.stringify(sortSyncPayloadCollections(normalizeSyncPayloadShape(rhs)));
+}
+
+function sortSyncPayloadCollections(payload) {
+  const compare = (lhs, rhs, keys) => {
+    for (const key of keys) {
+      const left = String(lhs?.[key] || "").trim().toLowerCase();
+      const right = String(rhs?.[key] || "").trim().toLowerCase();
+      if (left < right) return -1;
+      if (left > right) return 1;
+    }
+    return 0;
+  };
+  return {
+    ...payload,
+    accounts: [...(payload?.accounts || [])].sort((lhs, rhs) => compare(lhs, rhs, ["recordId", "accountId"])),
+    passkeys: [...(payload?.passkeys || [])].sort((lhs, rhs) => compare(lhs, rhs, ["credentialIdB64u"])),
+    folders: [...(payload?.folders || [])].sort((lhs, rhs) => compare(lhs, rhs, ["id"])),
+  };
 }
 
 async function writeBusinessDataToStore({ accounts, passkeys, folders }) {
@@ -1318,6 +1333,10 @@ function normalizePasskeyShape(item) {
     lastUsedAtMs: item?.lastUsedAtMs == null ? null : Number(item.lastUsedAtMs),
     mode: String(item?.mode || "managed"),
     createCompatMethod: normalizedCompat,
+    isDeleted: Boolean(item?.isDeleted),
+    isPermanentlyDeleted: Boolean(item?.isPermanentlyDeleted),
+    deletedAtMs: item?.deletedAtMs == null ? null : Number(item.deletedAtMs),
+    deletedDeviceName: String(item?.deletedDeviceName || "").trim(),
   };
 }
 
@@ -1358,6 +1377,10 @@ function normalizeFolderShape(item) {
     name: safeName,
     matchedSites: normalizeSites(item?.matchedSites || []),
     autoAddMatchingSites: Boolean(item?.autoAddMatchingSites),
+    isDeleted: Boolean(item?.isDeleted),
+    isPermanentlyDeleted: Boolean(item?.isPermanentlyDeleted),
+    deletedAtMs: item?.deletedAtMs == null ? null : Number(item.deletedAtMs),
+    deletedDeviceName: String(item?.deletedDeviceName || "").trim(),
     createdAtMs,
     updatedAtMs: Number(item?.updatedAtMs || createdAtMs),
   };
@@ -1519,11 +1542,7 @@ async function buildSyncBundleFromPayload(payload) {
       logicalClockMs: Date.now(),
       formatVersion: 2,
     },
-    payload: {
-      accounts,
-      passkeys,
-      folders,
-    },
+    payload: sortSyncPayloadCollections({ accounts, passkeys, folders }),
   };
 }
 
