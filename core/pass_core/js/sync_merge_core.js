@@ -120,13 +120,43 @@ function mergeFolderMembershipStates(left, right) {
   return Object.fromEntries([...merged.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
 }
 
+function mergeRelationStates(left, right, stateKey, leftValues, rightValues, normalizeId) {
+  const collect = (account, values) => {
+    const states = account?.[stateKey] && typeof account[stateKey] === "object" ? account[stateKey] : {};
+    const result = new Map();
+    for (const [rawId, rawState] of Object.entries(states)) {
+      const id = normalizeId(rawId);
+      if (!id) continue;
+      result.set(id, {
+        isDeleted: Boolean(rawState?.isDeleted),
+        updatedAtMs: asNumber(rawState?.updatedAtMs || account?.updatedAtMs || account?.createdAtMs),
+        deviceName: asString(rawState?.deviceName || account?.lastOperatedDeviceName).trim(),
+      });
+    }
+    for (const rawId of values || []) {
+      const id = normalizeId(rawId);
+      if (id && !result.has(id)) result.set(id, { isDeleted: false, updatedAtMs: asNumber(account?.updatedAtMs || account?.createdAtMs), deviceName: asString(account?.lastOperatedDeviceName).trim() });
+    }
+    return result;
+  };
+  const merged = collect(left, leftValues);
+  for (const [id, incoming] of collect(right, rightValues)) {
+    const current = merged.get(id);
+    if (!current || incoming.updatedAtMs > current.updatedAtMs ||
+        (incoming.updatedAtMs === current.updatedAtMs && incoming.isDeleted && !current.isDeleted) ||
+        (incoming.updatedAtMs === current.updatedAtMs && incoming.isDeleted === current.isDeleted && incoming.deviceName > current.deviceName)) merged.set(id, incoming);
+  }
+  return Object.fromEntries([...merged.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+}
+
 function mergeSameAccount(lhs, rhs, h) {
   const left = h.normalizeAccountShape(lhs);
   const right = h.normalizeAccountShape(rhs);
   const primary = asNumber(left.createdAtMs) <= asNumber(right.createdAtMs) ? left : right;
   const secondary = primary === left ? right : left;
 
-  const mergedSites = h.normalizeSites([...(left.sites || []), ...(right.sites || [])]);
+  const siteAliasStates = mergeRelationStates(left, right, "siteAliasStates", left.sites, right.sites, (id) => asString(id).trim().toLowerCase());
+  const mergedSites = h.normalizeSites(Object.entries(siteAliasStates).filter(([, state]) => !state.isDeleted).map(([id]) => id));
   const canonicalBySites = h.etldPlusOne(mergedSites[0] || "");
   const canonicalSite = canonicalBySites || primary.canonicalSite || secondary.canonicalSite || "";
   const folderMembershipStates = mergeFolderMembershipStates(left, right);
@@ -185,9 +215,8 @@ function mergeSameAccount(lhs, rhs, h) {
     right.updatedAtMs
   );
 
-  const leftPasskeyIds = h.normalizePasskeyCredentialIds(left.passkeyCredentialIds || []);
-  const rightPasskeyIds = h.normalizePasskeyCredentialIds(right.passkeyCredentialIds || []);
-  const mergedPasskeyIds = h.normalizePasskeyCredentialIds([...leftPasskeyIds, ...rightPasskeyIds]);
+  const passkeyLinkStates = mergeRelationStates(left, right, "passkeyLinkStates", left.passkeyCredentialIds, right.passkeyCredentialIds, (id) => asString(id).trim());
+  const mergedPasskeyIds = h.normalizePasskeyCredentialIds(Object.entries(passkeyLinkStates).filter(([, state]) => !state.isDeleted).map(([id]) => id));
   const passkeyUpdatedAtMs = Math.max(
     asNumber(left.passkeyUpdatedAtMs || left.updatedAtMs || left.createdAtMs),
     asNumber(right.passkeyUpdatedAtMs || right.updatedAtMs || right.createdAtMs)
@@ -266,12 +295,14 @@ function mergeSameAccount(lhs, rhs, h) {
     folderIds: mergedFolderIds,
     folderMembershipStates,
     sites: mergedSites.length > 0 ? mergedSites : primary.sites,
+    siteAliasStates,
     username: usernameField.value,
     password: passwordField.value,
     totpSecret: totpField.value,
     recoveryCodes: recoveryField.value,
     note: noteField.value,
     passkeyCredentialIds: mergedPasskeyIds,
+    passkeyLinkStates,
     usernameUpdatedAtMs: usernameField.updatedAtMs,
     usernameUpdatedDeviceName: usernameField.deviceName,
     passwordUpdatedAtMs: passwordField.updatedAtMs,

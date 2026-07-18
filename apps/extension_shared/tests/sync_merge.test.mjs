@@ -318,6 +318,24 @@ test("移出文件夹的关系墓碑会阻止旧设备重新加入", () => {
   assert.equal(merged.folderMembershipStates["folder-1"].isDeleted, true);
 });
 
+test("删除站点别名和 Passkey 关联不会被旧设备复活", () => {
+  const local = helpers.normalizeAccountShape({
+    sites: [],
+    passkeyCredentialIds: [],
+    siteAliasStates: { "old.example": { isDeleted: true, updatedAtMs: 20, deviceName: "A" } },
+    passkeyLinkStates: { credential: { isDeleted: true, updatedAtMs: 20, deviceName: "A" } },
+    updatedAtMs: 20,
+  });
+  const staleRemote = helpers.normalizeAccountShape({
+    sites: ["old.example"],
+    passkeyCredentialIds: ["credential"],
+    updatedAtMs: 10,
+  });
+  const merged = mergeAccountCollections([local], [staleRemote], helpers)[0];
+  assert.equal(merged.sites.includes("old.example"), false);
+  assert.equal(merged.passkeyCredentialIds.includes("credential"), false);
+});
+
 test("通行密钥永久删除墓碑不会被旧设备记录重新生成", () => {
   const deleted = helpers.normalizePasskeyShape({
     credentialIdB64u: "credential-1",

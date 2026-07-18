@@ -180,6 +180,10 @@
           },
           "uniqueItems": true
         },
+        "siteAliasStates": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/relationState" }
+        },
         "username": {
           "type": "string"
         },
@@ -202,6 +206,10 @@
             "minLength": 1
           },
           "uniqueItems": true
+        },
+        "passkeyLinkStates": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/relationState" }
         },
         "usernameUpdatedAtMs": {
           "type": "integer",

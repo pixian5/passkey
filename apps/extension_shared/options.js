@@ -4079,6 +4079,14 @@ async function saveAccountEdit(accountId, draft) {
   const prevSites = normalizeSites(target.sites || []);
   if (nextSites.length > 0 && JSON.stringify(nextSites) !== JSON.stringify(prevSites)) {
     target.sites = nextSites;
+    const nextSiteSet = new Set(nextSites.map((site) => String(site).toLowerCase()));
+    const previousSiteSet = new Set(prevSites.map((site) => String(site).toLowerCase()));
+    const states = { ...(target.siteAliasStates || {}) };
+    for (const site of previousSiteSet) {
+      if (!nextSiteSet.has(site)) states[site] = { isDeleted: true, updatedAtMs: now, deviceName };
+    }
+    for (const site of nextSiteSet) states[site] = { isDeleted: false, updatedAtMs: now, deviceName };
+    target.siteAliasStates = states;
     changed = true;
     historyMessages.push(`站点别名改为${historyValueSnippet(nextSites.join(", "))}`);
   }
@@ -4472,12 +4480,14 @@ function normalizeAccountShape(account) {
       : (account?.folderId == null ? [] : [String(account.folderId)]),
     folderMembershipStates: account?.folderMembershipStates && typeof account.folderMembershipStates === "object" ? account.folderMembershipStates : {},
     sites,
+    siteAliasStates: account?.siteAliasStates && typeof account.siteAliasStates === "object" ? account.siteAliasStates : {},
     username,
     password: String(account?.password || ""),
     totpSecret: String(account?.totpSecret || ""),
     recoveryCodes: String(account?.recoveryCodes || ""),
     note: String(account?.note || ""),
     passkeyCredentialIds,
+    passkeyLinkStates: account?.passkeyLinkStates && typeof account.passkeyLinkStates === "object" ? account.passkeyLinkStates : {},
     usernameUpdatedAtMs: Number(account?.usernameUpdatedAtMs || createdAtMs),
     usernameUpdatedDeviceName: String(account?.usernameUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
     passwordUpdatedAtMs: Number(account?.passwordUpdatedAtMs || createdAtMs),

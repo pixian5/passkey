@@ -25,12 +25,14 @@ struct PasswordAccount: Codable, Identifiable, Hashable {
     var folderIds: [UUID]?
     var folderMembershipStates: [String: AccountFolderMembershipState] = [:]
     var sites: [String]
+    var siteAliasStates: [String: AccountFolderMembershipState] = [:]
     var username: String
     var password: String
     var totpSecret: String
     var recoveryCodes: String
     var note: String
     var passkeyCredentialIds: [String]
+    var passkeyLinkStates: [String: AccountFolderMembershipState] = [:]
     var usernameUpdatedAtMs: Int64
     var usernameUpdatedDeviceName: String
     var passwordUpdatedAtMs: Int64
@@ -106,12 +108,14 @@ extension PasswordAccount {
         case folderIds
         case folderMembershipStates
         case sites
+        case siteAliasStates
         case username
         case password
         case totpSecret
         case recoveryCodes
         case note
         case passkeyCredentialIds
+        case passkeyLinkStates
         case usernameUpdatedAtMs
         case usernameUpdatedDeviceName
         case passwordUpdatedAtMs
@@ -174,6 +178,7 @@ extension PasswordAccount {
         folderIds = try container.decodeIfPresent([UUID].self, forKey: .folderIds)
         folderMembershipStates = try container.decodeIfPresent([String: AccountFolderMembershipState].self, forKey: .folderMembershipStates) ?? [:]
         sites = normalizedSites
+        siteAliasStates = try container.decodeIfPresent([String: AccountFolderMembershipState].self, forKey: .siteAliasStates) ?? [:]
         username = decodedUsername
         password = try container.decodeIfPresent(String.self, forKey: .password) ?? ""
         totpSecret = try container.decodeIfPresent(String.self, forKey: .totpSecret) ?? ""
@@ -184,6 +189,7 @@ extension PasswordAccount {
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty })
         ).sorted()
+        passkeyLinkStates = try container.decodeIfPresent([String: AccountFolderMembershipState].self, forKey: .passkeyLinkStates) ?? [:]
         let fallbackDeviceName = try container.decodeIfPresent(String.self, forKey: .lastOperatedDeviceName)
             ?? "MacDevice"
         usernameUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .usernameUpdatedAtMs) ?? createdAt
@@ -231,12 +237,14 @@ extension PasswordAccount {
         try container.encode(folderIds, forKey: .folderIds)
         try container.encode(folderMembershipStates, forKey: .folderMembershipStates)
         try container.encode(sites, forKey: .sites)
+        try container.encode(siteAliasStates, forKey: .siteAliasStates)
         try container.encode(username, forKey: .username)
         try container.encode(password, forKey: .password)
         try container.encode(totpSecret, forKey: .totpSecret)
         try container.encode(recoveryCodes, forKey: .recoveryCodes)
         try container.encode(note, forKey: .note)
         try container.encode(passkeyCredentialIds, forKey: .passkeyCredentialIds)
+        try container.encode(passkeyLinkStates, forKey: .passkeyLinkStates)
         try container.encode(usernameUpdatedAtMs, forKey: .usernameUpdatedAtMs)
         try container.encode(usernameUpdatedDeviceName, forKey: .usernameUpdatedDeviceName)
         try container.encode(passwordUpdatedAtMs, forKey: .passwordUpdatedAtMs)

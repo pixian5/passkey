@@ -1998,6 +1998,14 @@ final class AccountStore: ObservableObject {
 
         let normalizedSites = parseSites(editSitesText)
         if !normalizedSites.isEmpty, normalizedSites != accounts[index].sites {
+            let previousSites = Set(accounts[index].sites.map(DomainUtils.normalize))
+            let nextSites = Set(normalizedSites.map(DomainUtils.normalize))
+            for site in previousSites.subtracting(nextSites) {
+                accounts[index].siteAliasStates[site] = AccountFolderMembershipState(isDeleted: true, updatedAtMs: now, deviceName: device)
+            }
+            for site in nextSites {
+                accounts[index].siteAliasStates[site] = AccountFolderMembershipState(isDeleted: false, updatedAtMs: now, deviceName: device)
+            }
             accounts[index].sites = normalizedSites
             changed = true
             changedLabels.append("站点别名")
@@ -4371,13 +4379,39 @@ final class AccountStore: ObservableObject {
         return merged
     }
 
+    private func mergeRelationStates(
+        _ left: [String: AccountFolderMembershipState], _ right: [String: AccountFolderMembershipState],
+        leftValues: [String], rightValues: [String], leftUpdatedAt: Int64, rightUpdatedAt: Int64,
+        leftDevice: String, rightDevice: String
+    ) -> [String: AccountFolderMembershipState] {
+        var merged = left
+        for value in leftValues where merged[value] == nil {
+            merged[value] = AccountFolderMembershipState(isDeleted: false, updatedAtMs: leftUpdatedAt, deviceName: leftDevice)
+        }
+        var incoming = right
+        for value in rightValues where incoming[value] == nil {
+            incoming[value] = AccountFolderMembershipState(isDeleted: false, updatedAtMs: rightUpdatedAt, deviceName: rightDevice)
+        }
+        for (id, state) in incoming {
+            guard let current = merged[id] else { merged[id] = state; continue }
+            if state.updatedAtMs > current.updatedAtMs ||
+                (state.updatedAtMs == current.updatedAtMs && state.isDeleted && !current.isDeleted) ||
+                (state.updatedAtMs == current.updatedAtMs && state.isDeleted == current.isDeleted && state.deviceName > current.deviceName) {
+                merged[id] = state
+            }
+        }
+        return merged
+    }
+
     private func mergeSameAccount(_ lhs: PasswordAccount, _ rhs: PasswordAccount) -> PasswordAccount {
         let primary = lhs.createdAtMs <= rhs.createdAtMs ? lhs : rhs
         let secondary = lhs.createdAtMs <= rhs.createdAtMs ? rhs : lhs
 
-        let mergedSites = Array(
-            Set((lhs.sites + rhs.sites).map(DomainUtils.normalize).filter { !$0.isEmpty })
-        ).sorted()
+        let siteAliasStates = mergeRelationStates(lhs.siteAliasStates, rhs.siteAliasStates,
+            leftValues: lhs.sites.map(DomainUtils.normalize), rightValues: rhs.sites.map(DomainUtils.normalize),
+            leftUpdatedAt: lhs.updatedAtMs, rightUpdatedAt: rhs.updatedAtMs,
+            leftDevice: lhs.lastOperatedDeviceName, rightDevice: rhs.lastOperatedDeviceName)
+        let mergedSites = siteAliasStates.filter { !$0.value.isDeleted }.map(\.key).sorted()
         let canonicalBySites = DomainUtils.etldPlusOne(for: mergedSites.first ?? "")
         let canonicalSite = canonicalBySites.isEmpty ? primary.canonicalSite : canonicalBySites
         var folderMembershipStates = lhs.folderMembershipStates
@@ -4463,11 +4497,11 @@ final class AccountStore: ObservableObject {
             rhs.noteUpdatedDeviceName,
             rhs.updatedAtMs
         )
-        let mergedPasskeyCredentialIds = Array(
-            Set((lhs.passkeyCredentialIds + rhs.passkeyCredentialIds)
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty })
-        ).sorted()
+        let passkeyLinkStates = mergeRelationStates(lhs.passkeyLinkStates, rhs.passkeyLinkStates,
+            leftValues: lhs.passkeyCredentialIds, rightValues: rhs.passkeyCredentialIds,
+            leftUpdatedAt: lhs.updatedAtMs, rightUpdatedAt: rhs.updatedAtMs,
+            leftDevice: lhs.lastOperatedDeviceName, rightDevice: rhs.lastOperatedDeviceName)
+        let mergedPasskeyCredentialIds = passkeyLinkStates.filter { !$0.value.isDeleted }.map(\.key).sorted()
         let passkeyUpdatedAtMs = max(lhs.passkeyUpdatedAtMs, rhs.passkeyUpdatedAtMs)
         let passkeyUpdatedDeviceName = lhs.passkeyUpdatedAtMs >= rhs.passkeyUpdatedAtMs
             ? lhs.passkeyUpdatedDeviceName
@@ -4524,12 +4558,14 @@ final class AccountStore: ObservableObject {
             folderIds: mergedFolderIds,
             folderMembershipStates: folderMembershipStates,
             sites: mergedSites.isEmpty ? primary.sites : mergedSites,
+            siteAliasStates: siteAliasStates,
             username: usernameField.value,
             password: passwordField.value,
             totpSecret: totpField.value,
             recoveryCodes: recoveryField.value,
             note: noteField.value,
             passkeyCredentialIds: mergedPasskeyCredentialIds,
+            passkeyLinkStates: passkeyLinkStates,
             usernameUpdatedAtMs: usernameField.updatedAtMs,
             usernameUpdatedDeviceName: usernameField.deviceName,
             passwordUpdatedAtMs: passwordField.updatedAtMs,
