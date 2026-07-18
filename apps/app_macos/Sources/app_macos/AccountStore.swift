@@ -4256,10 +4256,44 @@ final class AccountStore: ObservableObject {
     private func syncOutboxStatusText(_ items: [SyncOutboxItem]) -> String {
         guard !items.isEmpty else { return "" }
         let waiting = items.filter { $0.nextRetryAtMs > nowMs() }.count
-        if waiting == items.count {
-            return "有 \(items.count) 个同步补偿任务等待重试"
+        let details = items.map { item in
+            let kind = item.sourceKey.split(separator: "|", maxSplits: 1).first.map(String.init) ?? "同步源"
+            let label = kind == "server" ? "服务器" : kind == "webdav" ? "WebDAV" : kind == "icloud" ? "iCloud" : kind
+            let retry = item.nextRetryAtMs > nowMs() ? "下次 \(displayTime(item.nextRetryAtMs))" : "可立即重试"
+            return "\(label)：失败 \(item.attempts) 次，\(retry)，\(item.lastError)"
         }
-        return "有 \(items.count) 个同步补偿任务（\(items.count - waiting) 个可立即重试）"
+        return "补偿任务 \(items.count) 个（等待 \(waiting) 个）\n\(details.joined(separator: "\n"))"
+    }
+
+    func retrySyncOutboxNow() {
+        guard syncOutboxCount > 0 else {
+            statusMessage = "同步补偿队列为空"
+            return
+        }
+        syncNow(modeOverride: .merge)
+    }
+
+    func clearInactiveSyncOutboxItems() {
+        guard let data = try? localSQLiteStore.readData(for: LocalDatabaseKeys.syncOutbox),
+              let items = try? decoder.decode([SyncOutboxItem].self, from: data)
+        else {
+            statusMessage = "同步补偿队列为空"
+            return
+        }
+        var activeKeys = Set<String>()
+        if syncEnableSelfHostedServer {
+            activeKeys.insert(syncOutboxSourceKey(kind: "server", url: buildSelfHostedPayloadURL()))
+        }
+        if syncEnableWebDAV {
+            activeKeys.insert(syncOutboxSourceKey(kind: "webdav", url: buildWebDAVResourceURL()))
+        }
+        if syncEnableICloud {
+            activeKeys.insert(syncOutboxSourceKey(kind: "icloud"))
+        }
+        let next = items.filter { activeKeys.contains($0.sourceKey) }
+        let removed = items.count - next.count
+        if removed > 0 { saveSyncOutbox(next) }
+        statusMessage = removed > 0 ? "已清理 \(removed) 个失效同步目标任务" : "没有失效同步目标任务"
     }
 
     private func syncOutboxSourceKey(kind: String, url: URL? = nil) -> String {

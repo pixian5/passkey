@@ -119,6 +119,14 @@ struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                                 .textSelection(.enabled)
+                            HStack(spacing: 8) {
+                                Button("立即重试补偿任务") {
+                                    store.retrySyncOutboxNow()
+                                }
+                                Button("清理失效目标任务") {
+                                    store.clearInactiveSyncOutboxItems()
+                                }
+                            }
                         }
 
                         if store.syncEnableSelfHostedServer {

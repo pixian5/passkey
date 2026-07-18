@@ -63,3 +63,8 @@ export function upsertSyncOutbox(value, { targetKey, payload, error, nowMs = Dat
 export function removeSyncOutbox(value, targetKey) {
   return normalizeSyncOutbox(value).filter((item) => item.targetKey !== targetKey);
 }
+
+export function removeOrphanedSyncOutbox(value, activeTargetKeys) {
+  const active = new Set(Array.from(activeTargetKeys || [], (item) => String(item || "").trim()).filter(Boolean));
+  return normalizeSyncOutbox(value).filter((item) => active.has(item.targetKey));
+}

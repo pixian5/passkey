@@ -5,6 +5,7 @@ import {
   SYNC_OUTBOX_MAX_ATTEMPTS,
   isSyncOutboxReady,
   normalizeSyncOutbox,
+  removeOrphanedSyncOutbox,
   removeSyncOutbox,
   syncOutboxRetryDelayMs,
   syncTargetKey,
@@ -55,4 +56,13 @@ test("同步 outbox 更新、到期判断和删除保持单目标单任务", () 
   assert.equal(second[0].attempts, 2);
   assert.equal(second[0].payload.accounts[0].id, "two");
   assert.equal(removeSyncOutbox(second, targetKey).length, 0);
+});
+
+test("同步 outbox 只清理当前已失效的远端目标", () => {
+  const items = normalizeSyncOutbox([
+    { targetKey: "server|https://active.example", payload: { accounts: [] } },
+    { targetKey: "webdav|https://removed.example", payload: { accounts: [] } },
+  ], 1_000);
+  const remaining = removeOrphanedSyncOutbox(items, new Set(["server|https://active.example"]));
+  assert.deepEqual(remaining.map((item) => item.targetKey), ["server|https://active.example"]);
 });

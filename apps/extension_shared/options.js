@@ -43,6 +43,7 @@ import {
   normalizeSyncEncryptionKey,
 } from "./sync_crypto.js";
 import {
+  removeOrphanedSyncOutbox,
   upsertSyncOutbox,
   syncTargetKey,
 } from "./sync_outbox.js";
@@ -143,6 +144,8 @@ const dom = {
   syncAutoInterval: document.getElementById("syncAutoInterval"),
   syncAutoStatus: document.getElementById("syncAutoStatus"),
   syncOutboxStatus: document.getElementById("syncOutboxStatus"),
+  syncRetryOutboxBtn: document.getElementById("syncRetryOutboxBtn"),
+  syncClearOrphanedOutboxBtn: document.getElementById("syncClearOrphanedOutboxBtn"),
   storageSelfCheckBtn: document.getElementById("storageSelfCheckBtn"),
   exportDiagnosticsBtn: document.getElementById("exportDiagnosticsBtn"),
   restoreLatestSnapshotBtn: document.getElementById("restoreLatestSnapshotBtn"),
@@ -245,12 +248,14 @@ async function init() {
   await loadLockSettings();
   await ensureOptionsUnlocked();
   await ensureDataStorageReady();
-  await refreshSyncOutboxStatus();
   await loadSyncSettings();
+  await refreshSyncOutboxStatus();
   await refresh();
   startTotpRefreshTicker();
 
   dom.syncMergeBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE));
+  dom.syncRetryOutboxBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE));
+  dom.syncClearOrphanedOutboxBtn.addEventListener("click", () => void clearOrphanedSyncOutbox());
   dom.storageSelfCheckBtn.addEventListener("click", () => void runStorageSelfCheck());
   dom.exportDiagnosticsBtn.addEventListener("click", () => void exportStorageDiagnostics());
   dom.restoreLatestSnapshotBtn.addEventListener("click", () => void restoreLatestSafetySnapshot());
@@ -695,18 +700,43 @@ async function refreshSyncOutboxStatus() {
   if (!dom.syncOutboxStatus) return;
   try {
     const items = await getSyncOutbox();
+    dom.syncRetryOutboxBtn.disabled = items.length === 0;
     if (!items.length) {
       dom.syncOutboxStatus.textContent = "同步补偿队列为空";
       return;
     }
     const now = Date.now();
     const waiting = items.filter((item) => Number(item.nextRetryAtMs || 0) > now).length;
-    const lastError = items.find((item) => String(item.lastError || "").trim())?.lastError || "";
-    dom.syncOutboxStatus.textContent = waiting === items.length
-      ? `有 ${items.length} 个同步补偿任务等待重试${lastError ? `：${lastError}` : ""}`
-      : `有 ${items.length} 个同步补偿任务（${items.length - waiting} 个可立即重试）${lastError ? `：${lastError}` : ""}`;
+    const details = items.map((item) => {
+      const [kind, ...targetParts] = String(item.targetKey || "").split("|");
+      const target = targetParts.join("|");
+      let host = target;
+      try { host = new URL(target).host || target; } catch { /* Keep raw target. */ }
+      const label = kind === "server" ? "服务器" : kind === "webdav" ? "WebDAV" : kind;
+      const retryAt = Number(item.nextRetryAtMs || 0);
+      const retry = retryAt > now ? `下次 ${new Date(retryAt).toLocaleTimeString()}` : "可立即重试";
+      const error = String(item.lastError || "").trim();
+      return `${label} ${host}：失败 ${Number(item.attempts || 0)} 次，${retry}${error ? `，${error}` : ""}`;
+    });
+    dom.syncOutboxStatus.textContent = `补偿任务 ${items.length} 个（等待 ${waiting} 个）：${details.join("；")}`;
+    dom.syncOutboxStatus.title = details.join("\n");
   } catch (error) {
     dom.syncOutboxStatus.textContent = `同步补偿队列读取失败：${error.message}`;
+  }
+}
+
+async function clearOrphanedSyncOutbox() {
+  try {
+    const items = await getSyncOutbox();
+    const targets = buildRemoteSyncTargetsFromDom() || [];
+    const activeKeys = new Set(targets.map(syncTargetKey));
+    const next = removeOrphanedSyncOutbox(items, activeKeys);
+    const removed = items.length - next.length;
+    if (removed > 0) await setSyncOutbox(next);
+    await refreshSyncOutboxStatus();
+    setStatus(removed > 0 ? `已清理 ${removed} 个失效同步目标任务` : "没有失效同步目标任务");
+  } catch (error) {
+    setStatus(`清理同步补偿任务失败：${error.message}`);
   }
 }
 
