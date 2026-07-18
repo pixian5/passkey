@@ -127,6 +127,25 @@ test("同一稳定 recordId 但历史 accountId 不同的记录会合并", () =>
   assert.equal(merged[0].password, "right");
 });
 
+test("合并账号会保留最新的 pinnedViews，而不是丢失视图置顶状态", () => {
+  const local = helpers.normalizeAccountShape({
+    pinnedViews: {
+      all: { pinned: true, pinnedSortOrder: 1, regularSortOrder: null },
+    },
+    updatedAtMs: 10,
+  });
+  const remote = helpers.normalizeAccountShape({
+    password: "new-password",
+    passwordUpdatedAtMs: 20,
+    updatedAtMs: 20,
+    pinnedViews: {
+      folder: { pinned: true, pinnedSortOrder: 2, regularSortOrder: null },
+    },
+  });
+  const merged = mergeAccountCollections([local], [remote], helpers)[0];
+  assert.deepEqual(merged.pinnedViews, remote.pinnedViews);
+});
+
 test("181 条本地账号与 23 条远端账号合并时不能丢失本地账号", () => {
   const local = Array.from({ length: 181 }, (_, index) => helpers.normalizeAccountShape({
     accountId: `local-${index}`,

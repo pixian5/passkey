@@ -225,6 +225,10 @@ function mergeSameAccount(lhs, rhs, h) {
     isPinned: Boolean(newerAccount.isPinned),
     pinnedSortOrder: newerAccount.pinnedSortOrder == null ? null : asNumber(newerAccount.pinnedSortOrder),
     regularSortOrder: newerAccount.regularSortOrder == null ? null : asNumber(newerAccount.regularSortOrder),
+    // Pinned state is UI metadata, but it is still synchronized account state.
+    // Keep the newest complete map instead of accidentally dropping it during
+    // a field merge; the native client follows the same last-writer rule.
+    pinnedViews: newerAccount.pinnedViews || olderAccount.pinnedViews || null,
     folderId: mergedFolderIds[0] || (newerAccount.folderId == null ? null : h.normalizeFolderId(newerAccount.folderId)),
     folderIds: mergedFolderIds,
     sites: mergedSites.length > 0 ? mergedSites : primary.sites,

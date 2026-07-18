@@ -2959,7 +2959,7 @@ final class AccountStore: ObservableObject {
                 logicalClockMs: logicalClockMs,
                 formatVersion: 2
             ),
-            payload: payload
+            payload: canonicalSyncPayload(payload)
         )
     }
 
@@ -3005,12 +3005,25 @@ final class AccountStore: ObservableObject {
     }
 
     private func syncPayloadEquals(_ lhs: SyncBundlePayload, _ rhs: SyncBundlePayload) -> Bool {
-        guard let leftData = try? encoder.encode(lhs),
-              let rightData = try? encoder.encode(rhs)
+        guard let leftData = try? encoder.encode(canonicalSyncPayload(lhs)),
+              let rightData = try? encoder.encode(canonicalSyncPayload(rhs))
         else {
             return false
         }
         return leftData == rightData
+    }
+
+    private func canonicalSyncPayload(_ payload: SyncBundlePayload) -> SyncBundlePayload {
+        SyncBundlePayload(
+            accounts: payload.accounts.sorted { lhs, rhs in
+                let leftId = lhs.id.uuidString.lowercased()
+                let rightId = rhs.id.uuidString.lowercased()
+                if leftId != rightId { return leftId < rightId }
+                return lhs.accountId < rhs.accountId
+            },
+            folders: payload.folders.sorted { $0.id.uuidString.lowercased() < $1.id.uuidString.lowercased() },
+            passkeys: payload.passkeys.sorted { $0.credentialIdB64u < $1.credentialIdB64u }
+        )
     }
 
     private func buildWebDAVResourceURL() -> URL? {
