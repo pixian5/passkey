@@ -274,6 +274,7 @@ final class AccountStore: ObservableObject {
     private struct RemotePayloadResponse {
         let payload: SyncBundlePayload?
         let etag: String?
+        let isEncrypted: Bool
     }
 
     private struct SelfHostedPushResult {
@@ -2257,6 +2258,8 @@ final class AccountStore: ObservableObject {
         var mergedPayload = localPayload
         var selfHostedETag: String?
         var webDAVETag: String?
+        var selfHostedRemoteEncrypted = false
+        var webDAVRemoteEncrypted = false
         var selfHostedRemotePayload: SyncBundlePayload?
         var webDAVRemotePayload: SyncBundlePayload?
         var conflictCount = 0
@@ -2293,6 +2296,7 @@ final class AccountStore: ObservableObject {
                     )
                     webDAVETag = remoteResponse.etag
                     webDAVRemotePayload = remoteResponse.payload
+                    webDAVRemoteEncrypted = remoteResponse.isEncrypted
                     if let remotePayload = remoteResponse.payload {
                         if primarySource == .webDAV { primaryRemotePayload = remotePayload }
                         remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: remotePayload)
@@ -2316,6 +2320,7 @@ final class AccountStore: ObservableObject {
                     )
                     selfHostedETag = remoteResponse.etag
                     selfHostedRemotePayload = remoteResponse.payload
+                    selfHostedRemoteEncrypted = remoteResponse.isEncrypted
                     if let remotePayload = remoteResponse.payload {
                         if primarySource == .selfHostedServer { primaryRemotePayload = remotePayload }
                         remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: remotePayload)
@@ -2383,7 +2388,8 @@ final class AccountStore: ObservableObject {
                 let authorization = buildBearerAuthorization(serverAuthToken)
                 switch mode {
                 case .merge:
-                    if let selfHostedRemotePayload,
+                    if selfHostedRemoteEncrypted,
+                       let selfHostedRemotePayload,
                        syncPayloadEquals(mergedPayload, selfHostedRemotePayload)
                     {
                         break
@@ -2398,7 +2404,8 @@ final class AccountStore: ObservableObject {
                     mergedPayload = pushResult.payload
                     changed = changed || pushResult.changedLocalData
                 case .remoteOverwriteLocal:
-                    if let selfHostedRemotePayload,
+                    if selfHostedRemoteEncrypted,
+                       let selfHostedRemotePayload,
                        syncPayloadEquals(mergedPayload, selfHostedRemotePayload)
                     {
                         break
@@ -2454,7 +2461,8 @@ final class AccountStore: ObservableObject {
                 )
                 switch mode {
                 case .merge:
-                    if let webDAVRemotePayload,
+                    if webDAVRemoteEncrypted,
+                       let webDAVRemotePayload,
                        syncPayloadEquals(mergedPayload, webDAVRemotePayload)
                     {
                         break
@@ -2470,7 +2478,8 @@ final class AccountStore: ObservableObject {
                     mergedPayload = pushResult.payload
                     changed = changed || pushResult.changedLocalData
                 case .remoteOverwriteLocal:
-                    if let webDAVRemotePayload,
+                    if webDAVRemoteEncrypted,
+                       let webDAVRemotePayload,
                        syncPayloadEquals(mergedPayload, webDAVRemotePayload)
                     {
                         break
@@ -3088,7 +3097,7 @@ final class AccountStore: ObservableObject {
             )
         }
         if http.statusCode == 404 {
-            return RemotePayloadResponse(payload: nil, etag: nil)
+            return RemotePayloadResponse(payload: nil, etag: nil, isEncrypted: false)
         }
         guard (200 ... 299).contains(http.statusCode) else {
             throw NSError(
@@ -3098,8 +3107,9 @@ final class AccountStore: ObservableObject {
             )
         }
         guard !data.isEmpty else {
-            return RemotePayloadResponse(payload: nil, etag: http.value(forHTTPHeaderField: "ETag"))
+            return RemotePayloadResponse(payload: nil, etag: http.value(forHTTPHeaderField: "ETag"), isEncrypted: false)
         }
+        let isEncrypted = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["schema"] as? String == PassSyncCrypto.schema
         let parsed = try decodeSyncBundle(data)
         return RemotePayloadResponse(
             payload: SyncBundlePayload(
@@ -3107,7 +3117,8 @@ final class AccountStore: ObservableObject {
                 folders: parsed.folders,
                 passkeys: parsed.passkeys
             ),
-            etag: http.value(forHTTPHeaderField: "ETag")
+            etag: http.value(forHTTPHeaderField: "ETag"),
+            isEncrypted: isEncrypted
         )
     }
 

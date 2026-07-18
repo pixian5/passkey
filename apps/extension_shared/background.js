@@ -348,6 +348,7 @@ async function runAutoSync() {
     });
     updateRemoteConcurrencyState(target, remoteResponse.etag);
     target.remotePayload = remoteResponse.payload;
+    target.remoteEncrypted = remoteResponse.encrypted;
     const remotePayload = remoteResponse.payload;
     const remoteAccounts = remotePayload ? remotePayload.accounts.map(normalizeAccountShape) : [];
     const remotePasskeys = remotePayload ? buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys) : [];
@@ -550,7 +551,7 @@ async function buildRemoteSyncTargetsFromStorage() {
     if (username || password) {
       authHeader = `Basic ${base64EncodeUtf8(`${username}:${password}`)}`;
     }
-    targets.push({ label: "WebDAV", kind: "webdav", url, authHeader, supportsEtag: false, remoteEtag: null, isPrimary: primarySource === SYNC_PRIMARY_WEBDAV });
+    targets.push({ label: "WebDAV", kind: "webdav", url, authHeader, supportsEtag: false, remoteEtag: null, remoteEncrypted: false, isPrimary: primarySource === SYNC_PRIMARY_WEBDAV });
   }
 
   if (Boolean(result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER])) {
@@ -562,7 +563,7 @@ async function buildRemoteSyncTargetsFromStorage() {
     const url = new URL("v2/sync/state", normalizedBase).toString();
     const token = secrets.serverToken;
     const authHeader = token ? `Bearer ${token}` : null;
-    targets.push({ label: "服务器", kind: "server", url, authHeader, supportsEtag: true, remoteEtag: null, isPrimary: primarySource === SYNC_PRIMARY_SERVER });
+    targets.push({ label: "服务器", kind: "server", url, authHeader, supportsEtag: true, remoteEtag: null, remoteEncrypted: false, isPrimary: primarySource === SYNC_PRIMARY_SERVER });
   }
 
   const primaryTarget = targets.find((target) => target.kind === primarySource)
@@ -1558,17 +1559,19 @@ async function pullRemotePayload(target) {
     status: response.status,
     etag: response.headers.get("ETag"),
   });
-  if (response.status === 404) return { payload: null, etag: null };
+  if (response.status === 404) return { payload: null, etag: null, encrypted: false };
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const text = await response.text();
   if (!String(text || "").trim()) {
-    return { payload: null, etag: response.headers.get("ETag") };
+    return { payload: null, etag: response.headers.get("ETag"), encrypted: false };
   }
   const key = await getOrCreateSyncEncryptionKey();
-  const parsed = await decryptSyncBundleDocument(JSON.parse(text), key);
+  const envelope = JSON.parse(text);
+  const encrypted = String(envelope?.schema || "") === "pass.sync.encrypted.v1";
+  const parsed = await decryptSyncBundleDocument(envelope, key);
   const payload = parseSyncBundlePayload(parsed, { requireBundleSchema: true });
   if (!payload) throw new Error("远端数据格式错误，仅支持 pass.sync.bundle.v2");
-  return { payload, etag: response.headers.get("ETag") };
+  return { payload, etag: response.headers.get("ETag"), encrypted };
 }
 
 function updateRemoteConcurrencyState(target, etag) {
@@ -1584,7 +1587,7 @@ function createSyncIdempotencyKey() {
 }
 
 async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey = null) {
-  if (target.remotePayload && syncPayloadEquals(target.remotePayload, payload)) {
+  if (target.remoteEncrypted && target.remotePayload && syncPayloadEquals(target.remotePayload, payload)) {
     return { etag: target.remoteEtag, skipped: true };
   }
   const bundle = await buildSyncBundleFromPayload(payload);
@@ -1626,6 +1629,8 @@ async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey
     error.status = response.status;
     throw error;
   }
+  target.remotePayload = payload;
+  target.remoteEncrypted = true;
   return { etag: response.headers.get("ETag") };
 }
 
@@ -1642,6 +1647,7 @@ async function pushRemotePayloadWithRetry(target, payload) {
       const pushResult = await pushRemotePayload(target, candidate, target.remoteEtag, idempotencyKey);
       updateRemoteConcurrencyState(target, pushResult.etag);
       target.remotePayload = candidate;
+      target.remoteEncrypted = true;
       return { payload: candidate };
     } catch (error) {
       if (!target.supportsEtag || error?.status !== 412 || attempt === 2) throw error;
@@ -1649,6 +1655,7 @@ async function pushRemotePayloadWithRetry(target, payload) {
     const latestResponse = await pullRemotePayload(target);
     updateRemoteConcurrencyState(target, latestResponse.etag);
     target.remotePayload = latestResponse.payload;
+    target.remoteEncrypted = latestResponse.encrypted;
     const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
     const localAccounts = Array.isArray(candidate.accounts) ? candidate.accounts.map(normalizeAccountShape) : [];
     const localPasskeys = buildUnifiedPasskeys(localAccounts, Array.isArray(candidate.passkeys) ? candidate.passkeys.map(normalizePasskeyShape) : []);
@@ -1682,6 +1689,8 @@ async function pushRemotePayloadWithMode(target, payload, syncMode) {
   if (syncMode !== SYNC_MODE_MERGE) {
     const pushResult = await pushRemotePayload(target, payload, null, createSyncIdempotencyKey());
     updateRemoteConcurrencyState(target, pushResult.etag);
+    target.remotePayload = payload;
+    target.remoteEncrypted = true;
     return { payload };
   }
   return pushRemotePayloadWithRetry(target, payload);
