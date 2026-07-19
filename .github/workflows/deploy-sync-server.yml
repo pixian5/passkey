@@ -35,6 +35,28 @@ jobs:
             fi
             git fetch origin master
             git checkout -f origin/master
+            if ! getent group pass >/dev/null 2>&1; then
+              sudo groupadd --system pass
+            fi
+            if ! id -u pass >/dev/null 2>&1; then
+              sudo useradd --system --gid pass --home-dir /nonexistent --shell /usr/sbin/nologin pass
+            fi
+            sudo install -d -m 0755 /etc/pass-sync /var/lib/pass-sync /var/lib/pass-sync/backups
+            if [ -f /etc/pass-sync-server.env ] && [ ! -f /etc/pass-sync/pass-sync-server.env ]; then
+              sudo install -m 0600 /etc/pass-sync-server.env /etc/pass-sync/pass-sync-server.env
+            fi
+            if [ -f /etc/bz/certs/server.crt ] && [ -f /etc/bz/certs/server.key ]; then
+              sudo install -d -m 0750 -o pass -g pass /etc/pass-sync/tls
+              sudo install -m 0644 -o pass -g pass /etc/bz/certs/server.crt /etc/pass-sync/tls/server.crt
+              sudo install -m 0600 -o pass -g pass /etc/bz/certs/server.key /etc/pass-sync/tls/server.key
+              if [ -f /etc/pass-sync/pass-sync-server.env ]; then
+                sudo sed -i \
+                  -e 's#^PASS_SYNC_TLS_CERT=.*#PASS_SYNC_TLS_CERT=/etc/pass-sync/tls/server.crt#' \
+                  -e 's#^PASS_SYNC_TLS_KEY=.*#PASS_SYNC_TLS_KEY=/etc/pass-sync/tls/server.key#' \
+                  /etc/pass-sync/pass-sync-server.env
+              fi
+            fi
+            sudo chown -R pass:pass /var/lib/pass-sync
             sudo install -m 0644 apps/sync_server_ubuntu/pass-sync-server.service /etc/systemd/system/pass-sync-server.service
             sudo systemctl daemon-reload
             sudo systemctl restart pass-sync-server

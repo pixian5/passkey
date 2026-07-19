@@ -13,6 +13,7 @@ Environment=PASS_SYNC_DB_PATH=/var/lib/pass-sync/pass_sync.sqlite3
 Environment=PASS_SYNC_BEARER_TOKENS_FILE=/etc/pass-sync/tokens.conf
 # 创建并 chmod 600 /etc/pass-sync/tokens.conf 后启用文件令牌；
 # 未创建前可通过 EnvironmentFile 或环境变量注入 PASS_SYNC_BEARER_TOKENS。
+EnvironmentFile=-/etc/pass-sync-server.env
 EnvironmentFile=-/etc/pass-sync/pass-sync-server.env
 Environment=PASS_SYNC_LOG_LEVEL=INFO
 # Configure this in /etc/pass-sync/pass-sync-server.env. The deployment UI
