@@ -1393,6 +1393,9 @@ struct ContentView: View {
     private func installLocalKeyDownMonitor() {
         guard localKeyDownMonitor == nil else { return }
         localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.window === MainWindowRegistry.window else {
+                return event
+            }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard flags.contains(.command) else {
                 return event

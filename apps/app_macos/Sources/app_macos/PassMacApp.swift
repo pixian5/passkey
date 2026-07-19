@@ -1,6 +1,11 @@
 import AppKit
 import SwiftUI
 
+@MainActor
+enum MainWindowRegistry {
+    static weak var window: NSWindow?
+}
+
 @main
 struct PassMacApp: App {
     @StateObject private var store = AccountStore()
@@ -91,14 +96,12 @@ private struct PassMacShortcutCommands: Commands {
     }
 
     private func selectAllFocusedTextOrAccounts() {
-        if NSApp.keyWindow?.title == "PassMac" {
-            store.handleSelectAllShortcut()
-            return
-        }
         if NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil) {
             return
         }
-        store.handleSelectAllShortcut()
+        if NSApp.keyWindow === MainWindowRegistry.window {
+            store.handleSelectAllShortcut()
+        }
     }
 }
 
@@ -184,9 +187,11 @@ private struct MainWindowCloseTerminator: NSViewRepresentable {
             }
         }
 
+        @MainActor
         func bindIfNeeded(to window: NSWindow?) {
             guard let window, observedWindow !== window else { return }
             observedWindow = window
+            MainWindowRegistry.window = window
             if let closeObserver {
                 NotificationCenter.default.removeObserver(closeObserver)
             }
