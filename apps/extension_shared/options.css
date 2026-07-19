@@ -636,6 +636,27 @@ button {
   transition: opacity 140ms ease-out;
 }
 
+.options-toast.options-toast-success {
+  border-color: #63a56a;
+  background: linear-gradient(180deg, #e8f8ea 0%, #d5f2d9 100%);
+  color: #1d5b2c;
+  box-shadow: 0 10px 22px rgba(24, 68, 33, 0.24);
+}
+
+.options-toast.options-toast-error {
+  border-color: #d46a6a;
+  background: linear-gradient(180deg, #fdecec 0%, #f8d4d4 100%);
+  color: #8a1f1f;
+  box-shadow: 0 10px 22px rgba(120, 24, 24, 0.22);
+}
+
+.options-toast.options-toast-warning {
+  border-color: #d2b14a;
+  background: linear-gradient(180deg, #fff8df 0%, #ffe9a8 100%);
+  color: #6a5208;
+  box-shadow: 0 10px 22px rgba(120, 92, 16, 0.2);
+}
+
 .options-toast.options-toast-show {
   opacity: 1;
 }

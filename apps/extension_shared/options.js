@@ -1098,17 +1098,13 @@ async function clearAll() {
 async function exportSyncBundle() {
   try {
     const encryptionKey = normalizeSyncEncryptionKey(dom.syncEncryptionKey.value);
-    if (!encryptionKey) {
-      setStatus("同步包导出已停止：请先配置 256 位同步加密密钥，避免密码以明文落盘");
-      return;
-    }
     const bundle = await buildSyncBundle();
     const encrypted = await encryptSyncBundleDocument(bundle, encryptionKey);
     const fileName = `pass-sync-bundle-${formatFileTimestamp(bundle.exportedAtMs)}.json`;
     const text = JSON.stringify(encrypted, null, 2);
     await downloadTextFile(fileName, text, "application/json");
     setStatus(
-      `同步包已导出（已加密）：${bundle.payload.accounts.length} 条账号，` +
+      `同步包已导出${encryptionKey ? "（已加密）" : "（未加密，请妥善保管）"}：${bundle.payload.accounts.length} 条账号，` +
         `${bundle.payload.passkeys.length} 条通行密钥，${bundle.payload.folders.length} 个文件夹`
     );
   } catch (error) {
@@ -1485,9 +1481,6 @@ async function previewSyncWithRemote() {
   dom.syncPreviewStatus.textContent = "正在拉取远端并计算预览…";
   try {
     if (!(await saveSyncSettings())) throw new Error("同步配置无效");
-    if (!normalizeSyncEncryptionKey(dom.syncEncryptionKey.value)) {
-      throw new Error("请先配置 256 位同步加密密钥");
-    }
     const targets = buildRemoteSyncTargetsFromDom();
     if (!targets || targets.length === 0) throw new Error("请先启用同步源");
     const localStored = await readBusinessDataFromStore();
@@ -4928,6 +4921,22 @@ function toMultilineHtml(value) {
   return escapeHtml(text).replaceAll("\n", "<br/>");
 }
 
+function classifyToastTone(message) {
+  const text = String(message || "").trim();
+  const lower = text.toLowerCase();
+  const errorTokens = [
+    "失败", "错误", "无法", "不能", "拒绝", "无效", "禁止", "不匹配", "已停止",
+    "缺失", "不存在", "超时", "异常", "未找到", "不正确", "error", "failed", "fail",
+  ];
+  if (errorTokens.some((token) => text.includes(token) || lower.includes(token))) return "error";
+  const warningTokens = [
+    "警告", "请先", "请确认", "已取消", "取消", "暂无", "未启用", "未配置", "注意",
+    "跳过", "未选择", "不完整", "warning", "warn", "cancel",
+  ];
+  if (warningTokens.some((token) => text.includes(token) || lower.includes(token))) return "warning";
+  return "success";
+}
+
 function setStatus(message) {
   const text = String(message || "").trim();
   if (!text) return;
@@ -4947,7 +4956,11 @@ function showOptionsToast(message) {
     toast.className = "options-toast";
     document.body.appendChild(toast);
   }
-  toast.textContent = String(message || "");
+  const text = String(message || "");
+  const tone = classifyToastTone(text);
+  toast.textContent = text;
+  toast.classList.remove("options-toast-success", "options-toast-error", "options-toast-warning");
+  toast.classList.add(`options-toast-${tone}`);
   toast.classList.add("options-toast-show");
   if (optionsToastTimer != null) {
     clearTimeout(optionsToastTimer);

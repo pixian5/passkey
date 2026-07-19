@@ -332,7 +332,7 @@ function resolvePasskeyReadAccountLabel(response) {
   return "";
 }
 
-function showPassPageToast(message) {
+function showPassPageToast(message, tone = "success") {
   const text = String(message || "").trim();
   if (!text) return;
 
@@ -347,17 +347,38 @@ function showPassPageToast(message) {
     toast.style.maxWidth = "min(420px, calc(100vw - 28px))";
     toast.style.padding = "10px 12px";
     toast.style.borderRadius = "10px";
-    toast.style.border = "1px solid #63a56a";
-    toast.style.background = "linear-gradient(180deg, #e8f8ea 0%, #d5f2d9 100%)";
-    toast.style.color = "#1d5b2c";
     toast.style.font = '600 24px/1.4 "SF Pro Text", "PingFang SC", sans-serif';
-    toast.style.boxShadow = "0 12px 28px rgba(24, 68, 33, 0.22)";
     toast.style.pointerEvents = "none";
     toast.style.opacity = "0";
     toast.style.transition = "opacity 140ms ease-out";
     (document.documentElement || document.body).appendChild(toast);
   }
 
+  const styles = {
+    success: {
+      border: "1px solid #63a56a",
+      background: "linear-gradient(180deg, #e8f8ea 0%, #d5f2d9 100%)",
+      color: "#1d5b2c",
+      shadow: "0 12px 28px rgba(24, 68, 33, 0.22)",
+    },
+    error: {
+      border: "1px solid #d46a6a",
+      background: "linear-gradient(180deg, #fdecec 0%, #f8d4d4 100%)",
+      color: "#8a1f1f",
+      shadow: "0 12px 28px rgba(120, 24, 24, 0.22)",
+    },
+    warning: {
+      border: "1px solid #d2b14a",
+      background: "linear-gradient(180deg, #fff8df 0%, #ffe9a8 100%)",
+      color: "#6a5208",
+      shadow: "0 12px 28px rgba(120, 92, 16, 0.2)",
+    },
+  };
+  const style = styles[tone] || styles.success;
+  toast.style.border = style.border;
+  toast.style.background = style.background;
+  toast.style.color = style.color;
+  toast.style.boxShadow = style.shadow;
   toast.textContent = text;
   toast.style.opacity = "1";
 

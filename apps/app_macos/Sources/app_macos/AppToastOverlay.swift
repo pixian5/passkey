@@ -42,22 +42,56 @@ struct AppToastOverlay: ViewModifier {
     }
 
     private func toastLabel(text: String) -> some View {
-        Text(text)
+        let style = store.toastStyle
+        return Text(text)
             .font(store.textFont(size: store.scaledTextSize(15), weight: .semibold))
             .multilineTextAlignment(.center)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
-            .foregroundStyle(.white)
+            .foregroundStyle(style.foregroundColor)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.green.opacity(0.9))
+                    .fill(style.backgroundColor)
             )
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.green.opacity(0.95), lineWidth: 1)
+                    .stroke(style.borderColor, lineWidth: 1)
             )
             .shadow(radius: 8)
+    }
+}
+
+extension AccountStore.ToastStyle {
+    var backgroundColor: Color {
+        switch self {
+        case .success:
+            return Color.green.opacity(0.92)
+        case .error:
+            return Color.red.opacity(0.92)
+        case .warning:
+            return Color.yellow.opacity(0.95)
+        }
+    }
+
+    var borderColor: Color {
+        switch self {
+        case .success:
+            return Color.green.opacity(0.98)
+        case .error:
+            return Color.red.opacity(0.98)
+        case .warning:
+            return Color.orange.opacity(0.9)
+        }
+    }
+
+    var foregroundColor: Color {
+        switch self {
+        case .success, .error:
+            return .white
+        case .warning:
+            return Color(red: 0.35, green: 0.27, blue: 0.05)
+        }
     }
 }
 

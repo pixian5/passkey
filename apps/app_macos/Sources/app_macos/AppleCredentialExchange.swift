@@ -58,7 +58,9 @@ enum AppleCredentialExchangeMapper {
 
         var exportedPasskeyIDs = Set<String>()
         var items = try activeAccounts.map { account in
-            exportedPasskeyIDs.formUnion(account.passkeyCredentialIds)
+            exportedPasskeyIDs.formUnion(
+                account.passkeyCredentialIds.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            )
             let credentials = try exportCredentials(for: account, passkeysById: passkeysById)
             return ASImportableItem(
                 id: stableDataID("item|\(account.accountId)"),

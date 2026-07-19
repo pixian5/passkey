@@ -86,6 +86,12 @@ final class AccountStore: ObservableObject {
     }
 
     @Published var deviceName: String = ""
+    enum ToastStyle: String, Equatable {
+        case success
+        case error
+        case warning
+    }
+
     @Published var statusMessage: String = "" {
         didSet {
             let message = statusMessage.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -93,7 +99,7 @@ final class AccountStore: ObservableObject {
             nextStatusAllowsUndoMove = false
             isTopToastUndoAvailable = allowsUndoMove
             guard !message.isEmpty else { return }
-            showToast(message)
+            showToast(message, style: Self.classifyToastStyle(message))
         }
     }
     @Published var createSitesText: String = ""
@@ -156,6 +162,7 @@ final class AccountStore: ObservableObject {
         }
     }
     @Published private(set) var toastMessage: String = ""
+    @Published private(set) var toastStyle: ToastStyle = .success
     @Published private(set) var isToastVisible: Bool = false
     @Published private(set) var isTopToastUndoAvailable: Bool = false
     @Published private(set) var folders: [AccountFolder] = []
@@ -6272,9 +6279,10 @@ final class AccountStore: ObservableObject {
         return generated
     }
 
-    private func showToast(_ message: String) {
+    private func showToast(_ message: String, style: ToastStyle = .success) {
         toastDismissWorkItem?.cancel()
         toastMessage = message
+        toastStyle = style
         isToastVisible = true
 
         let dismissWorkItem = DispatchWorkItem { [weak self] in
@@ -6293,6 +6301,26 @@ final class AccountStore: ObservableObject {
     private func setStatusMessage(_ message: String, allowsUndoMove: Bool = false) {
         nextStatusAllowsUndoMove = allowsUndoMove
         statusMessage = message
+    }
+
+    static func classifyToastStyle(_ message: String) -> ToastStyle {
+        let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = text.lowercased()
+        let errorTokens = [
+            "失败", "错误", "无法", "不能", "拒绝", "无效", "禁止", "不匹配", "已停止",
+            "缺失", "不存在", "超时", "崩溃", "异常", "未找到", "不正确", "error", "failed", "fail",
+        ]
+        if errorTokens.contains(where: { lower.contains($0) || text.contains($0) }) {
+            return .error
+        }
+        let warningTokens = [
+            "警告", "请先", "请确认", "已取消", "取消", "暂无", "未启用", "未配置", "注意",
+            "跳过", "未选择", "不完整", "warning", "warn", "cancel",
+        ]
+        if warningTokens.contains(where: { lower.contains($0) || text.contains($0) }) {
+            return .warning
+        }
+        return .success
     }
 
     private func showUndoMoveToast(message: String) {

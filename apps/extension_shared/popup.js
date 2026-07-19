@@ -2132,6 +2132,22 @@ function shortenMiddle(value, keep = 18) {
   return `${text.slice(0, head)}...${text.slice(-tail)}`;
 }
 
+function classifyToastTone(message) {
+  const text = String(message || "").trim();
+  const lower = text.toLowerCase();
+  const errorTokens = [
+    "失败", "错误", "无法", "不能", "拒绝", "无效", "禁止", "不匹配", "已停止",
+    "缺失", "不存在", "超时", "异常", "未找到", "不正确", "error", "failed", "fail",
+  ];
+  if (errorTokens.some((token) => text.includes(token) || lower.includes(token))) return "error";
+  const warningTokens = [
+    "警告", "请先", "请确认", "已取消", "取消", "暂无", "未启用", "未配置", "注意",
+    "跳过", "未选择", "不完整", "warning", "warn", "cancel",
+  ];
+  if (warningTokens.some((token) => text.includes(token) || lower.includes(token))) return "warning";
+  return "success";
+}
+
 function setStatus(message) {
   const text = String(message || "").trim();
   if (!text) return;
@@ -2147,7 +2163,10 @@ function setStatus(message) {
     document.body.appendChild(toast);
   }
 
+  const tone = classifyToastTone(text);
   toast.textContent = text;
+  toast.classList.remove("popup-toast-success", "popup-toast-error", "popup-toast-warning");
+  toast.classList.add(`popup-toast-${tone}`);
   toast.classList.add("popup-toast-show");
 
   if (popupToastTimer != null) {
