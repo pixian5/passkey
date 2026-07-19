@@ -604,21 +604,22 @@ struct SettingsView: View {
         panel.allowsMultipleSelection = false
         panel.prompt = "选择"
 
-        let response = panel.runModal()
-        guard response == .OK else {
-            store.statusMessage = "已取消导出"
-            return
-        }
-        guard let selectedDirectory = panel.url else {
-            store.statusMessage = "导出失败：选择目录后未返回有效路径"
-            return
-        }
+        beginExportPanel(panel) { response in
+            guard response == .OK else {
+                store.statusMessage = "已取消导出"
+                return
+            }
+            guard let selectedDirectory = panel.url else {
+                store.statusMessage = "导出失败：选择目录后未返回有效路径"
+                return
+            }
 
-        store.exportDirectoryPath = selectedDirectory.path
-        store.saveExportDirectoryPath(clearBookmark: false)
-        store.saveExportDirectoryBookmark(for: selectedDirectory)
-        let fileURL = selectedDirectory.appendingPathComponent(store.suggestedCsvFileName(), isDirectory: false)
-        store.exportCsv(to: fileURL)
+            store.exportDirectoryPath = selectedDirectory.path
+            store.saveExportDirectoryPath(clearBookmark: false)
+            store.saveExportDirectoryBookmark(for: selectedDirectory)
+            let fileURL = selectedDirectory.appendingPathComponent(store.suggestedCsvFileName(), isDirectory: false)
+            store.exportCsv(to: fileURL, securityScopedDirectoryURL: selectedDirectory)
+        }
     }
 
     private func exportSyncBundleWithPanel() {
@@ -630,17 +631,18 @@ struct SettingsView: View {
         panel.canCreateDirectories = true
         panel.prompt = "导出"
 
-        let response = panel.runModal()
-        guard response == .OK else {
-            store.statusMessage = "已取消同步包导出"
-            return
-        }
-        guard let url = panel.url else {
-            store.statusMessage = "同步包导出失败：确认保存位置后未返回有效路径"
-            return
-        }
+        beginExportPanel(panel) { response in
+            guard response == .OK else {
+                store.statusMessage = "已取消同步包导出"
+                return
+            }
+            guard let url = panel.url else {
+                store.statusMessage = "同步包导出失败：确认保存位置后未返回有效路径"
+                return
+            }
 
-        store.exportSyncBundle(to: url)
+            store.exportSyncBundle(to: url)
+        }
     }
 
     private func importSyncBundleWithPanel() {
@@ -775,17 +777,30 @@ struct SettingsView: View {
         panel.canCreateDirectories = true
         panel.prompt = "导出"
 
-        let response = panel.runModal()
-        guard response == .OK else {
-            store.statusMessage = "已取消\(format.label)密码 CSV 导出"
-            return
-        }
-        guard let url = panel.url else {
-            store.statusMessage = "\(format.label) 密码 CSV 导出失败：确认保存位置后未返回有效路径"
-            return
-        }
+        beginExportPanel(panel) { response in
+            guard response == .OK else {
+                store.statusMessage = "已取消\(format.label)密码 CSV 导出"
+                return
+            }
+            guard let url = panel.url else {
+                store.statusMessage = "\(format.label) 密码 CSV 导出失败：确认保存位置后未返回有效路径"
+                return
+            }
 
-        store.exportBrowserPasswordCsv(to: url, format: format)
+            store.exportBrowserPasswordCsv(to: url, format: format)
+        }
+    }
+
+    private func beginExportPanel(
+        _ panel: NSSavePanel,
+        completion: @escaping (NSApplication.ModalResponse) -> Void
+    ) {
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            panel.beginSheetModal(for: window, completionHandler: completion)
+        } else {
+            panel.begin(completionHandler: completion)
+        }
     }
 }
 
