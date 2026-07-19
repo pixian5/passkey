@@ -118,7 +118,7 @@
           </div>
           <div class="row">
             <label for="syncEncryptionKey">同步加密密钥</label>
-            <input id="syncEncryptionKey" type="text" autocomplete="off" placeholder="远程同步必填 256 位密钥，所有设备必须填写同一值" />
+            <input id="syncEncryptionKey" type="text" autocomplete="off" placeholder="可选：256 位密钥；留空则明文同步" />
             <button id="generateSyncEncryptionKeyBtn" type="button">生成</button>
           </div>
           <p id="syncEncryptionKeyIdStatus" class="hint"></p>
@@ -127,7 +127,7 @@
             <input id="syncPreviousEncryptionKey" type="text" autocomplete="off" placeholder="可选：仅用于读取旧加密数据，下一次成功同步后可清空" />
             <span></span>
           </div>
-          <p class="hint">填写 256 位密钥并在所有设备使用同一值时，使用 AES-256-GCM 端到端加密；留空则使用明文同步包。明文可能包含密码，请仅在可信网络和已允许明文的同步服务器上使用。</p>
+          <p class="hint">同步加密密钥可选。填写 256 位密钥并在所有设备使用同一值时，使用 AES-256-GCM 端到端加密；留空则手动/自动同步与导出均使用明文 `pass.sync.bundle.v2`。明文可能包含密码与通行密钥材料，请仅在可信网络和已允许明文的同步服务器上使用。</p>
           <div class="lock-settings">
             <h4>解锁设置</h4>
             <div class="row lock-row">

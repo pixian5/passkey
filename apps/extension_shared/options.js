@@ -1016,7 +1016,7 @@ async function persistSyncSettings({ showStatus = true } = {}) {
     previousEncryptionKey: normalizeSyncEncryptionKey(dom.syncPreviousEncryptionKey.value),
   };
   if (dom.syncEncryptionKey.value.trim() && !nextSecrets.encryptionKey) {
-    if (showStatus) setStatus("同步加密密钥无效，远程同步必须配置 256 位密钥");
+    if (showStatus) setStatus("同步加密密钥无效，必须是 256 位密钥；留空表示使用明文同步包");
     return false;
   }
   if (dom.syncPreviousEncryptionKey.value.trim() && !nextSecrets.previousEncryptionKey) {

@@ -300,13 +300,10 @@ async function runAutoSync() {
   const targets = await buildRemoteSyncTargetsFromStorage();
   if (!targets || targets.length === 0) return;
   const encryptionKey = await getOrCreateSyncEncryptionKey();
-  if (!encryptionKey) {
-    logSyncFlow("auto-sync-skipped-no-encryption-key");
-    return;
-  }
   logSyncFlow("auto-sync-start", {
     targetLabels: targets.map((item) => item.label),
     targetUrls: targets.map((item) => item.url),
+    encrypted: Boolean(encryptionKey),
     online: typeof navigator !== "undefined" ? navigator.onLine : null,
   });
 

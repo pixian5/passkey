@@ -4901,7 +4901,8 @@ final class AccountStore: ObservableObject {
             folderId: mergedFolderIds.first ?? newerAccount.folderId,
             folderIds: mergedFolderIds,
             folderMembershipStates: folderMembershipStates,
-            sites: mergedSites.isEmpty ? primary.sites : mergedSites,
+            // Empty is intentional: every site may be tombstoned. Never revive primary.sites.
+            sites: mergedSites,
             siteAliasStates: siteAliasStates,
             username: usernameField.value,
             password: passwordField.value,

@@ -193,7 +193,7 @@ struct SettingsView: View {
                         HStack(spacing: 8) {
                             Text("同步加密密钥")
                                 .frame(width: labelColumnWidth, alignment: .leading)
-                            PasswordField(text: $store.syncEncryptionKey, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "留空则不同步加密")
+                            PasswordField(text: $store.syncEncryptionKey, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "留空则明文同步")
                                 .onTapGesture { store.loadSyncSecretsForUI() }
                             Button("生成") {
                                 store.generateSyncEncryptionKey()
@@ -205,7 +205,7 @@ struct SettingsView: View {
                             .buttonStyle(.bordered)
                         }
 
-                        Text("填写 256 位密钥并在所有设备使用同一值时，使用 AES-256-GCM 端到端加密；留空则按明文同步包处理。明文可能包含密码，请仅在可信网络和已允许明文的同步服务器上使用。")
+                        Text("同步加密密钥可选。填写 256 位密钥并在所有设备使用同一值时，使用 AES-256-GCM 端到端加密；留空则手动/自动同步与导出均使用明文同步包。明文可能包含密码，请仅在可信网络和已允许明文的同步服务器上使用。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 

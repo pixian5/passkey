@@ -2,7 +2,7 @@
 
 Runnable macOS desktop app (SwiftUI) for local password management demo.
 
-Remote sync bundles use AES-256-GCM with an independent local sync key. Secrets are stored as 0600 files in the shared app-group directory, so normal launches do not access or prompt for the macOS Keychain. A legacy Keychain item, when present, is read once without UI and migrated to the file store. The key is never sent to the server; browser extensions and other platforms must be configured with the same key. Remote sync and sync-bundle export are blocked until a valid 256-bit key is configured. The self-hosted server is the default primary source; WebDAV/iCloud can be selected as mirrors or the primary source, and preview never writes data.
+Remote sync may use AES-256-GCM with an independent local sync key, or plaintext `pass.sync.bundle.v2` when the key is left empty. Secrets are stored as 0600 files in the shared app-group directory, so normal launches do not access or prompt for the macOS Keychain. A legacy Keychain item, when present, is read once without UI and migrated to the file store. The sync key is never sent to the server; when encryption is used, browser extensions and other platforms must share the same key. Leaving the key empty enables plaintext sync/export (passwords may be exposed on the wire or in files—only use on trusted paths). The self-hosted server is the default primary source; WebDAV/iCloud can be selected as mirrors or the primary source, and preview never writes data.
 
 The app-lock password verifier uses PBKDF2-SHA-256 (310000 iterations). Existing legacy password verifiers are upgraded after the next successful password unlock. Sync endpoints must use HTTPS; HTTP is accepted only for `localhost`, `127.0.0.1`, and `::1` during local development, so network credentials are not sent in plaintext.
 
@@ -44,7 +44,7 @@ swift build
 - 主窗口、设置、新建账号、历史窗口都套了 AppLock 门禁。
 - AutoFill 扩展不再无交互直接出密，会要求用户确认。
 - 本地备份脚本不再把 `pass-db-key-v1` 与加密库放在同一目录；恢复时需单独提供密钥。
-- 同步仍要求 256 位同步加密密钥；CSV 导出会对 `=+-@` 等公式前缀做防护。
+- 同步加密密钥可选：填写 256 位密钥则端到端加密，留空则明文同步/导出（仅建议可信环境）；CSV 导出会对 `=+-@` 等公式前缀做防护。
 
 ## Xcode
 - 所有开发和打包均使用包含 AutoFill 扩展的 [`project.autofill.yml`](/Users/x/code/pass/apps/app_macos/project.autofill.yml)。`package_app.sh` 会自动重新生成该工程，避免扩展被遗漏。

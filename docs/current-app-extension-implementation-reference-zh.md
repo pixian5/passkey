@@ -235,4 +235,4 @@
 - 通行密钥私钥目前在扩展本地存储，安全模型仍需加强（见独立同步文档）。
 - 冲突解决仍依赖设备时间准确性，建议后续把 HLC/向量时钟正式落到同步协议与服务端裁决。
 - 当前真正接入远程同步的是 macOS App、浏览器扩展和 Python 同步服务器；Flutter、Tauri、Android Credential Provider 尚未接入该协议，不能宣称已完成全平台同步。
-- 生产服务器默认拒绝明文 `pass.sync.bundle.v2`，客户端必须配置同一枚同步密钥；明文只适合本地开发测试。
+- 同步服务默认允许明文 `pass.sync.bundle.v2`（`PASS_SYNC_ALLOW_PLAINTEXT` 默认开启）；客户端可留空同步密钥走明文，配置 256 位密钥则使用 AES-256-GCM。生产若需强制加密，将服务器设为 `PASS_SYNC_ALLOW_PLAINTEXT=0` 且客户端全部配置同一密钥。
