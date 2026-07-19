@@ -48,6 +48,7 @@ import {
   upsertSyncOutbox,
   syncTargetKey,
 } from "./sync_outbox.js";
+import { createSyncIdempotencyKey, secureRandomUuid } from "./secure_random.js";
 
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
 const STORAGE_KEY_SYNC_ENABLE_WEBDAV = "pass.sync.enableWebDAV.v3";
@@ -2007,10 +2008,6 @@ function updateRemoteConcurrencyState(target, etag) {
   if (target.kind === "webdav") {
     target.supportsEtag = Boolean(normalizedEtag);
   }
-}
-
-function createSyncIdempotencyKey() {
-  return `pass-${Date.now()}-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`;
 }
 
 async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey = null) {
@@ -4558,9 +4555,7 @@ async function getOrCreateSyncDeviceId() {
   const existing = String(result[STORAGE_KEY_SYNC_DEVICE_ID] || "").trim().toLowerCase();
   if (existing) return existing;
 
-  const generated = String(
-    globalThis.crypto?.randomUUID?.() || stableUuidFromText(`sync-device|${Date.now()}|${Math.random()}`)
-  ).toLowerCase();
+  const generated = secureRandomUuid().toLowerCase();
   await chrome.storage.local.set({ [STORAGE_KEY_SYNC_DEVICE_ID]: generated });
   return generated;
 }

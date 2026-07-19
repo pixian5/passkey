@@ -49,6 +49,7 @@ import {
   normalizeSyncEncryptionKey,
 } from "./sync_crypto.js";
 import { isTrustedExtensionMessageSender } from "./message_security.js";
+import { createSyncIdempotencyKey, secureRandomUuid } from "./secure_random.js";
 
 const PASSKEY_LOG_PREFIX = "[Pass background]";
 const SYNC_LOG_PREFIX = "[Pass sync]";
@@ -1556,9 +1557,7 @@ async function getOrCreateSyncDeviceId() {
   const result = await chrome.storage.local.get([STORAGE_KEY_SYNC_DEVICE_ID]);
   const existing = String(result[STORAGE_KEY_SYNC_DEVICE_ID] || "").trim().toLowerCase();
   if (isUuidLower(existing)) return existing;
-  const generated = String(
-    globalThis.crypto?.randomUUID?.() || stableUuidFromText(`sync-device|${Date.now()}|${Math.random()}`)
-  ).toLowerCase();
+  const generated = secureRandomUuid().toLowerCase();
   await chrome.storage.local.set({ [STORAGE_KEY_SYNC_DEVICE_ID]: generated });
   return generated;
 }
@@ -1638,10 +1637,6 @@ function updateRemoteConcurrencyState(target, etag) {
   if (target.kind === "webdav") {
     target.supportsEtag = Boolean(normalizedEtag);
   }
-}
-
-function createSyncIdempotencyKey() {
-  return `pass-${Date.now()}-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`;
 }
 
 async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey = null) {
