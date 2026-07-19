@@ -1967,50 +1967,95 @@ function fillCredentialInPage(username, password) {
     return true;
   };
 
-  const forms = Array.from(document.forms);
+  const semanticText = (input) => [
+    input.name,
+    input.id,
+    input.autocomplete,
+    input.placeholder,
+    input.getAttribute("aria-label"),
+  ].map((value) => String(value || "").toLowerCase()).join(" ");
+
+  const isUsernameCandidate = (input, strict) => {
+    if (!(input instanceof HTMLInputElement) || !visible(input)) return false;
+    const type = String(input.type || "text").toLowerCase();
+    if (type === "password") return false;
+    if (!["text", "email", "tel", "url", "search", ""].includes(type)) return false;
+    const semantic = semanticText(input);
+    const autocomplete = String(input.autocomplete || "").toLowerCase();
+    if (autocomplete.includes("username") || autocomplete.includes("email") || autocomplete === "tel") return true;
+    if (
+      semantic.includes("user")
+      || semantic.includes("email")
+      || semantic.includes("login")
+      || semantic.includes("account")
+      || semantic.includes("phone")
+      || semantic.includes("mobile")
+    ) {
+      return true;
+    }
+    return !strict && (type === "text" || type === "email" || type === "tel" || type === "");
+  };
+
+  const scoreUsername = (input, passwordInput) => {
+    let score = 0;
+    const type = String(input.type || "text").toLowerCase();
+    const semantic = semanticText(input);
+    const autocomplete = String(input.autocomplete || "").toLowerCase();
+    if (autocomplete.includes("username") || autocomplete.includes("email")) score += 50;
+    if (type === "email") score += 20;
+    if (type === "text" || type === "") score += 8;
+    if (semantic.includes("user") || semantic.includes("login") || semantic.includes("account")) score += 25;
+    if (semantic.includes("email")) score += 22;
+    if (passwordInput?.form && input.form === passwordInput.form) score += 30;
+    if (passwordInput && (passwordInput.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_PRECEDING)) score += 15;
+    return score;
+  };
+
   const allInputs = Array.from(document.querySelectorAll("input"));
   const passwordInputs = allInputs.filter((input) => input.type === "password" && visible(input));
-  if (passwordInputs.length === 0) return;
+  const passwordInput = passwordInputs[0] || null;
+  if (!passwordInput && !username) return;
 
-  const usernameCandidates = allInputs.filter((input) => {
-    const type = (input.type || "").toLowerCase();
-    const name = (input.name || "").toLowerCase();
-    const id = (input.id || "").toLowerCase();
-    const autocomplete = (input.autocomplete || "").toLowerCase();
-    const typeMatch = type === "text" || type === "email" || type === "tel";
-    const semanticMatch =
-      name.includes("user") ||
-      name.includes("email") ||
-      id.includes("user") ||
-      id.includes("email") ||
-      autocomplete.includes("username");
-    return visible(input) && (typeMatch || semanticMatch);
-  });
-
-  const passwordInput = passwordInputs[0];
-  let usernameInput = usernameCandidates[0] || null;
-
+  let usernameInput = null;
+  if (passwordInput) {
+    const form = passwordInput.form || passwordInput.closest("form");
+    const scoped = form
+      ? Array.from(form.querySelectorAll("input"))
+      : allInputs;
+    const candidates = scoped
+      .filter((input) => input !== passwordInput && (isUsernameCandidate(input, true) || (form && form.contains(input) && isUsernameCandidate(input, false))))
+      .sort((left, right) => scoreUsername(right, passwordInput) - scoreUsername(left, passwordInput));
+    usernameInput = candidates[0] || null;
+  }
   if (!usernameInput) {
-    const form = forms.find((formItem) => formItem.contains(passwordInput));
-    if (form) {
-      const localCandidates = Array.from(form.querySelectorAll("input")).filter((input) => {
-        const type = (input.type || "").toLowerCase();
-        return visible(input) && (type === "text" || type === "email");
-      });
-      usernameInput = localCandidates[0] || null;
-    }
+    usernameInput = allInputs
+      .filter((input) => isUsernameCandidate(input, true))
+      .sort((left, right) => scoreUsername(right, passwordInput) - scoreUsername(left, passwordInput))[0] || null;
   }
 
   const setInputValue = (input, value) => {
     if (!input) return;
-    input.focus();
-    input.value = value;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
+    try {
+      input.focus({ preventScroll: true });
+    } catch {
+      try { input.focus(); } catch { /* ignore */ }
+    }
+    const proto = window.HTMLInputElement.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+    if (descriptor?.set) descriptor.set.call(input, value);
+    else input.value = value;
+    try {
+      input.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertReplacementText", data: value }));
+    } catch {
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
     input.dispatchEvent(new Event("change", { bubbles: true }));
+    input.dispatchEvent(new Event("blur", { bubbles: true }));
   };
 
-  setInputValue(usernameInput, username);
-  setInputValue(passwordInput, password);
+  // Always attempt both fields: username first, then password.
+  setInputValue(usernameInput, username || "");
+  setInputValue(passwordInput, password || "");
 }
 
 function createAccount({ site, username, password, createdAtMs, deviceName }) {

@@ -213,50 +213,131 @@ function isVisible(input) {
   return true;
 }
 
-function isFillableCredentialInput(element) {
+function inputSemanticText(element) {
+  if (!(element instanceof HTMLElement)) return "";
+  return [
+    element.getAttribute?.("name"),
+    element.id,
+    element.getAttribute?.("autocomplete"),
+    element.getAttribute?.("placeholder"),
+    element.getAttribute?.("aria-label"),
+    element.getAttribute?.("data-testid"),
+  ].map((value) => String(value || "").toLowerCase()).join(" ");
+}
+
+function isPasswordInput(element) {
+  return element instanceof HTMLInputElement
+    && isVisible(element)
+    && String(element.type || "").toLowerCase() === "password";
+}
+
+function isUsernameLikeInput(element, { strict = true } = {}) {
   if (!(element instanceof HTMLInputElement)) return false;
   if (!isVisible(element)) return false;
+  if (isPasswordInput(element)) return false;
   const type = String(element.type || "text").toLowerCase();
-  if (type === "password") return true;
-  if (!["text", "email", "tel", "url", "search"].includes(type)) return false;
-  const semantic = `${element.name || ""} ${element.id || ""} ${element.autocomplete || ""} ${element.placeholder || ""}`.toLowerCase();
-  return (
+  if (!["text", "email", "tel", "url", "search", ""].includes(type)) return false;
+  const semantic = inputSemanticText(element);
+  const autocomplete = String(element.autocomplete || "").toLowerCase();
+  if (
+    autocomplete.includes("username")
+    || autocomplete.includes("email")
+    || autocomplete === "tel"
+    || autocomplete.includes("nickname")
+  ) {
+    return true;
+  }
+  if (
     semantic.includes("user")
     || semantic.includes("email")
     || semantic.includes("login")
     || semantic.includes("account")
     || semantic.includes("phone")
     || semantic.includes("mobile")
-  );
+    || semantic.includes("member")
+  ) {
+    return true;
+  }
+  // Near a password field, allow plain text/email inputs even without semantic hints.
+  return !strict && (type === "text" || type === "email" || type === "tel" || type === "");
+}
+
+function isFillableCredentialInput(element) {
+  return isPasswordInput(element) || isUsernameLikeInput(element, { strict: true });
+}
+
+function collectVisiblePasswordInputs(scope = document) {
+  return Array.from(scope.querySelectorAll('input[type="password"]')).filter(isVisible);
 }
 
 function findRelatedPasswordInput(usernameInput) {
   if (!(usernameInput instanceof HTMLInputElement)) return null;
   const form = usernameInput.form || usernameInput.closest("form");
   const scope = form || document;
-  const passwordInputs = Array.from(scope.querySelectorAll('input[type="password"]')).filter(isVisible);
-  if (passwordInputs.length === 0) return null;
-  const sameForm = passwordInputs.find((input) => input.form === usernameInput.form || (form && form.contains(input)));
-  return sameForm || passwordInputs[0] || null;
+  const passwordInputs = collectVisiblePasswordInputs(scope);
+  if (passwordInputs.length === 0) return collectVisiblePasswordInputs(document)[0] || null;
+  const sameForm = passwordInputs.find((input) => {
+    return input.form === usernameInput.form || (form && form.contains(input));
+  });
+  if (sameForm) return sameForm;
+  const following = passwordInputs.find((input) => {
+    return Boolean(usernameInput.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  return following || passwordInputs[0] || null;
+}
+
+function scoreUsernameCandidate(input, passwordInput) {
+  let score = 0;
+  const type = String(input.type || "text").toLowerCase();
+  const semantic = inputSemanticText(input);
+  const autocomplete = String(input.autocomplete || "").toLowerCase();
+  if (autocomplete.includes("username") || autocomplete.includes("email")) score += 50;
+  if (type === "email") score += 20;
+  if (type === "text" || type === "") score += 8;
+  if (type === "tel") score += 6;
+  if (semantic.includes("user") || semantic.includes("login") || semantic.includes("account")) score += 25;
+  if (semantic.includes("email")) score += 22;
+  if (semantic.includes("phone") || semantic.includes("mobile")) score += 12;
+  if (passwordInput) {
+    if (input.form && passwordInput.form && input.form === passwordInput.form) score += 30;
+    if (passwordInput.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_PRECEDING) score += 15;
+  }
+  if (input.readOnly || input.disabled) score -= 100;
+  return score;
 }
 
 function findRelatedUsernameInput(passwordInput) {
   if (!(passwordInput instanceof HTMLInputElement)) return null;
   const form = passwordInput.form || passwordInput.closest("form");
-  const scope = form || document;
-  const candidates = Array.from(scope.querySelectorAll("input")).filter((input) => {
-    if (input === passwordInput) return false;
-    return isFillableCredentialInput(input) && String(input.type || "").toLowerCase() !== "password";
-  });
+  const scopes = [];
+  if (form) scopes.push(form);
+  scopes.push(document);
+
+  const seen = new Set();
+  const candidates = [];
+  for (const scope of scopes) {
+    for (const input of scope.querySelectorAll("input")) {
+      if (!(input instanceof HTMLInputElement) || seen.has(input) || input === passwordInput) continue;
+      seen.add(input);
+      // Prefer semantic matches; if none, fall back to plain text inputs in the same form.
+      if (isUsernameLikeInput(input, { strict: true }) || (form && form.contains(input) && isUsernameLikeInput(input, { strict: false }))) {
+        candidates.push(input);
+      }
+    }
+    if (candidates.length > 0) break;
+  }
   if (candidates.length === 0) return null;
-  const preceding = candidates.filter((input) => {
-    return Boolean(input.compareDocumentPosition(passwordInput) & Node.DOCUMENT_POSITION_FOLLOWING);
-  });
-  return preceding[preceding.length - 1] || candidates[0] || null;
+  candidates.sort((left, right) => scoreUsernameCandidate(right, passwordInput) - scoreUsernameCandidate(left, passwordInput));
+  return candidates[0] || null;
 }
 
 function setNativeInputValue(input, value) {
   if (!(input instanceof HTMLInputElement)) return;
+  try {
+    input.focus({ preventScroll: true });
+  } catch {
+    try { input.focus(); } catch { /* ignore */ }
+  }
   const proto = window.HTMLInputElement.prototype;
   const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
   if (descriptor?.set) {
@@ -264,17 +345,25 @@ function setNativeInputValue(input, value) {
   } else {
     input.value = value;
   }
-  input.dispatchEvent(new Event("input", { bubbles: true }));
+  // Fire a broader event set so React/Vue/Angular controlled fields update.
+  try {
+    input.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertReplacementText", data: value }));
+  } catch {
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
   input.dispatchEvent(new Event("change", { bubbles: true }));
+  input.dispatchEvent(new Event("blur", { bubbles: true }));
 }
 
 function fillFocusedCredentialFields(username, password) {
   const active = fillChooserActiveInput;
   let usernameInput = null;
   let passwordInput = null;
+  const wantedUsername = String(username || "");
+  const wantedPassword = String(password || "");
 
   if (active instanceof HTMLInputElement) {
-    if (String(active.type || "").toLowerCase() === "password") {
+    if (isPasswordInput(active)) {
       passwordInput = active;
       usernameInput = findRelatedUsernameInput(active);
     } else {
@@ -283,16 +372,35 @@ function fillFocusedCredentialFields(username, password) {
     }
   }
 
+  // Always resolve the pair so selecting from either field fills both.
   if (!passwordInput) {
-    passwordInput = Array.from(document.querySelectorAll('input[type="password"]')).find(isVisible) || null;
+    passwordInput = collectVisiblePasswordInputs(document)[0] || null;
   }
   if (!usernameInput && passwordInput) {
     usernameInput = findRelatedUsernameInput(passwordInput);
   }
+  if (usernameInput && !passwordInput) {
+    passwordInput = findRelatedPasswordInput(usernameInput);
+  }
 
-  if (usernameInput && username) setNativeInputValue(usernameInput, username);
-  if (passwordInput && password) setNativeInputValue(passwordInput, password);
-  return Boolean((usernameInput && username) || (passwordInput && password));
+  let filledUsername = false;
+  let filledPassword = false;
+  if (usernameInput && wantedUsername) {
+    setNativeInputValue(usernameInput, wantedUsername);
+    filledUsername = usernameInput.value === wantedUsername || Boolean(usernameInput.value);
+  }
+  if (passwordInput && wantedPassword) {
+    setNativeInputValue(passwordInput, wantedPassword);
+    filledPassword = passwordInput.value === wantedPassword || Boolean(passwordInput.value);
+  }
+
+  return {
+    filledUsername,
+    filledPassword,
+    filledAny: filledUsername || filledPassword,
+    filledBoth: Boolean(wantedUsername ? filledUsername : true) && Boolean(wantedPassword ? filledPassword : true)
+      && (filledUsername || filledPassword),
+  };
 }
 
 function hideFillChooser() {
@@ -487,12 +595,16 @@ async function applyFillAccount(accountId) {
     showPassPageToast(response?.error || "填充失败", "error");
     return;
   }
-  const filled = fillFocusedCredentialFields(response.username || "", response.password || "");
+  const result = fillFocusedCredentialFields(response.username || "", response.password || "");
   hideFillChooser();
-  if (filled) {
-    showPassPageToast(`已填充 ${response.username || "账号"}`, "success");
+  if (result.filledUsername && result.filledPassword) {
+    showPassPageToast(`已填充用户名和密码：${response.username || "账号"}`, "success");
+  } else if (result.filledPassword && !result.filledUsername) {
+    showPassPageToast(`已填充密码，但未找到用户名框：${response.username || ""}`.trim(), "warning");
+  } else if (result.filledUsername && !result.filledPassword) {
+    showPassPageToast(`已填充用户名，但未找到密码框：${response.username || ""}`.trim(), "warning");
   } else {
-    showPassPageToast("未找到可填充的输入框", "warning");
+    showPassPageToast("未找到可填充的用户名/密码输入框", "warning");
   }
 }
 
