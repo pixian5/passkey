@@ -1919,8 +1919,7 @@ private struct AccountEditPopup: View {
                         Text("密码")
                             .frame(width: 80, alignment: .leading)
                             .help(fieldHelpText(editingAccount.passwordUpdatedAtMs, editingAccount.passwordUpdatedDeviceName))
-                        TextField("密码", text: $store.editPassword)
-                            .textFieldStyle(.roundedBorder)
+                        PasswordField(text: $store.editPassword, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "密码")
                             .frame(maxWidth: .infinity)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1930,8 +1929,7 @@ private struct AccountEditPopup: View {
                             Text("TOTP")
                                 .frame(width: 80, alignment: .leading)
                                 .help(fieldHelpText(editingAccount.totpUpdatedAtMs, editingAccount.totpUpdatedDeviceName))
-                            TextField("TOTP 种子密钥", text: $store.editTotpSecret)
-                                .textFieldStyle(.roundedBorder)
+                            PasswordField(text: $store.editTotpSecret, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "TOTP 种子密钥")
                                 .frame(maxWidth: .infinity)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)

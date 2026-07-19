@@ -26,6 +26,7 @@
 		7DBF9E3763DEF03C2999C1C8 /* DomainUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A09487F2F423EA5B6B401E3 /* DomainUtils.swift */; };
 		7DE0C2E8A6B3457CC6032939 /* AppLockStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEE2D2CD3411D5E212F6E08A /* AppLockStore.swift */; };
 		814F558759F7E40534701C88 /* AppToastOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = E93F0E304AB6E8C3797AAA42 /* AppToastOverlay.swift */; };
+		89EE086A19DFA111D61302A4 /* PasswordField.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C25080D7FF934F7095E97E4 /* PasswordField.swift */; };
 		8CB1A8E177E0E77C3BCB8C43 /* LocalKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = B27A36689B66024DBA74586B /* LocalKeychain.swift */; };
 		9CDA23BCB4F08E01D8F98399 /* HistoryWindows.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6340E6D0028E8A0735B9DAC /* HistoryWindows.swift */; };
 		9E088675D61DB0F4EE41172D /* AutoFillCredentialProviderViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEC5536DE467F4FC0BA63702 /* AutoFillCredentialProviderViewController.swift */; };
@@ -74,6 +75,7 @@
 		0E0C928C5DF28D261971A48C /* PassSharedAccountRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassSharedAccountRepository.swift; sourceTree = "<group>"; };
 		330C3281E19666C2B4CCC829 /* CredentialIdentitySync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialIdentitySync.swift; sourceTree = "<group>"; };
 		40BB7B94C278D1FC487D8CFD /* BrowserPasswordImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserPasswordImport.swift; sourceTree = "<group>"; };
+		4C25080D7FF934F7095E97E4 /* PasswordField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasswordField.swift; sourceTree = "<group>"; };
 		4DFEDF39603E91A5451DC2C6 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		5DCAD9B40BB7EEF8131C7B72 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		69981A62A424D2BC02DD34F8 /* PassMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PassMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -148,6 +150,7 @@
 				0754637CBC9E0926C0543F48 /* LocalSQLiteStore.swift */,
 				99993A46A4FE0D6D32E70035 /* Models.swift */,
 				B33B5DDB6E674C0CAE5D2004 /* PassMacApp.swift */,
+				4C25080D7FF934F7095E97E4 /* PasswordField.swift */,
 				73F290DB5DC45743BA6C2323 /* ServerProvisioning.swift */,
 				5DCAD9B40BB7EEF8131C7B72 /* SettingsView.swift */,
 				7A0BC1EB784F47F24A5F6ADB /* TotpGenerator.swift */,
@@ -302,6 +305,7 @@
 				AD369B0083D626D74BCE07FA /* PassSharedCrypto.swift in Sources */,
 				408F44161FCF8F9FFFAD9716 /* PassSharedData.swift in Sources */,
 				1865114F46D332413189428B /* PassSharedFileSecretStore.swift in Sources */,
+				89EE086A19DFA111D61302A4 /* PasswordField.swift in Sources */,
 				D889C6C11AB413A445C0DDBC /* ServerProvisioning.swift in Sources */,
 				A703B7D4995B2D1DE2842649 /* SettingsView.swift in Sources */,
 				F76DF1A986627720AECF25F8 /* TotpGenerator.swift in Sources */,

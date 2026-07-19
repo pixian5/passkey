@@ -36,8 +36,7 @@ struct CreateAccountWindowView: View {
                     HStack {
                         Text("密码")
                             .frame(width: 80, alignment: .leading)
-                        TextField("请输入密码", text: $store.createPassword)
-                            .textFieldStyle(.roundedBorder)
+                        PasswordField(text: $store.createPassword, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "请输入密码")
                             .frame(maxWidth: .infinity)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -46,8 +45,7 @@ struct CreateAccountWindowView: View {
                         HStack {
                             Text("TOTP")
                                 .frame(width: 80, alignment: .leading)
-                            TextField("TOTP 种子密钥", text: $store.createTotpSecret)
-                                .textFieldStyle(.roundedBorder)
+                            PasswordField(text: $store.createTotpSecret, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "TOTP 种子密钥")
                                 .frame(maxWidth: .infinity)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)

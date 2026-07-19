@@ -74,6 +74,14 @@ struct SettingsView: View {
                     .padding(.top, 2)
                 }
 
+                GroupBox("密码显示") {
+                    Toggle("全局显示密码、令牌和密钥", isOn: $store.showPasswordsGlobally)
+                        .toggleStyle(.checkbox)
+                    Text("关闭后所有密码框默认隐藏；每个字段旁的眼睛按钮仍可临时切换该字段。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 GroupBox("数据同步") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 16) {
@@ -147,8 +155,7 @@ struct SettingsView: View {
                             HStack(spacing: 8) {
                                 Text("访问令牌")
                                     .frame(width: labelColumnWidth, alignment: .leading)
-                                TextField("部署服务器时配置的 Bearer Token", text: $store.serverAuthToken)
-                                    .textFieldStyle(.roundedBorder)
+                                PasswordField(text: $store.serverAuthToken, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "部署服务器时配置的 Bearer Token")
                                     .onTapGesture { store.loadSyncSecretsForUI() }
                             }
                             Text("服务端主接口为 /v2/sync/state，使用 GET/PUT 交换 pass.sync.bundle.v2；/v1 仅兼容旧客户端。")
@@ -178,8 +185,7 @@ struct SettingsView: View {
                             HStack(spacing: 8) {
                                 Text("密码")
                                     .frame(width: labelColumnWidth, alignment: .leading)
-                                TextField("可选（仅保存于本机）", text: $store.webdavPassword)
-                                    .textFieldStyle(.roundedBorder)
+                                PasswordField(text: $store.webdavPassword, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "可选（仅保存于本机）")
                                     .onTapGesture { store.loadSyncSecretsForUI() }
                             }
                         }
@@ -187,8 +193,7 @@ struct SettingsView: View {
                         HStack(spacing: 8) {
                             Text("同步加密密钥")
                                 .frame(width: labelColumnWidth, alignment: .leading)
-                            TextField("留空则不同步加密", text: $store.syncEncryptionKey)
-                                .textFieldStyle(.roundedBorder)
+                            PasswordField(text: $store.syncEncryptionKey, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "留空则不同步加密")
                                 .onTapGesture { store.loadSyncSecretsForUI() }
                             Button("生成") {
                                 store.generateSyncEncryptionKey()
@@ -213,8 +218,7 @@ struct SettingsView: View {
                         HStack(spacing: 8) {
                             Text("轮换前密钥")
                                 .frame(width: labelColumnWidth, alignment: .leading)
-                            TextField("可选：仅用于读取旧加密数据", text: $store.previousSyncEncryptionKey)
-                                .textFieldStyle(.roundedBorder)
+                            PasswordField(text: $store.previousSyncEncryptionKey, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "可选：仅用于读取旧加密数据")
                                 .onTapGesture { store.loadSyncSecretsForUI() }
                         }
                         Text(store.previousSyncEncryptionKeyIdentifier.isEmpty
@@ -451,8 +455,7 @@ struct SettingsView: View {
 
                         if appLock.isUnlockEnabled {
                             HStack(spacing: 8) {
-                                TextField("输入主密码后可关闭解锁", text: $disableUnlockPassword)
-                                    .textFieldStyle(.roundedBorder)
+                                PasswordField(text: $disableUnlockPassword, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "输入主密码后可关闭解锁")
                                 Button("关闭解锁") {
                                     appLock.disableUnlock(currentPassword: disableUnlockPassword)
                                     if !appLock.isUnlockEnabled {
@@ -466,15 +469,13 @@ struct SettingsView: View {
                             HStack(spacing: 8) {
                                 Text("主密码")
                                     .frame(width: labelColumnWidth, alignment: .leading)
-                                TextField("至少 4 位", text: $newMasterPassword)
-                                    .textFieldStyle(.roundedBorder)
+                                PasswordField(text: $newMasterPassword, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "至少 4 位")
                             }
 
                             HStack(spacing: 8) {
                                 Text("确认密码")
                                     .frame(width: labelColumnWidth, alignment: .leading)
-                                TextField("再次输入主密码", text: $confirmMasterPassword)
-                                    .textFieldStyle(.roundedBorder)
+                                PasswordField(text: $confirmMasterPassword, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "再次输入主密码")
                             }
 
                             Button("设置主密码并启用") {
@@ -884,8 +885,7 @@ private struct ServerProvisioningSheet: View {
                 HStack(spacing: 8) {
                     Text("SSH 密码")
                         .frame(width: 120, alignment: .leading)
-                    TextField("输入服务器登录密码", text: $secret)
-                        .textFieldStyle(.roundedBorder)
+                    PasswordField(text: $secret, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "输入服务器登录密码")
                 }
             } else {
                 VStack(alignment: .leading, spacing: 6) {
@@ -894,23 +894,20 @@ private struct ServerProvisioningSheet: View {
                         .font(.system(.body, design: .monospaced))
                         .frame(minHeight: 128, maxHeight: 190)
                         .overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary))
-                    TextField("私钥口令（可选）", text: $privateKeyPassphrase)
-                        .textFieldStyle(.roundedBorder)
+                    PasswordField(text: $privateKeyPassphrase, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "私钥口令（可选）")
                 }
             }
 
             HStack(spacing: 8) {
                 Text("访问令牌")
                     .frame(width: 120, alignment: .leading)
-                TextField("用于服务端 Bearer Token", text: $accessToken)
-                    .textFieldStyle(.roundedBorder)
+                PasswordField(text: $accessToken, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "用于服务端 Bearer Token")
             }
 
             HStack(spacing: 8) {
                 Text("同步加密密钥")
                     .frame(width: 120, alignment: .leading)
-                TextField("留空则允许明文同步", text: $syncEncryptionKey)
-                    .textFieldStyle(.roundedBorder)
+                PasswordField(text: $syncEncryptionKey, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "留空则允许明文同步")
             }
 
             Text("接入时会先备份服务器现有同步数据库。同步加密密钥不会发送给服务器，只用于决定是否强制加密同步包。")

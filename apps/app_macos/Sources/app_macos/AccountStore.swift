@@ -161,6 +161,11 @@ final class AccountStore: ObservableObject {
             UserDefaults.standard.set(clamped, forKey: Keys.uiToastDurationSeconds)
         }
     }
+    @Published var showPasswordsGlobally: Bool = true {
+        didSet {
+            UserDefaults.standard.set(showPasswordsGlobally, forKey: Keys.showPasswordsGlobally)
+        }
+    }
     @Published private(set) var toastMessage: String = ""
     @Published private(set) var toastStyle: ToastStyle = .success
     @Published private(set) var isToastVisible: Bool = false
@@ -3808,6 +3813,8 @@ final class AccountStore: ObservableObject {
         let savedToastDuration = defaults.double(forKey: Keys.uiToastDurationSeconds)
         uiToastDurationSeconds = savedToastDuration > 0 ? savedToastDuration : 5
 
+        showPasswordsGlobally = defaults.object(forKey: Keys.showPasswordsGlobally) as? Bool ?? true
+
         passkeys = loadPasskeysFromLocalDisk()
         historyEntries = loadHistoryFromLocalDisk()
 
@@ -6500,6 +6507,7 @@ private enum Keys {
     static let uiTextFontSize = "pass.ui.font.textSize"
     static let uiButtonFontSize = "pass.ui.font.buttonSize"
     static let uiToastDurationSeconds = "pass.ui.toast.duration"
+    static let showPasswordsGlobally = "pass.ui.passwords.showGlobally.v1"
     static let syncDiagnostics = "pass.sync.diagnostics.v1"
 }
 

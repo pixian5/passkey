@@ -57,8 +57,7 @@ struct AppLockGateView<Content: View>: View {
                     .foregroundStyle(.secondary)
             }
 
-            TextField("输入主密码", text: $appLock.unlockPasswordInput)
-                .textFieldStyle(.roundedBorder)
+            PasswordField(text: $appLock.unlockPasswordInput, showPasswordsGlobally: $store.showPasswordsGlobally, placeholder: "输入主密码")
                 .focused($isPasswordFocused)
                 .frame(width: 280)
                 .onSubmit {
