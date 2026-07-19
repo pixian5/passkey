@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sqlite3
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -13,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pass_sync_server import AppConfig, build_server, load_config
+from pass_sync_server import AppConfig, build_server, load_config, parse_ascii_decimal
 
 
 def sample_bundle(exported_at_ms: int = 1_777_777_777_777) -> bytes:
@@ -49,6 +51,44 @@ class PassSyncServerTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=5)
         self.temp_dir.cleanup()
+
+    def test_version_id_accepts_ascii_decimal_only(self) -> None:
+        self.assertEqual(parse_ascii_decimal("42"), 42)
+        self.assertEqual(parse_ascii_decimal("٠١"), None)
+        self.assertEqual(parse_ascii_decimal("１２"), None)
+        self.assertEqual(parse_ascii_decimal("+1"), None)
+        self.assertEqual(parse_ascii_decimal(""), None)
+
+    def test_slow_connection_cannot_exhaust_bounded_workers(self) -> None:
+        limited_dir = tempfile.TemporaryDirectory()
+        limited_server = build_server(AppConfig(
+            host="127.0.0.1",
+            port=0,
+            db_path=Path(limited_dir.name) / "limited.sqlite3",
+            token_scopes={"secret-token": "default"},
+            max_concurrent_requests=1,
+            client_timeout_seconds=1.0,
+        ))
+        limited_thread = threading.Thread(target=limited_server.serve_forever, daemon=True)
+        limited_thread.start()
+        slow_client = socket.create_connection(limited_server.server_address, timeout=1)
+        try:
+            slow_client.sendall(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\n")
+            time.sleep(0.05)
+            with self.assertRaises(urllib.error.HTTPError) as context:
+                urllib.request.urlopen(
+                    f"http://127.0.0.1:{limited_server.server_address[1]}/healthz",
+                    timeout=2,
+                )
+            self.assertEqual(context.exception.code, 503)
+            context.exception.close()
+            self.assertGreaterEqual(limited_server.metrics_snapshot()["metrics"]["overloaded"], 1)
+        finally:
+            slow_client.close()
+            limited_server.shutdown()
+            limited_server.server_close()
+            limited_thread.join(timeout=2)
+            limited_dir.cleanup()
 
     def test_missing_token_file_falls_back_to_environment_token(self) -> None:
         previous = {

@@ -80,6 +80,10 @@ python3 pass_sync_server.py
   - 仅本地开发测试可显式设置为 `1`
 - `PASS_SYNC_RATE_LIMIT_PER_MINUTE`
   - 每个客户端 IP 每分钟最大请求数，默认 `120`
+- `PASS_SYNC_CLIENT_TIMEOUT_SECONDS`
+  - 单个连接读取请求头或请求体的最长时间，默认 `15` 秒；超时连接会被释放，避免慢速请求长期占用 worker
+- `PASS_SYNC_MAX_CONCURRENT_REQUESTS`
+  - 同时处理请求上限，默认 `32`；达到上限时新请求返回 `503 SERVER_BUSY`，保护已在处理的同步请求
 - `PASS_SYNC_ALLOWED_ORIGINS`
   - 可选，逗号分隔的精确 Origin 白名单（例如 `chrome-extension://<扩展ID>,moz-extension://<扩展ID>`）
   - 默认为空，即不返回 CORS 允许头；服务端同步客户端不依赖 CORS 时无需配置

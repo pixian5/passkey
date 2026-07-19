@@ -17,6 +17,8 @@ EnvironmentFile=-/etc/pass-sync/pass-sync-server.env
 Environment=PASS_SYNC_LOG_LEVEL=INFO
 Environment=PASS_SYNC_ALLOW_PLAINTEXT=0
 Environment=PASS_SYNC_RATE_LIMIT_PER_MINUTE=120
+Environment=PASS_SYNC_CLIENT_TIMEOUT_SECONDS=15
+Environment=PASS_SYNC_MAX_CONCURRENT_REQUESTS=32
 Environment=PASS_SYNC_TLS_CERT=/etc/bz/certs/server.crt
 Environment=PASS_SYNC_TLS_KEY=/etc/bz/certs/server.key
 ExecStart=/usr/bin/python3 /opt/pass-sync-server/pass_sync_server.py

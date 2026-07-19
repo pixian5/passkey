@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import signal
+import socket
 import sqlite3
 import ssl
 import threading
@@ -35,6 +36,8 @@ class AppConfig:
     tls_cert_path: Path | None = None
     tls_key_path: Path | None = None
     rate_limit_per_minute: int = 120
+    client_timeout_seconds: float = 15.0
+    max_concurrent_requests: int = 32
     allowed_origins: tuple[str, ...] = ()
 
     @property
@@ -478,6 +481,11 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
     server: "PassSyncHTTPServer"
     protocol_version = "HTTP/1.1"
 
+    def setup(self) -> None:
+        # Bound header and body reads so a slow client cannot retain a worker indefinitely.
+        self.request.settimeout(self.server.config.client_timeout_seconds)
+        super().setup()
+
     def do_GET(self) -> None:
         self._dispatch(expect_body=False)
 
@@ -516,12 +524,13 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 raw_version_id = path.removeprefix(version_prefix)
                 if raw_version_id.endswith("/restore"):
                     raw_version_id = raw_version_id.removesuffix("/restore")
-                    restore_version_id = int(raw_version_id) if raw_version_id.isdigit() else None
-                if not raw_version_id.isdigit():
+                    restore_version_id = parse_ascii_decimal(raw_version_id)
+                version_number = parse_ascii_decimal(raw_version_id)
+                if version_number is None:
                     if restore_version_id is None:
                         raise RequestError(HTTPStatus.NOT_FOUND, "NOT_FOUND", "接口不存在。")
                 elif restore_version_id is None:
-                    version_id = int(raw_version_id)
+                    version_id = version_number
             if not (is_payload_path or is_versions_path or is_audit_path or version_id is not None or restore_version_id is not None):
                 raise RequestError(HTTPStatus.NOT_FOUND, "NOT_FOUND", "接口不存在。")
 
@@ -740,7 +749,10 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 "PAYLOAD_TOO_LARGE",
                 f"请求体不能超过 {self.server.config.max_body_bytes} 字节。",
             )
-        raw_body = self.rfile.read(content_length)
+        try:
+            raw_body = self.rfile.read(content_length)
+        except socket.timeout as error:
+            raise RequestError(HTTPStatus.REQUEST_TIMEOUT, "REQUEST_TIMEOUT", "请求体读取超时。") from error
         if len(raw_body) != content_length:
             raise RequestError(HTTPStatus.BAD_REQUEST, "INCOMPLETE_BODY", "请求体长度与 Content-Length 不一致。")
         payload_json, payload_sha256, exported_at_ms = parse_and_validate_bundle(
@@ -843,7 +855,42 @@ class PassSyncHTTPServer(ThreadingHTTPServer):
         self._rate_lock = threading.Lock()
         self._rate_windows: dict[str, tuple[int, int]] = {}
         self._metrics_lock = threading.Lock()
-        self._metrics: dict[str, int] = {"requests": 0, "errors": 0, "rateLimited": 0}
+        self._metrics: dict[str, int] = {"requests": 0, "errors": 0, "rateLimited": 0, "overloaded": 0}
+        self._request_slots = threading.BoundedSemaphore(config.max_concurrent_requests)
+
+    def process_request(self, request: socket.socket, client_address: tuple[str, int]) -> None:
+        if not self._request_slots.acquire(blocking=False):
+            with self._metrics_lock:
+                self._metrics["overloaded"] += 1
+            self._reject_overloaded_connection(request)
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request: socket.socket, client_address: tuple[str, int]) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
+
+    @staticmethod
+    def _reject_overloaded_connection(request: socket.socket) -> None:
+        body = b'{"error":"SERVER_BUSY","message":"server busy"}'
+        response = (
+            b"HTTP/1.1 503 Service Unavailable\r\n"
+            b"Content-Type: application/json; charset=utf-8\r\n"
+            + f"Content-Length: {len(body)}\r\n".encode("ascii")
+            + b"Connection: close\r\n\r\n"
+            + body
+        )
+        try:
+            request.sendall(response)
+        except OSError:
+            pass
 
     def enforce_rate_limit(self, client: str) -> None:
         now = int(time.time() // 60)
@@ -975,6 +1022,13 @@ def current_time_ms() -> int:
     return int(time.time() * 1000)
 
 
+def parse_ascii_decimal(value: str) -> int | None:
+    normalized = str(value)
+    if not normalized or not normalized.isascii() or not normalized.isdecimal():
+        return None
+    return int(normalized)
+
+
 def load_config() -> AppConfig:
     script_dir = Path(__file__).resolve().parent
     db_path = Path(os.environ.get("PASS_SYNC_DB_PATH", script_dir / "data" / "pass_sync.sqlite3")).expanduser()
@@ -1007,6 +1061,8 @@ def load_config() -> AppConfig:
         token_scopes=token_scopes,
         max_body_bytes=max(1024, int(os.environ.get("PASS_SYNC_MAX_BODY_BYTES", str(2 * 1024 * 1024)))),
         rate_limit_per_minute=max(10, int(os.environ.get("PASS_SYNC_RATE_LIMIT_PER_MINUTE", "120"))),
+        client_timeout_seconds=max(1.0, float(os.environ.get("PASS_SYNC_CLIENT_TIMEOUT_SECONDS", "15"))),
+        max_concurrent_requests=max(1, int(os.environ.get("PASS_SYNC_MAX_CONCURRENT_REQUESTS", "32"))),
         allow_plaintext=os.environ.get("PASS_SYNC_ALLOW_PLAINTEXT", "0").strip().lower() in {"1", "true", "yes"},
         tls_cert_path=Path(cert_value).expanduser() if cert_value else None,
         tls_key_path=Path(key_value).expanduser() if key_value else None,
