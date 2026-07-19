@@ -63,6 +63,16 @@ function newerField(
     };
   }
 
+  // Account-level updates can describe unrelated edits (for example a note
+  // change). They must not make an older empty field erase a credential when
+  // the field clocks are tied.
+  if (!leftValue && rightValue) {
+    return { value: rightValue, updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
+  }
+  if (leftValue && !rightValue) {
+    return { value: leftValue, updatedAtMs: leftUpdated, deviceName: asString(lhsDeviceName) };
+  }
+
   const leftAccountUpdated = asNumber(lhsAccountUpdatedAt);
   const rightAccountUpdated = asNumber(rhsAccountUpdatedAt);
   if (leftAccountUpdated > rightAccountUpdated) {
@@ -72,9 +82,6 @@ function newerField(
     return { value: rightValue, updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
   }
 
-  if (!leftValue && rightValue) {
-    return { value: rightValue, updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
-  }
   const leftDevice = stableTieValue(lhsDeviceName);
   const rightDevice = stableTieValue(rhsDeviceName);
   if (leftDevice !== rightDevice) {

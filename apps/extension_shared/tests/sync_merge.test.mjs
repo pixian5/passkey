@@ -77,6 +77,23 @@ test("相同时间戳的字段冲突按设备名确定性裁决", () => {
   assert.equal(second.password, "right");
 });
 
+test("字段时钟并列时，后续无关账号修改不能让空密码覆盖已有密码", () => {
+  const local = helpers.normalizeAccountShape({
+    password: "",
+    passwordUpdatedAtMs: 100,
+    passwordUpdatedDeviceName: "Device-Z",
+    updatedAtMs: 200,
+  });
+  const remote = helpers.normalizeAccountShape({
+    password: "remote-secret",
+    passwordUpdatedAtMs: 100,
+    passwordUpdatedDeviceName: "Device-A",
+    updatedAtMs: 100,
+  });
+  assert.equal(mergeAccountCollections([local], [remote], helpers)[0].password, "remote-secret");
+  assert.equal(mergeAccountCollections([remote], [local], helpers)[0].password, "remote-secret");
+});
+
 test("恢复时间晚于删除墓碑时，恢复状态胜出", () => {
   const restored = helpers.normalizeAccountShape({
     updatedAtMs: 30,
