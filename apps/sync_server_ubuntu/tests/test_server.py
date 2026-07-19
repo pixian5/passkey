@@ -231,6 +231,12 @@ class PassSyncServerTests(unittest.TestCase):
             self.assertGreaterEqual(int(response.headers["X-Sync-Revision"]), 1)
             put_body = json.loads(response.read().decode("utf-8"))
         self.assertEqual(put_body["revision"], int(response.headers["X-Sync-Revision"]))
+        self.assertTrue(put_body["ok"])
+        self.assertTrue(put_body["committed"])
+        self.assertEqual(put_body["scope"], "default")
+        self.assertEqual(put_body["idempotencyKey"], "v2-state-1")
+        self.assertEqual(put_body["etag"], response.headers["ETag"])
+        self.assertEqual(put_body["payloadSha256"], response.headers["X-Payload-Sha256"])
 
         with self.request(
             "GET",

@@ -829,10 +829,13 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             HTTPStatus.OK,
             {
                 "ok": True,
+                "committed": True,
+                "scope": scope,
                 "etag": stored.etag,
                 "payloadSha256": stored.payload_sha256,
                 "updatedAtMs": stored.updated_at_ms,
                 "revision": self.server.repository.current_revision(scope),
+                "idempotencyKey": idempotency_key,
             },
             extra_headers={
                 "ETag": stored.etag,

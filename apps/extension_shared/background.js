@@ -1722,6 +1722,30 @@ function updateRemoteConcurrencyState(target, etag) {
   }
 }
 
+async function verifySelfHostedWriteReceipt(response, idempotencyKey) {
+  const scope = response.headers.get("X-Sync-Scope");
+  const etag = response.headers.get("ETag");
+  const payloadSha256 = response.headers.get("X-Payload-Sha256");
+  if (!scope || !etag || !payloadSha256) {
+    throw new Error("服务器未返回可验证的同步提交回执");
+  }
+  let receipt;
+  try {
+    receipt = await response.json();
+  } catch {
+    throw new Error("服务器提交回执不是有效 JSON");
+  }
+  if (!receipt?.ok || !receipt?.committed
+      || receipt.scope !== scope
+      || receipt.etag !== etag
+      || receipt.payloadSha256 !== payloadSha256
+      || !Number.isInteger(receipt.revision) || receipt.revision < 1
+      || (idempotencyKey && receipt.idempotencyKey !== idempotencyKey)) {
+    throw new Error("服务器提交回执校验失败");
+  }
+  return etag;
+}
+
 async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey = null) {
   if (target.remoteEncrypted && target.remotePayload && syncPayloadEquals(target.remotePayload, payload)) {
     return { etag: target.remoteEtag, skipped: true };
@@ -1765,9 +1789,12 @@ async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey
     error.status = response.status;
     throw error;
   }
+  const confirmedEtag = target.kind === "server"
+    ? await verifySelfHostedWriteReceipt(response, idempotencyKey)
+    : response.headers.get("ETag");
   target.remotePayload = payload;
   target.remoteEncrypted = true;
-  return { etag: response.headers.get("ETag") };
+  return { etag: confirmedEtag };
 }
 
 async function getOrCreateSyncEncryptionKey() {

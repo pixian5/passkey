@@ -354,6 +354,20 @@ final class AccountStore: ObservableObject {
         let etag: String?
     }
 
+    private struct RemoteWriteConfirmation {
+        let etag: String?
+    }
+
+    private struct SelfHostedWriteReceipt: Decodable {
+        let ok: Bool
+        let committed: Bool
+        let scope: String
+        let etag: String
+        let payloadSha256: String
+        let revision: Int
+        let idempotencyKey: String?
+    }
+
     private struct SyncOutboxItem: Codable {
         let sourceKey: String
         let payload: SyncBundlePayload
@@ -2705,12 +2719,13 @@ final class AccountStore: ObservableObject {
                     changed = changed || pushResult.changedLocalData
                     clearSyncOutbox(sourceKey: sourceKey)
                 case .localOverwriteRemote:
-                    webDAVETag = try await pushRemotePayload(
+                    let confirmation = try await pushRemotePayload(
                         mergedPayload,
                         to: resourceURL,
                         authorization: authorization,
                         idempotencyKey: "pass-\(syncDeviceId())-\(UUID().uuidString)"
                     )
+                    webDAVETag = confirmation.etag
                     clearSyncOutbox(sourceKey: sourceKey)
                 }
                 } catch {
@@ -3378,7 +3393,7 @@ final class AccountStore: ObservableObject {
         authorization: String?,
         ifMatch: String? = nil,
         idempotencyKey: String? = nil
-    ) async throws -> String? {
+    ) async throws -> RemoteWriteConfirmation {
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
         request.timeoutInterval = 30
@@ -3394,7 +3409,7 @@ final class AccountStore: ObservableObject {
             request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
         }
         request.httpBody = try encodeEncryptedSyncBundle(payload: payload)
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (responseData, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw NSError(
                 domain: "AccountStore.SyncRemote",
@@ -3412,7 +3427,26 @@ final class AccountStore: ObservableObject {
                 userInfo: [NSLocalizedDescriptionKey: "远端上传失败，HTTP \(http.statusCode)"]
             )
         }
-        return http.value(forHTTPHeaderField: "ETag")
+        let etag = http.value(forHTTPHeaderField: "ETag")
+        if let scope = http.value(forHTTPHeaderField: "X-Sync-Scope") {
+            guard let receipt = try? decoder.decode(SelfHostedWriteReceipt.self, from: responseData),
+                  receipt.ok,
+                  receipt.committed,
+                  !scope.isEmpty,
+                  receipt.scope == scope,
+                  receipt.revision > 0,
+                  receipt.etag == etag,
+                  receipt.payloadSha256 == http.value(forHTTPHeaderField: "X-Payload-Sha256"),
+                  idempotencyKey == nil || receipt.idempotencyKey == idempotencyKey
+            else {
+                throw NSError(
+                    domain: "AccountStore.SyncRemote",
+                    code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "服务器未返回可验证的同步提交回执"]
+                )
+            }
+        }
+        return RemoteWriteConfirmation(etag: etag)
     }
 
     private func pushSelfHostedPayloadWithRetry(
@@ -3471,8 +3505,8 @@ final class AccountStore: ObservableObject {
         let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
         for attempt in 0..<3 {
             do {
-                let nextETag = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
-                return ETagPushResult(payload: candidate, changedLocalData: changed, etag: nextETag)
+                let confirmation = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
+                return ETagPushResult(payload: candidate, changedLocalData: changed, etag: confirmation.etag)
             } catch SyncRemoteError.preconditionFailed {
                 guard attempt < 2 else { throw SyncRemoteError.preconditionFailed }
                 let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
@@ -3512,8 +3546,8 @@ final class AccountStore: ObservableObject {
         let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
         for attempt in 0..<3 {
             do {
-                let nextETag = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
-                return ETagPushResult(payload: candidate, changedLocalData: changed, etag: nextETag)
+                let confirmation = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
+                return ETagPushResult(payload: candidate, changedLocalData: changed, etag: confirmation.etag)
             } catch SyncRemoteError.preconditionFailed {
                 guard attempt < 2 else { throw SyncRemoteError.preconditionFailed }
                 let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
