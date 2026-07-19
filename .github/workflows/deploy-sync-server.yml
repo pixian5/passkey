@@ -57,6 +57,9 @@ jobs:
               fi
             fi
             sudo chown -R pass:pass /var/lib/pass-sync
+            sudo install -m 0644 apps/sync_server_ubuntu/pass_sync_server.py /opt/pass-sync-server/pass_sync_server.py
+            sudo install -m 0755 apps/sync_server_ubuntu/backup_sync_db.sh /opt/pass-sync-server/backup_sync_db.sh
+            sudo chown root:root /opt/pass-sync-server/pass_sync_server.py /opt/pass-sync-server/backup_sync_db.sh
             sudo install -m 0644 apps/sync_server_ubuntu/pass-sync-server.service /etc/systemd/system/pass-sync-server.service
             sudo systemctl daemon-reload
             sudo systemctl restart pass-sync-server
