@@ -583,14 +583,16 @@ struct SettingsView: View {
 
     private func exportCsvWithDirectoryRule() {
         if let directoryURL = store.configuredExportDirectoryURL() {
-            store.saveExportDirectoryPath()
+            store.saveExportDirectoryPath(clearBookmark: false)
             let fileURL = directoryURL.appendingPathComponent(store.suggestedCsvFileName(), isDirectory: false)
-            store.exportCsv(to: fileURL)
-            return
+            if store.exportCsv(to: fileURL, securityScopedDirectoryURL: directoryURL) {
+                return
+            }
+            store.statusMessage = "预设导出目录不可写，请重新选择目录"
         }
 
         if !store.exportDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            store.statusMessage = "导出目录不存在，改为手动选择目录"
+            store.statusMessage = "已保存目录尚未获得系统授权，改为手动选择目录"
         }
 
         let panel = NSOpenPanel()
@@ -613,7 +615,8 @@ struct SettingsView: View {
         }
 
         store.exportDirectoryPath = selectedDirectory.path
-        store.saveExportDirectoryPath()
+        store.saveExportDirectoryPath(clearBookmark: false)
+        store.saveExportDirectoryBookmark(for: selectedDirectory)
         let fileURL = selectedDirectory.appendingPathComponent(store.suggestedCsvFileName(), isDirectory: false)
         store.exportCsv(to: fileURL)
     }

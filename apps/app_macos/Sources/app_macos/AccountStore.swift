@@ -1672,24 +1672,52 @@ final class AccountStore: ObservableObject {
         "pass-sync-bundle-\(timestampForFile()).json"
     }
 
-    func saveExportDirectoryPath() {
+    func saveExportDirectoryPath(clearBookmark: Bool = true) {
         let normalized = exportDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
         exportDirectoryPath = normalized
-        UserDefaults.standard.set(normalized, forKey: Keys.exportDirectoryPath)
+        let defaults = UserDefaults.standard
+        defaults.set(normalized, forKey: Keys.exportDirectoryPath)
+        if clearBookmark {
+            defaults.removeObject(forKey: Keys.exportDirectoryBookmark)
+        }
+    }
+
+    func saveExportDirectoryBookmark(for directoryURL: URL) {
+        do {
+            let bookmark = try directoryURL.bookmarkData(
+                options: [.withSecurityScope],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+            UserDefaults.standard.set(bookmark, forKey: Keys.exportDirectoryBookmark)
+        } catch {
+            UserDefaults.standard.removeObject(forKey: Keys.exportDirectoryBookmark)
+            statusMessage = "导出目录授权保存失败，下次导出时会重新选择目录：\(error.localizedDescription)"
+        }
     }
 
     func configuredExportDirectoryURL() -> URL? {
-        let raw = exportDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { return nil }
-
-        let expandedPath = (raw as NSString).expandingTildeInPath
-        var isDirectory = ObjCBool(false)
-        guard FileManager.default.fileExists(atPath: expandedPath, isDirectory: &isDirectory),
-              isDirectory.boolValue
-        else {
-            return nil
+        let defaults = UserDefaults.standard
+        if let bookmark = defaults.data(forKey: Keys.exportDirectoryBookmark) {
+            var isStale = false
+            if let resolved = try? URL(
+                resolvingBookmarkData: bookmark,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ),
+               !isStale,
+               resolved.hasDirectoryPath,
+               FileManager.default.fileExists(atPath: resolved.path)
+            {
+                return resolved
+            }
+            defaults.removeObject(forKey: Keys.exportDirectoryBookmark)
         }
-        return URL(fileURLWithPath: expandedPath, isDirectory: true)
+
+        // A plain path is not sufficient under App Sandbox. It is retained for
+        // display, but the next export must ask the user for a scoped location.
+        return nil
     }
 
     func exportCsv() {
@@ -1697,35 +1725,45 @@ final class AccountStore: ObservableObject {
         exportCsv(to: fileURL)
     }
 
-    func exportCsv(to fileURL: URL) {
+    @discardableResult
+    func exportCsv(to fileURL: URL, securityScopedDirectoryURL: URL? = nil) -> Bool {
         let csv = buildCsvContent()
         let parentDirectory = fileURL.deletingLastPathComponent()
 
         do {
-            try FileManager.default.createDirectory(
-                at: parentDirectory,
-                withIntermediateDirectories: true
-            )
-            try csv.write(to: fileURL, atomically: true, encoding: String.Encoding.utf8)
+            try withSecurityScopedAccess(to: fileURL, additionalURL: securityScopedDirectoryURL) {
+                try FileManager.default.createDirectory(
+                    at: parentDirectory,
+                    withIntermediateDirectories: true
+                )
+                try csv.write(to: fileURL, atomically: true, encoding: String.Encoding.utf8)
+            }
             statusMessage = "全部账号 CSV 导出成功: \(fileURL.path)"
+            return true
         } catch {
             statusMessage = "全部账号 CSV 导出失败: \(error.localizedDescription)"
+            return false
         }
     }
 
-    func exportBrowserPasswordCsv(to fileURL: URL, format: BrowserPasswordExportFormat) {
+    @discardableResult
+    func exportBrowserPasswordCsv(to fileURL: URL, format: BrowserPasswordExportFormat) -> Bool {
         let csv = buildBrowserPasswordCsvContent(format: format)
         let parentDirectory = fileURL.deletingLastPathComponent()
 
         do {
-            try FileManager.default.createDirectory(
-                at: parentDirectory,
-                withIntermediateDirectories: true
-            )
-            try csv.write(to: fileURL, atomically: true, encoding: String.Encoding.utf8)
+            try withSecurityScopedAccess(to: fileURL) {
+                try FileManager.default.createDirectory(
+                    at: parentDirectory,
+                    withIntermediateDirectories: true
+                )
+                try csv.write(to: fileURL, atomically: true, encoding: String.Encoding.utf8)
+            }
             statusMessage = "\(format.label) 密码 CSV 导出成功: \(fileURL.path)"
+            return true
         } catch {
             statusMessage = "\(format.label) 密码 CSV 导出失败: \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -1740,16 +1778,38 @@ final class AccountStore: ObservableObject {
                 )
             }
             let parentDirectory = fileURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(
-                at: parentDirectory,
-                withIntermediateDirectories: true
-            )
             let data = try encodeEncryptedSyncBundle(payload: buildCurrentSyncPayload())
-            try data.write(to: fileURL, options: Data.WritingOptions.atomic)
+            try withSecurityScopedAccess(to: fileURL) {
+                try FileManager.default.createDirectory(
+                    at: parentDirectory,
+                    withIntermediateDirectories: true
+                )
+                try data.write(to: fileURL, options: Data.WritingOptions.atomic)
+            }
             statusMessage = "同步包导出成功: \(fileURL.path)"
         } catch {
             statusMessage = "同步包导出失败: \(error.localizedDescription)"
         }
+    }
+
+    private func withSecurityScopedAccess<T>(
+        to fileURL: URL,
+        additionalURL: URL? = nil,
+        operation: () throws -> T
+    ) rethrows -> T {
+        let candidateURLs = [additionalURL, fileURL, fileURL.deletingLastPathComponent()].compactMap { $0 }
+        var startedURLs: [URL] = []
+        for candidateURL in candidateURLs {
+            if candidateURL.startAccessingSecurityScopedResource() {
+                startedURLs.append(candidateURL)
+            }
+        }
+        defer {
+            for startedURL in startedURLs.reversed() {
+                startedURL.stopAccessingSecurityScopedResource()
+            }
+        }
+        return try operation()
     }
 
     func importSyncBundle(from fileURL: URL) {
@@ -6356,6 +6416,7 @@ private struct SyncBundlePayload: Codable {
 private enum Keys {
     static let deviceName = "pass.deviceName"
     static let exportDirectoryPath = "pass.export.directoryPath"
+    static let exportDirectoryBookmark = "pass.export.directoryBookmark"
     static let foldersData = "pass.folders.data"
     static let syncDeviceId = "pass.sync.deviceId.v1"
     static let syncEnableICloud = "pass.sync.enableICloud.v3"
