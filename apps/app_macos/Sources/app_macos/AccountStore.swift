@@ -5048,7 +5048,7 @@ final class AccountStore: ObservableObject {
             throw NSError(
                 domain: "AccountStore.SyncBundle",
                 code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "同步包解密失败，请确认所有设备使用同一同步加密密钥或保持留空"]
+                userInfo: [NSLocalizedDescriptionKey: "同步包解密失败，请确认所有设备使用同一同步加密密钥"]
             )
         }
 
@@ -5083,7 +5083,7 @@ final class AccountStore: ObservableObject {
     func copySyncEncryptionKey() {
         let trimmed = PassSyncCrypto.normalizedKeyString(syncEncryptionKey)
         guard !trimmed.isEmpty else {
-            statusMessage = "同步加密密钥为空，当前使用明文同步"
+            statusMessage = "同步加密密钥为空，远程同步不可用"
             return
         }
         guard PassSyncCrypto.isValidKeyString(syncEncryptionKey) else {

@@ -25,7 +25,7 @@ export async function syncEncryptionKeyId(rawKey) {
 export async function encryptSyncBundleDocument(document, rawKey) {
   const key = normalizeSyncEncryptionKey(rawKey);
   if (!key) {
-    return { ...document, schema: document?.schema || SYNC_PLAINTEXT_SCHEMA };
+    throw new Error("远程同步必须配置 256 位同步加密密钥");
   }
   const imported = await importSyncKey(key, ["encrypt"]);
   const nonce = crypto.getRandomValues(new Uint8Array(12));
@@ -47,7 +47,12 @@ export async function encryptSyncBundleDocument(document, rawKey) {
 
 export async function decryptSyncBundleDocument(envelope, rawKey, fallbackKeys = []) {
   const schema = String(envelope?.schema || "");
-  if (schema === SYNC_PLAINTEXT_SCHEMA) return envelope;
+  if (schema === SYNC_PLAINTEXT_SCHEMA) {
+    if (isSyncEncryptionEnabled(rawKey)) {
+      throw new Error("同步密钥已配置，拒绝未加密同步包");
+    }
+    return envelope;
+  }
   if (schema !== SYNC_ENCRYPTED_SCHEMA_V1) {
     throw new Error("不支持的同步包格式");
   }

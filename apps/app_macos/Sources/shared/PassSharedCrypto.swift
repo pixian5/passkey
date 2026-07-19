@@ -148,7 +148,11 @@ enum PassSyncCrypto {
     static func encrypt(_ plaintext: Data, keyString: String, exportedAtMs: Int64) throws -> Data {
         let key = normalizedKeyString(keyString)
         if key.isEmpty {
-            return plaintext
+            throw NSError(
+                domain: "PassSyncCrypto",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "远程同步必须配置 256 位同步加密密钥"]
+            )
         }
         guard isValidKeyString(key) else {
             throw NSError(
@@ -177,6 +181,13 @@ enum PassSyncCrypto {
            let schemaValue = probe["schema"] as? String,
            schemaValue == plaintextSchema
         {
+            if isEncryptionKeyConfigured(keyString) {
+                throw NSError(
+                    domain: "PassSyncCrypto",
+                    code: 4,
+                    userInfo: [NSLocalizedDescriptionKey: "同步密钥已配置，拒绝未加密同步包"]
+                )
+            }
             return data
         }
         var candidateKeys: [String] = []

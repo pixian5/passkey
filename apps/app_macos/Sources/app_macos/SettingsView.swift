@@ -179,7 +179,7 @@ struct SettingsView: View {
                         HStack(spacing: 8) {
                             Text("同步加密密钥")
                                 .frame(width: labelColumnWidth, alignment: .leading)
-                            TextField("留空则不同步加密", text: $store.syncEncryptionKey)
+                            TextField("远程同步必填", text: $store.syncEncryptionKey)
                                 .textFieldStyle(.roundedBorder)
                                 .onTapGesture { store.loadSyncSecretsForUI() }
                             Button("生成") {
