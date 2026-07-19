@@ -994,7 +994,7 @@ class PassSyncHTTPServer(ThreadingHTTPServer):
         return scope
 
 
-def parse_and_validate_bundle(raw_body: bytes, *, allow_plaintext: bool = False) -> tuple[str, str, int]:
+def parse_and_validate_bundle(raw_body: bytes, *, allow_plaintext: bool = True) -> tuple[str, str, int]:
     try:
         parsed = json.loads(raw_body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
