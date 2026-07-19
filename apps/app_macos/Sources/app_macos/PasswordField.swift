@@ -22,15 +22,25 @@ struct PasswordField: View {
                 }
             }
             .textFieldStyle(.roundedBorder)
+            .frame(minWidth: 0, maxWidth: .infinity)
+            .layoutPriority(1)
 
             Button {
                 localVisibility = !isVisible
             } label: {
                 Image(systemName: isVisible ? "eye.slash" : "eye")
-                    .frame(width: 18, height: 18)
+                    .frame(width: 22, height: 22)
             }
             .buttonStyle(.borderless)
+            .frame(width: 32, height: 28)
+            .contentShape(Rectangle())
             .help(isVisible ? "隐藏此字段" : "显示此字段")
+        }
+        .frame(minWidth: 0, maxWidth: .infinity)
+        .onChange(of: showPasswordsGlobally) { _ in
+            // A global change must take effect immediately, including fields
+            // that were temporarily overridden with their own eye button.
+            localVisibility = nil
         }
     }
 }
