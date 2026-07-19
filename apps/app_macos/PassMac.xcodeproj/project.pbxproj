@@ -15,6 +15,7 @@
 		30A91B77709F0D4D20F0E380 /* PassSharedCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = E45BF037B241F100E2C195E5 /* PassSharedCrypto.swift */; };
 		331E9BF4F148903DB3497C91 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99993A46A4FE0D6D32E70035 /* Models.swift */; };
 		335B023A9F18911334D040DD /* LocalKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = B27A36689B66024DBA74586B /* LocalKeychain.swift */; };
+		35AADC60A56AC8E13E3D92C4 /* PassSyncPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FEA745E35B7D36A06CA255B /* PassSyncPolicy.swift */; };
 		408F44161FCF8F9FFFAD9716 /* PassSharedData.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF4659CDF23C2A1DC24A14FB /* PassSharedData.swift */; };
 		4676C0FE6D5027F0BB466BF8 /* LocalSQLiteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0754637CBC9E0926C0543F48 /* LocalSQLiteStore.swift */; };
 		50B2522415D9C2211529BB67 /* PassMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B33B5DDB6E674C0CAE5D2004 /* PassMacApp.swift */; };
@@ -35,6 +36,7 @@
 		A703B7D4995B2D1DE2842649 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DCAD9B40BB7EEF8131C7B72 /* SettingsView.swift */; };
 		AAE7CCD4E44035AA4BEB9547 /* backup_sync_db.sh in Resources */ = {isa = PBXBuildFile; fileRef = 7B20309F7B8CD3638FF7579F /* backup_sync_db.sh */; };
 		AD369B0083D626D74BCE07FA /* PassSharedCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = E45BF037B241F100E2C195E5 /* PassSharedCrypto.swift */; };
+		B514427C6D4996B0660757EC /* PassSyncPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FEA745E35B7D36A06CA255B /* PassSyncPolicy.swift */; };
 		B53352F13FE392EEF6EFFB18 /* PassMac.icns in Resources */ = {isa = PBXBuildFile; fileRef = 72B061B7EE160156729572D5 /* PassMac.icns */; };
 		B602982B550BD0CE2296ED82 /* PassSharedFileSecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4352DF117B2D7BFE2BE5C6C /* PassSharedFileSecretStore.swift */; };
 		CBC0EF3C889A01C54F478298 /* DomainUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A09487F2F423EA5B6B401E3 /* DomainUtils.swift */; };
@@ -86,6 +88,7 @@
 		7B20309F7B8CD3638FF7579F /* backup_sync_db.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = backup_sync_db.sh; sourceTree = "<group>"; };
 		893853F422A6F51E043B5715 /* PassAutoFillExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PassAutoFillExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		8F8E182D6D5755032C95E9F3 /* AutoFillExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AutoFillExtension.entitlements; sourceTree = "<group>"; };
+		8FEA745E35B7D36A06CA255B /* PassSyncPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassSyncPolicy.swift; sourceTree = "<group>"; };
 		9496C7F83125669EB11769D0 /* AppleCredentialExchange.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleCredentialExchange.swift; sourceTree = "<group>"; };
 		99993A46A4FE0D6D32E70035 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		AF0EE98C4F1895D551D4DC15 /* CreateAccountWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateAccountWindowView.swift; sourceTree = "<group>"; };
@@ -165,6 +168,7 @@
 				E45BF037B241F100E2C195E5 /* PassSharedCrypto.swift */,
 				FF4659CDF23C2A1DC24A14FB /* PassSharedData.swift */,
 				D4352DF117B2D7BFE2BE5C6C /* PassSharedFileSecretStore.swift */,
+				8FEA745E35B7D36A06CA255B /* PassSyncPolicy.swift */,
 			);
 			path = shared;
 			sourceTree = "<group>";
@@ -305,6 +309,7 @@
 				AD369B0083D626D74BCE07FA /* PassSharedCrypto.swift in Sources */,
 				408F44161FCF8F9FFFAD9716 /* PassSharedData.swift in Sources */,
 				1865114F46D332413189428B /* PassSharedFileSecretStore.swift in Sources */,
+				35AADC60A56AC8E13E3D92C4 /* PassSyncPolicy.swift in Sources */,
 				89EE086A19DFA111D61302A4 /* PasswordField.swift in Sources */,
 				D889C6C11AB413A445C0DDBC /* ServerProvisioning.swift in Sources */,
 				A703B7D4995B2D1DE2842649 /* SettingsView.swift in Sources */,
@@ -325,6 +330,7 @@
 				30A91B77709F0D4D20F0E380 /* PassSharedCrypto.swift in Sources */,
 				DD44DFEB677BBDE42F2F5B83 /* PassSharedData.swift in Sources */,
 				B602982B550BD0CE2296ED82 /* PassSharedFileSecretStore.swift in Sources */,
+				B514427C6D4996B0660757EC /* PassSyncPolicy.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
