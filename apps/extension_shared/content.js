@@ -1,6 +1,5 @@
-import { etldPlusOne, normalizeDomain, normalizeSites } from "./account_core.js";
+import { normalizeDomain } from "./account_core.js";
 
-const STORAGE_KEY_DATA_BUMP = "pass.data.bump.v1";
 const PASS_LOGIN_COOLDOWN_MS = 5000;
 const WEB_AUTHN_BRIDGE_SOURCE = "pass-webauthn-bridge";
 const WEB_AUTHN_REQUEST_TYPE = "PASSKEY_REQUEST";
@@ -14,7 +13,6 @@ const PASS_EXTENSION_VERSION = "0.2.3";
 
 let lastPromptKey = "";
 let lastPromptAt = 0;
-let accountsCache = [];
 let passPageToastTimer = null;
 
 function logPasskeyContent(event, details = {}) {
@@ -42,24 +40,12 @@ function installPassContentBridge() {
     // Ignore bootstrap diagnostics failures.
   }
 
-  initAccountCache().catch(() => {
-    // Ignore cache bootstrap errors; detection continues with empty cache.
-  });
   window.addEventListener("message", onWebAuthnBridgeMessage, false);
 
-  chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "local") return;
-    if (!changes[STORAGE_KEY_DATA_BUMP]) return;
-    void initAccountCache();
-  });
-
   chrome.runtime.onMessage.addListener((message) => {
-    if (message?.type === "PASS_LOCKED") {
-      accountsCache = [];
+    if (message?.type === "PASS_LOCKED" || message?.type === "PASS_UNLOCKED") {
+      // Login prompts now ask the service worker; no local password cache.
       return;
-    }
-    if (message?.type === "PASS_UNLOCKED") {
-      void initAccountCache();
     }
   });
 
@@ -78,30 +64,8 @@ function installPassContentBridge() {
     const payload = extractCredentialPayload(form);
     if (!payload) return;
 
-    const mode = decidePromptMode(payload);
-    if (!mode) return;
-
-    const promptKey = `${payload.domain}|${payload.username}|${payload.password}|${mode}`;
-    const now = Date.now();
-    if (promptKey === lastPromptKey && now - lastPromptAt < PASS_LOGIN_COOLDOWN_MS) {
-      return;
-    }
-
     const submitter = event.submitter;
     event.preventDefault();
-
-    const actionText = mode === "update" ? "更新密码" : "保存账号";
-    const confirmed = window.confirm(
-      `检测到登录行为。\n域名: ${payload.domain}\n用户名: ${payload.username}\n是否${actionText}到 Pass？`
-    );
-
-    lastPromptKey = promptKey;
-    lastPromptAt = now;
-
-    if (!confirmed) {
-      resumeSubmit(form, submitter);
-      return;
-    }
 
     let resumed = false;
     const resumeOnce = () => {
@@ -112,61 +76,50 @@ function installPassContentBridge() {
 
     chrome.runtime.sendMessage(
       {
-        type: "PASS_SAVE_FROM_LOGIN",
+        type: "PASS_CONTENT_CHECK_LOGIN",
         payload,
       },
-      () => {
-        resumeOnce();
+      (response) => {
+        const runtimeError = chrome.runtime.lastError;
+        if (runtimeError || !response?.ok || !response?.shouldPrompt) {
+          resumeOnce();
+          return;
+        }
+        const mode = response.mode === "update" ? "update" : "create";
+        const promptKey = `${payload.domain}|${payload.username}|${mode}`;
+        const now = Date.now();
+        if (promptKey === lastPromptKey && now - lastPromptAt < PASS_LOGIN_COOLDOWN_MS) {
+          resumeOnce();
+          return;
+        }
+        lastPromptKey = promptKey;
+        lastPromptAt = now;
+        const actionText = mode === "update" ? "更新密码" : "保存账号";
+        const confirmed = window.confirm(
+          `检测到登录行为。\n域名: ${payload.domain}\n用户名: ${payload.username}\n是否${actionText}到 Pass？`
+        );
+        if (!confirmed) {
+          resumeOnce();
+          return;
+        }
+        chrome.runtime.sendMessage(
+          {
+            type: "PASS_SAVE_FROM_LOGIN",
+            payload,
+          },
+          () => {
+            resumeOnce();
+          }
+        );
+        setTimeout(resumeOnce, 250);
       }
     );
 
     // Fallback in case runtime message callback is delayed.
-    setTimeout(resumeOnce, 250);
+    setTimeout(resumeOnce, 800);
     },
     true
   );
-}
-
-async function initAccountCache() {
-  const raw = await fetchAccountsForContent();
-  accountsCache = raw.map(normalizeAccountShape);
-}
-
-async function fetchAccountsForContent() {
-  if (!isRuntimeAvailable()) return [];
-  return await new Promise((resolve) => {
-    try {
-      chrome.runtime.sendMessage({ type: "PASS_CONTENT_GET_ACCOUNTS" }, (response) => {
-        const runtimeError = chrome.runtime.lastError;
-        if (runtimeError || !response?.ok || !Array.isArray(response.accounts)) {
-          resolve([]);
-          return;
-        }
-        resolve(response.accounts);
-      });
-    } catch {
-      resolve([]);
-    }
-  });
-}
-
-function decidePromptMode(payload) {
-  const activeAccounts = accountsCache.filter((account) => !account.isDeleted);
-
-  const exact = activeAccounts.some((account) => {
-    return accountMatchesDomain(account, payload.domain) &&
-      account.username === payload.username &&
-      account.password === payload.password;
-  });
-  if (exact) return null;
-
-  const updateCandidate = activeAccounts.some((account) => {
-    return accountMatchesDomain(account, payload.domain) &&
-      account.username === payload.username &&
-      account.password !== payload.password;
-  });
-
-  return updateCandidate ? "update" : "create";
 }
 
 function extractCredentialPayload(form) {
@@ -227,22 +180,6 @@ function resumeSubmit(form, submitter) {
     return;
   }
   form.submit();
-}
-
-function normalizeAccountShape(account) {
-  const sites = normalizeSites(account.sites || []);
-  return {
-    sites,
-    username: account.username || "",
-    password: account.password || "",
-    isDeleted: Boolean(account.isDeleted),
-  };
-}
-
-function accountMatchesDomain(account, domain) {
-  const normalized = normalizeDomain(domain);
-  const etld1 = etldPlusOne(normalized);
-  return account.sites.some((site) => site === normalized || etldPlusOne(site) === etld1);
 }
 
 function isVisible(input) {
@@ -593,16 +530,21 @@ function isRuntimeAvailable() {
 function selectPasskeyCandidate(candidates) {
   return new Promise((resolve) => {
     const existing = document.getElementById("pass-passkey-chooser");
-    if (existing) {
-      existing.remove();
-    }
+    if (existing) existing.remove();
+
+    // Closed shadow root keeps chooser buttons out of the page's DOM tree so
+    // malicious pages cannot querySelector/click them to force a silent assert.
+    const host = document.createElement("div");
+    host.id = "pass-passkey-chooser";
+    host.style.all = "initial";
+    host.style.position = "fixed";
+    host.style.right = "12px";
+    host.style.top = "12px";
+    host.style.zIndex = "2147483647";
+    const shadow = host.attachShadow({ mode: "closed" });
 
     const root = document.createElement("div");
-    root.id = "pass-passkey-chooser";
-    root.style.position = "fixed";
-    root.style.right = "12px";
-    root.style.top = "12px";
-    root.style.zIndex = "2147483647";
+    root.style.position = "relative";
     root.style.maxWidth = "340px";
     root.style.width = "calc(100vw - 24px)";
     root.style.background = "#ffffff";
@@ -627,11 +569,9 @@ function selectPasskeyCandidate(candidates) {
     let timerId = null;
 
     const cleanup = (value) => {
-      root.remove();
+      host.remove();
       document.removeEventListener("keydown", onKeydown, true);
-      if (timerId) {
-        clearTimeout(timerId);
-      }
+      if (timerId) clearTimeout(timerId);
       resolve(value);
     };
 
@@ -675,7 +615,10 @@ function selectPasskeyCandidate(candidates) {
       idLine.style.color = "#4b6485";
       button.appendChild(idLine);
 
-      button.addEventListener("click", () => {
+      button.addEventListener("click", (event) => {
+        // Ignore synthetic clicks that the page may still try to dispatch onto
+        // retargeted shadow hosts; require a real user activation when available.
+        if (event.isTrusted === false) return;
         cleanup(String(item?.credentialIdB64u || ""));
       });
 
@@ -697,13 +640,15 @@ function selectPasskeyCandidate(candidates) {
     cancelBtn.style.padding = "5px 8px";
     cancelBtn.style.background = "#ffffff";
     cancelBtn.style.cursor = "pointer";
-    cancelBtn.addEventListener("click", () => {
+    cancelBtn.addEventListener("click", (event) => {
+      if (event.isTrusted === false) return;
       cleanup(PASSKEY_USE_BROWSER_FALLBACK);
     });
     footer.appendChild(cancelBtn);
 
     root.appendChild(footer);
-    document.documentElement.appendChild(root);
+    shadow.appendChild(root);
+    document.documentElement.appendChild(host);
 
     timerId = setTimeout(() => {
       cleanup(PASSKEY_USE_BROWSER_FALLBACK);
@@ -742,6 +687,6 @@ function postWebAuthnBridgeResponse(requestId, response) {
       result: response?.result || null,
       error: response?.error || null,
     },
-    "*"
+    window.location.origin
   );
 }

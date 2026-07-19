@@ -350,7 +350,25 @@ test("删除站点别名和 Passkey 关联不会被旧设备复活", () => {
   });
   const merged = mergeAccountCollections([local], [staleRemote], helpers)[0];
   assert.equal(merged.sites.includes("old.example"), false);
+  assert.deepEqual(merged.sites, []);
   assert.equal(merged.passkeyCredentialIds.includes("credential"), false);
+});
+
+test("全部站点 tombstone 后不会回退到 primary.sites", () => {
+  const local = helpers.normalizeAccountShape({
+    sites: ["a.example", "b.example"],
+    siteAliasStates: {
+      "a.example": { isDeleted: true, updatedAtMs: 30, deviceName: "A" },
+      "b.example": { isDeleted: true, updatedAtMs: 30, deviceName: "A" },
+    },
+    updatedAtMs: 30,
+  });
+  const remote = helpers.normalizeAccountShape({
+    sites: ["a.example", "b.example"],
+    updatedAtMs: 10,
+  });
+  const merged = mergeAccountCollections([local], [remote], helpers)[0];
+  assert.deepEqual(merged.sites, []);
 });
 
 test("通行密钥永久删除墓碑不会被旧设备记录重新生成", () => {

@@ -108,7 +108,7 @@ pass/
 - ✅ **Tauri 桌面应用**（Windows/Ubuntu/macOS）：设备名、账号 CRUD、域名别名同步、回收站、演示数据、CSV 导出
 - ✅ **Chrome 扩展**：MV3，自动填充、popup、options、background
 - ✅ **Firefox / Safari 扩展**：基于共享代码构建
-- ✅ **Ubuntu 同步服务**：Python 单文件，GET/PUT `/v2/sync/state`（兼容 `/v1/sync/payload`），SQLite 版本快照、ETag/CAS、幂等重试和回滚，Bearer Token 认证，仅存储 AES-256-GCM 端到端加密信封
+- ✅ **Ubuntu 同步服务**：Python 单文件，GET/PUT `/v2/sync/state`（兼容 `/v1/sync/payload`），SQLite 版本快照、ETag/CAS、幂等重试和回滚，Bearer Token 认证，默认仅存储 AES-256-GCM 端到端加密信封
 - 🚧 **Flutter 五端应用**：规划中，待接入 Rust FFI
 - 🚧 **桌面同步代理**：规划中，待实现配对与局域网同步
 
@@ -121,20 +121,24 @@ pass/
 cd core/pass_core
 cargo test
 
-# 2. macOS 应用构建
-cd apps/app_macos
-swift build
-
-# 3. Chrome 扩展语法检查
+# 2. 扩展单测 + 构建（壳层加载 dist/）
 cd apps/extension_shared
-node --check background.js
-node --check popup.js
-node --check options.js
+npm test
+npm run build
 
-# 4. Ubuntu 同步服务
+# 3. macOS 打包安装并启动（推荐）
+cd apps/app_macos
+./scripts/package_app.sh
+
+# 4. 同步服务单测（本机 macOS 用项目 venv，勿与 Ubuntu 服务器环境混用）
 cd apps/sync_server_ubuntu
-python3 pass_sync_server.py
+source .venv/bin/activate   # 没有则: python3 -m venv .venv && source .venv/bin/activate
+python -m unittest discover -s tests -p 'test_*.py'
 ```
+
+> 注意：本机是 Apple Silicon macOS；Ubuntu 同步服务部署在 Linux 服务器。Python 虚拟环境、路径和 systemd 配置不要混用。
+>
+> 更完整的安全审查见根目录 [`代码审查grok.md`](代码审查grok.md)。
 
 ---
 

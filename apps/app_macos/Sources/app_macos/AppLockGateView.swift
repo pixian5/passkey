@@ -1,15 +1,26 @@
 import AppKit
 import SwiftUI
 
-struct AppLockGateView: View {
+struct AppLockGateView<Content: View>: View {
     @ObservedObject var store: AccountStore
     @ObservedObject var appLock: AppLockStore
+    private let content: Content
     @FocusState private var isPasswordFocused: Bool
     private let autoLockTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
+    init(
+        store: AccountStore,
+        appLock: AppLockStore,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.store = store
+        self.appLock = appLock
+        self.content = content()
+    }
+
     var body: some View {
         ZStack {
-            ContentView(store: store)
+            content
                 .disabled(appLock.shouldShowLockScreen)
                 .blur(radius: appLock.shouldShowLockScreen ? 3 : 0)
 

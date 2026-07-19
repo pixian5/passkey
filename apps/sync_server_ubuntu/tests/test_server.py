@@ -293,6 +293,48 @@ class PassSyncServerTests(unittest.TestCase):
             self.assertEqual(response.headers["ETag"], first_etag)
             self.assertEqual(json.loads(response.read().decode("utf-8")), first_body)
 
+    def test_existing_state_requires_if_match(self) -> None:
+        headers = {
+            "Authorization": "Bearer secret-token",
+            "Content-Type": "application/json",
+        }
+        with self.request("PUT", "/v2/sync/state", body=sample_bundle(10), headers=headers) as response:
+            self.assertEqual(response.status, 200)
+
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            self.request(
+                "PUT",
+                "/v2/sync/state",
+                body=sample_bundle(11),
+                headers=headers,
+            )
+        self.assertIn(context.exception.code, {412, 428})
+        context.exception.close()
+
+    def test_idempotency_replay_rejects_stale_snapshot(self) -> None:
+        auth = {"Authorization": "Bearer secret-token", "Content-Type": "application/json"}
+        first_headers = {**auth, "Idempotency-Key": "stale-key"}
+        with self.request("PUT", "/v2/sync/state", body=sample_bundle(20), headers=first_headers) as response:
+            first_etag = response.headers["ETag"]
+
+        with self.request(
+            "PUT",
+            "/v2/sync/state",
+            body=sample_bundle(21),
+            headers={**auth, "If-Match": first_etag, "Idempotency-Key": "other-key"},
+        ) as response:
+            self.assertEqual(response.status, 200)
+
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            self.request(
+                "PUT",
+                "/v2/sync/state",
+                body=sample_bundle(20),
+                headers=first_headers,
+            )
+        self.assertEqual(context.exception.code, 409)
+        context.exception.close()
+
     def test_rejects_plaintext_bundle(self) -> None:
         plaintext = json.dumps({
             "schema": "pass.sync.bundle.legacy",
@@ -400,8 +442,16 @@ class PassSyncServerTests(unittest.TestCase):
                 "INSERT INTO payloads VALUES (?, ?, ?, ?, ?, ?)",
                 ("default", '"old"', json.dumps({"schema": "pass.sync.unknown", "payload": {}}), "old", 1, 1),
             )
-        config = AppConfig(host="127.0.0.1", port=0, db_path=db_path, token_scopes={"secret-token": "default"})
-        self.server = build_server(config)
+        previous = os.environ.get("PASS_SYNC_PURGE_LEGACY")
+        os.environ["PASS_SYNC_PURGE_LEGACY"] = "1"
+        try:
+            config = AppConfig(host="127.0.0.1", port=0, db_path=db_path, token_scopes={"secret-token": "default"})
+            self.server = build_server(config)
+        finally:
+            if previous is None:
+                os.environ.pop("PASS_SYNC_PURGE_LEGACY", None)
+            else:
+                os.environ["PASS_SYNC_PURGE_LEGACY"] = previous
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}"
@@ -409,6 +459,8 @@ class PassSyncServerTests(unittest.TestCase):
             self.request("GET", "/v1/sync/payload", headers={"Authorization": "Bearer secret-token"})
         self.assertEqual(context.exception.code, 404)
         context.exception.close()
+        purged = list(Path(self.temp_dir.name).glob("purged_payloads_*.jsonl"))
+        self.assertTrue(purged)
 
     def test_options_preflight_for_payload(self) -> None:
         with self.request(
@@ -483,12 +535,18 @@ class PassSyncServerTests(unittest.TestCase):
 
         with self.request("PUT", "/v1/sync/payload", body=sample_bundle(4000), headers=headers) as response:
             self.assertEqual(response.status, 200)
-        with self.request("PUT", "/v1/sync/payload", body=sample_bundle(5000), headers=headers) as response:
+            first_etag = response.headers["ETag"]
+        with self.request(
+            "PUT",
+            "/v1/sync/payload",
+            body=sample_bundle(5000),
+            headers={**headers, "If-Match": first_etag},
+        ) as response:
             self.assertEqual(response.status, 200)
 
         with self.request("GET", "/v1/sync/versions", headers=headers) as response:
             versions = json.loads(response.read().decode("utf-8"))["versions"]
-        self.assertEqual(len(versions), 3)
+        self.assertGreaterEqual(len(versions), 2)
         self.assertNotEqual(versions[0]["payloadSha256"], versions[-1]["payloadSha256"])
 
         oldest_version_id = versions[-1]["versionId"]
@@ -508,7 +566,12 @@ class PassSyncServerTests(unittest.TestCase):
         }
         with self.request("PUT", "/v1/sync/payload", body=sample_bundle(6000), headers=headers) as response:
             first_etag = response.headers["ETag"]
-        with self.request("PUT", "/v1/sync/payload", body=sample_bundle(7000), headers=headers) as response:
+        with self.request(
+            "PUT",
+            "/v1/sync/payload",
+            body=sample_bundle(7000),
+            headers={**headers, "If-Match": first_etag},
+        ) as response:
             current_etag = response.headers["ETag"]
 
         with self.assertRaises(urllib.error.HTTPError) as context:

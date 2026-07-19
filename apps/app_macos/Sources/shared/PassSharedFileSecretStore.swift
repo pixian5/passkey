@@ -19,7 +19,7 @@ enum PassSharedFileSecretStore {
         let directory = PassSharedData.dataDirectoryURL(fileManager: fileManager)
         let destination = directory.appendingPathComponent(fileName, isDirectory: false)
         let temporary = directory.appendingPathComponent(
-            ".(fileName).(UUID().uuidString).tmp",
+            ".\(fileName).\(UUID().uuidString).tmp",
             isDirectory: false
         )
 

@@ -35,6 +35,8 @@ jobs:
             fi
             git fetch origin master
             git checkout -f origin/master
+            sudo install -m 0644 apps/sync_server_ubuntu/pass-sync-server.service /etc/systemd/system/pass-sync-server.service
+            sudo systemctl daemon-reload
             sudo systemctl restart pass-sync-server
             if ! curl --fail --silent --show-error --insecure https://127.0.0.1:5443/healthz >/dev/null; then
               echo "新版本健康检查失败，回滚到 ${previous_revision}" >&2

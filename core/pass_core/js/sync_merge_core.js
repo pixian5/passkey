@@ -301,7 +301,8 @@ function mergeSameAccount(lhs, rhs, h) {
     folderId: mergedFolderIds[0] || (newerAccount.folderId == null ? null : h.normalizeFolderId(newerAccount.folderId)),
     folderIds: mergedFolderIds,
     folderMembershipStates,
-    sites: mergedSites.length > 0 ? mergedSites : primary.sites,
+    // Empty is intentional: every site may be tombstoned. Never revive primary.sites.
+    sites: mergedSites,
     siteAliasStates,
     username: usernameField.value,
     password: passwordField.value,

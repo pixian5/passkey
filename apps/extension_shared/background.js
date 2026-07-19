@@ -682,7 +682,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse(await handlePasskeyOperationAndSyncAccount(message.payload));
         return;
       case "PASS_CONTENT_GET_ACCOUNTS":
+        // Compatibility alias: never returns passwords.
         sendResponse(await handleContentGetAccounts());
+        return;
+      case "PASS_CONTENT_CHECK_LOGIN":
+        sendResponse(await handleContentCheckLogin(message.payload, sender));
         return;
       default:
         return;
@@ -869,10 +873,60 @@ async function handleFillActiveTab(payload) {
     return { ok: false, error: "找不到活动标签页" };
   }
 
+  let tabHost = "";
+  try {
+    tabHost = new URL(String(activeTab.url || "")).hostname;
+  } catch {
+    tabHost = "";
+  }
+  if (!tabHost) {
+    return { ok: false, error: "无法识别当前标签页域名" };
+  }
+
+  const protocol = (() => {
+    try {
+      return new URL(String(activeTab.url || "")).protocol;
+    } catch {
+      return "";
+    }
+  })();
+  const isLocalhost = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(String(tabHost).toLowerCase());
+  if (protocol !== "https:" && !(protocol === "http:" && isLocalhost)) {
+    return { ok: false, error: "仅允许向 HTTPS 页面（或本机 HTTP）填充凭据" };
+  }
+
+  let username = String(payload?.username || "");
+  let password = String(payload?.password || "");
+  const accountId = String(payload?.accountId || "").trim();
+  if (accountId) {
+    const accounts = await getAccounts();
+    const account = accounts.find((item) => !item?.isDeleted && String(item?.accountId || "") === accountId);
+    if (!account) {
+      return { ok: false, error: "找不到要填充的账号" };
+    }
+    if (!accountMatchesDomain(account, tabHost)) {
+      return { ok: false, error: "当前页面域名与账号站点不匹配，已阻止跨域填充" };
+    }
+    username = String(account.username || "");
+    password = String(account.password || "");
+  } else {
+    // Legacy payload path: still require an in-vault match for the active host.
+    const accounts = await getAccounts();
+    const matched = accounts.find((item) => {
+      return !item?.isDeleted
+        && accountMatchesDomain(item, tabHost)
+        && String(item?.username || "") === username
+        && String(item?.password || "") === password;
+    });
+    if (!matched) {
+      return { ok: false, error: "当前页面域名与账号站点不匹配，已阻止跨域填充" };
+    }
+  }
+
   await chrome.scripting.executeScript({
     target: { tabId: activeTab.id },
     func: fillCredentialInPage,
-    args: [payload?.username || "", payload?.password || ""],
+    args: [username, password],
   });
 
   return { ok: true };
@@ -970,16 +1024,48 @@ async function handleSaveFromLogin(payload) {
 }
 
 async function handleContentGetAccounts() {
+  // Content scripts only need enough metadata to decide save/update prompts.
+  // Passwords never leave the service worker on this path.
   const accounts = await getAccounts();
   return {
     ok: true,
-    accounts: accounts.map((account) => ({
-      sites: normalizeSites(account?.sites || []),
-      username: String(account?.username || ""),
-      password: String(account?.password || ""),
-      isDeleted: Boolean(account?.isDeleted),
-    })),
+    accounts: accounts
+      .filter((account) => !account?.isDeleted)
+      .map((account) => ({
+        sites: normalizeSites(account?.sites || []),
+        username: String(account?.username || ""),
+        isDeleted: false,
+      })),
   };
+}
+
+async function handleContentCheckLogin(payload, sender) {
+  let domain = normalizeDomain(payload?.domain || "");
+  try {
+    const tabUrl = String(sender?.tab?.url || "");
+    if (tabUrl) domain = normalizeDomain(new URL(tabUrl).hostname) || domain;
+  } catch {
+    // Keep payload domain as fallback for non-tab callers.
+  }
+  const username = String(payload?.username || "").trim();
+  const password = String(payload?.password || "");
+  if (!domain || !username || !password) {
+    return { ok: true, shouldPrompt: false };
+  }
+  const accounts = await getAccounts();
+  const active = accounts.filter((item) => !item.isDeleted);
+  const exact = active.some((account) => {
+    return accountMatchesDomain(account, domain)
+      && account.username === username
+      && account.password === password;
+  });
+  if (exact) return { ok: true, shouldPrompt: false };
+  const updateCandidate = active.some((account) => {
+    return accountMatchesDomain(account, domain)
+      && account.username === username
+      && account.password !== password;
+  });
+  return { ok: true, shouldPrompt: true, mode: updateCandidate ? "update" : "create" };
 }
 
 async function getAccounts() {
@@ -1761,7 +1847,10 @@ function fillCredentialInPage(username, password) {
     if (!(element instanceof HTMLElement)) return false;
     const style = window.getComputedStyle(element);
     if (style.display === "none" || style.visibility === "hidden") return false;
+    if (Number(style.opacity || "1") === 0) return false;
     if (element.hasAttribute("disabled") || element.hasAttribute("readonly")) return false;
+    const rect = element.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) return false;
     return true;
   };
 

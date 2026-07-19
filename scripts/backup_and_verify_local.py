@@ -18,10 +18,28 @@ def create_backup(source: Path, destination: Path) -> dict[str, object]:
     with sqlite3.connect(source_db) as connection:
         escaped = str(target_db).replace("'", "''")
         connection.execute(f"VACUUM INTO '{escaped}'")
-    for name in ("pass-db-key-v1", "sync-credentials-v1.json", "app-lock-credential-v1.json"):
+    # Never copy the raw database key next to the encrypted DB. Restoring a
+    # backup requires the operator to supply pass-db-key-v1 separately.
+    for name in ("sync-credentials-v1.json", "app-lock-credential-v1.json"):
         path = source / name
         if path.exists():
-            shutil.copy2(path, destination / name)
+            target = destination / name
+            shutil.copy2(path, target)
+            try:
+                target.chmod(0o600)
+            except OSError:
+                pass
+    note = destination / "RESTORE_KEY.txt"
+    note.write_text(
+        "This backup intentionally omits pass-db-key-v1.\n"
+        "Restore that 32-byte key from a separate secret store before opening pass.db.\n",
+        encoding="utf-8",
+    )
+    try:
+        note.chmod(0o600)
+        destination.chmod(0o700)
+    except OSError:
+        pass
     return verify(destination)
 
 

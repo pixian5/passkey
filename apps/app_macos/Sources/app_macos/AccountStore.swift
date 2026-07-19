@@ -1770,13 +1770,6 @@ final class AccountStore: ObservableObject {
     func exportSyncBundle(to fileURL: URL) {
         do {
             loadSyncSecretsIfNeeded()
-            guard PassSyncCrypto.isEncryptionKeyConfigured(syncEncryptionKey) else {
-                throw NSError(
-                    domain: "AccountStore.SyncBundle",
-                    code: 4,
-                    userInfo: [NSLocalizedDescriptionKey: "同步包导出必须先配置 256 位同步加密密钥"]
-                )
-            }
             let parentDirectory = fileURL.deletingLastPathComponent()
             let data = try encodeEncryptedSyncBundle(payload: buildCurrentSyncPayload())
             try withSecurityScopedAccess(to: fileURL) {
@@ -1786,7 +1779,9 @@ final class AccountStore: ObservableObject {
                 )
                 try data.write(to: fileURL, options: Data.WritingOptions.atomic)
             }
-            statusMessage = "同步包导出成功: \(fileURL.path)"
+            statusMessage = PassSyncCrypto.isEncryptionKeyConfigured(syncEncryptionKey)
+                ? "同步包导出成功（已加密）: \(fileURL.path)"
+                : "同步包导出成功（未加密，请妥善保管）: \(fileURL.path)"
         } catch {
             statusMessage = "同步包导出失败: \(error.localizedDescription)"
         }
@@ -2389,11 +2384,6 @@ final class AccountStore: ObservableObject {
         }
 
         loadSyncSecretsIfNeeded()
-        guard PassSyncCrypto.isEncryptionKeyConfigured(syncEncryptionKey) else {
-            cloudSyncStatus = "同步已停止：尚未配置 256 位同步加密密钥"
-            statusMessage = "同步已停止，请先配置 256 位同步加密密钥"
-            return
-        }
         let localPayload = buildCurrentSyncPayload()
         do {
             try saveLocalSyncSafetySnapshot(localPayload, reason: "同步前自动备份")
@@ -2896,10 +2886,6 @@ final class AccountStore: ObservableObject {
 
     func previewSync() async {
         loadSyncSecretsIfNeeded()
-        guard PassSyncCrypto.isEncryptionKeyConfigured(syncEncryptionKey) else {
-            syncPreviewStatus = "预览失败：请先配置 256 位同步加密密钥"
-            return
-        }
         let localPayload = buildCurrentSyncPayload()
         var remoteAggregate: SyncBundlePayload?
         do {
@@ -5157,7 +5143,7 @@ final class AccountStore: ObservableObject {
     func copySyncEncryptionKey() {
         let trimmed = PassSyncCrypto.normalizedKeyString(syncEncryptionKey)
         guard !trimmed.isEmpty else {
-            statusMessage = "同步加密密钥为空，远程同步不可用"
+            statusMessage = "同步加密密钥为空，将使用明文同步；请确认同步服务器允许明文"
             return
         }
         guard PassSyncCrypto.isValidKeyString(syncEncryptionKey) else {
@@ -5191,13 +5177,18 @@ final class AccountStore: ObservableObject {
                 : lhsDeviceName
             return (lhsValue, lhsUpdatedAt, device)
         }
+        // Field clocks tied: never let an empty credential erase a non-empty one
+        // just because an unrelated account-level edit bumped updatedAtMs.
+        if lhsValue.isEmpty, !rhsValue.isEmpty {
+            return (rhsValue, rhsUpdatedAt, rhsDeviceName)
+        }
+        if rhsValue.isEmpty, !lhsValue.isEmpty {
+            return (lhsValue, lhsUpdatedAt, lhsDeviceName)
+        }
         if lhsAccountUpdatedAt > rhsAccountUpdatedAt {
             return (lhsValue, lhsUpdatedAt, lhsDeviceName)
         }
         if rhsAccountUpdatedAt > lhsAccountUpdatedAt {
-            return (rhsValue, rhsUpdatedAt, rhsDeviceName)
-        }
-        if lhsValue.isEmpty, !rhsValue.isEmpty {
             return (rhsValue, rhsUpdatedAt, rhsDeviceName)
         }
         let lhsDevice = lhsDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -5375,7 +5366,13 @@ final class AccountStore: ObservableObject {
     }
 
     private func csvEscaped(_ value: String) -> String {
-        "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+        var sanitized = value
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+        if let first = sanitized.first, "=+-@\t".contains(first) {
+            sanitized = "'" + sanitized
+        }
+        return "\"\(sanitized.replacingOccurrences(of: "\"", with: "\"\""))\""
     }
 
     private func matchedImportedAccountIndex(

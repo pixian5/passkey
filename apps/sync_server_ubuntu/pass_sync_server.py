@@ -157,18 +157,57 @@ class PayloadRepository:
                 );
                 """
             )
-            rows = connection.execute("SELECT scope, payload_json FROM payloads;").fetchall()
-            plaintext_scopes = []
+            rows = connection.execute(
+                "SELECT scope, etag, payload_json, payload_sha256, exported_at_ms, updated_at_ms FROM payloads;"
+            ).fetchall()
+            unsupported = []
             for row in rows:
                 try:
                     schema = json.loads(row["payload_json"]).get("schema")
-                except (json.JSONDecodeError, AttributeError):
+                except (json.JSONDecodeError, AttributeError, TypeError):
                     schema = None
                 if schema not in {"pass.sync.encrypted.v1", "pass.sync.bundle.v2"}:
-                    plaintext_scopes.append(row["scope"])
-            if plaintext_scopes:
-                connection.executemany("DELETE FROM payloads WHERE scope = ?;", [(scope,) for scope in plaintext_scopes])
-                LOGGER.warning("Removed %s legacy unsupported payload(s)", len(plaintext_scopes))
+                    unsupported.append(row)
+            if unsupported:
+                purge_enabled = os.environ.get("PASS_SYNC_PURGE_LEGACY", "0").strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                }
+                quarantine_path = self.db_path.parent / f"purged_payloads_{current_time_ms()}.jsonl"
+                with quarantine_path.open("a", encoding="utf-8") as handle:
+                    for row in unsupported:
+                        handle.write(
+                            json.dumps(
+                                {
+                                    "scope": row["scope"],
+                                    "etag": row["etag"],
+                                    "payloadSha256": row["payload_sha256"],
+                                    "exportedAtMs": row["exported_at_ms"],
+                                    "updatedAtMs": row["updated_at_ms"],
+                                    "payloadJson": row["payload_json"],
+                                },
+                                ensure_ascii=False,
+                            )
+                            + "\n"
+                        )
+                scopes = [row["scope"] for row in unsupported]
+                if not purge_enabled:
+                    raise RuntimeError(
+                        "发现不受支持的同步 payload schema，已写入隔离文件但未删除："
+                        f"{quarantine_path}. scopes={scopes}. "
+                        "确认备份后设置 PASS_SYNC_PURGE_LEGACY=1 再启动。"
+                    )
+                connection.executemany(
+                    "DELETE FROM payloads WHERE scope = ?;",
+                    [(scope,) for scope in scopes],
+                )
+                LOGGER.warning(
+                    "Purged %s legacy unsupported payload(s) into %s: %s",
+                    len(scopes),
+                    quarantine_path,
+                    ",".join(scopes),
+                )
 
     def get(self, scope: str) -> StoredPayload | None:
         with self._managed_connect() as connection:
@@ -285,6 +324,13 @@ class PayloadRepository:
                             "IDEMPOTENCY_KEY_REUSED",
                             "Idempotency-Key 已经用于另一份同步数据。",
                         )
+                    current_for_replay = self.get(scope)
+                    if current_for_replay is not None and current_for_replay.etag != replay["etag"]:
+                        raise RequestError(
+                            HTTPStatus.CONFLICT,
+                            "IDEMPOTENCY_STALE",
+                            "Idempotency-Key 对应的快照已被更新，请重新拉取合并后再上传。",
+                        )
                     self.record_operation(scope, "idempotent_replay", "success", replay["etag"], None)
                     return StoredPayload(
                         scope=scope,
@@ -295,6 +341,15 @@ class PayloadRepository:
                         updated_at_ms=replay["updated_at_ms"],
                     )
             current = self.get(scope)
+            if current is not None and (if_match is None or not str(if_match).strip()):
+                self.record_operation(scope, operation, "conflict", current.etag, None)
+                raise RequestError(
+                    HTTPStatus.PRECONDITION_REQUIRED
+                    if hasattr(HTTPStatus, "PRECONDITION_REQUIRED")
+                    else HTTPStatus.PRECONDITION_FAILED,
+                    "IF_MATCH_REQUIRED",
+                    "更新已有同步数据必须提供 If-Match。",
+                )
             if not etag_matches(current.etag if current else None, if_match):
                 self.record_operation(scope, operation, "conflict", current.etag if current else None, None)
                 raise PreconditionFailedError()
@@ -939,7 +994,7 @@ class PassSyncHTTPServer(ThreadingHTTPServer):
         return scope
 
 
-def parse_and_validate_bundle(raw_body: bytes, *, allow_plaintext: bool = True) -> tuple[str, str, int]:
+def parse_and_validate_bundle(raw_body: bytes, *, allow_plaintext: bool = False) -> tuple[str, str, int]:
     try:
         parsed = json.loads(raw_body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:

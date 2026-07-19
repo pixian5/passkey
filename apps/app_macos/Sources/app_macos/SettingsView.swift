@@ -179,7 +179,7 @@ struct SettingsView: View {
                         HStack(spacing: 8) {
                             Text("同步加密密钥")
                                 .frame(width: labelColumnWidth, alignment: .leading)
-                            TextField("远程同步必填", text: $store.syncEncryptionKey)
+                            TextField("留空则不同步加密", text: $store.syncEncryptionKey)
                                 .textFieldStyle(.roundedBorder)
                                 .onTapGesture { store.loadSyncSecretsForUI() }
                             Button("生成") {
@@ -197,7 +197,7 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
 
                         Text(store.syncEncryptionKeyIdentifier.isEmpty
-                            ? "当前未配置同步密钥。"
+                            ? "当前未配置同步密钥。远程同步和同步包导出不可用。"
                             : "当前同步密钥 ID：\(store.syncEncryptionKeyIdentifier)。配对、轮换或排查密钥不匹配时请核对此标识。")
                             .font(.caption)
                             .foregroundStyle(.secondary)

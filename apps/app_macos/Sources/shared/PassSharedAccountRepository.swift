@@ -36,12 +36,8 @@ final class PassSharedAccountRepository {
             .filter { !$0.isDeleted && !$0.username.isEmpty && !$0.password.isEmpty }
 
         guard !normalizedDomains.isEmpty else {
-            return accounts.sorted { lhs, rhs in
-                if lhs.updatedAtMs != rhs.updatedAtMs {
-                    return lhs.updatedAtMs > rhs.updatedAtMs
-                }
-                return lhs.accountId < rhs.accountId
-            }
+            // Never dump the whole vault when the requester omitted domains.
+            return []
         }
 
         let filtered = accounts.filter { account in

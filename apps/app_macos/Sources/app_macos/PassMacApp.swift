@@ -8,7 +8,9 @@ struct PassMacApp: App {
 
     var body: some Scene {
         WindowGroup {
-            AppLockGateView(store: store, appLock: appLock)
+            AppLockGateView(store: store, appLock: appLock) {
+                ContentView(store: store)
+            }
                 .font(store.textFont())
                 .appToast(store)
                 .modifier(AppleCredentialExchangeActivityModifier(store: store))
@@ -23,38 +25,46 @@ struct PassMacApp: App {
         }
 
         Window("设置", id: "settings") {
-            SettingsView(store: store, appLock: appLock)
-                .font(store.textFont())
-                .appToast(store)
-                .modifier(AppleCredentialExchangeActivityModifier(store: store))
-                .background(WindowFrameAutosave(name: "pass.settings"))
+            AppLockGateView(store: store, appLock: appLock) {
+                SettingsView(store: store, appLock: appLock)
+            }
+            .font(store.textFont())
+            .appToast(store)
+            .modifier(AppleCredentialExchangeActivityModifier(store: store))
+            .background(WindowFrameAutosave(name: "pass.settings"))
         }
         .defaultSize(width: 860, height: 620)
         .windowResizability(.automatic)
 
         Window("新建账号", id: "create-account") {
-            CreateAccountWindowView(store: store)
-                .font(store.textFont())
-                .appToast(store)
-                .background(WindowFrameAutosave(name: "pass.create-account"))
+            AppLockGateView(store: store, appLock: appLock) {
+                CreateAccountWindowView(store: store)
+            }
+            .font(store.textFont())
+            .appToast(store)
+            .background(WindowFrameAutosave(name: "pass.create-account"))
         }
         .defaultSize(width: 760, height: 760)
         .windowResizability(.automatic)
 
         Window(HistoryEntryCategory.sync.menuTitle, id: "history-sync") {
-            HistoryWindowView(store: store, category: .sync)
-                .font(store.textFont())
-                .appToast(store)
-                .background(WindowFrameAutosave(name: "pass.history-sync"))
+            AppLockGateView(store: store, appLock: appLock) {
+                HistoryWindowView(store: store, category: .sync)
+            }
+            .font(store.textFont())
+            .appToast(store)
+            .background(WindowFrameAutosave(name: "pass.history-sync"))
         }
         .defaultSize(width: 980, height: 720)
         .windowResizability(.automatic)
 
         Window(HistoryEntryCategory.local.menuTitle, id: "history-local") {
-            HistoryWindowView(store: store, category: .local)
-                .font(store.textFont())
-                .appToast(store)
-                .background(WindowFrameAutosave(name: "pass.history-local"))
+            AppLockGateView(store: store, appLock: appLock) {
+                HistoryWindowView(store: store, category: .local)
+            }
+            .font(store.textFont())
+            .appToast(store)
+            .background(WindowFrameAutosave(name: "pass.history-local"))
         }
         .defaultSize(width: 980, height: 720)
         .windowResizability(.automatic)
@@ -72,11 +82,11 @@ private struct PassMacShortcutCommands: Commands {
             .keyboardShortcut("z", modifiers: .command)
         }
 
-        CommandGroup(replacing: .textEditing) {
+        CommandGroup(after: .textEditing) {
             Button("全选账号") {
                 store.handleSelectAllShortcut()
             }
-            .keyboardShortcut("a", modifiers: .command)
+            .keyboardShortcut("a", modifiers: [.command, .shift])
         }
     }
 }

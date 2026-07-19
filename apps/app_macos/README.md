@@ -17,7 +17,17 @@ The app-lock password verifier uses PBKDF2-SHA-256 (310000 iterations). Existing
 - Export passwords and passkeys through Apple Credential Exchange on macOS 26+.
 - Display all shown timestamps in `yy-M-d H:m:s` style (e.g. `26-3-14 9:2:8`).
 
-## Run
+## Run（推荐）
+开发测试版请优先打成 `.app` 安装到“应用程序”并前台启动，避免 `swift run` 与访达安装副本混用：
+
+```bash
+cd /Users/x/code/pass/apps/app_macos
+./scripts/package_app.sh
+```
+
+脚本会：结束旧 `PassMac` → Release 构建 → 写入 `dist/PassMac.app` → 复制到 `/Applications/PassMac.app` → `open` 启动。
+
+## 快速调试
 ```bash
 cd /Users/x/code/pass/apps/app_macos
 swift run PassMac
@@ -28,6 +38,12 @@ swift run PassMac
 cd /Users/x/code/pass/apps/app_macos
 swift build
 ```
+
+## 安全说明（开发测试版）
+- 主窗口、设置、新建账号、历史窗口都套了 AppLock 门禁。
+- AutoFill 扩展不再无交互直接出密，会要求用户确认。
+- 本地备份脚本不再把 `pass-db-key-v1` 与加密库放在同一目录；恢复时需单独提供密钥。
+- 同步仍要求 256 位同步加密密钥；CSV 导出会对 `=+-@` 等公式前缀做防护。
 
 ## Xcode
 - 默认开发路径：使用 [`project.yml`](/Users/x/code/pass/apps/app_macos/project.yml) 生成纯 App 工程，不包含 AutoFill 扩展和签名要求。

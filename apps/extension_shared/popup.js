@@ -885,7 +885,10 @@ function renderAccounts() {
 
       const fillBtn = document.createElement("button");
       fillBtn.textContent = "填充当前页";
-      fillBtn.disabled = !(account.username && account.password);
+      const canFill = Boolean(account.username && account.password)
+        && (!showAllAccountsMode || isAccountMatchCurrentDomain(account, currentDomain));
+      fillBtn.disabled = !canFill;
+      fillBtn.title = canFill ? "" : "仅允许填充与当前页面域名匹配的账号";
       fillBtn.addEventListener("click", () => fillCurrentPage(account));
       actions.appendChild(fillBtn);
 
@@ -1329,15 +1332,15 @@ function buildEditor(account) {
   const details = document.createElement("div");
   details.className = "meta editor-meta";
   details.innerHTML =
-    `通行密钥: ${(account.passkeyCredentialIds || []).length} 个 | 通行密钥更新时间：${formatTime(account.passkeyUpdatedAtMs)} | ${String(account.passkeyUpdatedDeviceName || "").trim() || "-"}<br/>` +
+    `通行密钥: ${(account.passkeyCredentialIds || []).length} 个 | 通行密钥更新时间：${formatTime(account.passkeyUpdatedAtMs)} | ${escapeHtml(String(account.passkeyUpdatedDeviceName || "").trim() || "-")}<br/>` +
     `创建: ${formatTime(account.createdAtMs)} | 更新: ${formatTime(account.updatedAtMs)}<br/>` +
-    `最后操作设备: ${String(account.lastOperatedDeviceName || "").trim() || "-"}<br/>` +
+    `最后操作设备: ${escapeHtml(String(account.lastOperatedDeviceName || "").trim() || "-")}<br/>` +
     `删除: ${formatTime(account.deletedAtMs)}<br/>` +
-    `用户名：${formatTime(account.usernameUpdatedAtMs)} | ${String(account.usernameUpdatedDeviceName || "").trim() || "-"}<br/>` +
-    `密码：${formatTime(account.passwordUpdatedAtMs)} | ${String(account.passwordUpdatedDeviceName || "").trim() || "-"}<br/>` +
-    `TOTP：${formatTime(account.totpUpdatedAtMs)} | ${String(account.totpUpdatedDeviceName || "").trim() || "-"}<br/>` +
-    `恢复码：${formatTime(account.recoveryCodesUpdatedAtMs)} | ${String(account.recoveryCodesUpdatedDeviceName || "").trim() || "-"}<br/>` +
-    `备注：${formatTime(account.noteUpdatedAtMs)} | ${String(account.noteUpdatedDeviceName || "").trim() || "-"}<br/>`;
+    `用户名：${formatTime(account.usernameUpdatedAtMs)} | ${escapeHtml(String(account.usernameUpdatedDeviceName || "").trim() || "-")}<br/>` +
+    `密码：${formatTime(account.passwordUpdatedAtMs)} | ${escapeHtml(String(account.passwordUpdatedDeviceName || "").trim() || "-")}<br/>` +
+    `TOTP：${formatTime(account.totpUpdatedAtMs)} | ${escapeHtml(String(account.totpUpdatedDeviceName || "").trim() || "-")}<br/>` +
+    `恢复码：${formatTime(account.recoveryCodesUpdatedAtMs)} | ${escapeHtml(String(account.recoveryCodesUpdatedDeviceName || "").trim() || "-")}<br/>` +
+    `备注：${formatTime(account.noteUpdatedAtMs)} | ${escapeHtml(String(account.noteUpdatedDeviceName || "").trim() || "-")}<br/>`;
   editor.appendChild(details);
 
   const buttons = document.createElement("div");
@@ -1831,7 +1834,11 @@ async function editPasskeyUsername(credentialIdB64u, currentUserName = "") {
 async function fillCurrentPage(account) {
   const response = await chrome.runtime.sendMessage({
     type: "PASS_FILL_ACTIVE_TAB",
-    payload: { username: account.username, password: account.password },
+    payload: {
+      accountId: account.accountId,
+      username: account.username,
+      password: account.password,
+    },
   });
 
   if (response?.ok) {

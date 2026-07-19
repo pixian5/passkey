@@ -49,12 +49,16 @@ enum AppleCredentialExchangeMapper {
         formatVersion: ASExportedCredentialData.FormatVersion
     ) throws -> ASExportedCredentialData {
         let activeAccounts = accounts.filter { !$0.isDeleted }
-        let passkeysById = Dictionary(uniqueKeysWithValues: passkeys.compactMap { passkey -> (String, PasskeyRecord)? in
+        var passkeysById: [String: PasskeyRecord] = [:]
+        for passkey in passkeys {
             let id = passkey.credentialIdB64u.trimmingCharacters(in: .whitespacesAndNewlines)
-            return id.isEmpty ? nil : (id, passkey)
-        })
+            guard !id.isEmpty else { continue }
+            passkeysById[id] = passkey
+        }
 
-        let items = try activeAccounts.map { account in
+        var exportedPasskeyIDs = Set<String>()
+        var items = try activeAccounts.map { account in
+            exportedPasskeyIDs.formUnion(account.passkeyCredentialIds)
             let credentials = try exportCredentials(for: account, passkeysById: passkeysById)
             return ASImportableItem(
                 id: stableDataID("item|\(account.accountId)"),
@@ -66,6 +70,30 @@ enum AppleCredentialExchangeMapper {
                 scope: scope(for: account.sites),
                 credentials: credentials,
                 tags: []
+            )
+        }
+
+        // Preserve passkeys that are not currently linked from an active
+        // account instead of silently dropping them during a full export.
+        for passkey in passkeysById.values.sorted(by: { $0.credentialIdB64u < $1.credentialIdB64u }) {
+            let credentialID = passkey.credentialIdB64u.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !exportedPasskeyIDs.contains(credentialID) else { continue }
+            let relyingParty = DomainUtils.normalize(passkey.rpId)
+            let displayTitle = passkey.displayName.isEmpty
+                ? (passkey.userName.isEmpty ? relyingParty : passkey.userName)
+                : passkey.displayName
+            items.append(
+                ASImportableItem(
+                    id: stableDataID("orphan-passkey-item|\(credentialID)"),
+                    created: dateFromMs(passkey.createdAtMs),
+                    lastModified: dateFromMs(passkey.updatedAtMs),
+                    title: displayTitle,
+                    subtitle: relyingParty,
+                    favorite: false,
+                    scope: scope(for: [relyingParty]),
+                    credentials: [.passkey(try exportPasskey(passkey))],
+                    tags: []
+                )
             )
         }
 
@@ -185,7 +213,6 @@ enum AppleCredentialExchangeMapper {
 
         for credentialId in account.passkeyCredentialIds {
             guard let passkey = passkeysById[credentialId] else { continue }
-            guard passkey.signCount == 0 else { continue }
             credentials.append(.passkey(try exportPasskey(passkey)))
         }
         return credentials

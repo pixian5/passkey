@@ -59,8 +59,25 @@ function openDatabase() {
         db.createObjectStore(STORE_COLLECTIONS, { keyPath: "key" });
       }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error("Failed to open IndexedDB"));
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+      };
+      resolve(db);
+    };
+    request.onerror = () => {
+      dbPromise = null;
+      reject(request.error || new Error("Failed to open IndexedDB"));
+    };
+    request.onblocked = () => {
+      dbPromise = null;
+      reject(new Error("Failed to open IndexedDB: blocked"));
+    };
+  }).catch((error) => {
+    dbPromise = null;
+    throw error;
   });
   return dbPromise;
 }
@@ -139,11 +156,71 @@ async function loadOrCreateEncryptionKey() {
   }
   let rawKey = base64ToBytes(stored[STORAGE_KEY_ENCRYPTION_KEY]);
   if (rawKey.length !== 32) {
+    // Never mint a replacement key when encrypted collections already exist —
+    // that would permanently brick the vault. Only mint on a truly empty store.
+    if (await hasEncryptedCollections()) {
+      throw new Error("本地数据密钥缺失，请恢复密钥或从备份导入");
+    }
     rawKey = crypto.getRandomValues(new Uint8Array(32));
     await chrome.storage.local.set({ [STORAGE_KEY_ENCRYPTION_KEY]: bytesToBase64(rawKey) });
   }
   unlockedEncryptionKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt", "decrypt"]);
   return unlockedEncryptionKey;
+}
+
+async function hasEncryptedCollections() {
+  // Probe with a dedicated connection so module-level dbPromise cannot mask a
+  // freshly deleted/recreated database (important for tests and migrations).
+  return await new Promise((resolve) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_COLLECTIONS)) {
+        db.createObjectStore(STORE_COLLECTIONS, { keyPath: "key" });
+      }
+    };
+    request.onerror = () => resolve(false);
+    request.onsuccess = () => {
+      const db = request.result;
+      try {
+        const tx = db.transaction(STORE_COLLECTIONS, "readonly");
+        const store = tx.objectStore(STORE_COLLECTIONS);
+        const getAll = store.getAll();
+        getAll.onsuccess = () => {
+          const rows = Array.isArray(getAll.result) ? getAll.result : [];
+          db.close();
+          resolve(rows.some((row) => {
+            return row
+              && Number(row.version) === 1
+              && row.nonceBase64
+              && row.ciphertextBase64;
+          }));
+        };
+        getAll.onerror = () => {
+          db.close();
+          resolve(false);
+        };
+      } catch {
+        try { db.close(); } catch { /* ignore */ }
+        resolve(false);
+      }
+    };
+  });
+}
+
+/** Test-only helper: drop cached DB handles after indexedDB.deleteDatabase. */
+export async function resetDataStoreRuntimeForTests() {
+  unlockedEncryptionKey = null;
+  readyPromise = null;
+  if (dbPromise) {
+    try {
+      const db = await dbPromise;
+      db.close();
+    } catch {
+      // Ignore.
+    }
+  }
+  dbPromise = null;
 }
 
 export async function unlockDataEncryption(password, rawCredential) {
@@ -170,8 +247,15 @@ export async function unlockDataEncryption(password, rawCredential) {
       throw new Error("本地数据密钥格式无效");
     }
   } else {
-    const legacy = base64ToBytes(stored[STORAGE_KEY_ENCRYPTION_KEY]);
-    rawKey = legacy.length === 32 ? legacy : crypto.getRandomValues(new Uint8Array(32));
+    const sessionExisting = await chrome.storage.session.get([STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
+    const sessionExistingKey = base64ToBytes(sessionExisting[STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
+    if (sessionExistingKey.length === 32) {
+      // After disableDataEncryption the raw key only lives in session.
+      rawKey = sessionExistingKey;
+    } else {
+      const legacy = base64ToBytes(stored[STORAGE_KEY_ENCRYPTION_KEY]);
+      rawKey = legacy.length === 32 ? legacy : crypto.getRandomValues(new Uint8Array(32));
+    }
     await storeWrappedDataKey(password, rawKey);
     await chrome.storage.local.remove(STORAGE_KEY_ENCRYPTION_KEY);
   }
@@ -193,13 +277,16 @@ export async function lockDataEncryption() {
 }
 
 export async function disableDataEncryption(password, rawCredential) {
+  // Development builds still allow removing the master-password gate, but the
+  // raw data key must stay available only while the browser session is alive.
+  // On next cold start the operator must re-enable lock or re-import data.
   await unlockDataEncryption(password, rawCredential);
   const session = await chrome.storage.session.get([STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
   const rawKey = base64ToBytes(session[STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
   if (rawKey.length !== 32) throw new Error("无法读取已解锁的数据密钥");
-  await chrome.storage.local.set({ [STORAGE_KEY_ENCRYPTION_KEY]: bytesToBase64(rawKey) });
-  await chrome.storage.local.remove(STORAGE_KEY_WRAPPED_ENCRYPTION_KEY);
-  await lockDataEncryption();
+  await chrome.storage.local.remove([STORAGE_KEY_WRAPPED_ENCRYPTION_KEY, STORAGE_KEY_ENCRYPTION_KEY]);
+  unlockedEncryptionKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt", "decrypt"]);
+  await chrome.storage.session.set({ [STORAGE_KEY_SESSION_ENCRYPTION_KEY]: bytesToBase64(rawKey) });
 }
 
 async function deriveWrappingKey(password, saltBytes, iterations) {
@@ -632,7 +719,15 @@ export async function appendHistoryEntry({ timestampMs, action }) {
   if (!normalizedAction) return;
   const ts = Number(timestampMs || Date.now());
   const entry = {
-    id: String(globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`),
+    id: (() => {
+      try {
+        if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
+        const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+        return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+      } catch {
+        throw new Error("当前环境不支持安全随机数");
+      }
+    })(),
     timestampMs: Number.isFinite(ts) && ts > 0 ? ts : Date.now(),
     action: normalizedAction,
   };

@@ -27,15 +27,15 @@ final class AutoFillCredentialProviderViewController: ASCredentialProviderViewCo
     }
 
     override func provideCredentialWithoutUserInteraction(for credentialIdentity: ASPasswordCredentialIdentity) {
-        guard let account = repository.account(recordIdentifier: credentialIdentity.recordIdentifier) else {
-            let error = NSError(
-                domain: ASExtensionErrorDomain,
-                code: ASExtensionError.userInteractionRequired.rawValue
-            )
-            extensionContext.cancelRequest(withError: error)
-            return
-        }
-        complete(with: account)
+        // Never release vault secrets without an explicit AutoFill UI confirmation.
+        let error = NSError(
+            domain: ASExtensionErrorDomain,
+            code: ASExtensionError.userInteractionRequired.rawValue,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Pass 需要用户确认后才能自动填充",
+            ]
+        )
+        extensionContext.cancelRequest(withError: error)
     }
 
     private func configureHostingIfNeeded() {

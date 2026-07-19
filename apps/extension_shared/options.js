@@ -711,7 +711,7 @@ async function refreshSyncEncryptionKeyIdStatus() {
   const key = normalizeSyncEncryptionKey(dom.syncEncryptionKey.value);
   dom.syncEncryptionKeyIdStatus.textContent = key
     ? `当前同步密钥 ID：${await syncEncryptionKeyId(key)}。配对、轮换或排查密钥不匹配时请核对此标识。`
-    : "当前未配置同步密钥。远程同步和同步包导出不可用。";
+    : "当前未配置同步密钥，将使用明文同步包；请确认同步服务器允许明文。";
 }
 
 async function refreshSyncOutboxStatus() {
@@ -1108,7 +1108,7 @@ async function exportSyncBundle() {
     const text = JSON.stringify(encrypted, null, 2);
     await downloadTextFile(fileName, text, "application/json");
     setStatus(
-      `同步包已导出：${bundle.payload.accounts.length} 条账号，` +
+      `同步包已导出（已加密）：${bundle.payload.accounts.length} 条账号，` +
         `${bundle.payload.passkeys.length} 条通行密钥，${bundle.payload.folders.length} 个文件夹`
     );
   } catch (error) {
@@ -1553,10 +1553,6 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
 
 async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
   if (!(await saveSyncSettings())) return;
-  if (!normalizeSyncEncryptionKey(dom.syncEncryptionKey.value)) {
-    setStatus("远程同步已停止：请先配置 256 位同步加密密钥");
-    return;
-  }
   const targets = buildRemoteSyncTargetsFromDom();
   if (!targets || targets.length === 0) return;
   const normalizedSyncMode = normalizeSyncMode(syncMode);
@@ -2362,7 +2358,9 @@ function buildBrowserPasswordCsv(accounts, format) {
 }
 
 function csvEscape(value) {
-  return `"${String(value || "").replaceAll("\"", "\"\"")}"`;
+  let text = String(value || "").replaceAll("\r", " ").replaceAll("\n", " ");
+  if (/^[=+\-@\t]/.test(text)) text = `'${text}`;
+  return `"${text.replaceAll("\"", "\"\"")}"`;
 }
 
 function parseBrowserPasswordCsv(text) {
@@ -4143,14 +4141,14 @@ function buildAccountEditor(account) {
   details.className = "meta";
   details.innerHTML =
     `创建: ${formatTime(account.createdAtMs)} | 更新: ${formatTime(account.updatedAtMs)}<br/>` +
-    `最后操作设备: ${String(account.lastOperatedDeviceName || "").trim() || "-"}<br/>` +
+    `最后操作设备: ${escapeHtml(String(account.lastOperatedDeviceName || "").trim() || "-")}<br/>` +
     `删除: ${formatTime(account.deletedAtMs)}<br/>` +
-    `用户名：${formatTime(account.usernameUpdatedAtMs)} | ${String(account.usernameUpdatedDeviceName || "").trim() || "-"}<br/>` +
-    `密码：${formatTime(account.passwordUpdatedAtMs)} | ${String(account.passwordUpdatedDeviceName || "").trim() || "-"}<br/>` +
-    `TOTP：${formatTime(account.totpUpdatedAtMs)} | ${String(account.totpUpdatedDeviceName || "").trim() || "-"}<br/>` +
-    `恢复码：${formatTime(account.recoveryCodesUpdatedAtMs)} | ${String(account.recoveryCodesUpdatedDeviceName || "").trim() || "-"}<br/>` +
-    `备注：${formatTime(account.noteUpdatedAtMs)} | ${String(account.noteUpdatedDeviceName || "").trim() || "-"}<br/>` +
-    `通行密钥：${formatTime(account.passkeyUpdatedAtMs)} | ${String(account.passkeyUpdatedDeviceName || "").trim() || "-"}<br/>`;
+    `用户名：${formatTime(account.usernameUpdatedAtMs)} | ${escapeHtml(String(account.usernameUpdatedDeviceName || "").trim() || "-")}<br/>` +
+    `密码：${formatTime(account.passwordUpdatedAtMs)} | ${escapeHtml(String(account.passwordUpdatedDeviceName || "").trim() || "-")}<br/>` +
+    `TOTP：${formatTime(account.totpUpdatedAtMs)} | ${escapeHtml(String(account.totpUpdatedDeviceName || "").trim() || "-")}<br/>` +
+    `恢复码：${formatTime(account.recoveryCodesUpdatedAtMs)} | ${escapeHtml(String(account.recoveryCodesUpdatedDeviceName || "").trim() || "-")}<br/>` +
+    `备注：${formatTime(account.noteUpdatedAtMs)} | ${escapeHtml(String(account.noteUpdatedDeviceName || "").trim() || "-")}<br/>` +
+    `通行密钥：${formatTime(account.passkeyUpdatedAtMs)} | ${escapeHtml(String(account.passkeyUpdatedDeviceName || "").trim() || "-")}<br/>`;
   editor.appendChild(details);
 
   const actions = document.createElement("div");

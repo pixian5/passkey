@@ -86,7 +86,15 @@ fn serialize_state(state: &AppState) -> Result<String, String> {
 }
 
 fn escape_csv(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
+    let mut sanitized = value.replace('\r', " ").replace('\n', " ");
+    if sanitized
+        .chars()
+        .next()
+        .is_some_and(|c| matches!(c, '=' | '+' | '-' | '@' | '\t'))
+    {
+        sanitized.insert(0, '\'');
+    }
+    format!("\"{}\"", sanitized.replace('"', "\"\""))
 }
 
 fn sync_alias(accounts: &mut [Account]) {

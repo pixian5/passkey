@@ -3,6 +3,7 @@ import CommonCrypto
 import CryptoKit
 import Foundation
 import LocalAuthentication
+import Security
 
 enum AppLockPolicy: String, CaseIterable, Identifiable {
     case onceUntilQuit
@@ -203,7 +204,13 @@ final class AppLockStore: ObservableObject {
     }
 
     private func storeMasterPassword(_ password: String) -> Bool {
-        let salt = Data((0..<16).map { _ in UInt8.random(in: UInt8.min ... UInt8.max) })
+        var salt = Data(count: 16)
+        let status = salt.withUnsafeMutableBytes { buffer in
+            SecRandomCopyBytes(kSecRandomDefault, 16, buffer.baseAddress!)
+        }
+        guard status == errSecSuccess else {
+            return false
+        }
         guard let digest = pbkdf2Digest(password: password, salt: salt, iterations: MasterPasswordCredential.iterations) else {
             return false
         }

@@ -23,10 +23,13 @@
 - 返回 `ETag`，并支持 `If-Match` 并发保护
 - `GET /healthz` 健康检查
 - `GET /metrics`（需要 Bearer Token）返回请求数、限流数、数据库大小等运维指标
-- 通过受保护的版本接口读取最近保存的加密快照，不会在服务端解密
+- 通过受保护的版本接口读取最近保存的同步快照；启用明文模式时服务端会直接保存明文内容
 - 恢复接口要求携带当前数据的 `If-Match`，恢复动作会再次写入版本历史，避免并发覆盖
 - 审计接口只返回操作类型、状态、ETag、版本号和时间，不包含同步密文内容
 - 生产默认拒绝明文 `pass.sync.bundle.v2`，只有测试或本地开发显式设置 `PASS_SYNC_ALLOW_PLAINTEXT=1` 才允许
+- 已有 state 的 `PUT` **必须**携带 `If-Match`；缺失返回 `428/412`
+- 启动时若发现未知 schema 的 payload，会先写入 `purged_payloads_*.jsonl` 隔离文件；默认拒绝启动，需显式设置 `PASS_SYNC_PURGE_LEGACY=1` 才删除
+- 幂等重放若发现远端 etag 已被推进，返回 `409 IDEMPOTENCY_STALE`
 - GitHub Actions 部署后会访问 `/healthz`；健康检查失败会自动回滚到部署前提交并重启服务
 
 ## 快速启动
@@ -78,6 +81,9 @@ python3 pass_sync_server.py
 - `PASS_SYNC_ALLOW_PLAINTEXT`
   - 默认关闭（`0`）；生产服务器拒绝未加密的 `pass.sync.bundle.v2`
   - 仅本地开发测试可显式设置为 `1`
+- `PASS_SYNC_PURGE_LEGACY`
+  - 默认关闭；发现未知 schema 时只隔离不删除
+  - 确认隔离文件后设为 `1` 才允许启动时 purge
 - `PASS_SYNC_RATE_LIMIT_PER_MINUTE`
   - 每个客户端 IP 每分钟最大请求数，默认 `120`
 - `PASS_SYNC_CLIENT_TIMEOUT_SECONDS`
@@ -96,7 +102,7 @@ python3 pass_sync_server.py
 
 - 服务地址：`https://your-domain.example`
 - Token：`PASS_SYNC_BEARER_TOKENS` 中对应值
-- 同步加密密钥：在所有客户端填写同一枚 256 位密钥；该密钥不得配置到服务器
+- 同步加密密钥：在所有客户端填写同一枚 256 位密钥（必填）；该密钥不得配置到服务器
 
 客户端会自动访问：
 

@@ -155,7 +155,15 @@
   }
 
   async function callBridge(operation, publicKey) {
-    const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const requestId = (() => {
+      try {
+        if (typeof crypto?.randomUUID === "function") return `req_${crypto.randomUUID()}`;
+        const bytes = crypto.getRandomValues(new Uint8Array(16));
+        return `req_${Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")}`;
+      } catch {
+        throw { name: "SecurityError", message: "当前环境不支持安全随机数" };
+      }
+    })();
     const request = {
       source: BRIDGE_SOURCE,
       type: REQUEST_TYPE,
@@ -177,6 +185,7 @@
 
       const onMessage = (event) => {
         if (event.source !== window) return;
+        if (event.origin && event.origin !== window.location.origin) return;
         const data = event.data;
         if (!data || data.source !== BRIDGE_SOURCE || data.type !== RESPONSE_TYPE) return;
         if (data.requestId !== requestId) return;
@@ -214,7 +223,7 @@
         requestId,
         operation,
       });
-      window.postMessage(request, "*");
+      window.postMessage(request, window.location.origin);
     });
   }
 
@@ -457,7 +466,7 @@
       operation,
       reason,
       message,
-    }, "*");
+    }, window.location.origin);
   }
 
   async function notifyFallbackBeforeBrowser(operation, reason) {

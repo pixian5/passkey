@@ -40,6 +40,7 @@ const {
   getSyncSecrets,
   lockDataEncryption,
   migrateLegacySyncSecrets,
+  resetDataStoreRuntimeForTests,
   rewrapDataEncryption,
   setSyncSecrets,
   setSafetySnapshots,
@@ -119,6 +120,14 @@ beforeEach(async () => {
   await lockDataEncryption();
   await local.clear();
   await session.clear();
+  await resetDataStoreRuntimeForTests();
+  await new Promise((resolve, reject) => {
+    const request = indexedDB.deleteDatabase("pass.local.db.v1");
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error || new Error("failed to reset indexeddb"));
+    request.onblocked = () => resolve();
+  });
+  await resetDataStoreRuntimeForTests();
 });
 
 test("v3 包装不能被主密码摘要直接解密，且锁定会清除会话密钥", async () => {
@@ -209,13 +218,21 @@ test("更新主密码、关闭保护和重新启用都会保持 v3 包装可用"
   await disableDataEncryption(nextPassword, nextCredential);
   let stored = await local.get([WRAPPED_KEY, LEGACY_KEY]);
   assert.equal(stored[WRAPPED_KEY], undefined);
-  assert.deepEqual(base64ToBytes(stored[LEGACY_KEY]), rawKey);
-  assert.equal((await session.get([SESSION_KEY]))[SESSION_KEY], undefined);
+  assert.equal(stored[LEGACY_KEY], undefined);
+  assert.deepEqual(
+    base64ToBytes((await session.get([SESSION_KEY]))[SESSION_KEY]),
+    rawKey
+  );
 
+  // Re-enable wraps the still-session key without minting a replacement.
   await unlockDataEncryption(nextPassword, nextCredential);
   stored = await local.get([WRAPPED_KEY, LEGACY_KEY]);
   assert.equal(stored[WRAPPED_KEY].version, 3);
   assert.equal(stored[LEGACY_KEY], undefined);
+  assert.deepEqual(
+    base64ToBytes((await session.get([SESSION_KEY]))[SESSION_KEY]),
+    rawKey
+  );
 });
 
 test("迁移标记已存在时仍会转换 Safari 新来源中的旧集合", async () => {
