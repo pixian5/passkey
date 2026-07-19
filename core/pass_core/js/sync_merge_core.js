@@ -613,6 +613,24 @@ export function evaluateSyncSafety({ local, remote, merged, mode = "merge" }, he
     if (missingAccounts.length > 0) reasons.push("LOCAL_ACCOUNTS_DROPPED");
     if (missingFolders.length > 0) reasons.push("LOCAL_FOLDERS_DROPPED");
     if (missingPasskeys.length > 0) reasons.push("LOCAL_PASSKEYS_DROPPED");
+    const missingRemoteAccounts = missingIdentities(
+      remote?.accounts,
+      merged?.accounts,
+      (item) => asString(item?.recordId || item?.id || item?.accountId).trim().toLowerCase()
+    );
+    const missingRemoteFolders = missingIdentities(
+      remote?.folders,
+      merged?.folders,
+      (item) => asString(item?.id).trim().toLowerCase()
+    );
+    const missingRemotePasskeys = missingIdentities(
+      remote?.passkeys,
+      merged?.passkeys,
+      (item) => asString(item?.credentialIdB64u || item?.id).trim()
+    );
+    if (missingRemoteAccounts.length > 0) reasons.push("REMOTE_ACCOUNTS_DROPPED");
+    if (missingRemoteFolders.length > 0) reasons.push("REMOTE_FOLDERS_DROPPED");
+    if (missingRemotePasskeys.length > 0) reasons.push("REMOTE_PASSKEYS_DROPPED");
     return {
       safe: reasons.length === 0,
       reasons,

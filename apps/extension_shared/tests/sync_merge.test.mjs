@@ -381,3 +381,14 @@ test("合并结果缺少本地稳定 ID 时必须阻止写入", () => {
   assert.equal(safety.safe, false);
   assert.deepEqual(safety.reasons, ["LOCAL_ACCOUNTS_DROPPED"]);
 });
+
+test("合并结果缺少远端稳定 ID 时必须阻止写入", () => {
+  const local = [helpers.normalizeAccountShape({ recordId: "record-local" })];
+  const remote = [helpers.normalizeAccountShape({ recordId: "record-remote" })];
+  const safety = evaluateSyncSafety(
+    { local: { accounts: local }, remote: { accounts: remote }, merged: { accounts: local }, mode: "merge" },
+    helpers
+  );
+  assert.equal(safety.safe, false);
+  assert.deepEqual(safety.reasons, ["REMOTE_ACCOUNTS_DROPPED"]);
+});

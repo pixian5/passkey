@@ -2758,6 +2758,20 @@ final class AccountStore: ObservableObject {
         if !localPasskeyIds.isSubset(of: mergedPasskeyIds) {
             reasons.append("LOCAL_PASSKEYS_DROPPED")
         }
+        if let remote {
+            let remoteAccountIds = Set(remote.accounts.map { $0.id.uuidString.lowercased() })
+            if !remoteAccountIds.isSubset(of: mergedAccountIds) {
+                reasons.append("REMOTE_ACCOUNTS_DROPPED")
+            }
+            let remoteFolderIds = Set(remote.folders.map { $0.id.uuidString.lowercased() })
+            if !remoteFolderIds.isSubset(of: mergedFolderIds) {
+                reasons.append("REMOTE_FOLDERS_DROPPED")
+            }
+            let remotePasskeyIds = Set(remote.passkeys.map(\.credentialIdB64u).filter { !$0.isEmpty })
+            if !remotePasskeyIds.isSubset(of: mergedPasskeyIds) {
+                reasons.append("REMOTE_PASSKEYS_DROPPED")
+            }
+        }
         return reasons
     }
 
