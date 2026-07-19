@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 
-const schemaDirectory = path.resolve(process.cwd(), "../../docs/schemas");
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const schemaDirectory = path.join(repositoryRoot, "docs/schemas");
 const dataSchema = JSON.parse(fs.readFileSync(path.join(schemaDirectory, "pass-data-v2.schema.json"), "utf8"));
 const bundleSchema = JSON.parse(fs.readFileSync(path.join(schemaDirectory, "pass-sync-bundle-v2.schema.json"), "utf8"));
 

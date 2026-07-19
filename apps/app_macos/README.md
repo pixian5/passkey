@@ -15,6 +15,7 @@ The app-lock password verifier uses PBKDF2-SHA-256 (310000 iterations). Existing
 - Generate demo accounts.
 - Export local data to CSV.
 - Export passwords and passkeys through Apple Credential Exchange on macOS 26+.
+- In Settings, use `接入服务器` to install or update the self-hosted sync service over the system `/usr/bin/ssh` client. The SSH username defaults to `root`; password/private-key credentials are encrypted in the local app-group file store and are saved per server host for reuse.
 - Display all shown timestamps in `yy-M-d H:m:s` style (e.g. `26-3-14 9:2:8`).
 
 ## Run（推荐）
@@ -46,13 +47,8 @@ swift build
 - 同步仍要求 256 位同步加密密钥；CSV 导出会对 `=+-@` 等公式前缀做防护。
 
 ## Xcode
-- 默认开发路径：使用 [`project.yml`](/Users/x/code/pass/apps/app_macos/project.yml) 生成纯 App 工程，不包含 AutoFill 扩展和签名要求。
-- 生成默认工程：
-```bash
-cd /Users/x/code/pass/apps/app_macos
-xcodegen generate
-```
-- 如果以后有开发者账号，需要恢复系统级 AutoFill 扩展，再改用 [`project.autofill.yml`](/Users/x/code/pass/apps/app_macos/project.autofill.yml) 生成工程：
+- 所有开发和打包均使用包含 AutoFill 扩展的 [`project.autofill.yml`](/Users/x/code/pass/apps/app_macos/project.autofill.yml)。`package_app.sh` 会自动重新生成该工程，避免扩展被遗漏。
+- 手动生成工程：
 ```bash
 cd /Users/x/code/pass/apps/app_macos
 xcodegen generate --spec project.autofill.yml
@@ -74,6 +70,10 @@ Generated bundle:
 `project.autofill.yml` generated Xcode project and real Developer ID/App Store
 signing before macOS will treat the app as a system credential provider. The
 app and extension share the database key through the app-group file store.
+The local development bundle is ad-hoc signed without the main-app sandbox so
+the `接入服务器` action can launch the system `/usr/bin/ssh` and `/usr/bin/scp`.
+Production distribution should use a signed helper or another approved SSH
+transport instead of reusing this development entitlement set.
 Local verification can use `CODE_SIGNING_ALLOWED=NO`; the packaging script
 still removes the obsolete shared Keychain entitlement from ad-hoc development
 bundles.
@@ -97,6 +97,7 @@ RUN_AFTER_INSTALL=0 ./scripts/package_app.sh
 - App Lock verifier: `~/Library/Group Containers/group.com.pass.desktop.shared/pass-mac/app-lock-credential-v1.json` (0600)
 - Existing `sync-secrets.json` is migrated first and deleted only after the new file is written successfully.
 - Sync credentials and App Lock verifier are encrypted with the local database key before being written to their 0600 files.
+- SSH host keys are kept in `ssh-known-hosts`; new keys are accepted once and changed keys are rejected by OpenSSH. Server provisioning requires root or passwordless sudo. When the server URL contains an explicit HTTPS port (for example `https://uk.sbbz.tech:5443`), the server must have `/etc/bz/certs/server.crt` and `/etc/bz/certs/server.key`; deployment copies them into the service-only TLS directory, listens publicly on that port, opens the port when UFW is active, and backs up the existing SQLite database before restarting the service. A URL without an explicit port keeps the backend on `127.0.0.1:53333` and requires an already configured HTTPS reverse proxy.
 - If the database or its key cannot be read, the app does not fall back to the smaller legacy JSON store or create a replacement database key.
 - CSV export: `~/Library/Group Containers/group.com.pass.desktop.shared/pass-mac/pass-export-*.csv`
 - If a historical audit record cannot be authenticated, the app leaves accounts,

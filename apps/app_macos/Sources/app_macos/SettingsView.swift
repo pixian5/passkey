@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State private var confirmMasterPassword: String = ""
     @State private var disableUnlockPassword: String = ""
     @State private var didConfigureWindow: Bool = false
+    @State private var isServerProvisioningPresented: Bool = false
     private let labelColumnWidth: CGFloat = 170
     private let idleMinuteChoices: [Int] = [1, 3, 5, 10, 15, 30, 60]
 
@@ -135,6 +136,13 @@ struct SettingsView: View {
                                     .frame(width: labelColumnWidth, alignment: .leading)
                                 TextField(AccountStore.defaultSelfHostedServerBaseURL, text: $store.serverBaseURL)
                                     .textFieldStyle(.roundedBorder)
+                                Button {
+                                    store.loadSyncSecretsForUI()
+                                    isServerProvisioningPresented = true
+                                } label: {
+                                    Label("接入服务器", systemImage: "server.rack")
+                                }
+                                .buttonStyle(.borderedProminent)
                             }
                             HStack(spacing: 8) {
                                 Text("访问令牌")
@@ -505,6 +513,9 @@ struct SettingsView: View {
         .background(WindowAccessor { window in
             configureWindowIfNeeded(window)
         })
+        .sheet(isPresented: $isServerProvisioningPresented) {
+            ServerProvisioningSheet(store: store)
+        }
     }
 
     private var syncDiagnosticsText: String {
@@ -800,6 +811,185 @@ struct SettingsView: View {
             panel.beginSheetModal(for: window, completionHandler: completion)
         } else {
             panel.begin(completionHandler: completion)
+        }
+    }
+}
+
+private struct ServerProvisioningSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var store: AccountStore
+    @State private var serverURL: String
+    @State private var username: String
+    @State private var sshPort: String
+    @State private var authMode: ServerSSHAuthMode
+    @State private var secret: String
+    @State private var privateKeyPassphrase: String
+    @State private var accessToken: String
+    @State private var syncEncryptionKey: String
+    @State private var isWorking = false
+    @State private var errorMessage = ""
+
+    init(store: AccountStore) {
+        self.store = store
+        let credential = store.savedServerSSHCredential(for: store.serverBaseURL)
+        _serverURL = State(initialValue: store.serverBaseURL)
+        _username = State(initialValue: credential.username)
+        _sshPort = State(initialValue: String(credential.port))
+        _authMode = State(initialValue: credential.authMode)
+        _secret = State(initialValue: credential.secret)
+        _privateKeyPassphrase = State(initialValue: credential.privateKeyPassphrase)
+        _accessToken = State(initialValue: store.serverAuthToken)
+        _syncEncryptionKey = State(initialValue: store.syncEncryptionKey)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("接入自建同步服务器")
+                .font(.title3.weight(.semibold))
+
+            Text("应用会通过 SSH 安装或更新同步服务。默认使用 root；非 root 用户必须具备免密码 sudo 权限。服务器 URL 仅用于提取主机并验证最终服务，SSH 端口单独填写。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                Text("服务器地址")
+                    .frame(width: 120, alignment: .leading)
+                TextField("https://example.com:5443", text: $serverURL)
+                    .textFieldStyle(.roundedBorder)
+                Button("读取已保存") {
+                    loadSavedCredential()
+                }
+                .buttonStyle(.bordered)
+            }
+
+            HStack(spacing: 8) {
+                Text("SSH 用户名")
+                    .frame(width: 120, alignment: .leading)
+                TextField("root", text: $username)
+                    .textFieldStyle(.roundedBorder)
+                Text("SSH 端口")
+                TextField("22", text: $sshPort)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 72)
+            }
+
+            Picker("认证方式", selection: $authMode) {
+                ForEach(ServerSSHAuthMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            if authMode == .password {
+                HStack(spacing: 8) {
+                    Text("SSH 密码")
+                        .frame(width: 120, alignment: .leading)
+                    SecureField("输入服务器登录密码", text: $secret)
+                        .textFieldStyle(.roundedBorder)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("SSH 私钥")
+                    TextEditor(text: $secret)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 128, maxHeight: 190)
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary))
+                    SecureField("私钥口令（可选）", text: $privateKeyPassphrase)
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+
+            HStack(spacing: 8) {
+                Text("访问令牌")
+                    .frame(width: 120, alignment: .leading)
+                SecureField("用于服务端 Bearer Token", text: $accessToken)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            HStack(spacing: 8) {
+                Text("同步加密密钥")
+                    .frame(width: 120, alignment: .leading)
+                SecureField("留空则允许明文同步", text: $syncEncryptionKey)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            Text("接入时会先备份服务器现有同步数据库。同步加密密钥不会发送给服务器，只用于决定是否强制加密同步包。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if !errorMessage.isEmpty {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+
+            HStack {
+                Spacer()
+                Button("取消") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button {
+                    provision()
+                } label: {
+                    if isWorking {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label("连接并接入", systemImage: "link")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(isWorking)
+            }
+        }
+        .padding(20)
+        .frame(width: 620)
+        .onAppear {
+            store.loadSyncSecretsForUI()
+            if accessToken.isEmpty { accessToken = store.serverAuthToken }
+            if syncEncryptionKey.isEmpty { syncEncryptionKey = store.syncEncryptionKey }
+        }
+    }
+
+    private func loadSavedCredential() {
+        let credential = store.savedServerSSHCredential(for: serverURL)
+        username = credential.username
+        sshPort = String(credential.port)
+        authMode = credential.authMode
+        secret = credential.secret
+        privateKeyPassphrase = credential.privateKeyPassphrase
+    }
+
+    private func provision() {
+        errorMessage = ""
+        guard let port = Int(sshPort.trimmingCharacters(in: .whitespacesAndNewlines)),
+              (1 ... 65535).contains(port)
+        else {
+            errorMessage = "SSH 端口必须是 1 到 65535 之间的数字"
+            return
+        }
+        let credential = ServerSSHCredential(
+            username: username.trimmingCharacters(in: .whitespacesAndNewlines),
+            port: port,
+            authMode: authMode,
+            secret: secret,
+            privateKeyPassphrase: privateKeyPassphrase
+        )
+        isWorking = true
+        Task { @MainActor in
+            do {
+                try await store.provisionSelfHostedServer(
+                    serverURL: serverURL,
+                    credential: credential,
+                    accessToken: accessToken,
+                    syncEncryptionKey: syncEncryptionKey
+                )
+                dismiss()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isWorking = false
         }
     }
 }

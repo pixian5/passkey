@@ -3597,6 +3597,48 @@ final class AccountStore: ObservableObject {
         loadSyncSecretsIfNeeded()
     }
 
+    func savedServerSSHCredential(for serverURL: String) -> ServerSSHCredential {
+        loadSyncSecretsIfNeeded()
+        guard let host = ServerProvisioningService.host(from: serverURL),
+              let saved = ServerSSHCredentialStore.load(host: host)
+        else {
+            return ServerSSHCredential()
+        }
+        return saved
+    }
+
+    func provisionSelfHostedServer(
+        serverURL: String,
+        credential: ServerSSHCredential,
+        accessToken: String,
+        syncEncryptionKey: String
+    ) async throws {
+        loadSyncSecretsIfNeeded()
+        let result = try await ServerProvisioningService.deploy(
+            serverURL: serverURL,
+            credential: credential,
+            accessToken: accessToken,
+            syncEncryptionKey: syncEncryptionKey
+        )
+        guard ServerSSHCredentialStore.save(credential, host: result.host) else {
+            throw ServerProvisioningError.commandFailed("服务器已接入，但 SSH 凭据保存失败")
+        }
+        let normalizedToken = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedKey = syncEncryptionKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        serverBaseURL = result.endpoint
+        serverAuthToken = normalizedToken
+        self.syncEncryptionKey = normalizedKey
+        syncEnableSelfHostedServer = true
+
+        guard await ServerProvisioningService.verifyPublicEndpoint(result.endpoint) else {
+            statusMessage = "服务器已安装，但暂时无法从本机访问：\(result.endpoint)/healthz"
+            throw ServerProvisioningError.commandFailed(
+                "服务器服务已安装且连接信息已保存，但无法从本机访问 \(result.endpoint)/healthz；请检查防火墙、DNS、端口映射和证书"
+            )
+        }
+        statusMessage = "服务器接入完成：\(result.endpoint)"
+    }
+
     private func loadSyncSecretsIfNeeded() {
         guard !syncSecretsLoaded else { return }
         isLoadingSyncPreferences = true

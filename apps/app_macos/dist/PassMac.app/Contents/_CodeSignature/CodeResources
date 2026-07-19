@@ -8,6 +8,14 @@
 		<data>
 		ioGYGQxGf2kTOj2I0wLVVDXbfzM=
 		</data>
+		<key>Resources/backup_sync_db.sh</key>
+		<data>
+		I5Sz9iOfImND2/U+TE43aupzsus=
+		</data>
+		<key>Resources/pass_sync_server.py</key>
+		<data>
+		64iFi372URm6u9jsULbZV3mQL28=
+		</data>
 	</dict>
 	<key>files2</key>
 	<dict>
@@ -15,16 +23,30 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			B2W1vqqHsLVu0ymDpIyfBz9zW0o=
+			0Zl47bK8OWPQz4yhhK/iIY10Obs=
 			</data>
 			<key>requirement</key>
-			<string>cdhash H"0765b5beaa87b0b56ed32983a48c9f073f735b4a" or cdhash H"22c64f08b32fa62cad1c72545867a06e31a68c91"</string>
+			<string>cdhash H"d19978edb2bc3963d0cf8ca184afe2218d7439bb" or cdhash H"9d776dd47b3f625273224ceb9f18660eb7657677"</string>
 		</dict>
 		<key>Resources/PassMac.icns</key>
 		<dict>
 			<key>hash2</key>
 			<data>
 			+OpEj8svORCnMQ1CrKIDfzUFLjqt+1qeebZZUgkklvg=
+			</data>
+		</dict>
+		<key>Resources/backup_sync_db.sh</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			ptNtJ+gvAHpI/ttYuq5DO5lX7MC5VG85VMl8I0eqwzo=
+			</data>
+		</dict>
+		<key>Resources/pass_sync_server.py</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			CZtO4YYCFPDIyttCWsymIVDU9IRNA5bREVcglJR2/Tg=
 			</data>
 		</dict>
 	</dict>

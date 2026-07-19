@@ -8,6 +8,15 @@ enum PassSharedData {
         if let sharedBase = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
             return sharedBase.appendingPathComponent(directoryName, isDirectory: true)
         }
+        // The local development app is intentionally unsandboxed so it can
+        // launch the system ssh/scp tools. Keep using the app-group data when
+        // the entitlement API is unavailable in that mode.
+        let directSharedBase = fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Group Containers", isDirectory: true)
+            .appendingPathComponent(appGroupIdentifier, isDirectory: true)
+        if fileManager.fileExists(atPath: directSharedBase.path) {
+            return directSharedBase.appendingPathComponent(directoryName, isDirectory: true)
+        }
         return legacyDataDirectoryURL(fileManager: fileManager)
     }
 

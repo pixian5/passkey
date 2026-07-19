@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   evaluateSyncSafety,
   mergeAccountCollections,
@@ -53,8 +54,9 @@ const helpers = {
   fixedNewAccountFolderName: "新账号",
 };
 
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const goldenVectors = JSON.parse(fs.readFileSync(
-  path.resolve(process.cwd(), "../../docs/sync-golden-vectors.json"),
+  path.join(repositoryRoot, "docs/sync-golden-vectors.json"),
   "utf8"
 ));
 
