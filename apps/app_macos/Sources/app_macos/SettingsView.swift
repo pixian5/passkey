@@ -602,10 +602,13 @@ struct SettingsView: View {
         panel.allowsMultipleSelection = false
         panel.prompt = "选择"
 
-        guard panel.runModal() == .OK, let selectedDirectory = panel.url else {
-            if store.statusMessage.isEmpty {
-                store.statusMessage = "已取消导出"
-            }
+        let response = panel.runModal()
+        guard response == .OK else {
+            store.statusMessage = "已取消导出"
+            return
+        }
+        guard let selectedDirectory = panel.url else {
+            store.statusMessage = "导出失败：选择目录后未返回有效路径"
             return
         }
 
@@ -624,8 +627,13 @@ struct SettingsView: View {
         panel.canCreateDirectories = true
         panel.prompt = "导出"
 
-        guard panel.runModal() == .OK, let url = panel.url else {
+        let response = panel.runModal()
+        guard response == .OK else {
             store.statusMessage = "已取消同步包导出"
+            return
+        }
+        guard let url = panel.url else {
+            store.statusMessage = "同步包导出失败：确认保存位置后未返回有效路径"
             return
         }
 
@@ -764,8 +772,13 @@ struct SettingsView: View {
         panel.canCreateDirectories = true
         panel.prompt = "导出"
 
-        guard panel.runModal() == .OK, let url = panel.url else {
+        let response = panel.runModal()
+        guard response == .OK else {
             store.statusMessage = "已取消\(format.label)密码 CSV 导出"
+            return
+        }
+        guard let url = panel.url else {
+            store.statusMessage = "\(format.label) 密码 CSV 导出失败：确认保存位置后未返回有效路径"
             return
         }
 

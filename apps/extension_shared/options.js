@@ -49,6 +49,7 @@ import {
   syncTargetKey,
 } from "./sync_outbox.js";
 import { createSyncIdempotencyKey, secureRandomUuid } from "./secure_random.js";
+import { downloadTextFile } from "./download_file.js";
 
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
 const STORAGE_KEY_SYNC_ENABLE_WEBDAV = "pass.sync.enableWebDAV.v3";
@@ -235,6 +236,7 @@ let addSitesTargetFolderId = null;
 let deviceNameSaveTimer = null;
 let syncSettingsSaveTimer = null;
 let lockSettingsSaveTimer = null;
+let syncInFlight = false;
 
 const AUTO_SYNC_INTERVAL_OPTIONS = new Set(["0", "1", "3", "5", "10", "15", "30", "60"]);
 
@@ -1094,33 +1096,41 @@ async function clearAll() {
 }
 
 async function exportSyncBundle() {
-  const encryptionKey = normalizeSyncEncryptionKey(dom.syncEncryptionKey.value);
-  if (!encryptionKey) {
-    setStatus("同步包导出已停止：请先配置 256 位同步加密密钥，避免密码以明文落盘");
-    return;
+  try {
+    const encryptionKey = normalizeSyncEncryptionKey(dom.syncEncryptionKey.value);
+    if (!encryptionKey) {
+      setStatus("同步包导出已停止：请先配置 256 位同步加密密钥，避免密码以明文落盘");
+      return;
+    }
+    const bundle = await buildSyncBundle();
+    const encrypted = await encryptSyncBundleDocument(bundle, encryptionKey);
+    const fileName = `pass-sync-bundle-${formatFileTimestamp(bundle.exportedAtMs)}.json`;
+    const text = JSON.stringify(encrypted, null, 2);
+    await downloadTextFile(fileName, text, "application/json");
+    setStatus(
+      `同步包已导出：${bundle.payload.accounts.length} 条账号，` +
+        `${bundle.payload.passkeys.length} 条通行密钥，${bundle.payload.folders.length} 个文件夹`
+    );
+  } catch (error) {
+    setStatus(`同步包导出失败：${error.message}`);
   }
-  const bundle = await buildSyncBundle();
-  const encrypted = await encryptSyncBundleDocument(bundle, encryptionKey);
-  const fileName = `pass-sync-bundle-${formatFileTimestamp(bundle.exportedAtMs)}.json`;
-  const text = JSON.stringify(encrypted, null, 2);
-  downloadTextFile(fileName, text, "application/json");
-  setStatus(
-    `同步包已导出：${bundle.payload.accounts.length} 条账号，` +
-      `${bundle.payload.passkeys.length} 条通行密钥，${bundle.payload.folders.length} 个文件夹`
-  );
 }
 
 async function exportBrowserPasswordCsv(format) {
-  const browser = normalizeBrowserExportFormat(format);
-  const localStored = await readBusinessDataFromStore();
-  const localAccounts = Array.isArray(localStored.accounts)
-    ? localStored.accounts.map(normalizeAccountShape)
-    : [];
-  const activeAccounts = localAccounts.filter((account) => !account.isDeleted);
-  const csv = buildBrowserPasswordCsv(activeAccounts, browser);
-  const fileName = `pass-${browser}-passwords-${formatFileTimestamp(Date.now())}.csv`;
-  downloadTextFile(fileName, csv, "text/csv;charset=utf-8");
-  setStatus(`已导出 ${browserExportLabel(browser)} 密码 CSV，共 ${countBrowserPasswordRows(activeAccounts)} 行`);
+  try {
+    const browser = normalizeBrowserExportFormat(format);
+    const localStored = await readBusinessDataFromStore();
+    const localAccounts = Array.isArray(localStored.accounts)
+      ? localStored.accounts.map(normalizeAccountShape)
+      : [];
+    const activeAccounts = localAccounts.filter((account) => !account.isDeleted);
+    const csv = buildBrowserPasswordCsv(activeAccounts, browser);
+    const fileName = `pass-${browser}-passwords-${formatFileTimestamp(Date.now())}.csv`;
+    await downloadTextFile(fileName, csv, "text/csv;charset=utf-8");
+    setStatus(`已导出 ${browserExportLabel(browser)} 密码 CSV，共 ${countBrowserPasswordRows(activeAccounts)} 行`);
+  } catch (error) {
+    setStatus(`密码 CSV 导出失败：${error.message}`);
+  }
 }
 
 async function importSyncBundleAndMerge() {
@@ -1529,6 +1539,19 @@ async function previewSyncWithRemote() {
 }
 
 async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
+  if (syncInFlight) {
+    setStatus("同步进行中，请稍候；本次请求未重复执行");
+    return false;
+  }
+  syncInFlight = true;
+  try {
+    return await performSyncNowWithRemote(syncMode);
+  } finally {
+    syncInFlight = false;
+  }
+}
+
+async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
   if (!(await saveSyncSettings())) return;
   if (!normalizeSyncEncryptionKey(dom.syncEncryptionKey.value)) {
     setStatus("远程同步已停止：请先配置 256 位同步加密密钥");
@@ -1937,7 +1960,7 @@ async function exportStorageDiagnostics() {
       snapshotCount: snapshots.length,
       note: "诊断导出不包含密码字段、同步令牌或同步加密密钥",
     };
-    downloadTextFile(`pass-diagnostics-${formatFileTimestamp(payload.exportedAtMs)}.json`, JSON.stringify(payload, null, 2), "application/json");
+    await downloadTextFile(`pass-diagnostics-${formatFileTimestamp(payload.exportedAtMs)}.json`, JSON.stringify(payload, null, 2), "application/json");
     dom.storageDiagnosticsStatus.textContent = "诊断文件已导出（不含敏感字段）";
   } catch (error) {
     dom.storageDiagnosticsStatus.textContent = `导出失败：${error.message}`;
@@ -2253,16 +2276,6 @@ function parseSyncBundlePayload(input, { requireBundleSchema = false } = {}) {
     passkeys: Array.isArray(rawPayload.passkeys) ? rawPayload.passkeys : [],
     folders: Array.isArray(rawPayload.folders) ? rawPayload.folders : [],
   };
-}
-
-function downloadTextFile(fileName, content, mimeType) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.click();
-  URL.revokeObjectURL(url);
 }
 
 function pickJsonFile() {
