@@ -109,6 +109,9 @@ const SENSITIVE_MESSAGE_TYPES = new Set([
   "PASS_SAVE_FROM_LOGIN",
   "PASS_PASSKEY_OPERATION",
   "PASS_CONTENT_GET_ACCOUNTS",
+  "PASS_CONTENT_CHECK_LOGIN",
+  "PASS_CONTENT_LIST_FILL_ACCOUNTS",
+  "PASS_CONTENT_FILL_ACCOUNT",
 ]);
 
 function normalizeLegacySelfHostedServerBaseUrl(value) {
@@ -675,6 +678,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "PASS_FILL_ACTIVE_TAB":
         sendResponse(await handleFillActiveTab(message.payload));
         return;
+      case "PASS_CONTENT_LIST_FILL_ACCOUNTS":
+        sendResponse(await handleContentListFillAccounts(sender));
+        return;
+      case "PASS_CONTENT_FILL_ACCOUNT":
+        sendResponse(await handleContentFillAccount(message.payload, sender));
+        return;
       case "PASS_LOGIN_DETECTED":
         sendResponse(await handleLoginDetected(message.payload));
         return;
@@ -870,34 +879,23 @@ async function handlePasskeyOperationAndSyncAccount(payload) {
   return response;
 }
 
-async function handleFillActiveTab(payload) {
-  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!activeTab?.id) {
-    return { ok: false, error: "找不到活动标签页" };
-  }
-
+function parseTabSecurityContext(urlValue) {
   let tabHost = "";
+  let protocol = "";
   try {
-    tabHost = new URL(String(activeTab.url || "")).hostname;
+    const parsed = new URL(String(urlValue || ""));
+    tabHost = parsed.hostname;
+    protocol = parsed.protocol;
   } catch {
     tabHost = "";
+    protocol = "";
   }
-  if (!tabHost) {
-    return { ok: false, error: "无法识别当前标签页域名" };
-  }
-
-  const protocol = (() => {
-    try {
-      return new URL(String(activeTab.url || "")).protocol;
-    } catch {
-      return "";
-    }
-  })();
   const isLocalhost = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(String(tabHost).toLowerCase());
-  if (protocol !== "https:" && !(protocol === "http:" && isLocalhost)) {
-    return { ok: false, error: "仅允许向 HTTPS 页面（或本机 HTTP）填充凭据" };
-  }
+  const allowedProtocol = protocol === "https:" || (protocol === "http:" && isLocalhost);
+  return { tabHost, protocol, allowedProtocol };
+}
 
+async function resolveFillAccountForHost(payload, tabHost) {
   let username = String(payload?.username || "");
   let password = String(payload?.password || "");
   const accountId = String(payload?.accountId || "").trim();
@@ -910,29 +908,114 @@ async function handleFillActiveTab(payload) {
     if (!accountMatchesDomain(account, tabHost)) {
       return { ok: false, error: "当前页面域名与账号站点不匹配，已阻止跨域填充" };
     }
-    username = String(account.username || "");
-    password = String(account.password || "");
-  } else {
-    // Legacy payload path: still require an in-vault match for the active host.
-    const accounts = await getAccounts();
-    const matched = accounts.find((item) => {
-      return !item?.isDeleted
-        && accountMatchesDomain(item, tabHost)
-        && String(item?.username || "") === username
-        && String(item?.password || "") === password;
-    });
-    if (!matched) {
-      return { ok: false, error: "当前页面域名与账号站点不匹配，已阻止跨域填充" };
-    }
+    return {
+      ok: true,
+      accountId: String(account.accountId || accountId),
+      username: String(account.username || ""),
+      password: String(account.password || ""),
+    };
   }
+
+  const accounts = await getAccounts();
+  const matched = accounts.find((item) => {
+    return !item?.isDeleted
+      && accountMatchesDomain(item, tabHost)
+      && String(item?.username || "") === username
+      && String(item?.password || "") === password;
+  });
+  if (!matched) {
+    return { ok: false, error: "当前页面域名与账号站点不匹配，已阻止跨域填充" };
+  }
+  return {
+    ok: true,
+    accountId: String(matched.accountId || ""),
+    username,
+    password,
+  };
+}
+
+async function handleFillActiveTab(payload) {
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!activeTab?.id) {
+    return { ok: false, error: "找不到活动标签页" };
+  }
+
+  const { tabHost, allowedProtocol } = parseTabSecurityContext(activeTab.url || "");
+  if (!tabHost) {
+    return { ok: false, error: "无法识别当前标签页域名" };
+  }
+  if (!allowedProtocol) {
+    return { ok: false, error: "仅允许向 HTTPS 页面（或本机 HTTP）填充凭据" };
+  }
+
+  const resolved = await resolveFillAccountForHost(payload, tabHost);
+  if (!resolved.ok) return resolved;
 
   await chrome.scripting.executeScript({
     target: { tabId: activeTab.id },
     func: fillCredentialInPage,
-    args: [username, password],
+    args: [resolved.username, resolved.password],
   });
 
   return { ok: true };
+}
+
+async function handleContentListFillAccounts(sender) {
+  const tabUrl = String(sender?.tab?.url || "");
+  const { tabHost, allowedProtocol } = parseTabSecurityContext(tabUrl);
+  if (!tabHost) {
+    return { ok: false, error: "无法识别当前标签页域名", accounts: [] };
+  }
+  if (!allowedProtocol) {
+    return { ok: false, error: "仅允许在 HTTPS 页面（或本机 HTTP）列出可填充账号", accounts: [] };
+  }
+
+  const accounts = await getAccounts();
+  const matched = accounts
+    .filter((item) => !item?.isDeleted && accountMatchesDomain(item, tabHost) && String(item?.username || "").trim())
+    .sort((left, right) => {
+      const leftUpdated = Number(left?.updatedAtMs || left?.createdAtMs || 0);
+      const rightUpdated = Number(right?.updatedAtMs || right?.createdAtMs || 0);
+      if (leftUpdated !== rightUpdated) return rightUpdated - leftUpdated;
+      return String(left?.username || "").localeCompare(String(right?.username || ""));
+    })
+    .slice(0, 20)
+    .map((item) => ({
+      accountId: String(item.accountId || ""),
+      username: String(item.username || ""),
+      sites: normalizeSites(item.sites || []),
+    }))
+    .filter((item) => item.accountId);
+
+  return { ok: true, domain: normalizeDomain(tabHost), accounts: matched };
+}
+
+async function handleContentFillAccount(payload, sender) {
+  const tabId = sender?.tab?.id;
+  const tabUrl = String(sender?.tab?.url || "");
+  if (!tabId) {
+    return { ok: false, error: "找不到来源标签页" };
+  }
+
+  const { tabHost, allowedProtocol } = parseTabSecurityContext(tabUrl);
+  if (!tabHost) {
+    return { ok: false, error: "无法识别当前标签页域名" };
+  }
+  if (!allowedProtocol) {
+    return { ok: false, error: "仅允许向 HTTPS 页面（或本机 HTTP）填充凭据" };
+  }
+
+  const resolved = await resolveFillAccountForHost(payload, tabHost);
+  if (!resolved.ok) return resolved;
+
+  // Return credentials to the isolated content script so it can fill the same
+  // form the user focused. Do not include passwords in list responses.
+  return {
+    ok: true,
+    accountId: resolved.accountId,
+    username: resolved.username,
+    password: resolved.password,
+  };
 }
 
 async function handleLoginDetected(payload) {

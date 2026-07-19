@@ -10,10 +10,19 @@ const PASS_PAGE_TOAST_DURATION_MS = 3000;
 const PASSKEY_USE_BROWSER_FALLBACK = "__PASSKEY_USE_BROWSER_FALLBACK__";
 const PASSKEY_LOG_PREFIX = "[Pass content]";
 const PASS_EXTENSION_VERSION = "0.2.3";
+const PASS_FILL_CHOOSER_ID = "pass-fill-chooser";
+const PASS_FILL_LIST_COOLDOWN_MS = 400;
 
 let lastPromptKey = "";
 let lastPromptAt = 0;
 let passPageToastTimer = null;
+let fillChooserHost = null;
+let fillChooserShadow = null;
+let fillChooserHideTimer = null;
+let fillChooserListInFlight = false;
+let fillChooserLastListAt = 0;
+let fillChooserActiveInput = null;
+let fillChooserLocked = false;
 
 function logPasskeyContent(event, details = {}) {
   try {
@@ -43,11 +52,21 @@ function installPassContentBridge() {
   window.addEventListener("message", onWebAuthnBridgeMessage, false);
 
   chrome.runtime.onMessage.addListener((message) => {
-    if (message?.type === "PASS_LOCKED" || message?.type === "PASS_UNLOCKED") {
-      // Login prompts now ask the service worker; no local password cache.
+    if (message?.type === "PASS_LOCKED") {
+      fillChooserLocked = true;
+      hideFillChooser();
+      return;
+    }
+    if (message?.type === "PASS_UNLOCKED") {
+      fillChooserLocked = false;
       return;
     }
   });
+
+  document.addEventListener("focusin", onFillFieldFocusIn, true);
+  document.addEventListener("pointerdown", onDocumentPointerDownForFillChooser, true);
+  window.addEventListener("scroll", () => hideFillChooser(), true);
+  window.addEventListener("resize", () => hideFillChooser());
 
   document.addEventListener(
     "submit",
@@ -187,7 +206,308 @@ function isVisible(input) {
   if ((input.type || "").toLowerCase() === "hidden") return false;
   if (input.disabled || input.readOnly) return false;
   const style = window.getComputedStyle(input);
-  return style.display !== "none" && style.visibility !== "hidden";
+  if (style.display === "none" || style.visibility === "hidden") return false;
+  if (Number(style.opacity || "1") === 0) return false;
+  const rect = input.getBoundingClientRect();
+  if (rect.width < 2 || rect.height < 2) return false;
+  return true;
+}
+
+function isFillableCredentialInput(element) {
+  if (!(element instanceof HTMLInputElement)) return false;
+  if (!isVisible(element)) return false;
+  const type = String(element.type || "text").toLowerCase();
+  if (type === "password") return true;
+  if (!["text", "email", "tel", "url", "search"].includes(type)) return false;
+  const semantic = `${element.name || ""} ${element.id || ""} ${element.autocomplete || ""} ${element.placeholder || ""}`.toLowerCase();
+  return (
+    semantic.includes("user")
+    || semantic.includes("email")
+    || semantic.includes("login")
+    || semantic.includes("account")
+    || semantic.includes("phone")
+    || semantic.includes("mobile")
+  );
+}
+
+function findRelatedPasswordInput(usernameInput) {
+  if (!(usernameInput instanceof HTMLInputElement)) return null;
+  const form = usernameInput.form || usernameInput.closest("form");
+  const scope = form || document;
+  const passwordInputs = Array.from(scope.querySelectorAll('input[type="password"]')).filter(isVisible);
+  if (passwordInputs.length === 0) return null;
+  const sameForm = passwordInputs.find((input) => input.form === usernameInput.form || (form && form.contains(input)));
+  return sameForm || passwordInputs[0] || null;
+}
+
+function findRelatedUsernameInput(passwordInput) {
+  if (!(passwordInput instanceof HTMLInputElement)) return null;
+  const form = passwordInput.form || passwordInput.closest("form");
+  const scope = form || document;
+  const candidates = Array.from(scope.querySelectorAll("input")).filter((input) => {
+    if (input === passwordInput) return false;
+    return isFillableCredentialInput(input) && String(input.type || "").toLowerCase() !== "password";
+  });
+  if (candidates.length === 0) return null;
+  const preceding = candidates.filter((input) => {
+    return Boolean(input.compareDocumentPosition(passwordInput) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  return preceding[preceding.length - 1] || candidates[0] || null;
+}
+
+function setNativeInputValue(input, value) {
+  if (!(input instanceof HTMLInputElement)) return;
+  const proto = window.HTMLInputElement.prototype;
+  const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+  if (descriptor?.set) {
+    descriptor.set.call(input, value);
+  } else {
+    input.value = value;
+  }
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function fillFocusedCredentialFields(username, password) {
+  const active = fillChooserActiveInput;
+  let usernameInput = null;
+  let passwordInput = null;
+
+  if (active instanceof HTMLInputElement) {
+    if (String(active.type || "").toLowerCase() === "password") {
+      passwordInput = active;
+      usernameInput = findRelatedUsernameInput(active);
+    } else {
+      usernameInput = active;
+      passwordInput = findRelatedPasswordInput(active);
+    }
+  }
+
+  if (!passwordInput) {
+    passwordInput = Array.from(document.querySelectorAll('input[type="password"]')).find(isVisible) || null;
+  }
+  if (!usernameInput && passwordInput) {
+    usernameInput = findRelatedUsernameInput(passwordInput);
+  }
+
+  if (usernameInput && username) setNativeInputValue(usernameInput, username);
+  if (passwordInput && password) setNativeInputValue(passwordInput, password);
+  return Boolean((usernameInput && username) || (passwordInput && password));
+}
+
+function hideFillChooser() {
+  if (fillChooserHideTimer) {
+    clearTimeout(fillChooserHideTimer);
+    fillChooserHideTimer = null;
+  }
+  if (fillChooserHost) {
+    fillChooserHost.remove();
+    fillChooserHost = null;
+    fillChooserShadow = null;
+  }
+}
+
+function positionFillChooserNear(input) {
+  if (!fillChooserHost || !(input instanceof HTMLElement)) return;
+  const rect = input.getBoundingClientRect();
+  const top = Math.min(window.innerHeight - 12, Math.max(8, rect.bottom + 6));
+  const left = Math.min(window.innerWidth - 280, Math.max(8, rect.left));
+  fillChooserHost.style.top = `${top}px`;
+  fillChooserHost.style.left = `${left}px`;
+}
+
+function ensureFillChooserHost() {
+  if (fillChooserHost && fillChooserShadow) return fillChooserShadow;
+  const host = document.createElement("div");
+  host.id = PASS_FILL_CHOOSER_ID;
+  host.style.all = "initial";
+  host.style.position = "fixed";
+  host.style.zIndex = "2147483646";
+  host.style.maxWidth = "min(360px, calc(100vw - 16px))";
+  const shadow = host.attachShadow({ mode: "closed" });
+  fillChooserHost = host;
+  fillChooserShadow = shadow;
+  document.documentElement.appendChild(host);
+  return shadow;
+}
+
+function renderFillChooser(accounts, input) {
+  hideFillChooser();
+  if (!Array.isArray(accounts) || accounts.length === 0) return;
+  fillChooserActiveInput = input;
+  const shadow = ensureFillChooserHost();
+  positionFillChooserNear(input);
+
+  const root = document.createElement("div");
+  root.style.background = "#ffffff";
+  root.style.border = "1px solid #c7dafb";
+  root.style.borderRadius = "10px";
+  root.style.boxShadow = "0 10px 26px rgba(36, 67, 109, 0.22)";
+  root.style.padding = "8px";
+  root.style.font = '12px/1.4 "SF Pro Text", "PingFang SC", sans-serif';
+  root.style.color = "#1d314d";
+
+  const title = document.createElement("div");
+  title.textContent = "Pass 填充账号";
+  title.style.fontWeight = "600";
+  title.style.fontSize = "13px";
+  title.style.margin = "2px 4px 8px";
+  root.appendChild(title);
+
+  const list = document.createElement("div");
+  list.style.display = "grid";
+  list.style.gap = "6px";
+
+  for (const account of accounts) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.style.display = "grid";
+    button.style.gap = "2px";
+    button.style.width = "100%";
+    button.style.textAlign = "left";
+    button.style.border = "1px solid #d1e3ff";
+    button.style.borderRadius = "8px";
+    button.style.padding = "7px 8px";
+    button.style.background = "#f7fbff";
+    button.style.cursor = "pointer";
+    button.style.color = "inherit";
+    button.style.font = "inherit";
+
+    const nameLine = document.createElement("div");
+    nameLine.textContent = String(account?.username || "未命名账号");
+    nameLine.style.fontWeight = "600";
+    button.appendChild(nameLine);
+
+    const siteLine = document.createElement("div");
+    const sites = Array.isArray(account?.sites) ? account.sites.filter(Boolean) : [];
+    siteLine.textContent = sites.slice(0, 3).join(" · ") || "匹配当前站点";
+    siteLine.style.fontSize = "11px";
+    siteLine.style.color = "#4b6485";
+    button.appendChild(siteLine);
+
+    button.addEventListener("mousedown", (event) => {
+      // Keep focus on the field while selecting.
+      event.preventDefault();
+    });
+    button.addEventListener("click", (event) => {
+      if (event.isTrusted === false) return;
+      void applyFillAccount(String(account?.accountId || ""));
+    });
+    list.appendChild(button);
+  }
+
+  root.appendChild(list);
+
+  const footer = document.createElement("div");
+  footer.style.display = "flex";
+  footer.style.justifyContent = "flex-end";
+  footer.style.marginTop = "8px";
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.textContent = "关闭";
+  closeBtn.style.border = "1px solid #9ab9eb";
+  closeBtn.style.borderRadius = "8px";
+  closeBtn.style.padding = "4px 8px";
+  closeBtn.style.background = "#fff";
+  closeBtn.style.cursor = "pointer";
+  closeBtn.style.font = "inherit";
+  closeBtn.addEventListener("click", (event) => {
+    if (event.isTrusted === false) return;
+    hideFillChooser();
+  });
+  footer.appendChild(closeBtn);
+  root.appendChild(footer);
+  shadow.appendChild(root);
+}
+
+function runtimeSendMessage(message) {
+  return new Promise((resolve) => {
+    if (!isRuntimeAvailable()) {
+      resolve({ ok: false, error: "扩展上下文不可用" });
+      return;
+    }
+    try {
+      chrome.runtime.sendMessage(message, (response) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message || "消息发送失败" });
+          return;
+        }
+        resolve(response || { ok: false, error: "空响应" });
+      });
+    } catch (error) {
+      resolve({ ok: false, error: error?.message || String(error || "消息发送失败") });
+    }
+  });
+}
+
+async function showFillChooserForInput(input) {
+  if (fillChooserLocked || !isFillableCredentialInput(input)) return;
+  const now = Date.now();
+  if (fillChooserListInFlight) return;
+  if (now - fillChooserLastListAt < PASS_FILL_LIST_COOLDOWN_MS && fillChooserHost) {
+    positionFillChooserNear(input);
+    fillChooserActiveInput = input;
+    return;
+  }
+
+  fillChooserListInFlight = true;
+  try {
+    const response = await runtimeSendMessage({ type: "PASS_CONTENT_LIST_FILL_ACCOUNTS" });
+    fillChooserLastListAt = Date.now();
+    if (!response?.ok) {
+      if (response?.locked) fillChooserLocked = true;
+      hideFillChooser();
+      return;
+    }
+    const accounts = Array.isArray(response.accounts) ? response.accounts : [];
+    if (accounts.length === 0) {
+      hideFillChooser();
+      return;
+    }
+    renderFillChooser(accounts, input);
+  } finally {
+    fillChooserListInFlight = false;
+  }
+}
+
+async function applyFillAccount(accountId) {
+  const id = String(accountId || "").trim();
+  if (!id) return;
+  const response = await runtimeSendMessage({
+    type: "PASS_CONTENT_FILL_ACCOUNT",
+    payload: { accountId: id },
+  });
+  if (!response?.ok) {
+    if (response?.locked) {
+      fillChooserLocked = true;
+      hideFillChooser();
+      showPassPageToast(response.error || "扩展已锁定", "warning");
+      return;
+    }
+    showPassPageToast(response?.error || "填充失败", "error");
+    return;
+  }
+  const filled = fillFocusedCredentialFields(response.username || "", response.password || "");
+  hideFillChooser();
+  if (filled) {
+    showPassPageToast(`已填充 ${response.username || "账号"}`, "success");
+  } else {
+    showPassPageToast("未找到可填充的输入框", "warning");
+  }
+}
+
+function onFillFieldFocusIn(event) {
+  const target = event.target;
+  if (!isFillableCredentialInput(target)) return;
+  void showFillChooserForInput(target);
+}
+
+function onDocumentPointerDownForFillChooser(event) {
+  if (!fillChooserHost) return;
+  const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+  if (path.includes(fillChooserHost)) return;
+  if (event.target === fillChooserActiveInput) return;
+  hideFillChooser();
 }
 
 function onWebAuthnBridgeMessage(event) {
