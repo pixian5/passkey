@@ -91,6 +91,10 @@ private struct PassMacShortcutCommands: Commands {
     }
 
     private func selectAllFocusedTextOrAccounts() {
+        if NSApp.keyWindow?.title == "PassMac" {
+            store.handleSelectAllShortcut()
+            return
+        }
         if NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil) {
             return
         }
