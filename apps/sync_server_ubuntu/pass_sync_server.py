@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import signal
 import sqlite3
 import ssl
@@ -928,6 +929,11 @@ def parse_and_validate_bundle(raw_body: bytes, *, allow_plaintext: bool = True) 
                 raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_ENVELOPE", f"{field_name} 不是合法 Base64。") from exc
             if len(decoded) < minimum_bytes:
                 raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_ENVELOPE", f"{field_name} 长度不足。")
+        key_id = parsed.get("keyId")
+        if key_id is not None and (
+            not isinstance(key_id, str) or re.fullmatch(r"k1-[0-9a-f]{16}", key_id) is None
+        ):
+            raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_KEY_ID", "keyId 必须是 k1- 加 16 位十六进制指纹。")
 
     exported_at_ms = parsed.get("exportedAtMs")
     if not isinstance(exported_at_ms, int):

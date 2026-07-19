@@ -1618,9 +1618,10 @@ async function pullRemotePayload(target) {
     return { payload: null, etag: response.headers.get("ETag"), encrypted: false };
   }
   const key = await getOrCreateSyncEncryptionKey();
+  const fallbackKeys = await getSyncDecryptionFallbackKeys();
   const envelope = JSON.parse(text);
   const encrypted = String(envelope?.schema || "") === "pass.sync.encrypted.v1";
-  const parsed = await decryptSyncBundleDocument(envelope, key);
+  const parsed = await decryptSyncBundleDocument(envelope, key, fallbackKeys);
   const payload = parseSyncBundlePayload(parsed, { requireBundleSchema: true });
   if (!payload) throw new Error("远端数据格式错误，仅支持 pass.sync.bundle.v2");
   return { payload, etag: response.headers.get("ETag"), encrypted };
@@ -1689,6 +1690,13 @@ async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey
 async function getOrCreateSyncEncryptionKey() {
   const secrets = await migrateLegacySyncSecrets();
   return normalizeSyncEncryptionKey(secrets.encryptionKey);
+}
+
+async function getSyncDecryptionFallbackKeys() {
+  const secrets = await migrateLegacySyncSecrets();
+  const previous = normalizeSyncEncryptionKey(secrets.previousEncryptionKey);
+  const current = normalizeSyncEncryptionKey(secrets.encryptionKey);
+  return previous && previous !== current ? [previous] : [];
 }
 
 async function pushRemotePayloadWithRetry(target, payload) {

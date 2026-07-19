@@ -251,6 +251,12 @@ final class AccountStore: ObservableObject {
             _ = saveSecret(syncEncryptionKey, account: SecretKeys.syncEncryptionKeyAccount)
         }
     }
+    @Published var previousSyncEncryptionKey: String = "" {
+        didSet {
+            guard !isLoadingSyncPreferences else { return }
+            _ = saveSecret(previousSyncEncryptionKey, account: SecretKeys.previousSyncEncryptionKeyAccount)
+        }
+    }
     @Published var syncMode: SyncMode = .merge {
         didSet {
             guard !isLoadingSyncPreferences else { return }
@@ -2786,6 +2792,14 @@ final class AccountStore: ObservableObject {
         AutoSyncInterval.allCases
     }
 
+    var syncEncryptionKeyIdentifier: String {
+        PassSyncCrypto.keyId(for: syncEncryptionKey)
+    }
+
+    var previousSyncEncryptionKeyIdentifier: String {
+        PassSyncCrypto.keyId(for: previousSyncEncryptionKey)
+    }
+
     var autoSyncStatusDescription: String {
         let interval = AutoSyncInterval(rawValue: autoSyncIntervalMinutes) ?? .disabled
         let enabledSourceNames = activeSyncSourceNames()
@@ -3523,9 +3537,14 @@ final class AccountStore: ObservableObject {
         webdavPassword = readSecret(account: SecretKeys.webdavPasswordAccount)
         serverAuthToken = readSecret(account: SecretKeys.serverTokenAccount)
         syncEncryptionKey = readSecret(account: SecretKeys.syncEncryptionKeyAccount)
+        previousSyncEncryptionKey = readSecret(account: SecretKeys.previousSyncEncryptionKeyAccount)
         if !PassSyncCrypto.isValidKeyString(syncEncryptionKey) {
             syncEncryptionKey = ""
             _ = saveSecret(syncEncryptionKey, account: SecretKeys.syncEncryptionKeyAccount)
+        }
+        if !PassSyncCrypto.isValidKeyString(previousSyncEncryptionKey) || previousSyncEncryptionKey == syncEncryptionKey {
+            previousSyncEncryptionKey = ""
+            _ = saveSecret(previousSyncEncryptionKey, account: SecretKeys.previousSyncEncryptionKeyAccount)
         }
         isLoadingSyncPreferences = false
         syncSecretsLoaded = true
@@ -3642,6 +3661,7 @@ final class AccountStore: ObservableObject {
         )
         serverAuthToken = ""
         syncEncryptionKey = ""
+        previousSyncEncryptionKey = ""
         syncSecretsLoaded = false
         syncSecretFileLoaded = false
         isLoadingSyncPreferences = false
@@ -5019,7 +5039,11 @@ final class AccountStore: ObservableObject {
     ) {
         let plaintext: Data
         do {
-            plaintext = try PassSyncCrypto.decrypt(data, keyString: syncEncryptionKey)
+            plaintext = try PassSyncCrypto.decrypt(
+                data,
+                keyString: syncEncryptionKey,
+                fallbackKeyStrings: [previousSyncEncryptionKey]
+            )
         } catch {
             throw NSError(
                 domain: "AccountStore.SyncBundle",
@@ -6344,10 +6368,12 @@ private enum SecretKeys {
     static let webdavPasswordAccount = "sync.webdav.password"
     static let serverTokenAccount = "sync.server.token"
     static let syncEncryptionKeyAccount = "sync.encryption.key.v1"
+    static let previousSyncEncryptionKeyAccount = "sync.encryption.key.previous.v1"
     static let allAccounts = [
         webdavPasswordAccount,
         serverTokenAccount,
         syncEncryptionKeyAccount,
+        previousSyncEncryptionKeyAccount,
     ]
 }
 

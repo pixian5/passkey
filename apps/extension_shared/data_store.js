@@ -477,6 +477,7 @@ function normalizeSyncSecrets(value) {
     webdavPassword: String(source.webdavPassword || ""),
     serverToken: String(source.serverToken || "").trim(),
     encryptionKey: String(source.encryptionKey || "").trim(),
+    previousEncryptionKey: String(source.previousEncryptionKey || "").trim(),
   };
 }
 
@@ -569,6 +570,7 @@ export async function migrateLegacySyncSecrets() {
     webdavPassword: existing.webdavPassword || legacy[LEGACY_STORAGE_KEY_SYNC_WEBDAV_PASSWORD],
     serverToken: existing.serverToken || legacy[LEGACY_STORAGE_KEY_SYNC_SERVER_TOKEN],
     encryptionKey: existing.encryptionKey || legacy[LEGACY_STORAGE_KEY_SYNC_ENCRYPTION_KEY],
+    previousEncryptionKey: existing.previousEncryptionKey,
   });
   const hasLegacyRecoverySecrets = Boolean(
     migrated.webdavPassword || migrated.serverToken || migrated.encryptionKey

@@ -41,6 +41,7 @@ import {
   encryptSyncBundleDocument,
   generateSyncEncryptionKey,
   normalizeSyncEncryptionKey,
+  syncEncryptionKeyId,
 } from "./sync_crypto.js";
 import {
   removeOrphanedSyncOutbox,
@@ -140,6 +141,8 @@ const dom = {
   syncServerBaseUrl: document.getElementById("syncServerBaseUrl"),
   syncServerToken: document.getElementById("syncServerToken"),
   syncEncryptionKey: document.getElementById("syncEncryptionKey"),
+  syncEncryptionKeyIdStatus: document.getElementById("syncEncryptionKeyIdStatus"),
+  syncPreviousEncryptionKey: document.getElementById("syncPreviousEncryptionKey"),
   generateSyncEncryptionKeyBtn: document.getElementById("generateSyncEncryptionKeyBtn"),
   syncAutoInterval: document.getElementById("syncAutoInterval"),
   syncAutoStatus: document.getElementById("syncAutoStatus"),
@@ -297,6 +300,7 @@ async function init() {
   dom.syncServerBaseUrl.addEventListener("input", scheduleSyncSettingsSave);
   dom.syncServerToken.addEventListener("input", scheduleSyncSettingsSave);
   dom.syncEncryptionKey.addEventListener("input", scheduleSyncSettingsSave);
+  dom.syncEncryptionKey.addEventListener("input", () => void refreshSyncEncryptionKeyIdStatus());
   dom.syncWebdavBaseUrl.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.syncWebdavPath.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.syncWebdavUsername.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
@@ -304,6 +308,8 @@ async function init() {
   dom.syncServerBaseUrl.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.syncServerToken.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.syncEncryptionKey.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
+  dom.syncPreviousEncryptionKey.addEventListener("input", scheduleSyncSettingsSave);
+  dom.syncPreviousEncryptionKey.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
   dom.generateSyncEncryptionKeyBtn.addEventListener("click", () => {
     dom.syncEncryptionKey.value = generateSyncEncryptionKey();
     void persistSyncSettings({ showStatus: true });
@@ -649,6 +655,8 @@ async function loadSyncSettings() {
   dom.syncServerToken.value = secrets.serverToken;
   const syncEncryptionKey = normalizeSyncEncryptionKey(secrets.encryptionKey);
   dom.syncEncryptionKey.value = syncEncryptionKey;
+  dom.syncPreviousEncryptionKey.value = normalizeSyncEncryptionKey(secrets.previousEncryptionKey);
+  await refreshSyncEncryptionKeyIdStatus();
   if (syncEncryptionKey !== secrets.encryptionKey) {
     await setSyncSecrets({ ...secrets, encryptionKey: syncEncryptionKey });
   }
@@ -694,6 +702,13 @@ function renderAutoSyncStatus() {
     return;
   }
   dom.syncAutoStatus.textContent = `自动按“合并”模式执行，每 ${interval} 分钟同步一次（${enabledLabels.join(" + ")}）`;
+}
+
+async function refreshSyncEncryptionKeyIdStatus() {
+  const key = normalizeSyncEncryptionKey(dom.syncEncryptionKey.value);
+  dom.syncEncryptionKeyIdStatus.textContent = key
+    ? `当前同步密钥 ID：${await syncEncryptionKeyId(key)}。配对、轮换或排查密钥不匹配时请核对此标识。`
+    : "当前未配置同步密钥。远程同步和同步包导出不可用。";
 }
 
 async function refreshSyncOutboxStatus() {
@@ -995,13 +1010,22 @@ async function persistSyncSettings({ showStatus = true } = {}) {
     webdavPassword: String(dom.syncWebdavPassword.value || ""),
     serverToken: String(dom.syncServerToken.value || "").trim(),
     encryptionKey: normalizeSyncEncryptionKey(dom.syncEncryptionKey.value),
+    previousEncryptionKey: normalizeSyncEncryptionKey(dom.syncPreviousEncryptionKey.value),
   };
   if (dom.syncEncryptionKey.value.trim() && !nextSecrets.encryptionKey) {
     if (showStatus) setStatus("同步加密密钥无效，远程同步必须配置 256 位密钥");
     return false;
   }
+  if (dom.syncPreviousEncryptionKey.value.trim() && !nextSecrets.previousEncryptionKey) {
+    if (showStatus) setStatus("轮换前同步密钥无效，必须是 256 位密钥");
+    return false;
+  }
+  if (nextSecrets.previousEncryptionKey && nextSecrets.previousEncryptionKey === nextSecrets.encryptionKey) {
+    nextSecrets.previousEncryptionKey = "";
+  }
   await chrome.storage.local.set(nextSettings);
   await setSyncSecrets(nextSecrets);
+  await refreshSyncEncryptionKeyIdStatus();
 
   const persisted = await chrome.storage.local.get([
     STORAGE_KEY_SYNC_SERVER_BASE_URL,
@@ -1107,7 +1131,11 @@ async function importSyncBundleAndMerge() {
 
   let parsed;
   try {
-    parsed = await decryptSyncBundleDocument(JSON.parse(await file.text()), dom.syncEncryptionKey.value);
+    parsed = await decryptSyncBundleDocument(
+      JSON.parse(await file.text()),
+      dom.syncEncryptionKey.value,
+      [dom.syncPreviousEncryptionKey.value]
+    );
   } catch (error) {
     setStatus(`同步包读取失败: ${error.message}`);
     return;
@@ -1811,7 +1839,7 @@ async function pullRemotePayload(target) {
   try {
     const envelope = JSON.parse(text);
     const encrypted = String(envelope?.schema || "") === "pass.sync.encrypted.v1";
-    parsed = await decryptSyncBundleDocument(envelope, dom.syncEncryptionKey.value);
+    parsed = await decryptSyncBundleDocument(envelope, dom.syncEncryptionKey.value, [dom.syncPreviousEncryptionKey.value]);
     const payload = parseSyncBundlePayload(parsed, { requireBundleSchema: true });
     if (!payload) {
       throw new Error("远端数据格式错误，仅支持 pass.sync.bundle.v2");

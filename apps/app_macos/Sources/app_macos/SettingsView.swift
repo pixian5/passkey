@@ -196,6 +196,25 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
+                        Text(store.syncEncryptionKeyIdentifier.isEmpty
+                            ? "当前未配置同步密钥。"
+                            : "当前同步密钥 ID：\(store.syncEncryptionKeyIdentifier)。配对、轮换或排查密钥不匹配时请核对此标识。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 8) {
+                            Text("轮换前密钥")
+                                .frame(width: labelColumnWidth, alignment: .leading)
+                            TextField("可选：仅用于读取旧加密数据", text: $store.previousSyncEncryptionKey)
+                                .textFieldStyle(.roundedBorder)
+                                .onTapGesture { store.loadSyncSecretsForUI() }
+                        }
+                        Text(store.previousSyncEncryptionKeyIdentifier.isEmpty
+                            ? "轮换前密钥未配置。"
+                            : "轮换前密钥 ID：\(store.previousSyncEncryptionKeyIdentifier)。一次成功同步后，确认所有设备已更新再清空。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
                         HStack(spacing: 8) {
                             Text("自动同步")
                                 .frame(width: labelColumnWidth, alignment: .leading)

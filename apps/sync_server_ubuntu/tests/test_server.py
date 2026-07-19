@@ -273,6 +273,23 @@ class PassSyncServerTests(unittest.TestCase):
         self.assertEqual(context.exception.code, 400)
         context.exception.close()
 
+    def test_encrypted_bundle_accepts_valid_key_id_and_rejects_malformed_one(self) -> None:
+        headers = {
+            "Authorization": "Bearer secret-token",
+            "Content-Type": "application/json",
+        }
+        valid = json.loads(sample_bundle(30).decode("utf-8"))
+        valid["keyId"] = "k1-0123456789abcdef"
+        with self.request("PUT", "/v2/sync/state", body=json.dumps(valid).encode("utf-8"), headers=headers) as response:
+            self.assertEqual(response.status, 200)
+
+        invalid = json.loads(sample_bundle(31).decode("utf-8"))
+        invalid["keyId"] = "not-a-key-id"
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            self.request("PUT", "/v2/sync/state", body=json.dumps(invalid).encode("utf-8"), headers=headers)
+        self.assertEqual(context.exception.code, 400)
+        context.exception.close()
+
     def test_accepts_plaintext_bundle_v2(self) -> None:
         plaintext = json.dumps({
             "schema": "pass.sync.bundle.v2",

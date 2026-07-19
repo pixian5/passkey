@@ -103,6 +103,7 @@ enum PassSharedCrypto {
 struct PassSyncEncryptedEnvelope: Codable {
     let schema: String
     let exportedAtMs: Int64
+    let keyId: String?
     let cipher: String
     let nonceBase64: String
     let ciphertextBase64: String
@@ -136,6 +137,14 @@ enum PassSyncCrypto {
             || Data(base64URLString: normalizedKeyString(value))?.count == 32
     }
 
+    static func keyId(for keyString: String) -> String {
+        let normalized = normalizedKeyString(keyString)
+        guard let keyData = Data(base64URLString: normalized), keyData.count == 32 else { return "" }
+        let digest = SHA256.hash(data: keyData)
+        let prefix = digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+        return "k1-\(prefix)"
+    }
+
     static func encrypt(_ plaintext: Data, keyString: String, exportedAtMs: Int64) throws -> Data {
         let key = normalizedKeyString(keyString)
         if key.isEmpty {
@@ -154,6 +163,7 @@ enum PassSyncCrypto {
         let envelope = PassSyncEncryptedEnvelope(
             schema: schema,
             exportedAtMs: exportedAtMs,
+            keyId: keyId(for: key),
             cipher: cipher,
             nonceBase64: Data(sealed.nonce).base64EncodedString(),
             ciphertextBase64: ciphertextAndTag.base64EncodedString()
@@ -161,7 +171,7 @@ enum PassSyncCrypto {
         return try JSONEncoder().encode(envelope)
     }
 
-    static func decrypt(_ data: Data, keyString: String) throws -> Data {
+    static func decrypt(_ data: Data, keyString: String, fallbackKeyStrings: [String] = []) throws -> Data {
         // 明文 bundle 直接返回
         if let probe = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let schemaValue = probe["schema"] as? String,
@@ -169,19 +179,19 @@ enum PassSyncCrypto {
         {
             return data
         }
-        let key = normalizedKeyString(keyString)
-        if key.isEmpty {
+        var candidateKeys: [String] = []
+        for candidate in [keyString] + fallbackKeyStrings {
+            let normalized = normalizedKeyString(candidate)
+            guard !normalized.isEmpty, isValidKeyString(normalized), !candidateKeys.contains(normalized) else {
+                continue
+            }
+            candidateKeys.append(normalized)
+        }
+        if candidateKeys.isEmpty {
             throw NSError(
                 domain: "PassSyncCrypto",
                 code: 2,
                 userInfo: [NSLocalizedDescriptionKey: "该同步包为加密信封，但当前未配置同步加密密钥"]
-            )
-        }
-        guard isValidKeyString(key) else {
-            throw NSError(
-                domain: "PassSyncCrypto",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "同步加密密钥无效，必须是 256 位密钥"]
             )
         }
         let envelope = try JSONDecoder().decode(PassSyncEncryptedEnvelope.self, from: data)
@@ -192,12 +202,28 @@ enum PassSyncCrypto {
         else {
             throw PassSharedCryptoError.invalidCiphertext
         }
+        let declaredKeyId = envelope.keyId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let matchingKeys = declaredKeyId.isEmpty
+            ? candidateKeys
+            : candidateKeys.filter { keyId(for: $0) == declaredKeyId }
+        guard !matchingKeys.isEmpty else {
+            throw NSError(
+                domain: "PassSyncCrypto",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "同步密钥 ID 不匹配，请选择与远端数据相同的同步密钥或完成密钥轮换"]
+            )
+        }
         let nonce = try AES.GCM.Nonce(data: nonceData)
         let ciphertext = combined.dropLast(16)
         let tag = combined.suffix(16)
         let sealed = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag)
-        let symmetric = SymmetricKey(data: Data(base64URLString: key)!)
-        return try AES.GCM.open(sealed, using: symmetric, authenticating: Data(schema.utf8))
+        for key in matchingKeys {
+            let symmetric = SymmetricKey(data: Data(base64URLString: key)!)
+            if let plaintext = try? AES.GCM.open(sealed, using: symmetric, authenticating: Data(schema.utf8)) {
+                return plaintext
+            }
+        }
+        throw PassSharedCryptoError.invalidCiphertext
     }
 }
 
