@@ -1,12 +1,6 @@
-const ETLD2_SUFFIXES = new Set([
-  "com.cn",
-  "net.cn",
-  "org.cn",
-  "gov.cn",
-  "edu.cn",
-  "co.uk",
-  "org.uk",
-]);
+import { ETLD2_SUFFIXES as ETLD2_SUFFIX_LIST } from "../../core/pass_core/js/sync_policy.js";
+
+const ETLD2_SUFFIXES = new Set(ETLD2_SUFFIX_LIST);
 
 export function normalizeDomain(input) {
   if (!input) return "";

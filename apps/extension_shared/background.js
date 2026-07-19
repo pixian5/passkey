@@ -51,6 +51,14 @@ import {
 import { isTrustedExtensionMessageSender } from "./message_security.js";
 import { createSyncIdempotencyKey, secureRandomUuid } from "./secure_random.js";
 
+import {
+  DEFAULT_DEVICE_NAME,
+  FIXED_NEW_ACCOUNT_FOLDER_ID,
+  FIXED_NEW_ACCOUNT_FOLDER_NAME,
+  SYNC_PUSH_CONFLICT_MAX_ATTEMPTS,
+  normalizeDeviceName,
+} from "../../core/pass_core/js/sync_policy.js";
+
 const PASSKEY_LOG_PREFIX = "[Pass background]";
 const SYNC_LOG_PREFIX = "[Pass sync]";
 
@@ -81,8 +89,6 @@ const STORAGE_KEY_SYNC_PRIMARY_SOURCE = "pass.sync.primarySource.v1";
 const STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
 const CONTEXT_MENU_ID_ALL_ACCOUNTS = "pass.context.all_accounts";
-const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
-const FIXED_NEW_ACCOUNT_FOLDER_NAME = "新账号";
 const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "https://uk.sbbz.tech:5443";
 const SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
 const SYNC_MODE_MERGE = "merge";
@@ -139,7 +145,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   const stored = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
 
   if (!stored[STORAGE_KEY_DEVICE_NAME]) {
-    await chrome.storage.local.set({ [STORAGE_KEY_DEVICE_NAME]: "ChromeMac" });
+    await chrome.storage.local.set({ [STORAGE_KEY_DEVICE_NAME]: DEFAULT_DEVICE_NAME });
   }
 
   await ensureDataStorageReady().catch(() => {});
@@ -966,7 +972,7 @@ async function handleSaveFromLogin(payload) {
 
   const now = Date.now();
   const { [STORAGE_KEY_DEVICE_NAME]: deviceNameStored } = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
-  const deviceName = (deviceNameStored || "ChromeMac").trim() || "ChromeMac";
+  const deviceName = normalizeDeviceName(deviceNameStored);
 
   const next = await getAccounts();
   const existing = next.find((account) => {
@@ -1088,7 +1094,7 @@ async function upsertAccountForPasskey(accountHint) {
 
   const now = Date.now();
   const { [STORAGE_KEY_DEVICE_NAME]: deviceNameStored } = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
-  const deviceName = (deviceNameStored || "ChromeMac").trim() || "ChromeMac";
+  const deviceName = normalizeDeviceName(deviceNameStored);
 
   const allAccounts = await getAccounts();
   let matchIndexes = [];
@@ -1415,23 +1421,23 @@ function normalizeAccountShape(account) {
     passkeyCredentialIds,
     passkeyLinkStates: account?.passkeyLinkStates && typeof account.passkeyLinkStates === "object" ? account.passkeyLinkStates : {},
     usernameUpdatedAtMs: asTimestamp(account?.usernameUpdatedAtMs, createdAtMs),
-    usernameUpdatedDeviceName: normalizeUsername(account?.usernameUpdatedDeviceName || account?.lastOperatedDeviceName || "") || "ChromeMac",
+    usernameUpdatedDeviceName: normalizeUsername(account?.usernameUpdatedDeviceName || account?.lastOperatedDeviceName || "") || DEFAULT_DEVICE_NAME,
     passwordUpdatedAtMs: asTimestamp(account?.passwordUpdatedAtMs, createdAtMs),
-    passwordUpdatedDeviceName: normalizeUsername(account?.passwordUpdatedDeviceName || account?.lastOperatedDeviceName || "") || "ChromeMac",
+    passwordUpdatedDeviceName: normalizeUsername(account?.passwordUpdatedDeviceName || account?.lastOperatedDeviceName || "") || DEFAULT_DEVICE_NAME,
     totpUpdatedAtMs: asTimestamp(account?.totpUpdatedAtMs, createdAtMs),
-    totpUpdatedDeviceName: normalizeUsername(account?.totpUpdatedDeviceName || account?.lastOperatedDeviceName || "") || "ChromeMac",
+    totpUpdatedDeviceName: normalizeUsername(account?.totpUpdatedDeviceName || account?.lastOperatedDeviceName || "") || DEFAULT_DEVICE_NAME,
     recoveryCodesUpdatedAtMs: asTimestamp(account?.recoveryCodesUpdatedAtMs, createdAtMs),
-    recoveryCodesUpdatedDeviceName: normalizeUsername(account?.recoveryCodesUpdatedDeviceName || account?.lastOperatedDeviceName || "") || "ChromeMac",
+    recoveryCodesUpdatedDeviceName: normalizeUsername(account?.recoveryCodesUpdatedDeviceName || account?.lastOperatedDeviceName || "") || DEFAULT_DEVICE_NAME,
     noteUpdatedAtMs: asTimestamp(account?.noteUpdatedAtMs, createdAtMs),
-    noteUpdatedDeviceName: normalizeUsername(account?.noteUpdatedDeviceName || account?.lastOperatedDeviceName || "") || "ChromeMac",
+    noteUpdatedDeviceName: normalizeUsername(account?.noteUpdatedDeviceName || account?.lastOperatedDeviceName || "") || DEFAULT_DEVICE_NAME,
     passkeyUpdatedAtMs: asTimestamp(account?.passkeyUpdatedAtMs, createdAtMs),
-    passkeyUpdatedDeviceName: normalizeUsername(account?.passkeyUpdatedDeviceName || account?.lastOperatedDeviceName || "") || "ChromeMac",
+    passkeyUpdatedDeviceName: normalizeUsername(account?.passkeyUpdatedDeviceName || account?.lastOperatedDeviceName || "") || DEFAULT_DEVICE_NAME,
     isDeleted: Boolean(account?.isDeleted),
     isPermanentlyDeleted: Boolean(account?.isPermanentlyDeleted),
     deletedAtMs: account?.deletedAtMs == null ? null : asTimestamp(account.deletedAtMs, 0),
     deletedDeviceName: normalizeUsername(account?.deletedDeviceName || "") || "",
-    lastOperatedDeviceName: normalizeUsername(account?.lastOperatedDeviceName || "") || "ChromeMac",
-    createdDeviceName: normalizeUsername(account?.createdDeviceName || account?.lastOperatedDeviceName || "") || "ChromeMac",
+    lastOperatedDeviceName: normalizeUsername(account?.lastOperatedDeviceName || "") || DEFAULT_DEVICE_NAME,
+    createdDeviceName: normalizeUsername(account?.createdDeviceName || account?.lastOperatedDeviceName || "") || DEFAULT_DEVICE_NAME,
     createdAtMs,
     updatedAtMs: asTimestamp(account?.updatedAtMs, createdAtMs),
   };
@@ -1633,7 +1639,7 @@ function parseSyncBundlePayload(input, { requireBundleSchema = false } = {}) {
 
 async function getDeviceName() {
   const result = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
-  return String(result[STORAGE_KEY_DEVICE_NAME] || "").trim() || "ChromeMac";
+  return normalizeDeviceName(result[STORAGE_KEY_DEVICE_NAME]);
 }
 
 async function getOrCreateSyncDeviceId() {
@@ -1812,7 +1818,7 @@ async function getSyncDecryptionFallbackKeys() {
 async function pushRemotePayloadWithRetry(target, payload) {
   let candidate = payload;
   const idempotencyKey = createSyncIdempotencyKey();
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < SYNC_PUSH_CONFLICT_MAX_ATTEMPTS; attempt += 1) {
     try {
       const pushResult = await pushRemotePayload(target, candidate, target.remoteEtag, idempotencyKey);
       updateRemoteConcurrencyState(target, pushResult.etag);

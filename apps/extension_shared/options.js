@@ -50,6 +50,13 @@ import {
 } from "./sync_outbox.js";
 import { createSyncIdempotencyKey, secureRandomUuid } from "./secure_random.js";
 import { downloadTextFile } from "./download_file.js";
+import {
+  DEFAULT_DEVICE_NAME,
+  FIXED_NEW_ACCOUNT_FOLDER_ID,
+  FIXED_NEW_ACCOUNT_FOLDER_NAME,
+  SYNC_PUSH_CONFLICT_MAX_ATTEMPTS,
+  normalizeDeviceName,
+} from "../../core/pass_core/js/sync_policy.js";
 
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
 const STORAGE_KEY_SYNC_ENABLE_WEBDAV = "pass.sync.enableWebDAV.v3";
@@ -71,8 +78,6 @@ const STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
 const STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
 const STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
 const STORAGE_KEY_LOCK_MASTER_CREDENTIAL = "pass.lock.masterCredential.v1";
-const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
-const FIXED_NEW_ACCOUNT_FOLDER_NAME = "新账号";
 const SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
 const LOCK_POLICY_ONCE_UNTIL_QUIT = "onceUntilQuit";
 const LOCK_POLICY_IDLE_TIMEOUT = "idleTimeout";
@@ -462,7 +467,7 @@ async function ensureOptionsUnlocked() {
 
 async function loadDeviceName() {
   const result = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
-  dom.deviceName.value = String(result[STORAGE_KEY_DEVICE_NAME] || "ChromeMac");
+  dom.deviceName.value = String(result[STORAGE_KEY_DEVICE_NAME] || DEFAULT_DEVICE_NAME);
 }
 
 function scheduleDeviceNameSave() {
@@ -2086,7 +2091,7 @@ async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey
 async function pushRemotePayloadWithRetry(target, payload) {
   let candidate = payload;
   const idempotencyKey = createSyncIdempotencyKey();
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < SYNC_PUSH_CONFLICT_MAX_ATTEMPTS; attempt += 1) {
     try {
       const pushResult = await pushRemotePayload(target, candidate, target.remoteEtag, idempotencyKey);
       updateRemoteConcurrencyState(target, pushResult.etag);
@@ -2130,7 +2135,7 @@ async function pushRemotePayloadWithRetry(target, payload) {
 async function pushRemotePayloadRemotePreferred(target, payload) {
   let candidate = payload;
   const idempotencyKey = createSyncIdempotencyKey();
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < SYNC_PUSH_CONFLICT_MAX_ATTEMPTS; attempt += 1) {
     try {
       const pushResult = await pushRemotePayload(target, candidate, target.remoteEtag, idempotencyKey);
       updateRemoteConcurrencyState(target, pushResult.etag);
@@ -2619,7 +2624,7 @@ function mergeImportedBrowserNotes(parts) {
 }
 
 function currentImportDeviceName() {
-  return String(dom.deviceName?.value || "").trim() || "ChromeMac";
+  return normalizeDeviceName(dom.deviceName?.value);
 }
 
 function formatFileTimestamp(ms) {
@@ -4578,7 +4583,7 @@ function cloneAccounts(inputAccounts) {
 async function getDeviceName() {
   const result = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
   const value = String(result[STORAGE_KEY_DEVICE_NAME] || "").trim();
-  return value || "ChromeMac";
+  return normalizeDeviceName(value);
 }
 
 async function getOrCreateSyncDeviceId() {
@@ -4625,23 +4630,23 @@ function normalizeAccountShape(account) {
     passkeyCredentialIds,
     passkeyLinkStates: account?.passkeyLinkStates && typeof account.passkeyLinkStates === "object" ? account.passkeyLinkStates : {},
     usernameUpdatedAtMs: Number(account?.usernameUpdatedAtMs || createdAtMs),
-    usernameUpdatedDeviceName: String(account?.usernameUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
+    usernameUpdatedDeviceName: String(account?.usernameUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
     passwordUpdatedAtMs: Number(account?.passwordUpdatedAtMs || createdAtMs),
-    passwordUpdatedDeviceName: String(account?.passwordUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
+    passwordUpdatedDeviceName: String(account?.passwordUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
     totpUpdatedAtMs: Number(account?.totpUpdatedAtMs || createdAtMs),
-    totpUpdatedDeviceName: String(account?.totpUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
+    totpUpdatedDeviceName: String(account?.totpUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
     recoveryCodesUpdatedAtMs: Number(account?.recoveryCodesUpdatedAtMs || createdAtMs),
-    recoveryCodesUpdatedDeviceName: String(account?.recoveryCodesUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
+    recoveryCodesUpdatedDeviceName: String(account?.recoveryCodesUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
     noteUpdatedAtMs: Number(account?.noteUpdatedAtMs || createdAtMs),
-    noteUpdatedDeviceName: String(account?.noteUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
+    noteUpdatedDeviceName: String(account?.noteUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
     passkeyUpdatedAtMs: Number(account?.passkeyUpdatedAtMs || createdAtMs),
-    passkeyUpdatedDeviceName: String(account?.passkeyUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
+    passkeyUpdatedDeviceName: String(account?.passkeyUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
     isDeleted: Boolean(account?.isDeleted),
     isPermanentlyDeleted: Boolean(account?.isPermanentlyDeleted),
     deletedAtMs: account?.deletedAtMs == null ? null : Number(account.deletedAtMs),
     deletedDeviceName: String(account?.deletedDeviceName || "").trim(),
-    lastOperatedDeviceName: String(account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
-    createdDeviceName: String(account?.createdDeviceName || account?.lastOperatedDeviceName || "").trim() || "ChromeMac",
+    lastOperatedDeviceName: String(account?.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
+    createdDeviceName: String(account?.createdDeviceName || account?.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
     createdAtMs,
     updatedAtMs: Number(account?.updatedAtMs || createdAtMs),
   };

@@ -1,15 +1,7 @@
 import Foundation
 
 enum DomainUtils {
-    private static let secondLevelSuffixes: Set<String> = [
-        "com.cn",
-        "net.cn",
-        "org.cn",
-        "gov.cn",
-        "edu.cn",
-        "co.uk",
-        "org.uk",
-    ]
+    private static let secondLevelSuffixes = PassSyncPolicy.etld2Suffixes
 
     static func normalize(_ raw: String) -> String {
         var value = raw
@@ -48,4 +40,3 @@ enum DomainUtils {
         etldPlusOne(for: a) == etldPlusOne(for: b)
     }
 }
-

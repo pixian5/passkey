@@ -19,7 +19,7 @@ struct SettingsView: View {
                 HStack(spacing: 8) {
                     Text("设备名称")
                         .frame(width: labelColumnWidth, alignment: .leading)
-                    TextField("例如 ChromeMac", text: $store.deviceName)
+                    TextField("例如 PassDevice", text: $store.deviceName)
                         .textFieldStyle(.roundedBorder)
                         .onChange(of: store.deviceName) { _ in
                             store.saveDeviceName(showStatus: false)

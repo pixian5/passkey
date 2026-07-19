@@ -1,14 +1,17 @@
-export const SYNC_OUTBOX_MAX_ATTEMPTS = 12;
-export const SYNC_OUTBOX_BASE_DELAY_MS = 5_000;
-export const SYNC_OUTBOX_MAX_DELAY_MS = 60 * 60 * 1000;
+export {
+  SYNC_OUTBOX_MAX_ATTEMPTS,
+  SYNC_OUTBOX_BASE_DELAY_MS,
+  SYNC_OUTBOX_MAX_DELAY_MS,
+  syncOutboxRetryDelayMs,
+} from "../../core/pass_core/js/sync_policy.js";
+
+import {
+  SYNC_OUTBOX_MAX_ATTEMPTS,
+  syncOutboxRetryDelayMs,
+} from "../../core/pass_core/js/sync_policy.js";
 
 export function syncTargetKey(target) {
   return `${String(target?.kind || "").trim()}|${String(target?.url || "").trim()}`;
-}
-
-export function syncOutboxRetryDelayMs(attempts) {
-  const exponent = Math.max(0, Math.min(Number(attempts || 1) - 1, 8));
-  return Math.min(SYNC_OUTBOX_MAX_DELAY_MS, SYNC_OUTBOX_BASE_DELAY_MS * (2 ** exponent));
 }
 
 export function normalizeSyncOutboxItem(item, nowMs = Date.now()) {

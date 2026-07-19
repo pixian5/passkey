@@ -289,8 +289,8 @@ final class AccountStore: ObservableObject {
     }
 
     static let systemDefaultFontFamily = "系统默认"
-    static let fixedNewAccountFolderName = "新账号"
-    static let fixedNewAccountFolderId = UUID(uuidString: "F16A2C4E-4A2A-43D5-A670-3F1767D41001")!
+    static let fixedNewAccountFolderName = PassSyncPolicy.fixedNewAccountFolderName
+    static let fixedNewAccountFolderId = PassSyncPolicy.fixedNewAccountFolderId
     static let syncBundleSchemaV2 = "pass.sync.bundle.v2"
     static let defaultSelfHostedServerBaseURL = "https://uk.sbbz.tech:5443"
     private static let maxHistoryEntries = 500
@@ -3461,7 +3461,7 @@ final class AccountStore: ObservableObject {
         var currentETag = etag
         var changed = false
         let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
-        for attempt in 0..<3 {
+        for attempt in 0..<PassSyncPolicy.syncPushConflictMaxAttempts {
             do {
                 _ = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
                 return SelfHostedPushResult(payload: candidate, changedLocalData: changed)
@@ -3503,7 +3503,7 @@ final class AccountStore: ObservableObject {
         var currentETag = etag
         var changed = false
         let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
-        for attempt in 0..<3 {
+        for attempt in 0..<PassSyncPolicy.syncPushConflictMaxAttempts {
             do {
                 let confirmation = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
                 return ETagPushResult(payload: candidate, changedLocalData: changed, etag: confirmation.etag)
@@ -3544,7 +3544,7 @@ final class AccountStore: ObservableObject {
         var currentETag = etag
         var changed = false
         let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
-        for attempt in 0..<3 {
+        for attempt in 0..<PassSyncPolicy.syncPushConflictMaxAttempts {
             do {
                 let confirmation = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
                 return ETagPushResult(payload: candidate, changedLocalData: changed, etag: confirmation.etag)
@@ -3585,7 +3585,7 @@ final class AccountStore: ObservableObject {
         var currentETag = etag
         var changed = false
         let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
-        for attempt in 0..<3 {
+        for attempt in 0..<PassSyncPolicy.syncPushConflictMaxAttempts {
             do {
                 _ = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
                 return SelfHostedPushResult(payload: candidate, changedLocalData: changed)
@@ -4506,8 +4506,8 @@ final class AccountStore: ObservableObject {
             items = decoded
         }
         let previousAttempts = items.first(where: { $0.sourceKey == sourceKey })?.attempts ?? 0
-        let attempts = min(previousAttempts + 1, 12)
-        let delaySeconds = min(60 * 60, 5 * (1 << min(attempts - 1, 8)))
+        let attempts = min(previousAttempts + 1, PassSyncPolicy.syncOutboxMaxAttempts)
+        let delaySeconds = PassSyncPolicy.syncOutboxRetryDelaySeconds(attempts: attempts)
         let item = SyncOutboxItem(
             sourceKey: sourceKey,
             payload: canonicalSyncPayload(payload),
@@ -6346,8 +6346,7 @@ final class AccountStore: ObservableObject {
     }
 
     private func currentDeviceName() -> String {
-        let trimmed = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "MacDevice" : trimmed
+        PassSyncPolicy.normalizeDeviceName(deviceName)
     }
 
     private func syncDeviceId() -> String {

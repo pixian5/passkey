@@ -21,9 +21,13 @@ import {
   setPasskeys as setPasskeysToDataStore,
 } from "./data_store.js";
 import { normalizeLockMasterCredential } from "./lock_crypto.js";
+import {
+  DEFAULT_DEVICE_NAME,
+  FIXED_NEW_ACCOUNT_FOLDER_ID,
+  normalizeDeviceName,
+} from "../../core/pass_core/js/sync_policy.js";
 
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
-const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
 const STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
 const STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
 const STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
@@ -618,7 +622,7 @@ async function resolveCurrentDomain() {
 async function getDeviceName() {
   const stored = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
   const value = String(stored[STORAGE_KEY_DEVICE_NAME] || "").trim();
-  return value || "ChromeMac";
+  return normalizeDeviceName(value);
 }
 
 async function loadAccounts() {
@@ -732,23 +736,23 @@ function normalizeAccountShape(account) {
     note: account.note || "",
     passkeyCredentialIds,
     usernameUpdatedAtMs: Number(account.usernameUpdatedAtMs || createdAtMs),
-    usernameUpdatedDeviceName: String(account.usernameUpdatedDeviceName || account.lastOperatedDeviceName || "").trim() || "ChromeMac",
+    usernameUpdatedDeviceName: String(account.usernameUpdatedDeviceName || account.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
     passwordUpdatedAtMs: Number(account.passwordUpdatedAtMs || createdAtMs),
-    passwordUpdatedDeviceName: String(account.passwordUpdatedDeviceName || account.lastOperatedDeviceName || "").trim() || "ChromeMac",
+    passwordUpdatedDeviceName: String(account.passwordUpdatedDeviceName || account.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
     totpUpdatedAtMs: Number(account.totpUpdatedAtMs || createdAtMs),
-    totpUpdatedDeviceName: String(account.totpUpdatedDeviceName || account.lastOperatedDeviceName || "").trim() || "ChromeMac",
+    totpUpdatedDeviceName: String(account.totpUpdatedDeviceName || account.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
     recoveryCodesUpdatedAtMs: Number(account.recoveryCodesUpdatedAtMs || createdAtMs),
-    recoveryCodesUpdatedDeviceName: String(account.recoveryCodesUpdatedDeviceName || account.lastOperatedDeviceName || "").trim() || "ChromeMac",
+    recoveryCodesUpdatedDeviceName: String(account.recoveryCodesUpdatedDeviceName || account.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
     noteUpdatedAtMs: Number(account.noteUpdatedAtMs || createdAtMs),
-    noteUpdatedDeviceName: String(account.noteUpdatedDeviceName || account.lastOperatedDeviceName || "").trim() || "ChromeMac",
+    noteUpdatedDeviceName: String(account.noteUpdatedDeviceName || account.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
     passkeyUpdatedAtMs: Number(account.passkeyUpdatedAtMs || createdAtMs),
-    passkeyUpdatedDeviceName: String(account.passkeyUpdatedDeviceName || account.lastOperatedDeviceName || "").trim() || "ChromeMac",
+    passkeyUpdatedDeviceName: String(account.passkeyUpdatedDeviceName || account.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
     isDeleted: Boolean(account.isDeleted),
     isPermanentlyDeleted: Boolean(account.isPermanentlyDeleted),
     deletedAtMs: account.deletedAtMs == null ? null : Number(account.deletedAtMs),
     deletedDeviceName: String(account.deletedDeviceName || "").trim(),
-    lastOperatedDeviceName: account.lastOperatedDeviceName || "ChromeMac",
-    createdDeviceName: String(account.createdDeviceName || account.lastOperatedDeviceName || "").trim() || "ChromeMac",
+    lastOperatedDeviceName: account.lastOperatedDeviceName || DEFAULT_DEVICE_NAME,
+    createdDeviceName: String(account.createdDeviceName || account.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
     createdAtMs,
     updatedAtMs: Number(account.updatedAtMs || createdAtMs),
   };

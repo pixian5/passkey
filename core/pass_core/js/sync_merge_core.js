@@ -1,6 +1,16 @@
+import { DEFAULT_DEVICE_NAME } from "./sync_policy.js";
+
 function asNumber(value) {
   const parsed = Number(value || 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function fallbackDeviceName(...candidates) {
+  for (const value of candidates) {
+    const trimmed = asString(value).trim();
+    if (trimmed) return trimmed;
+  }
+  return DEFAULT_DEVICE_NAME;
 }
 
 function asString(value) {
@@ -59,7 +69,7 @@ function newerField(
     return {
       value: leftValue,
       updatedAtMs: leftUpdated,
-      deviceName: asString(lhsDeviceName).trim() || asString(rhsDeviceName).trim() || "ChromeMac",
+      deviceName: fallbackDeviceName(lhsDeviceName, rhsDeviceName),
     };
   }
 
@@ -230,8 +240,8 @@ function mergeSameAccount(lhs, rhs, h) {
   );
   const passkeyUpdatedDeviceName = asNumber(left.passkeyUpdatedAtMs || left.updatedAtMs || left.createdAtMs)
     >= asNumber(right.passkeyUpdatedAtMs || right.updatedAtMs || right.createdAtMs)
-    ? asString(left.passkeyUpdatedDeviceName).trim() || asString(left.lastOperatedDeviceName).trim() || "ChromeMac"
-    : asString(right.passkeyUpdatedDeviceName).trim() || asString(right.lastOperatedDeviceName).trim() || "ChromeMac";
+    ? asString(left.passkeyUpdatedDeviceName).trim() || asString(left.lastOperatedDeviceName).trim() || DEFAULT_DEVICE_NAME
+    : asString(right.passkeyUpdatedDeviceName).trim() || asString(right.lastOperatedDeviceName).trim() || DEFAULT_DEVICE_NAME;
 
   const latestContentUpdatedAt = Math.max(
     usernameField.updatedAtMs,
@@ -277,10 +287,10 @@ function mergeSameAccount(lhs, rhs, h) {
     || asString(secondary.createdDeviceName).trim()
     || asString(primary.lastOperatedDeviceName).trim()
     || asString(secondary.lastOperatedDeviceName).trim()
-    || "ChromeMac";
+    || DEFAULT_DEVICE_NAME;
   const lastOperatedDeviceName = asString(newerAccount.lastOperatedDeviceName).trim()
     || asString(olderAccount.lastOperatedDeviceName).trim()
-    || "ChromeMac";
+    || DEFAULT_DEVICE_NAME;
 
   return {
     recordId:
@@ -372,7 +382,7 @@ function mergeSamePasskey(lhs, rhs, h) {
     isDeleted: keepDeleted,
     isPermanentlyDeleted: keepPermanentlyDeleted,
     deletedAtMs: keepDeleted ? (latestDeletedAt || Math.max(leftUpdated, rightUpdated)) : null,
-    deletedDeviceName: keepDeleted ? (deletedDeviceName || "ChromeMac") : "",
+    deletedDeviceName: keepDeleted ? (deletedDeviceName || DEFAULT_DEVICE_NAME) : "",
   };
 }
 
@@ -422,7 +432,7 @@ function mergeSameFolder(lhs, rhs, h) {
     isDeleted: keepDeleted,
     isPermanentlyDeleted: keepPermanentlyDeleted,
     deletedAtMs: keepDeleted ? (latestDeletedAt || Math.max(leftUpdatedAt, rightUpdatedAt)) : null,
-    deletedDeviceName: keepDeleted ? (deletedDeviceName || "ChromeMac") : "",
+    deletedDeviceName: keepDeleted ? (deletedDeviceName || DEFAULT_DEVICE_NAME) : "",
     createdAtMs: Math.min(asNumber(left.createdAtMs), asNumber(right.createdAtMs)),
     updatedAtMs: Math.max(leftUpdatedAt, rightUpdatedAt),
   };
