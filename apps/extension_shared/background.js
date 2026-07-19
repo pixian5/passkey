@@ -48,6 +48,7 @@ import {
   generateSyncEncryptionKey,
   normalizeSyncEncryptionKey,
 } from "./sync_crypto.js";
+import { isTrustedExtensionMessageSender } from "./message_security.js";
 
 const PASSKEY_LOG_PREFIX = "[Pass background]";
 const SYNC_LOG_PREFIX = "[Pass sync]";
@@ -632,6 +633,10 @@ async function buildRemoteSyncTargetsFromStorage() {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
+    if (!isTrustedExtensionMessageSender(sender, chrome.runtime.id)) {
+      sendResponse({ ok: false, error: "拒绝来自其他扩展或网页的消息" });
+      return;
+    }
     if (SENSITIVE_MESSAGE_TYPES.has(message?.type)) {
       const lockStatus = await getBackgroundLockStatus();
       if (lockStatus.locked) {
