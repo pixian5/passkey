@@ -439,9 +439,27 @@ enum ServerProvisioningService {
           if command -v ufw >/dev/null 2>&1 && $SUDO ufw status 2>/dev/null | grep -q "Status: active"; then
             $SUDO ufw allow \(endpoint.backendPort)/tcp >/dev/null
           fi
-          curl --fail --silent --show-error --insecure --max-time 15 https://127.0.0.1:\(endpoint.backendPort)/healthz >/dev/null
+          healthy=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --insecure --max-time 15 https://127.0.0.1:\(endpoint.backendPort)/healthz >/dev/null; then
+              healthy=1
+              break
+            fi
+            sleep 1
+          done
         else
-          curl --fail --silent --show-error --max-time 15 http://127.0.0.1:\(endpoint.backendPort)/healthz >/dev/null
+          healthy=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --max-time 15 http://127.0.0.1:\(endpoint.backendPort)/healthz >/dev/null; then
+              healthy=1
+              break
+            fi
+            sleep 1
+          done
+        fi
+        if [ "$healthy" -ne 1 ]; then
+          echo "同步服务启动后健康检查失败" >&2
+          exit 1
         fi
         rm -rf '\(stage)'
         """
