@@ -108,7 +108,7 @@ pass/
 - ✅ **Tauri 桌面应用**（Windows/Ubuntu/macOS）：设备名、账号 CRUD、域名别名同步、回收站、演示数据、CSV 导出
 - ✅ **Chrome 扩展**：MV3，自动填充、popup、options、background
 - ✅ **Firefox / Safari 扩展**：基于共享代码构建
-- ✅ **Ubuntu 同步服务**：Python 单文件，GET/PUT `/v2/sync/state`（兼容 `/v1/sync/payload`），SQLite 版本快照、ETag/CAS、幂等重试和回滚，Bearer Token 认证，默认仅存储 AES-256-GCM 端到端加密信封
+- ✅ **Ubuntu 同步服务**：Python 单文件，GET/PUT `/v2/sync/state`（兼容 `/v1/sync/payload`），SQLite 版本快照、ETag/CAS、幂等重试和回滚，Bearer Token 认证；客户端配置密钥时存储 AES-256-GCM 信封，留空时可按配置存储明文同步包
 - 🚧 **Flutter 五端应用**：规划中，待接入 Rust FFI
 - 🚧 **桌面同步代理**：规划中，待实现配对与局域网同步
 

@@ -12,7 +12,7 @@
 - `POST /v1/sync/versions/{versionId}/restore`（使用当前 `If-Match` 原子恢复）
 - `GET /v1/sync/audit`（读取当前 scope 的同步操作审计记录）
 
-服务端只负责认证、版本控制和持久化 `pass.sync.encrypted.v1` 密文信封，无法读取账号、密码、TOTP、恢复码或 Passkey。
+服务端只负责认证、版本控制和持久化同步快照；客户端配置密钥时保存 `pass.sync.encrypted.v1` 密文信封，留空时会保存明文内容。
 
 ## 特性
 
@@ -26,7 +26,7 @@
 - 通过受保护的版本接口读取最近保存的同步快照；启用明文模式时服务端会直接保存明文内容
 - 恢复接口要求携带当前数据的 `If-Match`，恢复动作会再次写入版本历史，避免并发覆盖
 - 审计接口只返回操作类型、状态、ETag、版本号和时间，不包含同步密文内容
-- 生产默认拒绝明文 `pass.sync.bundle.v2`，只有测试或本地开发显式设置 `PASS_SYNC_ALLOW_PLAINTEXT=1` 才允许
+- 支持客户端留空同步密钥后使用明文 `pass.sync.bundle.v2`；明文可能包含密码，生产环境应优先配置同步密钥
 - 已有 state 的 `PUT` **必须**携带 `If-Match`；缺失返回 `428/412`
 - 启动时若发现未知 schema 的 payload，会先写入 `purged_payloads_*.jsonl` 隔离文件；默认拒绝启动，需显式设置 `PASS_SYNC_PURGE_LEGACY=1` 才删除
 - 幂等重放若发现远端 etag 已被推进，返回 `409 IDEMPOTENCY_STALE`
@@ -79,8 +79,8 @@ python3 pass_sync_server.py
 - `PASS_SYNC_MAX_BODY_BYTES`
   - 默认 `2097152`（2 MiB）
 - `PASS_SYNC_ALLOW_PLAINTEXT`
-  - 默认关闭（`0`）；生产服务器拒绝未加密的 `pass.sync.bundle.v2`
-  - 仅本地开发测试可显式设置为 `1`
+  - 默认开启（`1`），允许客户端在同步密钥为空时上传明文 `pass.sync.bundle.v2`
+  - 如需强制端到端加密，设置为 `0`；此时所有客户端都必须配置 256 位同步密钥
 - `PASS_SYNC_PURGE_LEGACY`
   - 默认关闭；发现未知 schema 时只隔离不删除
   - 确认隔离文件后设为 `1` 才允许启动时 purge
@@ -102,7 +102,7 @@ python3 pass_sync_server.py
 
 - 服务地址：`https://your-domain.example`
 - Token：`PASS_SYNC_BEARER_TOKENS` 中对应值
-- 同步加密密钥：在所有客户端填写同一枚 256 位密钥（必填）；该密钥不得配置到服务器
+- 同步加密密钥：在所有客户端填写同一枚 256 位密钥；留空则使用明文同步包，该密钥不得配置到服务器
 
 客户端会自动访问：
 

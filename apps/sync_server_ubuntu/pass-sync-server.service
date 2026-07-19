@@ -15,7 +15,7 @@ Environment=PASS_SYNC_BEARER_TOKENS_FILE=/etc/pass-sync/tokens.conf
 # 未创建前可通过 EnvironmentFile 或环境变量注入 PASS_SYNC_BEARER_TOKENS。
 EnvironmentFile=-/etc/pass-sync/pass-sync-server.env
 Environment=PASS_SYNC_LOG_LEVEL=INFO
-Environment=PASS_SYNC_ALLOW_PLAINTEXT=0
+Environment=PASS_SYNC_ALLOW_PLAINTEXT=1
 Environment=PASS_SYNC_RATE_LIMIT_PER_MINUTE=120
 Environment=PASS_SYNC_CLIENT_TIMEOUT_SECONDS=15
 Environment=PASS_SYNC_MAX_CONCURRENT_REQUESTS=32

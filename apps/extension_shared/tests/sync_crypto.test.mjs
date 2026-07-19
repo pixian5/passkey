@@ -42,13 +42,10 @@ test("同步密钥轮换期间可用保留的上一把密钥读取旧信封", as
   );
 });
 
-test("远程同步禁止明文上传，且配置密钥后拒绝明文同步包", async () => {
+test("空密钥生成明文同步包，配置密钥后拒绝读取明文同步包", async () => {
   const key = generateSyncEncryptionKey();
   const plaintext = { schema: "pass.sync.bundle.v2", payload: { accounts: [], folders: [], passkeys: [] } };
-  await assert.rejects(
-    () => encryptSyncBundleDocument(plaintext, ""),
-    /必须配置 256 位同步加密密钥/
-  );
+  assert.deepEqual(await encryptSyncBundleDocument(plaintext, ""), plaintext);
   await assert.rejects(
     () => decryptSyncBundleDocument(plaintext, key),
     /拒绝未加密同步包/

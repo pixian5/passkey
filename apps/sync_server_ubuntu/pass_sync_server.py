@@ -32,7 +32,7 @@ class AppConfig:
     db_path: Path
     token_scopes: dict[str, str]
     max_body_bytes: int = 2 * 1024 * 1024
-    allow_plaintext: bool = False
+    allow_plaintext: bool = True
     tls_cert_path: Path | None = None
     tls_key_path: Path | None = None
     rate_limit_per_minute: int = 120
@@ -1118,7 +1118,7 @@ def load_config() -> AppConfig:
         rate_limit_per_minute=max(10, int(os.environ.get("PASS_SYNC_RATE_LIMIT_PER_MINUTE", "120"))),
         client_timeout_seconds=max(1.0, float(os.environ.get("PASS_SYNC_CLIENT_TIMEOUT_SECONDS", "15"))),
         max_concurrent_requests=max(1, int(os.environ.get("PASS_SYNC_MAX_CONCURRENT_REQUESTS", "32"))),
-        allow_plaintext=os.environ.get("PASS_SYNC_ALLOW_PLAINTEXT", "0").strip().lower() in {"1", "true", "yes"},
+        allow_plaintext=os.environ.get("PASS_SYNC_ALLOW_PLAINTEXT", "1").strip().lower() in {"1", "true", "yes"},
         tls_cert_path=Path(cert_value).expanduser() if cert_value else None,
         tls_key_path=Path(key_value).expanduser() if key_value else None,
         allowed_origins=allowed_origins,

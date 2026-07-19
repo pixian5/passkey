@@ -192,12 +192,12 @@ struct SettingsView: View {
                             .buttonStyle(.bordered)
                         }
 
-                        Text("远程同步和同步包导出必须填写 256 位密钥，并在所有设备使用同一值。同步使用 AES-256-GCM 端到端加密，服务器无法读取数据；访问令牌只负责服务器认证。")
+                        Text("填写 256 位密钥并在所有设备使用同一值时，使用 AES-256-GCM 端到端加密；留空则按明文同步包处理。明文可能包含密码，请仅在可信网络和已允许明文的同步服务器上使用。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
                         Text(store.syncEncryptionKeyIdentifier.isEmpty
-                            ? "当前未配置同步密钥。远程同步和同步包导出不可用。"
+                            ? "当前未配置同步密钥，将使用明文同步包。"
                             : "当前同步密钥 ID：\(store.syncEncryptionKeyIdentifier)。配对、轮换或排查密钥不匹配时请核对此标识。")
                             .font(.caption)
                             .foregroundStyle(.secondary)

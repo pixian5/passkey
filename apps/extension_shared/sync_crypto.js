@@ -25,7 +25,7 @@ export async function syncEncryptionKeyId(rawKey) {
 export async function encryptSyncBundleDocument(document, rawKey) {
   const key = normalizeSyncEncryptionKey(rawKey);
   if (!key) {
-    throw new Error("远程同步必须配置 256 位同步加密密钥");
+    return document;
   }
   const imported = await importSyncKey(key, ["encrypt"]);
   const nonce = crypto.getRandomValues(new Uint8Array(12));

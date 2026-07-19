@@ -82,12 +82,19 @@ private struct PassMacShortcutCommands: Commands {
             .keyboardShortcut("z", modifiers: .command)
         }
 
-        CommandGroup(after: .textEditing) {
-            Button("全选账号") {
-                store.handleSelectAllShortcut()
+        CommandGroup(replacing: .textEditing) {
+            Button("全选") {
+                selectAllFocusedTextOrAccounts()
             }
-            .keyboardShortcut("a", modifiers: [.command, .shift])
+            .keyboardShortcut("a", modifiers: .command)
         }
+    }
+
+    private func selectAllFocusedTextOrAccounts() {
+        if NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil) {
+            return
+        }
+        store.handleSelectAllShortcut()
     }
 }
 
