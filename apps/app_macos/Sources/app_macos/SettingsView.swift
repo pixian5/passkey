@@ -451,7 +451,7 @@ struct SettingsView: View {
 
                         if appLock.isUnlockEnabled {
                             HStack(spacing: 8) {
-                                SecureField("输入主密码后可关闭解锁", text: $disableUnlockPassword)
+                                TextField("输入主密码后可关闭解锁", text: $disableUnlockPassword)
                                     .textFieldStyle(.roundedBorder)
                                 Button("关闭解锁") {
                                     appLock.disableUnlock(currentPassword: disableUnlockPassword)
@@ -466,14 +466,14 @@ struct SettingsView: View {
                             HStack(spacing: 8) {
                                 Text("主密码")
                                     .frame(width: labelColumnWidth, alignment: .leading)
-                                SecureField("至少 4 位", text: $newMasterPassword)
+                                TextField("至少 4 位", text: $newMasterPassword)
                                     .textFieldStyle(.roundedBorder)
                             }
 
                             HStack(spacing: 8) {
                                 Text("确认密码")
                                     .frame(width: labelColumnWidth, alignment: .leading)
-                                SecureField("再次输入主密码", text: $confirmMasterPassword)
+                                TextField("再次输入主密码", text: $confirmMasterPassword)
                                     .textFieldStyle(.roundedBorder)
                             }
 
@@ -884,7 +884,7 @@ private struct ServerProvisioningSheet: View {
                 HStack(spacing: 8) {
                     Text("SSH 密码")
                         .frame(width: 120, alignment: .leading)
-                    SecureField("输入服务器登录密码", text: $secret)
+                    TextField("输入服务器登录密码", text: $secret)
                         .textFieldStyle(.roundedBorder)
                 }
             } else {
@@ -894,7 +894,7 @@ private struct ServerProvisioningSheet: View {
                         .font(.system(.body, design: .monospaced))
                         .frame(minHeight: 128, maxHeight: 190)
                         .overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary))
-                    SecureField("私钥口令（可选）", text: $privateKeyPassphrase)
+                    TextField("私钥口令（可选）", text: $privateKeyPassphrase)
                         .textFieldStyle(.roundedBorder)
                 }
             }
@@ -902,14 +902,14 @@ private struct ServerProvisioningSheet: View {
             HStack(spacing: 8) {
                 Text("访问令牌")
                     .frame(width: 120, alignment: .leading)
-                SecureField("用于服务端 Bearer Token", text: $accessToken)
+                TextField("用于服务端 Bearer Token", text: $accessToken)
                     .textFieldStyle(.roundedBorder)
             }
 
             HStack(spacing: 8) {
                 Text("同步加密密钥")
                     .frame(width: 120, alignment: .leading)
-                SecureField("留空则允许明文同步", text: $syncEncryptionKey)
+                TextField("留空则允许明文同步", text: $syncEncryptionKey)
                     .textFieldStyle(.roundedBorder)
             }
 
