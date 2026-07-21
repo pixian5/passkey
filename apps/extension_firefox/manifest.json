@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Pass - Firefox Extension",
-  "description": "Password manager extension for Firefox with device name, domain alias group, and local account storage.",
+  "description": "Password manager extension for Firefox with device name, domain alias groups, autofill, and encrypted local vault.",
   "version": "0.2.3",
   "browser_specific_settings": {
     "gecko": {
@@ -43,7 +43,7 @@
         "<all_urls>"
       ],
       "js": [
-        "webauthn_injected.js"
+        "dist/webauthn_injected.js"
       ],
       "run_at": "document_start",
       "world": "MAIN"

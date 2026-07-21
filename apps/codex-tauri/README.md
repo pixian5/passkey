@@ -1,24 +1,27 @@
 # codex-tauri
 
-`codex-tauri` 是 `pass` 的 Tauri 2 桌面端工程，目标平台：
+Pass 的 **Win / macOS / Linux** 统一桌面壳（Tauri 2）。  
+macOS **系统级**能力（AutoFill、Credential Exchange）仍在 `apps/app_macos`（SwiftUI）；本壳用于跨桌面与 **自建同步互通**。
 
-- Windows（`msi` / `nsis`）
-- Ubuntu / Linux（`deb` / `AppImage`）
-- macOS（`dmg` / `.app`）
+> `apps/copilot-53-tauri` 已冻结，请勿继续加功能。
 
-## 功能对齐目标（参考 app_macos）
+## 已实现
 
-当前已实现以下核心能力（跨平台版本）：
+- 设备名、账号 CRUD、回收站（软删 / 恢复 / 永久墓碑）
+- 别名并集、CSV 导出（`pass-merge` / `pass-csvio`）
+- **自建同步**：`GET/PUT /v2/sync/state`（Bearer、ETag/If-Match、412 重试）
+- 合并权威：`pass_merge::v2` + `evaluate_sync_safety`
+- 可选 AES-256-GCM 信封（`pass.sync.encrypted.v1`，与 macOS/扩展兼容）
+- 同步预览（不写库）与立即同步（写库并推送）
+- 本地粘贴 JSON 的合并预览（调试）
 
-- 设备名设置与持久化。
-- 账号新增 / 编辑（site、username、password、totp、recovery codes、note）。
-- 别名域自动合并（账号 site 集合有交集时自动取并集）。
-- 回收站（软删除、恢复、彻底删除）。
-- 生成演示账号。
-- CSV 导出。
-- 时间显示格式与 macOS 版一致：`yy-M-d H:m:s`。
+## 与 macOS 互相同步
 
-## 开发运行
+1. 启动自建服务（例：`apps/sync_server_ubuntu` 或本机开发端口）。
+2. 两端配置 **同一 Base URL + Bearer Token**（可选同一同步加密密钥）。
+3. macOS：设置里启用自建服务器 → 合并同步。
+4. 本应用：勾选「启用同步」→ 保存 →「预览合并」→「立即同步」。
+5. 合并后账号列表应收敛。
 
 ```bash
 cd apps/codex-tauri
@@ -26,48 +29,19 @@ npm install
 npm run tauri dev
 ```
 
-## Ubuntu 构建依赖
-
-如果 Ubuntu 环境缺少 `glib-2.0` / `gio-2.0` / `webkit2gtk`，先安装：
-
-```bash
-sudo apt update
-sudo apt install -y \
-  build-essential \
-  pkg-config \
-  libgtk-3-dev \
-  libwebkit2gtk-4.1-dev \
-  libayatana-appindicator3-dev \
-  librsvg2-dev
-```
-
 ## 打包
 
 ```bash
-cd apps/codex-tauri
 npm run tauri build
+# 产物：src-tauri/target/release/bundle/
 ```
 
-如果当前 Linux 环境无法正常执行 `linuxdeploy`（常见于精简容器），可先仅打 `deb` 包：
+## 数据
 
-```bash
-cd apps/codex-tauri
-npm run tauri build -- --bundles deb
-```
-
-产物默认在 `apps/codex-tauri/src-tauri/target/release/bundle/`：
-
-- Windows: `msi` / `nsis`
-- Ubuntu/Linux: `deb` / `appimage`
-- macOS: `dmg` 与 `.app`
-
-## 数据位置
-
-- SQLite（WAL）：`<app_local_data_dir>/pass-tauri.db`
-- CSV 导出：`<app_local_data_dir>/pass-export-*.csv`
+- SQLite：`<app_local_data_dir>/pass-tauri.db`（`accounts.v2` 等）
+- 同步设置：`<app_local_data_dir>/sync_settings.json`（Unix 0600）
 
 ## 说明
 
-- 当前版本以开发测试为目标，重点先保证三端可跑与核心流程可用。
-- UI 仍是基础风格，后续可继续向 macOS 版细节（交互、视觉、结构）靠齐。
-- 为避免 PR 被“二进制文件不支持”拦截，仓库不再提交 Tauri 新图标二进制；当前通过 `src-tauri/icons/icon.png -> ../../../../pass.png` 软链接满足本地构建。
+- 开发测试向；本地 vault 尚未做应用锁 / SQLCipher（后续 D3）。
+- 不要把 Token / 同步密钥写进仓库或 CI 日志。

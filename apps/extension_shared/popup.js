@@ -889,10 +889,18 @@ function renderAccounts() {
 
       const fillBtn = document.createElement("button");
       fillBtn.textContent = "填充当前页";
-      const canFill = Boolean(account.username && account.password)
-        && (!showAllAccountsMode || isAccountMatchCurrentDomain(account, currentDomain));
+      // Align with content/background: username is enough to fill; empty password is allowed.
+      const hasUsername = Boolean(String(account.username || "").trim());
+      const domainOk = !showAllAccountsMode || isAccountMatchCurrentDomain(account, currentDomain);
+      const canFill = hasUsername && domainOk;
       fillBtn.disabled = !canFill;
-      fillBtn.title = canFill ? "" : "仅允许填充与当前页面域名匹配的账号";
+      if (!hasUsername) {
+        fillBtn.title = "该账号没有用户名，无法填充";
+      } else if (!domainOk) {
+        fillBtn.title = "仅允许填充与当前页面域名匹配的账号";
+      } else {
+        fillBtn.title = "";
+      }
       fillBtn.addEventListener("click", () => fillCurrentPage(account));
       actions.appendChild(fillBtn);
 
@@ -1846,7 +1854,10 @@ async function fillCurrentPage(account) {
   });
 
   if (response?.ok) {
-    setStatus("已向当前网页注入填充动作");
+    const parts = [];
+    if (response.filledUsername) parts.push("用户名");
+    if (response.filledPassword) parts.push("密码");
+    setStatus(parts.length > 0 ? `已填充${parts.join("和")}` : "已填充");
   } else {
     setStatus(`填充失败: ${response?.error || "未知错误"}`);
   }

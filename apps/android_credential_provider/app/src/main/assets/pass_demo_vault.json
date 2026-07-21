@@ -1,0 +1,22 @@
+{
+  "accounts": [
+    {
+      "id": "demo-1",
+      "username": "alice@example.com",
+      "sites": ["example.com", "login.example.com"],
+      "isDeleted": false
+    },
+    {
+      "id": "demo-2",
+      "username": "bob",
+      "sites": ["news.ycombinator.com"],
+      "isDeleted": false
+    },
+    {
+      "id": "demo-deleted",
+      "username": "gone",
+      "sites": ["example.com"],
+      "isDeleted": true
+    }
+  ]
+}

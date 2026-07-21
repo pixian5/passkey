@@ -1,5 +1,14 @@
 import { DEFAULT_DEVICE_NAME } from "./sync_policy.js";
 
+/**
+ * Browser-side merge kernel for pass.sync.bundle.v2.
+ *
+ * Authority: `pass_merge::v2` in core/pass_core/crates/merge (Rust).
+ * Keep this file semantically aligned; prefer calling the Rust engine via
+ * FFI/WASM when host embedding is available. Parity harness:
+ * `js/check_merge_parity.mjs`.
+ */
+
 function asNumber(value) {
   const parsed = Number(value || 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -18,7 +27,8 @@ function asString(value) {
 }
 
 function stableTieValue(value) {
-  return asString(value).trim().toLocaleLowerCase();
+  // Locale-independent to match Swift String.lowercased() + lexicographic compare.
+  return asString(value).trim().toLowerCase();
 }
 
 function requireFunction(helpers, name) {
@@ -99,7 +109,8 @@ function newerField(
       ? { value: leftValue, updatedAtMs: leftUpdated, deviceName: asString(lhsDeviceName) }
       : { value: rightValue, updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
   }
-  return leftValue.localeCompare(rightValue) >= 0
+  // Raw lexicographic order matches Swift `lhsValue >= rhsValue`.
+  return leftValue >= rightValue
     ? { value: leftValue, updatedAtMs: leftUpdated, deviceName: asString(lhsDeviceName) }
     : { value: rightValue, updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
 }
@@ -128,13 +139,22 @@ function mergeFolderMembershipStates(left, right) {
   const merged = collect(left);
   for (const [id, incoming] of collect(right)) {
     const current = merged.get(id);
-    if (!current || incoming.updatedAtMs > current.updatedAtMs ||
-        (incoming.updatedAtMs === current.updatedAtMs && incoming.isDeleted && !current.isDeleted) ||
-        (incoming.updatedAtMs === current.updatedAtMs && incoming.isDeleted === current.isDeleted && incoming.deviceName > current.deviceName)) {
+    if (!current || shouldPreferRelationState(incoming, current)) {
       merged.set(id, incoming);
     }
   }
   return Object.fromEntries([...merged.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+}
+
+function shouldPreferRelationState(incoming, current) {
+  if (incoming.updatedAtMs > current.updatedAtMs) return true;
+  if (incoming.updatedAtMs < current.updatedAtMs) return false;
+  if (incoming.isDeleted && !current.isDeleted) return true;
+  if (incoming.isDeleted === current.isDeleted) {
+    // Match newerField / macOS: case-insensitive device name tie-break.
+    return stableTieValue(incoming.deviceName) > stableTieValue(current.deviceName);
+  }
+  return false;
 }
 
 function mergeRelationStates(left, right, stateKey, leftValues, rightValues, normalizeId) {
@@ -159,9 +179,7 @@ function mergeRelationStates(left, right, stateKey, leftValues, rightValues, nor
   const merged = collect(left, leftValues);
   for (const [id, incoming] of collect(right, rightValues)) {
     const current = merged.get(id);
-    if (!current || incoming.updatedAtMs > current.updatedAtMs ||
-        (incoming.updatedAtMs === current.updatedAtMs && incoming.isDeleted && !current.isDeleted) ||
-        (incoming.updatedAtMs === current.updatedAtMs && incoming.isDeleted === current.isDeleted && incoming.deviceName > current.deviceName)) merged.set(id, incoming);
+    if (!current || shouldPreferRelationState(incoming, current)) merged.set(id, incoming);
   }
   return Object.fromEntries([...merged.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
 }
@@ -537,13 +555,50 @@ export function reconcileAccountFolders(accounts, folders, helpers) {
   const values = Array.isArray(accounts) ? accounts : [];
   return values.map((account) => {
     const normalized = h.normalizeAccountShape(account);
+    const previousIds = h.normalizeFolderIdList(h.extractAccountFolderIds(normalized));
     const resolved = h.normalizeFolderIdList(
-      h.extractAccountFolderIds(normalized).filter((id) => validIds.has(h.normalizeFolderId(id)))
+      previousIds.filter((id) => validIds.has(h.normalizeFolderId(id)))
     );
+    const previousSet = new Set(previousIds.map((id) => h.normalizeFolderId(id)));
+    const resolvedSet = new Set(resolved.map((id) => h.normalizeFolderId(id)));
+    const folderMembershipStates = {
+      ...(normalized.folderMembershipStates && typeof normalized.folderMembershipStates === "object"
+        ? normalized.folderMembershipStates
+        : {}),
+    };
+    const tombstoneAt = Math.max(
+      asNumber(normalized.updatedAtMs),
+      asNumber(normalized.createdAtMs),
+      Date.now()
+    );
+    const deviceName = asString(normalized.lastOperatedDeviceName).trim() || DEFAULT_DEVICE_NAME;
+    // Match macOS setResolvedFolderIds: dropped memberships become durable tombstones
+    // so an offline peer cannot re-add a folder that no longer exists.
+    for (const id of previousSet) {
+      if (!id || resolvedSet.has(id)) continue;
+      const existing = folderMembershipStates[id] || {};
+      folderMembershipStates[id] = {
+        isDeleted: true,
+        updatedAtMs: Math.max(asNumber(existing.updatedAtMs), tombstoneAt),
+        deviceName: asString(existing.deviceName).trim() || deviceName,
+      };
+    }
+    for (const id of resolvedSet) {
+      if (!id) continue;
+      const existing = folderMembershipStates[id];
+      if (!existing || existing.isDeleted) {
+        folderMembershipStates[id] = {
+          isDeleted: false,
+          updatedAtMs: Math.max(asNumber(existing?.updatedAtMs), tombstoneAt),
+          deviceName: asString(existing?.deviceName).trim() || deviceName,
+        };
+      }
+    }
     return {
       ...normalized,
       folderId: resolved[0] || null,
       folderIds: resolved,
+      folderMembershipStates,
     };
   });
 }

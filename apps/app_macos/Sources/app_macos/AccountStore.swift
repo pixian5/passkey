@@ -1988,7 +1988,27 @@ final class AccountStore: ObservableObject {
     }
 
     private func buildCsvContent() -> String {
-        
+        if !PassCoreFFI.forceSwiftMerge {
+            do {
+                return try buildCsvContentViaRust()
+            } catch {
+                NSLog("[PassCore] Rust CSV export failed, fallback Swift: \(error.localizedDescription)")
+            }
+        }
+        return buildCsvContentSwift()
+    }
+
+    private func buildCsvContentViaRust() throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(accounts)
+        guard let accountsJSON = String(data: data, encoding: .utf8) else {
+            throw PassCoreFFI.FFIError.invalidUTF8
+        }
+        return try PassCoreFFI.exportMacosCsvJSON(accountsJSON: accountsJSON)
+    }
+
+    private func buildCsvContentSwift() -> String {
         let header = [
             "account_id",
             "sites",
@@ -2809,6 +2829,32 @@ final class AccountStore: ObservableObject {
         mode: SyncMode
     ) -> [String] {
         guard mode == .merge || mode == .remoteOverwriteLocal else { return [] }
+        if !PassCoreFFI.forceSwiftMerge {
+            do {
+                let localJSON = try encodeSyncPayloadJSON(local)
+                let remoteJSON = try remote.map { try encodeSyncPayloadJSON($0) }
+                let mergedJSON = try encodeSyncPayloadJSON(merged)
+                let modeString = mode == .remoteOverwriteLocal ? "remoteOverwriteLocal" : "merge"
+                let report = try PassCoreFFI.evaluateSyncSafetyJSON(
+                    localJSON: localJSON,
+                    remoteJSON: remoteJSON,
+                    mergedJSON: mergedJSON,
+                    mode: modeString
+                )
+                return report.reasons
+            } catch {
+                NSLog("[PassCore] Rust safety failed, fallback Swift: \(error.localizedDescription)")
+            }
+        }
+        return syncSafetyReasonsSwift(local: local, remote: remote, merged: merged, mode: mode)
+    }
+
+    private func syncSafetyReasonsSwift(
+        local: SyncBundlePayload,
+        remote: SyncBundlePayload?,
+        merged: SyncBundlePayload,
+        mode: SyncMode
+    ) -> [String] {
         let localNonEmpty = !isSyncPayloadEmpty(local)
         let remoteNonEmpty = remote.map { !isSyncPayloadEmpty($0) } ?? false
         var reasons: [String] = []
@@ -3128,6 +3174,29 @@ final class AccountStore: ObservableObject {
     }
 
     private func mergePayloads(local: SyncBundlePayload, remote: SyncBundlePayload) -> SyncBundlePayload {
+        if !PassCoreFFI.forceSwiftMerge {
+            do {
+                return try mergePayloadsViaRust(local: local, remote: remote)
+            } catch {
+                NSLog("[PassCore] Rust merge failed, fallback Swift: \(error.localizedDescription)")
+            }
+        }
+        return mergePayloadsSwift(local: local, remote: remote)
+    }
+
+    /// Production path: shared Rust `pass_merge::v2` via `pass-core-ffi`.
+    private func mergePayloadsViaRust(local: SyncBundlePayload, remote: SyncBundlePayload) throws -> SyncBundlePayload {
+        let localJSON = try encodeSyncPayloadJSON(local)
+        let remoteJSON = try encodeSyncPayloadJSON(remote)
+        let mergedJSON = try PassCoreFFI.mergeSyncPayloadJSON(localJSON: localJSON, remoteJSON: remoteJSON)
+        guard let data = mergedJSON.data(using: .utf8) else {
+            throw PassCoreFFI.FFIError.invalidUTF8
+        }
+        return try decoder.decode(SyncBundlePayload.self, from: data)
+    }
+
+    /// Legacy in-process merge (rollback / FFI unavailable).
+    private func mergePayloadsSwift(local: SyncBundlePayload, remote: SyncBundlePayload) -> SyncBundlePayload {
         let mergedFolders = mergeFolderCollections(local: local.folders, remote: remote.folders)
         let validFolderIds = Set(mergedFolders.filter { !$0.isDeleted }.map(\.id))
         var mergedAccounts = mergeAccountCollections(
@@ -3141,6 +3210,17 @@ final class AccountStore: ObservableObject {
             folders: mergedFolders,
             passkeys: mergedPasskeys
         )
+    }
+
+    private func encodeSyncPayloadJSON(_ payload: SyncBundlePayload) throws -> String {
+        // Compact JSON for FFI (field names already camelCase via Codable).
+        let ffiEncoder = JSONEncoder()
+        ffiEncoder.outputFormatting = [.sortedKeys]
+        let data = try ffiEncoder.encode(payload)
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw PassCoreFFI.FFIError.invalidUTF8
+        }
+        return json
     }
 
     @discardableResult
@@ -4760,66 +4840,164 @@ final class AccountStore: ObservableObject {
     private func mergeRelationStates(
         _ left: [String: AccountFolderMembershipState], _ right: [String: AccountFolderMembershipState],
         leftValues: [String], rightValues: [String], leftUpdatedAt: Int64, rightUpdatedAt: Int64,
-        leftDevice: String, rightDevice: String
+        leftDevice: String, rightDevice: String,
+        normalizeKey: (String) -> String
     ) -> [String: AccountFolderMembershipState] {
-        var merged = left
-        for value in leftValues where merged[value] == nil {
-            merged[value] = AccountFolderMembershipState(isDeleted: false, updatedAtMs: leftUpdatedAt, deviceName: leftDevice)
+        func rekey(
+            _ source: [String: AccountFolderMembershipState],
+            values: [String],
+            updatedAt: Int64,
+            device: String
+        ) -> [String: AccountFolderMembershipState] {
+            var result: [String: AccountFolderMembershipState] = [:]
+            for (rawKey, state) in source {
+                let key = normalizeKey(rawKey)
+                guard !key.isEmpty else { continue }
+                if let current = result[key] {
+                    if shouldPreferRelationState(state, over: current) {
+                        result[key] = state
+                    }
+                } else {
+                    result[key] = state
+                }
+            }
+            let activityAt = max(updatedAt, 0)
+            for rawValue in values {
+                let key = normalizeKey(rawValue)
+                guard !key.isEmpty, result[key] == nil else { continue }
+                result[key] = AccountFolderMembershipState(
+                    isDeleted: false,
+                    updatedAtMs: activityAt,
+                    deviceName: device
+                )
+            }
+            return result
         }
-        var incoming = right
-        for value in rightValues where incoming[value] == nil {
-            incoming[value] = AccountFolderMembershipState(isDeleted: false, updatedAtMs: rightUpdatedAt, deviceName: rightDevice)
-        }
+
+        var merged = rekey(left, values: leftValues, updatedAt: leftUpdatedAt, device: leftDevice)
+        let incoming = rekey(right, values: rightValues, updatedAt: rightUpdatedAt, device: rightDevice)
         for (id, state) in incoming {
-            guard let current = merged[id] else { merged[id] = state; continue }
-            if state.updatedAtMs > current.updatedAtMs ||
-                (state.updatedAtMs == current.updatedAtMs && state.isDeleted && !current.isDeleted) ||
-                (state.updatedAtMs == current.updatedAtMs && state.isDeleted == current.isDeleted && state.deviceName > current.deviceName) {
+            guard let current = merged[id] else {
+                merged[id] = state
+                continue
+            }
+            if shouldPreferRelationState(state, over: current) {
                 merged[id] = state
             }
         }
         return merged
     }
 
+    /// Match sync_merge_core.js stable device-name tie-break (case-insensitive).
+    private func shouldPreferRelationState(
+        _ incoming: AccountFolderMembershipState,
+        over current: AccountFolderMembershipState
+    ) -> Bool {
+        if incoming.updatedAtMs > current.updatedAtMs { return true }
+        if incoming.updatedAtMs < current.updatedAtMs { return false }
+        if incoming.isDeleted && !current.isDeleted { return true }
+        if incoming.isDeleted == current.isDeleted {
+            let leftDevice = incoming.deviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let rightDevice = current.deviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return leftDevice > rightDevice
+        }
+        return false
+    }
+
+    /// Align with JS: `passkeyUpdatedAtMs || updatedAtMs || createdAtMs`.
+    private func resolvedPasskeyUpdatedAtMs(_ account: PasswordAccount) -> Int64 {
+        if account.passkeyUpdatedAtMs > 0 {
+            return account.passkeyUpdatedAtMs
+        }
+        return max(account.updatedAtMs, account.createdAtMs)
+    }
+
+    /// Align with JS synthetic relation clocks: `updatedAtMs || createdAtMs`.
+    private func resolvedAccountActivityAtMs(_ account: PasswordAccount) -> Int64 {
+        max(account.updatedAtMs, account.createdAtMs)
+    }
+
+    private func firstNonEmptyString(_ candidates: String..., fallback: String = "") -> String {
+        for candidate in candidates {
+            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return fallback
+    }
+
+    private func firstNonEmptyDeviceName(_ candidates: String...) -> String {
+        for candidate in candidates {
+            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return PassSyncPolicy.defaultDeviceName
+    }
+
     private func mergeSameAccount(_ lhs: PasswordAccount, _ rhs: PasswordAccount) -> PasswordAccount {
         let primary = lhs.createdAtMs <= rhs.createdAtMs ? lhs : rhs
         let secondary = lhs.createdAtMs <= rhs.createdAtMs ? rhs : lhs
+        let leftActivityAt = resolvedAccountActivityAtMs(lhs)
+        let rightActivityAt = resolvedAccountActivityAtMs(rhs)
 
-        let siteAliasStates = mergeRelationStates(lhs.siteAliasStates, rhs.siteAliasStates,
-            leftValues: lhs.sites.map(DomainUtils.normalize), rightValues: rhs.sites.map(DomainUtils.normalize),
-            leftUpdatedAt: lhs.updatedAtMs, rightUpdatedAt: rhs.updatedAtMs,
-            leftDevice: lhs.lastOperatedDeviceName, rightDevice: rhs.lastOperatedDeviceName)
+        let siteAliasStates = mergeRelationStates(
+            lhs.siteAliasStates,
+            rhs.siteAliasStates,
+            leftValues: lhs.sites.map(DomainUtils.normalize),
+            rightValues: rhs.sites.map(DomainUtils.normalize),
+            leftUpdatedAt: leftActivityAt,
+            rightUpdatedAt: rightActivityAt,
+            leftDevice: lhs.lastOperatedDeviceName,
+            rightDevice: rhs.lastOperatedDeviceName,
+            normalizeKey: DomainUtils.normalize
+        )
         let mergedSites = siteAliasStates.filter { !$0.value.isDeleted }.map(\.key).sorted()
         let canonicalBySites = DomainUtils.etldPlusOne(for: mergedSites.first ?? "")
-        let canonicalSite = canonicalBySites.isEmpty ? primary.canonicalSite : canonicalBySites
-        var folderMembershipStates = lhs.folderMembershipStates
-        for id in lhs.resolvedFolderIds.map({ $0.uuidString.lowercased() }) where folderMembershipStates[id] == nil {
-            folderMembershipStates[id] = AccountFolderMembershipState(isDeleted: false, updatedAtMs: lhs.updatedAtMs, deviceName: lhs.lastOperatedDeviceName)
+        let canonicalSite: String = {
+            if !canonicalBySites.isEmpty { return canonicalBySites }
+            if !primary.canonicalSite.isEmpty { return primary.canonicalSite }
+            return secondary.canonicalSite
+        }()
+
+        var folderMembershipStates: [String: AccountFolderMembershipState] = [:]
+        func ingestFolderStates(
+            from account: PasswordAccount,
+            activityAt: Int64
+        ) {
+            var rekeyed: [String: AccountFolderMembershipState] = [:]
+            for (rawId, state) in account.folderMembershipStates {
+                let id = rawId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                guard !id.isEmpty else { continue }
+                if let current = rekeyed[id] {
+                    if shouldPreferRelationState(state, over: current) {
+                        rekeyed[id] = state
+                    }
+                } else {
+                    rekeyed[id] = state
+                }
+            }
+            for id in account.resolvedFolderIds.map({ $0.uuidString.lowercased() }) where rekeyed[id] == nil {
+                rekeyed[id] = AccountFolderMembershipState(
+                    isDeleted: false,
+                    updatedAtMs: activityAt,
+                    deviceName: account.lastOperatedDeviceName
+                )
+            }
+            for (id, incoming) in rekeyed {
+                guard let current = folderMembershipStates[id] else {
+                    folderMembershipStates[id] = incoming
+                    continue
+                }
+                if shouldPreferRelationState(incoming, over: current) {
+                    folderMembershipStates[id] = incoming
+                }
+            }
         }
-        for id in rhs.resolvedFolderIds.map({ $0.uuidString.lowercased() }) {
-            let incoming = rhs.folderMembershipStates[id]
-                ?? AccountFolderMembershipState(isDeleted: false, updatedAtMs: rhs.updatedAtMs, deviceName: rhs.lastOperatedDeviceName)
-            guard let current = folderMembershipStates[id] else {
-                folderMembershipStates[id] = incoming
-                continue
-            }
-            if incoming.updatedAtMs > current.updatedAtMs ||
-                (incoming.updatedAtMs == current.updatedAtMs && incoming.isDeleted && !current.isDeleted) ||
-                (incoming.updatedAtMs == current.updatedAtMs && incoming.isDeleted == current.isDeleted && incoming.deviceName > current.deviceName) {
-                folderMembershipStates[id] = incoming
-            }
-        }
-        for (id, incoming) in rhs.folderMembershipStates {
-            guard let current = folderMembershipStates[id] else {
-                folderMembershipStates[id] = incoming
-                continue
-            }
-            if incoming.updatedAtMs > current.updatedAtMs ||
-                (incoming.updatedAtMs == current.updatedAtMs && incoming.isDeleted && !current.isDeleted) ||
-                (incoming.updatedAtMs == current.updatedAtMs && incoming.isDeleted == current.isDeleted && incoming.deviceName > current.deviceName) {
-                folderMembershipStates[id] = incoming
-            }
-        }
+        ingestFolderStates(from: lhs, activityAt: leftActivityAt)
+        ingestFolderStates(from: rhs, activityAt: rightActivityAt)
         let mergedFolderIds = folderMembershipStates
             .filter { !$0.value.isDeleted }
             .compactMap { UUID(uuidString: $0.key) }
@@ -4875,15 +5053,25 @@ final class AccountStore: ObservableObject {
             rhs.noteUpdatedDeviceName,
             rhs.updatedAtMs
         )
-        let passkeyLinkStates = mergeRelationStates(lhs.passkeyLinkStates, rhs.passkeyLinkStates,
-            leftValues: lhs.passkeyCredentialIds, rightValues: rhs.passkeyCredentialIds,
-            leftUpdatedAt: lhs.updatedAtMs, rightUpdatedAt: rhs.updatedAtMs,
-            leftDevice: lhs.lastOperatedDeviceName, rightDevice: rhs.lastOperatedDeviceName)
+        let passkeyLinkStates = mergeRelationStates(
+            lhs.passkeyLinkStates,
+            rhs.passkeyLinkStates,
+            leftValues: lhs.passkeyCredentialIds,
+            rightValues: rhs.passkeyCredentialIds,
+            leftUpdatedAt: leftActivityAt,
+            rightUpdatedAt: rightActivityAt,
+            leftDevice: lhs.lastOperatedDeviceName,
+            rightDevice: rhs.lastOperatedDeviceName,
+            normalizeKey: { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        )
         let mergedPasskeyCredentialIds = passkeyLinkStates.filter { !$0.value.isDeleted }.map(\.key).sorted()
-        let passkeyUpdatedAtMs = max(lhs.passkeyUpdatedAtMs, rhs.passkeyUpdatedAtMs)
-        let passkeyUpdatedDeviceName = lhs.passkeyUpdatedAtMs >= rhs.passkeyUpdatedAtMs
-            ? lhs.passkeyUpdatedDeviceName
-            : rhs.passkeyUpdatedDeviceName
+        // Align with sync_merge_core.js: treat missing/zero field clocks as account activity.
+        let leftPasskeyUpdatedAt = resolvedPasskeyUpdatedAtMs(lhs)
+        let rightPasskeyUpdatedAt = resolvedPasskeyUpdatedAtMs(rhs)
+        let passkeyUpdatedAtMs = max(leftPasskeyUpdatedAt, rightPasskeyUpdatedAt)
+        let passkeyUpdatedDeviceName = leftPasskeyUpdatedAt >= rightPasskeyUpdatedAt
+            ? firstNonEmptyDeviceName(lhs.passkeyUpdatedDeviceName, lhs.lastOperatedDeviceName)
+            : firstNonEmptyDeviceName(rhs.passkeyUpdatedDeviceName, rhs.lastOperatedDeviceName)
 
         let latestContentUpdatedAt = max(
             usernameField.updatedAtMs,
@@ -4901,6 +5089,7 @@ final class AccountStore: ObservableObject {
         // that activity timestamp so a later restore can beat an older tombstone.
         let latestActivityAt = max(latestContentUpdatedAt, lhs.updatedAtMs, rhs.updatedAtMs)
         let keepDeleted = latestDeletedAt > 0 && latestDeletedAt >= latestActivityAt
+        let keepPermanentlyDeleted = lhs.isPermanentlyDeleted || rhs.isPermanentlyDeleted
 
         let latestUpdatedAt = max(
             lhs.updatedAtMs,
@@ -4910,18 +5099,29 @@ final class AccountStore: ObservableObject {
             primary.createdAtMs
         )
         let newerAccount = lhs.updatedAtMs >= rhs.updatedAtMs ? lhs : rhs
-        let usernameAtCreate = primary.usernameAtCreate.isEmpty
-            ? secondary.usernameAtCreate
-            : primary.usernameAtCreate
-        let createdDeviceName = primary.createdDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? secondary.createdDeviceName
-            : primary.createdDeviceName
-        let lastOperatedDeviceName = newerAccount.lastOperatedDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? currentDeviceName()
-            : newerAccount.lastOperatedDeviceName
-        let deletedDeviceName = lhsDeletedAt >= rhsDeletedAt
+        let olderAccount = lhs.updatedAtMs >= rhs.updatedAtMs ? rhs : lhs
+        let usernameAtCreate = firstNonEmptyString(
+            primary.usernameAtCreate,
+            secondary.usernameAtCreate,
+            primary.username,
+            secondary.username
+        )
+        let createdDeviceName = firstNonEmptyDeviceName(
+            primary.createdDeviceName,
+            secondary.createdDeviceName,
+            primary.lastOperatedDeviceName,
+            secondary.lastOperatedDeviceName
+        )
+        let lastOperatedDeviceName = firstNonEmptyDeviceName(
+            newerAccount.lastOperatedDeviceName,
+            olderAccount.lastOperatedDeviceName
+        )
+        let deletedDeviceNameCandidate = lhsDeletedAt >= rhsDeletedAt
             ? lhs.deletedDeviceName
             : rhs.deletedDeviceName
+        let deletedDeviceName = keepPermanentlyDeleted || keepDeleted
+            ? firstNonEmptyDeviceName(deletedDeviceNameCandidate, lastOperatedDeviceName)
+            : ""
 
         return PasswordAccount(
             id: primary.id,
@@ -4931,7 +5131,7 @@ final class AccountStore: ObservableObject {
             isPinned: newerAccount.isPinned ?? false,
             pinnedSortOrder: newerAccount.pinnedSortOrder,
             regularSortOrder: newerAccount.regularSortOrder,
-            pinnedViews: newerAccount.pinnedViews,
+            pinnedViews: newerAccount.pinnedViews ?? olderAccount.pinnedViews,
             folderId: mergedFolderIds.first ?? newerAccount.folderId,
             folderIds: mergedFolderIds,
             folderMembershipStates: folderMembershipStates,
@@ -4958,14 +5158,14 @@ final class AccountStore: ObservableObject {
             passkeyUpdatedAtMs: passkeyUpdatedAtMs,
             passkeyUpdatedDeviceName: passkeyUpdatedDeviceName,
             updatedAtMs: latestUpdatedAt,
-            isDeleted: lhs.isPermanentlyDeleted || rhs.isPermanentlyDeleted || keepDeleted,
-            isPermanentlyDeleted: lhs.isPermanentlyDeleted || rhs.isPermanentlyDeleted,
-            deletedAtMs: lhs.isPermanentlyDeleted || rhs.isPermanentlyDeleted || keepDeleted
+            isDeleted: keepPermanentlyDeleted || keepDeleted,
+            isPermanentlyDeleted: keepPermanentlyDeleted,
+            deletedAtMs: keepPermanentlyDeleted || keepDeleted
                 ? (latestDeletedAt == 0 ? latestUpdatedAt : latestDeletedAt)
                 : nil,
-            deletedDeviceName: lhs.isPermanentlyDeleted || rhs.isPermanentlyDeleted || keepDeleted ? deletedDeviceName : "",
+            deletedDeviceName: deletedDeviceName,
             lastOperatedDeviceName: lastOperatedDeviceName,
-            createdDeviceName: createdDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? currentDeviceName() : createdDeviceName,
+            createdDeviceName: createdDeviceName,
             createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs)
         )
     }
@@ -4999,13 +5199,14 @@ final class AccountStore: ObservableObject {
                 updatedAtMs: existing.updatedAtMs
             )
         } else {
+            // Align with JS: synthetic fixed folder uses epoch timestamps, not wall clock.
             mergedById[fixedId] = AccountFolder(
                 id: fixedId,
                 name: Self.fixedNewAccountFolderName,
                 matchedSites: [],
                 autoAddMatchingSites: false,
-                createdAtMs: nowMs(),
-                updatedAtMs: nowMs()
+                createdAtMs: 0,
+                updatedAtMs: 0
             )
         }
 
@@ -5299,6 +5500,36 @@ final class AccountStore: ObservableObject {
     private func syncAliasGroups() {
         guard accounts.count >= 2 else { return }
 
+        if !PassCoreFFI.forceSwiftMerge {
+            do {
+                try syncAliasGroupsViaRust()
+                return
+            } catch {
+                NSLog("[PassCore] Rust alias sync failed, fallback Swift: \(error.localizedDescription)")
+            }
+        }
+        syncAliasGroupsSwift()
+    }
+
+    private func syncAliasGroupsViaRust() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(accounts)
+        guard let accountsJSON = String(data: data, encoding: .utf8) else {
+            throw PassCoreFFI.FFIError.invalidUTF8
+        }
+        let result = try PassCoreFFI.syncAliasGroupsJSON(
+            accountsJSON: accountsJSON,
+            deviceName: currentDeviceName(),
+            nowMs: nowMs()
+        )
+        guard result.changed else { return }
+        let decoded = try decoder.decode([PasswordAccount].self, from: Data(result.accountsJSON.utf8))
+        accounts = decoded
+    }
+
+    /// Legacy in-process alias union (rollback / FFI unavailable).
+    private func syncAliasGroupsSwift() {
         var components: [[Int]] = []
         var visited = Set<Int>()
 
@@ -5477,6 +5708,10 @@ final class AccountStore: ObservableObject {
         var bestMatch: (index: Int, score: Int)?
 
         for (index, account) in source.enumerated() {
+            // Permanent-delete tombstones must not be revived by re-import.
+            if account.isPermanentlyDeleted {
+                continue
+            }
             let accountSites = Set(account.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
             let accountCanonicalSites = Set(accountSites.map(DomainUtils.etldPlusOne)).union([account.canonicalSite])
             let usernameMatches = normalizedUsername.isEmpty
@@ -5514,6 +5749,10 @@ final class AccountStore: ObservableObject {
         to account: PasswordAccount,
         nowMs: Int64
     ) -> PasswordAccount {
+        // Defense in depth: never clear permanent-delete tombstones via import.
+        if account.isPermanentlyDeleted {
+            return account
+        }
         var updated = account
         var changed = false
 
@@ -5547,10 +5786,11 @@ final class AccountStore: ObservableObject {
             changed = true
         }
 
+        // Soft-deleted accounts may be revived; permanent tombstones are blocked above.
         if updated.isDeleted {
             updated.isDeleted = false
-            updated.isPermanentlyDeleted = false
             updated.deletedAtMs = nil
+            updated.deletedDeviceName = ""
             changed = true
         }
 
@@ -6095,6 +6335,10 @@ final class AccountStore: ObservableObject {
         var bestMatch: (index: Int, score: Int)?
 
         for (index, account) in accounts.enumerated() {
+            // Permanent-delete tombstones must not be revived by re-import.
+            if account.isPermanentlyDeleted {
+                continue
+            }
             let accountSecret = account.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalizedSecret.isEmpty, accountSecret == normalizedSecret else {
                 continue
@@ -6135,6 +6379,10 @@ final class AccountStore: ObservableObject {
         nowMs: Int64,
         targetFolderId: UUID?
     ) -> PasswordAccount {
+        // Defense in depth: never clear permanent-delete tombstones via import.
+        if account.isPermanentlyDeleted {
+            return account
+        }
         var updated = account
         var changed = false
 
@@ -6160,10 +6408,11 @@ final class AccountStore: ObservableObject {
             changed = true
         }
 
+        // Soft-deleted accounts may be revived; permanent tombstones are blocked above.
         if updated.isDeleted {
             updated.isDeleted = false
-            updated.isPermanentlyDeleted = false
             updated.deletedAtMs = nil
+            updated.deletedDeviceName = ""
             changed = true
         }
 

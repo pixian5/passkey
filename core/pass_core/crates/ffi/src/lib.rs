@@ -86,15 +86,7 @@ fn serialize_state(state: &AppState) -> Result<String, String> {
 }
 
 fn escape_csv(value: &str) -> String {
-    let mut sanitized = value.replace('\r', " ").replace('\n', " ");
-    if sanitized
-        .chars()
-        .next()
-        .is_some_and(|c| matches!(c, '=' | '+' | '-' | '@' | '\t'))
-    {
-        sanitized.insert(0, '\'');
-    }
-    format!("\"{}\"", sanitized.replace('"', "\"\""))
+    pass_csvio::escape_csv_cell(value)
 }
 
 fn sync_alias(accounts: &mut [Account]) {
@@ -374,6 +366,59 @@ pub extern "C" fn pass_core_export_accounts_csv(state_json: *const c_char) -> *m
     wrap_result(result)
 }
 
+/// Export accounts as macOS-compatible full CSV (includes deleted rows).
+///
+/// Input: `{"accounts":[...]}` using v2 account JSON fields.
+#[no_mangle]
+pub extern "C" fn pass_core_export_macos_csv_json(accounts_json: *const c_char) -> *mut c_char {
+    let result = (|| {
+        let accounts_json = cstr_to_str(accounts_json, "accounts_json")?;
+        let accounts: Vec<pass_merge::v2::PasswordAccount> =
+            if let Ok(wrapper) = serde_json::from_str::<serde_json::Value>(&accounts_json) {
+                if let Some(arr) = wrapper.get("accounts") {
+                    serde_json::from_value(arr.clone())
+                        .map_err(|e| format!("invalid accounts array: {e}"))?
+                } else if wrapper.is_array() {
+                    serde_json::from_value(wrapper)
+                        .map_err(|e| format!("invalid accounts array: {e}"))?
+                } else {
+                    return Err("accounts_json must be an array or {\"accounts\":[...]}".into());
+                }
+            } else {
+                return Err("invalid accounts json".into());
+            };
+
+        let rows: Vec<Vec<String>> = accounts
+            .iter()
+            .map(|a| {
+                vec![
+                    a.account_id.clone(),
+                    a.sites.join(";"),
+                    a.username.clone(),
+                    a.password.clone(),
+                    a.totp_secret.clone(),
+                    a.recovery_codes.clone(),
+                    a.note.clone(),
+                    a.username_updated_at_ms.to_string(),
+                    a.password_updated_at_ms.to_string(),
+                    a.totp_updated_at_ms.to_string(),
+                    a.recovery_codes_updated_at_ms.to_string(),
+                    a.note_updated_at_ms.to_string(),
+                    if a.is_deleted { "true" } else { "false" }.to_string(),
+                    a.deleted_at_ms
+                        .map(|v| v.to_string())
+                        .unwrap_or_default(),
+                    a.last_operated_device_name.clone(),
+                    a.created_at_ms.to_string(),
+                    a.updated_at_ms.to_string(),
+                ]
+            })
+            .collect();
+        Ok(pass_csvio::build_csv(pass_csvio::MACOS_EXPORT_HEADERS, &rows))
+    })();
+    wrap_result(result)
+}
+
 #[no_mangle]
 pub extern "C" fn pass_core_last_error_message() -> *const c_char {
     if let Ok(slot) = last_error_slot().lock() {
@@ -393,4 +438,138 @@ pub extern "C" fn pass_core_string_free(ptr: *mut c_char) {
     unsafe {
         let _ = CString::from_raw(ptr);
     }
+}
+
+/// Merge two `pass.sync.bundle.v2` payload JSON objects (accounts/folders/passkeys).
+///
+/// Input may be either:
+/// - a wrapper: `{"local":{...},"remote":{...}}`
+/// - or callers can pass local/remote via dedicated functions below.
+///
+/// Returns merged payload JSON on success, or null with `pass_core_last_error_message`.
+#[no_mangle]
+pub extern "C" fn pass_core_merge_sync_payloads_json(
+    local_json: *const c_char,
+    remote_json: *const c_char,
+) -> *mut c_char {
+    let result = (|| {
+        let local_json = cstr_to_str(local_json, "local_json")?;
+        let remote_json = cstr_to_str(remote_json, "remote_json")?;
+        let local: pass_merge::v2::SyncPayload =
+            serde_json::from_str(&local_json).map_err(|e| format!("invalid local payload: {e}"))?;
+        let remote: pass_merge::v2::SyncPayload = serde_json::from_str(&remote_json)
+            .map_err(|e| format!("invalid remote payload: {e}"))?;
+        let merged = pass_merge::v2::merge_sync_payloads(local, remote);
+        serde_json::to_string(&merged).map_err(|e| format!("serialize merged payload failed: {e}"))
+    })();
+    wrap_result(result)
+}
+
+/// Sync site alias groups across accounts (macOS `syncAliasGroups` semantics).
+///
+/// `accounts_json` is a JSON array of account objects (or `{"accounts":[...]}`).
+/// Returns JSON `{"accounts":[...],"changed":bool}` on success.
+#[no_mangle]
+pub extern "C" fn pass_core_sync_alias_groups_json(
+    accounts_json: *const c_char,
+    device_name: *const c_char,
+    now_ms: i64,
+) -> *mut c_char {
+    let result = (|| {
+        let accounts_json = cstr_to_str(accounts_json, "accounts_json")?;
+        let device_name = cstr_to_str(device_name, "device_name").unwrap_or_else(|_| "".to_string());
+        let mut accounts: Vec<pass_merge::v2::PasswordAccount> =
+            if let Ok(wrapper) = serde_json::from_str::<serde_json::Value>(&accounts_json) {
+                if let Some(arr) = wrapper.get("accounts") {
+                    serde_json::from_value(arr.clone())
+                        .map_err(|e| format!("invalid accounts array: {e}"))?
+                } else if wrapper.is_array() {
+                    serde_json::from_value(wrapper)
+                        .map_err(|e| format!("invalid accounts array: {e}"))?
+                } else {
+                    return Err("accounts_json must be an array or {\"accounts\":[...]}".into());
+                }
+            } else {
+                return Err("invalid accounts json".into());
+            };
+        let changed =
+            pass_merge::v2::sync_alias_groups(&mut accounts, now_ms, &device_name);
+        serde_json::to_string(&serde_json::json!({
+            "accounts": accounts,
+            "changed": changed,
+        }))
+        .map_err(|e| format!("serialize alias result failed: {e}"))
+    })();
+    wrap_result(result)
+}
+
+/// Normalize a domain/host string (trim, lower, strip scheme/path).
+#[no_mangle]
+pub extern "C" fn pass_core_normalize_domain(input: *const c_char) -> *mut c_char {
+    let result = (|| {
+        let input = cstr_to_str(input, "input")?;
+        Ok(pass_merge::v2::normalize::normalize_domain(&input))
+    })();
+    wrap_result(result)
+}
+
+/// eTLD+1 for a domain (IP hosts returned as-is).
+#[no_mangle]
+pub extern "C" fn pass_core_etld_plus_one(input: *const c_char) -> *mut c_char {
+    let result = (|| {
+        let input = cstr_to_str(input, "input")?;
+        Ok(pass_merge::v2::normalize::etld_plus_one(&input))
+    })();
+    wrap_result(result)
+}
+
+/// Deterministic UUID string from text (matches extension + Swift PassStableUUID).
+#[no_mangle]
+pub extern "C" fn pass_core_stable_uuid_from_text(input: *const c_char) -> *mut c_char {
+    let result = (|| {
+        let input = cstr_to_str(input, "input")?;
+        Ok(pass_merge::v2::normalize::stable_uuid_from_text(&input))
+    })();
+    wrap_result(result)
+}
+
+/// Evaluate merge safety. Inputs are payload JSON strings.
+/// `mode` is "merge" or "remoteOverwriteLocal".
+#[no_mangle]
+pub extern "C" fn pass_core_evaluate_sync_safety_json(
+    local_json: *const c_char,
+    remote_json: *const c_char,
+    merged_json: *const c_char,
+    mode: *const c_char,
+) -> *mut c_char {
+    let result = (|| {
+        let local_json = cstr_to_str(local_json, "local_json")?;
+        let merged_json = cstr_to_str(merged_json, "merged_json")?;
+        let mode = cstr_to_str(mode, "mode").unwrap_or_else(|_| "merge".to_string());
+        let local: pass_merge::v2::SyncPayload =
+            serde_json::from_str(&local_json).map_err(|e| format!("invalid local payload: {e}"))?;
+        let merged: pass_merge::v2::SyncPayload = serde_json::from_str(&merged_json)
+            .map_err(|e| format!("invalid merged payload: {e}"))?;
+        let remote = if remote_json.is_null() {
+            None
+        } else {
+            let remote_json = cstr_to_str(remote_json, "remote_json")?;
+            if remote_json.trim().is_empty() || remote_json == "null" {
+                None
+            } else {
+                Some(
+                    serde_json::from_str::<pass_merge::v2::SyncPayload>(&remote_json)
+                        .map_err(|e| format!("invalid remote payload: {e}"))?,
+                )
+            }
+        };
+        let report =
+            pass_merge::v2::evaluate_sync_safety(&local, remote.as_ref(), &merged, &mode);
+        serde_json::to_string(&serde_json::json!({
+            "safe": report.safe,
+            "reasons": report.reasons,
+        }))
+        .map_err(|e| format!("serialize safety report failed: {e}"))
+    })();
+    wrap_result(result)
 }

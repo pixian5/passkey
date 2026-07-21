@@ -4,6 +4,9 @@ apps/extension_shared/node_modules/
 apps/extension_shared/dist/
 apps/extension_firefox/build/
 apps/extension_safari/PassSafari/build_apple/
+apps/app_macos/Vendor/pass_core_ffi/
+apps/app_macos/dist/
+apps/app_macos/build/
 
 # OS noise
 .DS_Store

@@ -31,14 +31,25 @@ cd /Users/x/code/pass/apps/app_macos
 ## 快速调试
 ```bash
 cd /Users/x/code/pass/apps/app_macos
+./scripts/build_pass_core_ffi.sh   # 同步合并依赖 Rust dylib
 swift run PassMac
 ```
+
+开发时会从 `Vendor/pass_core_ffi/` 或 `core/pass_core/target/release/` 动态加载 `libpass_core_ffi.dylib`。  
+强制回退旧 Swift 合并：`PASS_USE_SWIFT_MERGE=1`。
 
 ## Build
 ```bash
 cd /Users/x/code/pass/apps/app_macos
+./scripts/build_pass_core_ffi.sh
 swift build
 ```
+
+## 同步合并（Rust Core）
+
+- 默认同步 merge / safety 走 `pass_merge::v2`（`pass-core-ffi`）。
+- 加载或调用失败时自动回退 Swift 实现，并写 `NSLog`。
+- 架构说明见 [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md)。
 
 ## 安全说明（开发测试版）
 - 主窗口、设置、新建账号、历史窗口都套了 AppLock 门禁。

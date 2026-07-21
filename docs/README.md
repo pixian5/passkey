@@ -1,20 +1,25 @@
 # 文档索引
 
 ## 建议阅读顺序
-1. [总体设计：password-manager-design-zh.md](/Users/x/code/pass/docs/password-manager-design-zh.md)
-2. [跨平台架构：cross-platform-architecture-zh.md](/Users/x/code/pass/docs/cross-platform-architecture-zh.md)
-3. [插件与客户端完整设计（含通行密钥）：browser-client-passkey-full-design-zh.md](/Users/x/code/pass/docs/browser-client-passkey-full-design-zh.md)
-4. [完整实施规范：implementation-spec-full-zh.md](/Users/x/code/pass/docs/implementation-spec-full-zh.md)
-5. [同步协议契约：sync-protocol-contract-zh.md](/Users/x/code/pass/docs/sync-protocol-contract-zh.md)
-6. [当前实现参考（APP + 扩展）：current-app-extension-implementation-reference-zh.md](/Users/x/code/pass/docs/current-app-extension-implementation-reference-zh.md)
-7. [多设备同步与手动导入导出：manual-sync-import-export-design-and-implementation-zh.md](/Users/x/code/pass/docs/manual-sync-import-export-design-and-implementation-zh.md)
-8. [统一数据与同步实施计划（V2）：unified-data-sync-v2-design-and-plan-zh.md](/Users/x/code/pass/docs/unified-data-sync-v2-design-and-plan-zh.md)
-9. [数据库 DDL：sqlite-schema.sql](/Users/x/code/pass/docs/sqlite-schema.sql)
-10. [数据模型 Schema（V2）：schemas/pass-data-v2.schema.json](/Users/x/code/pass/docs/schemas/pass-data-v2.schema.json)
-11. [同步包 Schema（V2）：schemas/pass-sync-bundle-v2.schema.json](/Users/x/code/pass/docs/schemas/pass-sync-bundle-v2.schema.json)
-12. [跨平台同步后端契约（V2）：cross-platform-sync-backends-v2-zh.md](/Users/x/code/pass/docs/cross-platform-sync-backends-v2-zh.md)
+
+1. [架构宪章（简版执行边界）：ARCHITECTURE.md](/Users/x/code/pass/docs/ARCHITECTURE.md)
+2. [总体设计：password-manager-design-zh.md](/Users/x/code/pass/docs/password-manager-design-zh.md)
+3. [跨平台架构：cross-platform-architecture-zh.md](/Users/x/code/pass/docs/cross-platform-architecture-zh.md)
+4. [插件与客户端完整设计（含通行密钥）：browser-client-passkey-full-design-zh.md](/Users/x/code/pass/docs/browser-client-passkey-full-design-zh.md)
+5. [完整实施规范：implementation-spec-full-zh.md](/Users/x/code/pass/docs/implementation-spec-full-zh.md)
+6. [同步协议契约：sync-protocol-contract-zh.md](/Users/x/code/pass/docs/sync-protocol-contract-zh.md)
+7. [当前实现参考（APP + 扩展）：current-app-extension-implementation-reference-zh.md](/Users/x/code/pass/docs/current-app-extension-implementation-reference-zh.md)
+8. [多设备同步与手动导入导出：manual-sync-import-export-design-and-implementation-zh.md](/Users/x/code/pass/docs/manual-sync-import-export-design-and-implementation-zh.md)
+9. [统一数据与同步实施计划（V2）：unified-data-sync-v2-design-and-plan-zh.md](/Users/x/code/pass/docs/unified-data-sync-v2-design-and-plan-zh.md)
+10. [数据库 DDL：sqlite-schema.sql](/Users/x/code/pass/docs/sqlite-schema.sql)
+11. [数据模型 Schema（V2）：schemas/pass-data-v2.schema.json](/Users/x/code/pass/docs/schemas/pass-data-v2.schema.json)
+12. [同步包 Schema（V2）：schemas/pass-sync-bundle-v2.schema.json](/Users/x/code/pass/docs/schemas/pass-sync-bundle-v2.schema.json)
+13. [跨平台同步后端契约（V2）：cross-platform-sync-backends-v2-zh.md](/Users/x/code/pass/docs/cross-platform-sync-backends-v2-zh.md)
+14. [开发路线图（A+C+J+G）：dev-roadmap-a-c-j-g-zh.md](/Users/x/code/pass/docs/dev-roadmap-a-c-j-g-zh.md)
 
 ## 文档职责
+
+- `ARCHITECTURE.md`：当前执行用分层、禁止事项、端优先级与 P0–P5 阶段。
 - `password-manager-design-zh.md`：业务规则与产品侧约束。
 - `cross-platform-architecture-zh.md`：技术路线、分层、里程碑。
 - `browser-client-passkey-full-design-zh.md`：浏览器插件与客户端协同、通行密钥原理与落地方案。
@@ -27,3 +32,4 @@
 - `schemas/pass-data-v2.schema.json`：统一数据模型 `pass.data.v2` 的机器可校验定义。
 - `schemas/pass-sync-bundle-v2.schema.json`：统一同步包 `pass.sync.bundle.v2` 的机器可校验定义。
 - `cross-platform-sync-backends-v2-zh.md`：WebDAV/自建服务器跨平台同步协议与接入清单。
+- `dev-roadmap-a-c-j-g-zh.md`：现行交付路线（A+C+J+G）、阶段退出门、前 30 天清单与禁止项；与「单框架全平台 UI」路线区分。

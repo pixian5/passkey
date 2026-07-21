@@ -16,6 +16,8 @@ Pass 浏览器扩展共享核心。
 - 关闭“本地数据保护”后，数据密钥只保留在当前浏览器会话，不会再写回 `chrome.storage.local` 明文。
 - 通行密钥选择器使用 closed Shadow DOM，降低页面脚本合成点击绕过的风险。软件 passkey 私钥仍可导出并参与同步，这是已知的产品模型限制，不是硬件认证器替代品。
 - 修改共享源码后必须执行 `npm run build`，平台壳层实际加载的是 `dist/`。
+  - 版本号以 `package.json` 为准；构建会生成 `extension_version.js` 并同步 `manifest.json`。
+  - `webauthn_injected.js` 源码也需打包为 `dist/webauthn_injected.js`（含版本常量）。
 
 ## 目录职责
 - 这里存放 Chrome / Firefox / Safari 三个平台共用的前端代码与构建脚本
@@ -31,7 +33,8 @@ Pass 浏览器扩展共享核心。
   - `account_core.js`
   - `data_store.js`
   - `passkey_store.js`
-  - `webauthn_injected.js`
+  - `webauthn_injected.js`（源）→ `dist/webauthn_injected.js`
+  - `extension_version.js`（由 build 从 package.json 生成）
   - `scripts/build.mjs`
   - `dist/`
 

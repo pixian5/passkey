@@ -148,8 +148,6 @@ extension PasswordAccount {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
             .flatMap(UUID.init(uuidString:))
 
-        id = explicitId ?? parsedRecordId ?? UUID()
-
         let decodedSites = try container.decodeIfPresent([String].self, forKey: .sites)
             ?? []
         let normalizedSites = Array(
@@ -170,6 +168,19 @@ extension PasswordAccount {
         canonicalSite = canonical
         usernameAtCreate = try container.decodeIfPresent(String.self, forKey: .usernameAtCreate)
             ?? decodedUsername
+        // Align with extension normalizeRecordId: missing/invalid ids become a stable hash,
+        // never a random UUID that would fork identity across import/sync cycles.
+        if let explicitId {
+            id = explicitId
+        } else if let parsedRecordId {
+            id = parsedRecordId
+        } else {
+            let usernameSeed = usernameAtCreate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? decodedUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+                : usernameAtCreate.trimmingCharacters(in: .whitespacesAndNewlines)
+            let seed = "\(accountId)|\(createdAt)|\(usernameSeed)"
+            id = PassStableUUID.fromText(seed)
+        }
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned)
         pinnedSortOrder = try container.decodeIfPresent(Int64.self, forKey: .pinnedSortOrder)
         regularSortOrder = try container.decodeIfPresent(Int64.self, forKey: .regularSortOrder)
@@ -229,12 +240,13 @@ extension PasswordAccount {
         try container.encode(accountId, forKey: .accountId)
         try container.encode(canonicalSite, forKey: .canonicalSite)
         try container.encode(usernameAtCreate, forKey: .usernameAtCreate)
-        try container.encode(isPinned, forKey: .isPinned)
-        try container.encode(pinnedSortOrder, forKey: .pinnedSortOrder)
-        try container.encode(regularSortOrder, forKey: .regularSortOrder)
-        try container.encode(pinnedViews, forKey: .pinnedViews)
-        try container.encode(folderId, forKey: .folderId)
-        try container.encode(folderIds, forKey: .folderIds)
+        // Omit null optionals so Rust/JS serde defaults apply (null bool breaks pass_merge).
+        try container.encodeIfPresent(isPinned, forKey: .isPinned)
+        try container.encodeIfPresent(pinnedSortOrder, forKey: .pinnedSortOrder)
+        try container.encodeIfPresent(regularSortOrder, forKey: .regularSortOrder)
+        try container.encodeIfPresent(pinnedViews, forKey: .pinnedViews)
+        try container.encodeIfPresent(folderId, forKey: .folderId)
+        try container.encodeIfPresent(folderIds, forKey: .folderIds)
         try container.encode(folderMembershipStates, forKey: .folderMembershipStates)
         try container.encode(sites, forKey: .sites)
         try container.encode(siteAliasStates, forKey: .siteAliasStates)
@@ -260,7 +272,7 @@ extension PasswordAccount {
         try container.encode(updatedAtMs, forKey: .updatedAtMs)
         try container.encode(isDeleted, forKey: .isDeleted)
         try container.encode(isPermanentlyDeleted, forKey: .isPermanentlyDeleted)
-        try container.encode(deletedAtMs, forKey: .deletedAtMs)
+        try container.encodeIfPresent(deletedAtMs, forKey: .deletedAtMs)
         try container.encode(deletedDeviceName, forKey: .deletedDeviceName)
         try container.encode(lastOperatedDeviceName, forKey: .lastOperatedDeviceName)
         try container.encode(createdDeviceName, forKey: .createdDeviceName)

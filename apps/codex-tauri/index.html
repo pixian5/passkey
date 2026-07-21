@@ -3,57 +3,228 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>codex-tauri</title>
+    <title>Pass Desktop</title>
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
-    <main class="layout">
-      <header class="topbar">
-        <h1>codex-tauri</h1>
-        <div class="actions">
-          <button id="btn-health">后端健康检查</button>
-          <button id="btn-demo">生成演示数据</button>
-          <button id="btn-export">导出 CSV</button>
+    <div id="lockOverlay" class="lock-overlay" hidden>
+      <div class="lock-card">
+        <h2>Pass 已锁定</h2>
+        <p class="hint">输入主密码解锁 vault 与同步密钥。</p>
+        <label>主密码<input id="unlockPassword" type="password" autocomplete="current-password" /></label>
+        <div class="form-actions">
+          <button type="button" id="btn-unlock" class="primary">解锁</button>
         </div>
-      </header>
+        <p id="lockError" class="error"></p>
+      </div>
+    </div>
 
-      <section class="settings">
-        <label for="deviceName">设备名</label>
-        <input id="deviceName" placeholder="例如：Pixian-MacBook" />
-        <button id="btn-save-device">保存设备名</button>
-      </section>
+    <main class="shell" id="appMain">
+      <!-- Intentionally no heavy toolbar — PassMac uses menu bar; keep minimal chrome -->
+      <div class="titlebar-drag">
+        <div class="titlebar-left">
+          <span class="app-title">Pass</span>
+          <span class="muted" id="deviceLabel"></span>
+        </div>
+        <div class="titlebar-right">
+          <button type="button" id="btn-new" class="primary">新建账号</button>
+          <button type="button" id="btn-sync-now">同步</button>
+          <button type="button" id="btn-open-settings">设置</button>
+          <button type="button" id="btn-lock-now">锁定</button>
+        </div>
+      </div>
 
-      <section class="content-grid">
-        <aside class="list-panel">
-          <h2>账号列表</h2>
-          <ul id="accountList"></ul>
+      <div class="workspace">
+        <aside class="sidebar" id="sidebar">
+          <div class="sidebar-inner">
+            <button type="button" class="side-item active" data-filter="all">
+              <span id="label-all">全部 (0)</span>
+            </button>
+            <button type="button" class="side-item" data-filter="passkeys">
+              <span id="label-passkeys">通行密钥 (0)</span>
+            </button>
+            <button type="button" class="side-item" data-filter="totp">
+              <span id="label-totp">验证码 (0)</span>
+            </button>
+            <button type="button" class="side-item" data-filter="recycle">
+              <span id="label-recycle">回收站 (0)</span>
+            </button>
+
+            <div class="side-divider"></div>
+
+            <div class="folder-head">
+              <span id="label-folders">文件夹 (0)</span>
+              <button type="button" class="folder-new" id="btn-new-folder">新建</button>
+            </div>
+            <div id="folderEmpty" class="folder-empty" hidden>暂无文件夹</div>
+            <div class="folder-scroll" id="folderList"></div>
+
+            <div class="sidebar-spacer"></div>
+          </div>
         </aside>
 
-        <section class="editor-panel">
-          <h2>账号编辑</h2>
-          <form id="accountForm">
-            <input type="hidden" id="accountId" />
-            <label>站点（逗号分隔）<input id="sites" required /></label>
-            <label>用户名<input id="username" required /></label>
-            <label>密码<input id="password" required /></label>
-            <label>TOTP<input id="totpSecret" /></label>
-            <label>恢复码<input id="recoveryCodes" /></label>
-            <label>备注<textarea id="note"></textarea></label>
+        <section class="content">
+          <div class="search-wrap">
+            <button type="button" class="icon-ghost" id="btn-sort" title="排序">⇅</button>
+            <input id="searchInput" type="search" placeholder="搜索全部账号（输入即搜）" />
+            <select id="sortMode" class="sort-select" title="排序">
+              <option value="default">默认排序</option>
+              <option value="updatedNewest">最近修改</option>
+              <option value="usernameAZ">用户名 A-Z</option>
+              <option value="siteAZ">站点 A-Z</option>
+            </select>
+          </div>
 
-            <div class="form-actions">
-              <button type="submit">保存</button>
-              <button type="button" id="btn-new">新建</button>
-              <button type="button" id="btn-delete">移入回收站</button>
-            </div>
-          </form>
-
-          <h3>回收站</h3>
-          <ul id="trashList"></ul>
+          <div id="listEmpty" class="list-empty" hidden>暂无账号</div>
+          <div class="account-scroll">
+            <div class="account-stack" id="accountRows"></div>
+          </div>
         </section>
-      </section>
+      </div>
 
-      <pre id="output"></pre>
+      <div class="toast" id="output" hidden></div>
     </main>
+
+    <!-- Edit sheet -->
+    <div id="editModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close-edit></div>
+      <div class="modal-card">
+        <header class="modal-head">
+          <h2 id="editTitle">编辑账号</h2>
+          <button type="button" class="icon-btn" data-close-edit>×</button>
+        </header>
+        <form id="accountForm" class="modal-body">
+          <input type="hidden" id="accountId" />
+          <label>站点别名（逗号分隔）<input id="sites" required /></label>
+          <label>用户名<input id="username" required /></label>
+          <label>密码<input id="password" required /></label>
+          <label>TOTP 密钥<input id="totpSecret" placeholder="Base32" /></label>
+          <label>恢复码<input id="recoveryCodes" /></label>
+          <label>备注<textarea id="note"></textarea></label>
+          <label>文件夹（⌘/Ctrl 多选）
+            <select id="editFolders" multiple size="5"></select>
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="primary">保存</button>
+            <button type="button" id="btn-restore" class="primary" hidden>恢复账号</button>
+            <button type="button" id="btn-delete" class="danger">移入回收站</button>
+            <button type="button" data-close-edit>取消</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="folderModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close-folder></div>
+      <div class="modal-card sm">
+        <header class="modal-head">
+          <h2>新建文件夹</h2>
+          <button type="button" class="icon-btn" data-close-folder>×</button>
+        </header>
+        <div class="modal-body">
+          <label>名称<input id="newFolderName" /></label>
+          <div class="form-actions">
+            <button type="button" class="primary" id="btn-create-folder">创建</button>
+            <button type="button" data-close-folder>取消</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="settingsModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close-settings></div>
+      <div class="modal-card wide">
+        <header class="modal-head">
+          <h2>设置</h2>
+          <button type="button" class="icon-btn" data-close-settings>×</button>
+        </header>
+        <nav class="settings-nav">
+          <button type="button" class="nav-btn active" data-settings-tab="general">通用</button>
+          <button type="button" class="nav-btn" data-settings-tab="sync">同步</button>
+          <button type="button" class="nav-btn" data-settings-tab="lock">应用锁</button>
+          <button type="button" class="nav-btn" data-settings-tab="tools">工具</button>
+          <button type="button" class="nav-btn" data-settings-tab="debug">开发</button>
+        </nav>
+        <div class="modal-body">
+          <section class="settings-pane active" data-pane="general">
+            <label>设备名
+              <div class="inline-actions">
+                <input id="deviceName" />
+                <button type="button" id="btn-save-device">保存</button>
+              </div>
+            </label>
+          </section>
+          <section class="settings-pane" data-pane="sync">
+            <p class="hint">与 macOS 共用自建同步 <code>/v2/sync/state</code>。</p>
+            <label class="row-check"><input type="checkbox" id="syncEnabled" /> 启用同步</label>
+            <label>Base URL<input id="syncBaseUrl" /></label>
+            <label>Bearer Token<input id="syncToken" type="password" /></label>
+            <label>同步密钥（可选）
+              <div class="inline-actions">
+                <input id="syncEncKey" type="password" />
+                <button type="button" id="btn-gen-sync-key">生成</button>
+              </div>
+            </label>
+            <label>模式
+              <select id="syncMode">
+                <option value="merge">合并</option>
+                <option value="remoteOverwriteLocal">云端覆盖本地</option>
+                <option value="localOverwriteRemote">本地覆盖云端</option>
+              </select>
+            </label>
+            <div class="form-actions">
+              <button type="button" id="btn-save-sync">保存</button>
+              <button type="button" id="btn-sync-preview">预览合并</button>
+              <button type="button" id="btn-sync-now-settings">立即同步</button>
+            </div>
+            <pre id="syncPreviewOut" class="mini-log" hidden></pre>
+          </section>
+          <section class="settings-pane" data-pane="lock">
+            <div id="lockStatus">状态：未启用</div>
+            <label>主密码<input id="lockPassword" type="password" /></label>
+            <label>确认<input id="lockPassword2" type="password" /></label>
+            <label>空闲分钟<input id="idleMinutes" type="number" min="1" max="60" value="5" /></label>
+            <div class="form-actions">
+              <button type="button" id="btn-lock-enable">启用</button>
+              <button type="button" id="btn-lock-disable">关闭</button>
+              <button type="button" id="btn-lock-idle">保存空闲</button>
+            </div>
+          </section>
+          <section class="settings-pane" data-pane="tools">
+            <div class="form-actions">
+              <button type="button" id="btn-export">导出 CSV</button>
+              <button type="button" id="btn-demo">生成演示数据</button>
+            </div>
+          </section>
+          <section class="settings-pane" data-pane="debug">
+            <div class="form-actions">
+              <button type="button" id="btn-health">健康检查</button>
+              <button type="button" id="btn-open-merge">JSON 合并预览</button>
+            </div>
+            <pre id="debugOut" class="mini-log"></pre>
+            <div id="mergePanel" hidden>
+              <div class="merge-grid">
+                <div>
+                  <button type="button" id="btn-load-local">填充本地</button>
+                  <textarea id="localPayload"></textarea>
+                </div>
+                <div>
+                  <button type="button" id="btn-fill-empty-remote">空远端</button>
+                  <button type="button" id="btn-clear-remote">清空</button>
+                  <textarea id="remotePayload"></textarea>
+                </div>
+              </div>
+              <button type="button" id="btn-merge-preview">运行</button>
+              <div id="mergeResult" hidden>
+                <div id="mergeSummary" class="mini-log"></div>
+                <pre id="mergePayloadOut" class="mini-log"></pre>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

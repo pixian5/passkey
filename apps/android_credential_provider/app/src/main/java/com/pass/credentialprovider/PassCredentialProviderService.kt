@@ -4,9 +4,7 @@ import android.os.CancellationSignal
 import android.os.OutcomeReceiver
 import androidx.credentials.exceptions.ClearCredentialException
 import androidx.credentials.exceptions.CreateCredentialException
-import androidx.credentials.exceptions.CreateCredentialUnknownException
 import androidx.credentials.exceptions.GetCredentialException
-import androidx.credentials.exceptions.GetCredentialUnknownException
 import androidx.credentials.provider.BeginCreateCredentialRequest
 import androidx.credentials.provider.BeginCreateCredentialResponse
 import androidx.credentials.provider.BeginGetCredentialRequest
@@ -21,12 +19,7 @@ class PassCredentialProviderService : CredentialProviderService() {
         callback: OutcomeReceiver<BeginCreateCredentialResponse, CreateCredentialException>,
     ) {
         if (cancellationSignal.isCanceled) return
-        val response = PassProviderRepository.beginCreateCredential(this, request)
-        if (response == null) {
-            callback.onError(CreateCredentialUnknownException())
-        } else {
-            callback.onResult(response)
-        }
+        callback.onResult(PassProviderRepository.beginCreateCredential(this, request))
     }
 
     override fun onBeginGetCredentialRequest(
@@ -35,12 +28,7 @@ class PassCredentialProviderService : CredentialProviderService() {
         callback: OutcomeReceiver<BeginGetCredentialResponse, GetCredentialException>,
     ) {
         if (cancellationSignal.isCanceled) return
-        val response = PassProviderRepository.beginGetCredential(this, request)
-        if (response == null) {
-            callback.onError(GetCredentialUnknownException())
-        } else {
-            callback.onResult(response)
-        }
+        callback.onResult(PassProviderRepository.beginGetCredential(this, request))
     }
 
     override fun onClearCredentialStateRequest(
@@ -48,6 +36,7 @@ class PassCredentialProviderService : CredentialProviderService() {
         cancellationSignal: CancellationSignal,
         callback: OutcomeReceiver<Void?, ClearCredentialException>,
     ) {
+        if (cancellationSignal.isCanceled) return
         PassProviderRepository.clearCredentialState(this, request)
         callback.onResult(null)
     }

@@ -2549,6 +2549,8 @@ function findImportedBrowserAccountIndex(accounts, entry) {
   let bestScore = -1;
 
   accounts.forEach((account, index) => {
+    // Permanent-delete tombstones must not be revived by re-import.
+    if (account?.isPermanentlyDeleted) return;
     const accountSites = new Set(normalizeSites(account?.sites || []));
     const accountCanonicalSites = new Set([...accountSites].map((site) => etldPlusOne(site)));
     accountCanonicalSites.add(String(account?.canonicalSite || ""));
@@ -2576,6 +2578,8 @@ function findImportedBrowserAccountIndex(accounts, entry) {
 
 function applyImportedBrowserEntryToAccount(account, entry, nowMs) {
   const next = normalizeAccountShape(account);
+  // Permanent-delete tombstones must never be revived by re-import.
+  if (next.isPermanentlyDeleted) return next;
   let changed = false;
   const mergedSites = normalizeSites([...(next.sites || []), ...(entry.sites || [])]);
   if (JSON.stringify(mergedSites) !== JSON.stringify(next.sites || [])) {
@@ -2598,10 +2602,11 @@ function applyImportedBrowserEntryToAccount(account, entry, nowMs) {
     next.noteUpdatedAtMs = nowMs;
     changed = true;
   }
-  if (next.isDeleted) {
+  // Soft-deleted accounts may be revived by import; permanent tombstones must not.
+  if (next.isDeleted && !next.isPermanentlyDeleted) {
     next.isDeleted = false;
-    next.isPermanentlyDeleted = false;
     next.deletedAtMs = null;
+    next.deletedDeviceName = "";
     changed = true;
   }
   if (changed) {
@@ -4697,7 +4702,11 @@ function normalizeFolderShape(item) {
   const fixedId = FIXED_NEW_ACCOUNT_FOLDER_ID;
   const rawName = String(item?.name || "").trim();
   const safeId = id || (globalThis.crypto?.randomUUID?.() || stableUuidFromText(`folder|${rawName}|${now}`)).toLowerCase();
-  const createdAtMs = Number(item?.createdAtMs || now);
+  // Preserve explicit 0 timestamps (synthetic fixed-folder markers).
+  const createdAtMsRaw = Number(item?.createdAtMs ?? now);
+  const createdAtMs = Number.isFinite(createdAtMsRaw) ? createdAtMsRaw : now;
+  const updatedAtMsRaw = Number(item?.updatedAtMs ?? createdAtMs);
+  const updatedAtMs = Number.isFinite(updatedAtMsRaw) ? updatedAtMsRaw : createdAtMs;
   const safeName = safeId === fixedId
     ? FIXED_NEW_ACCOUNT_FOLDER_NAME
     : (rawName || `未命名文件夹 ${safeId.slice(0, 8)}`);
@@ -4711,7 +4720,7 @@ function normalizeFolderShape(item) {
     deletedAtMs: item?.deletedAtMs == null ? null : Number(item.deletedAtMs),
     deletedDeviceName: String(item?.deletedDeviceName || "").trim(),
     createdAtMs,
-    updatedAtMs: Number(item?.updatedAtMs || createdAtMs),
+    updatedAtMs,
   };
 }
 
@@ -5468,6 +5477,8 @@ function findImportedTotpAccountIndex(accounts, entry) {
 
 function applyImportedTotpEntryToAccount(account, entry, nowMs, targetFolderId = "") {
   const next = normalizeAccountShape(account);
+  // Permanent-delete tombstones must never be revived by re-import.
+  if (next.isPermanentlyDeleted) return next;
   let changed = false;
   const mergedSites = normalizeSites([...(next.sites || []), entry.siteAlias || ""]);
   if (JSON.stringify(mergedSites) !== JSON.stringify(next.sites || [])) {
@@ -5492,10 +5503,11 @@ function applyImportedTotpEntryToAccount(account, entry, nowMs, targetFolderId =
       changed = true;
     }
   }
-  if (next.isDeleted) {
+  // Soft-deleted accounts may be revived by import; permanent tombstones must not.
+  if (next.isDeleted && !next.isPermanentlyDeleted) {
     next.isDeleted = false;
-    next.isPermanentlyDeleted = false;
     next.deletedAtMs = null;
+    next.deletedDeviceName = "";
     changed = true;
   }
   if (changed) {

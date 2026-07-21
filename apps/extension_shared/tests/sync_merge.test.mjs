@@ -96,6 +96,98 @@ test("字段时钟并列时，后续无关账号修改不能让空密码覆盖�
   assert.equal(mergeAccountCollections([remote], [local], helpers)[0].password, "remote-secret");
 });
 
+test("passkeyUpdatedAtMs 缺失时回退到账号活动时间，避免与 macOS 合并语义分叉", () => {
+  const left = helpers.normalizeAccountShape({
+    passkeyUpdatedAtMs: 0,
+    updatedAtMs: 500,
+    createdAtMs: 100,
+    passkeyCredentialIds: ["pk-left"],
+    passkeyUpdatedDeviceName: "",
+    lastOperatedDeviceName: "LeftDevice",
+  });
+  const right = helpers.normalizeAccountShape({
+    passkeyUpdatedAtMs: 0,
+    updatedAtMs: 100,
+    createdAtMs: 100,
+    passkeyCredentialIds: ["pk-right"],
+    passkeyUpdatedDeviceName: "RightDevice",
+    lastOperatedDeviceName: "RightDevice",
+  });
+  const merged = mergeAccountCollections([left], [right], helpers)[0];
+  assert.equal(merged.passkeyUpdatedAtMs, 500);
+  assert.deepEqual(merged.passkeyCredentialIds, ["pk-left", "pk-right"]);
+  assert.equal(merged.passkeyUpdatedDeviceName, "LeftDevice");
+});
+
+test("关系状态设备名并列比较大小写不敏感", () => {
+  const left = helpers.normalizeAccountShape({
+    sites: ["example.com"],
+    siteAliasStates: {
+      "example.com": { isDeleted: false, updatedAtMs: 10, deviceName: "device-a" },
+    },
+    updatedAtMs: 10,
+  });
+  const right = helpers.normalizeAccountShape({
+    sites: ["example.com"],
+    siteAliasStates: {
+      "example.com": { isDeleted: true, updatedAtMs: 10, deviceName: "Device-B" },
+    },
+    updatedAtMs: 10,
+  });
+  const first = mergeAccountCollections([left], [right], helpers)[0];
+  const second = mergeAccountCollections([right], [left], helpers)[0];
+  assert.equal(first.siteAliasStates["example.com"].isDeleted, true);
+  assert.equal(second.siteAliasStates["example.com"].isDeleted, true);
+  assert.deepEqual(first.sites, []);
+  assert.deepEqual(second.sites, []);
+});
+
+test("reconcileAccountFolders 会对失效文件夹写入关系墓碑", () => {
+  const accounts = [
+    helpers.normalizeAccountShape({
+      folderIds: ["folder-live", "folder-gone"],
+      folderId: "folder-live",
+      folderMembershipStates: {
+        "folder-live": { isDeleted: false, updatedAtMs: 10, deviceName: "A" },
+        "folder-gone": { isDeleted: false, updatedAtMs: 10, deviceName: "A" },
+      },
+      updatedAtMs: 10,
+      lastOperatedDeviceName: "A",
+    }),
+  ];
+  const folders = [
+    helpers.normalizeFolderShape({
+      id: "folder-live",
+      name: "Live",
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      isDeleted: false,
+    }),
+  ];
+  const reconciled = reconcileAccountFolders(accounts, folders, helpers)[0];
+  assert.deepEqual(reconciled.folderIds, ["folder-live"]);
+  assert.equal(reconciled.folderMembershipStates["folder-gone"].isDeleted, true);
+  assert.ok(Number(reconciled.folderMembershipStates["folder-gone"].updatedAtMs) >= 10);
+});
+
+test("字段值最终并列使用字典序而不是 localeCompare", () => {
+  const left = helpers.normalizeAccountShape({
+    note: "a",
+    noteUpdatedAtMs: 10,
+    noteUpdatedDeviceName: "same",
+    updatedAtMs: 10,
+  });
+  const right = helpers.normalizeAccountShape({
+    note: "B",
+    noteUpdatedAtMs: 10,
+    noteUpdatedDeviceName: "same",
+    updatedAtMs: 10,
+  });
+  // Raw JS string order: "a" > "B" because lowercase code points are larger.
+  const merged = mergeAccountCollections([left], [right], helpers)[0];
+  assert.equal(merged.note, "a");
+});
+
 test("恢复时间晚于删除墓碑时，恢复状态胜出", () => {
   const restored = helpers.normalizeAccountShape({
     updatedAtMs: 30,

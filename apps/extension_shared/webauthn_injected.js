@@ -1,3 +1,5 @@
+import { PASS_EXTENSION_VERSION } from "./extension_version.js";
+
 (() => {
   const BRIDGE_SOURCE = "pass-webauthn-bridge";
   const REQUEST_TYPE = "PASSKEY_REQUEST";
@@ -5,10 +7,10 @@
   const NOTICE_TYPE = "PASSKEY_NOTICE";
   const REQUEST_TIMEOUT_MS = 10000;
   const FALLBACK_NOTICE_DELAY_MS = 1200;
+  const FALLBACK_NOTICE_DEDUPE_MS = 2500;
   const PASSKEY_LOG_PREFIX = "[Pass injected]";
-  const PASS_EXTENSION_VERSION = "0.2.3";
-  const FALLBACK_TOAST_ID = "pass-injected-fallback-toast";
-  const FALLBACK_OVERLAY_ID = "pass-injected-fallback-overlay";
+  let lastFallbackNoticeKey = "";
+  let lastFallbackNoticeAt = 0;
 
   if (window.__passWebAuthnBridgeInstalled) {
     return;
@@ -453,20 +455,73 @@
   function postFallbackNotice(operation, reason) {
     const message = buildFallbackNoticeMessage(operation, reason);
     if (!message) return;
-    showInjectedFallbackToast(message);
-    showInjectedFallbackOverlay(message);
+
+    // Visual toast is owned by the content script (isolated world). Injected only
+    // posts the notice so we keep a single toast implementation.
+    // Also park the latest notice on the DOM so content can drain it if it
+    // installed after this postMessage (document_start vs document_idle race).
+    const noticeKey = `${String(operation || "")}|${String(reason || "")}|${message}`;
+    const now = Date.now();
+    const isDuplicate = noticeKey === lastFallbackNoticeKey && now - lastFallbackNoticeAt < FALLBACK_NOTICE_DEDUPE_MS;
+    lastFallbackNoticeKey = noticeKey;
+    lastFallbackNoticeAt = now;
+
     logInjected("fallback-notice-posted", {
       operation,
       reason,
       message,
+      deduped: isDuplicate,
     });
-    window.postMessage({
+
+    const noticePayload = {
       source: BRIDGE_SOURCE,
       type: NOTICE_TYPE,
       operation,
       reason,
       message,
-    }, window.location.origin);
+      deduped: isDuplicate,
+      postedAtMs: now,
+    };
+
+    // Queue on the DOM (array) so content can drain missed notices after idle install.
+    // Keep only a short recent window; content owns display dedupe.
+    if (!isDuplicate) {
+      try {
+        const attr = "data-pass-webauthn-notice";
+        const maxAgeMs = 5000;
+        const maxItems = 5;
+        let queue = [];
+        const raw = document.documentElement?.getAttribute(attr);
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) queue = parsed;
+            else if (parsed && typeof parsed === "object") queue = [parsed];
+          } catch {
+            queue = [];
+          }
+        }
+        queue = queue.filter((item) => {
+          if (!item || typeof item !== "object") return false;
+          const postedAtMs = Number(item.postedAtMs || 0);
+          return !postedAtMs || now - postedAtMs <= maxAgeMs;
+        });
+        const alreadyQueued = queue.some((item) => (
+          String(item?.operation || "") === String(operation || "")
+          && String(item?.reason || "") === String(reason || "")
+          && String(item?.message || "") === message
+        ));
+        if (!alreadyQueued) {
+          queue.push(noticePayload);
+          if (queue.length > maxItems) queue = queue.slice(-maxItems);
+          document.documentElement?.setAttribute(attr, JSON.stringify(queue));
+        }
+      } catch {
+        // Ignore DOM buffer failures; postMessage may still deliver.
+      }
+    }
+
+    window.postMessage(noticePayload, window.location.origin);
   }
 
   async function notifyFallbackBeforeBrowser(operation, reason) {
@@ -509,92 +564,6 @@
     return new Promise((resolve) => {
       setTimeout(resolve, Math.max(0, Number(ms) || 0));
     });
-  }
-
-  function showInjectedFallbackToast(message) {
-    const text = String(message || "").trim();
-    if (!text) return;
-
-    let toast = document.getElementById(FALLBACK_TOAST_ID);
-    if (!(toast instanceof HTMLDivElement)) {
-      toast = document.createElement("div");
-      toast.id = FALLBACK_TOAST_ID;
-      toast.style.position = "fixed";
-      toast.style.top = "14px";
-      toast.style.right = "14px";
-      toast.style.zIndex = "2147483647";
-      toast.style.maxWidth = "min(520px, calc(100vw - 28px))";
-      toast.style.padding = "10px 12px";
-      toast.style.borderRadius = "10px";
-      toast.style.border = "1px solid #63a56a";
-      toast.style.background = "linear-gradient(180deg, #e8f8ea 0%, #d5f2d9 100%)";
-      toast.style.color = "#1d5b2c";
-      toast.style.font = '600 24px/1.4 "SF Pro Text", "PingFang SC", sans-serif';
-      toast.style.boxShadow = "0 12px 28px rgba(24, 68, 33, 0.22)";
-      toast.style.pointerEvents = "none";
-      toast.style.opacity = "0";
-      toast.style.transition = "opacity 140ms ease-out";
-      (document.documentElement || document.body).appendChild(toast);
-    }
-
-    toast.textContent = text;
-    toast.style.opacity = "1";
-    setTimeout(() => {
-      const current = document.getElementById(FALLBACK_TOAST_ID);
-      if (current instanceof HTMLDivElement) {
-        current.style.opacity = "0";
-      }
-    }, 3000);
-  }
-
-  function showInjectedFallbackOverlay(message) {
-    const text = String(message || "").trim();
-    if (!text) return;
-
-    let overlay = document.getElementById(FALLBACK_OVERLAY_ID);
-    if (!(overlay instanceof HTMLDivElement)) {
-      overlay = document.createElement("div");
-      overlay.id = FALLBACK_OVERLAY_ID;
-      overlay.style.position = "fixed";
-      overlay.style.inset = "0";
-      overlay.style.zIndex = "2147483646";
-      overlay.style.pointerEvents = "none";
-      overlay.style.display = "flex";
-      overlay.style.alignItems = "center";
-      overlay.style.justifyContent = "center";
-      overlay.style.background = "rgba(18, 24, 20, 0.18)";
-      overlay.style.opacity = "0";
-      overlay.style.transition = "opacity 120ms ease-out";
-
-      const panel = document.createElement("div");
-      panel.setAttribute("data-role", "panel");
-      panel.style.maxWidth = "min(720px, calc(100vw - 48px))";
-      panel.style.padding = "18px 22px";
-      panel.style.borderRadius = "16px";
-      panel.style.border = "1px solid #63a56a";
-      panel.style.background = "linear-gradient(180deg, #e8f8ea 0%, #d5f2d9 100%)";
-      panel.style.color = "#1d5b2c";
-      panel.style.font = '700 30px/1.45 "SF Pro Text", "PingFang SC", sans-serif';
-      panel.style.boxShadow = "0 24px 80px rgba(24, 68, 33, 0.28)";
-      panel.style.textAlign = "center";
-      panel.style.whiteSpace = "pre-wrap";
-      panel.style.wordBreak = "break-word";
-      overlay.appendChild(panel);
-
-      (document.documentElement || document.body).appendChild(overlay);
-    }
-
-    const panel = overlay.querySelector('[data-role="panel"]');
-    if (panel instanceof HTMLDivElement) {
-      panel.textContent = text;
-    }
-    overlay.style.opacity = "1";
-    setTimeout(() => {
-      const current = document.getElementById(FALLBACK_OVERLAY_ID);
-      if (current instanceof HTMLDivElement) {
-        current.style.opacity = "0";
-      }
-    }, Math.max(0, FALLBACK_NOTICE_DELAY_MS - 80));
   }
 
   function toDomLikeError(error, fallbackName) {

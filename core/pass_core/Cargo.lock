@@ -18,6 +18,8 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 name = "pass-core-ffi"
 version = "0.1.0"
 dependencies = [
+ "pass-csvio",
+ "pass-merge",
  "serde",
  "serde_json",
 ]
@@ -35,6 +37,8 @@ name = "pass-merge"
 version = "0.1.0"
 dependencies = [
  "pass-domain",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

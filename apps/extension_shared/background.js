@@ -1,4 +1,5 @@
 import { ensurePasskeyStorageShape, handlePasskeyBridgeOperation } from "./passkey_store.js";
+import { PASS_EXTENSION_VERSION } from "./extension_version.js";
 import {
   buildAccountId,
   etldPlusOne,
@@ -95,7 +96,6 @@ const SYNC_MODE_MERGE = "merge";
 const SYNC_PRIMARY_SERVER = "server";
 const SYNC_PRIMARY_WEBDAV = "webdav";
 const AUTO_SYNC_ALARM_NAME = "pass.sync.auto";
-const PASS_EXTENSION_VERSION = "0.2.3";
 const STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
 const STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
 const STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
@@ -264,7 +264,7 @@ async function ensureMainWorldPasskeyBridge(tabId, url) {
     });
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["webauthn_injected.js"],
+      files: ["dist/webauthn_injected.js"],
       world: "MAIN",
     });
     logPasskeyFlow("main-world-bridge-injected", {
@@ -951,13 +951,40 @@ async function handleFillActiveTab(payload) {
   const resolved = await resolveFillAccountForHost(payload, tabHost);
   if (!resolved.ok) return resolved;
 
-  await chrome.scripting.executeScript({
-    target: { tabId: activeTab.id },
-    func: fillCredentialInPage,
-    args: [resolved.username, resolved.password],
-  });
+  // Ensure content script is present, then reuse its fill path (single field-discovery implementation).
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: activeTab.id },
+      files: ["dist/content.js"],
+    });
+  } catch {
+    // Content may already be installed via content_scripts; ignore inject failures and still try messaging.
+  }
 
-  return { ok: true };
+  let response;
+  try {
+    response = await chrome.tabs.sendMessage(activeTab.id, {
+      type: "PASS_FILL_CREDENTIALS",
+      payload: {
+        username: resolved.username,
+        password: resolved.password,
+      },
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      error: error?.message || "无法连接页面内容脚本，请刷新页面后重试",
+    };
+  }
+
+  if (!response?.ok) {
+    return { ok: false, error: response?.error || "页面填充失败" };
+  }
+  return {
+    ok: true,
+    filledUsername: Boolean(response.filledUsername),
+    filledPassword: Boolean(response.filledPassword),
+  };
 }
 
 async function handleContentListFillAccounts(sender) {
@@ -1579,7 +1606,9 @@ function normalizeFolderShape(item) {
   const id = normalizeFolderId(item?.id || "");
   const rawName = String(item?.name || "").trim();
   const safeId = id || (globalThis.crypto?.randomUUID?.() || stableUuidFromText(`folder|${rawName}|${now}`)).toLowerCase();
-  const createdAtMs = Number(item?.createdAtMs || now);
+  // Preserve explicit 0 timestamps (synthetic fixed-folder markers).
+  const createdAtMs = Number(item?.createdAtMs ?? now);
+  const updatedAtMs = Number(item?.updatedAtMs ?? createdAtMs);
   const safeName = safeId === FIXED_NEW_ACCOUNT_FOLDER_ID
     ? FIXED_NEW_ACCOUNT_FOLDER_NAME
     : (rawName || `未命名文件夹 ${safeId.slice(0, 8)}`);
@@ -1592,8 +1621,8 @@ function normalizeFolderShape(item) {
     isPermanentlyDeleted: Boolean(item?.isPermanentlyDeleted),
     deletedAtMs: item?.deletedAtMs == null ? null : Number(item.deletedAtMs),
     deletedDeviceName: String(item?.deletedDeviceName || "").trim(),
-    createdAtMs,
-    updatedAtMs: Number(item?.updatedAtMs || createdAtMs),
+    createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : now,
+    updatedAtMs: Number.isFinite(updatedAtMs) ? updatedAtMs : (Number.isFinite(createdAtMs) ? createdAtMs : now),
   };
 }
 
@@ -1669,6 +1698,7 @@ function buildUnifiedPasskeys(accountsInput, passkeysInput) {
 function mergeAccountCollections(local, remote) {
   return mergeAccountCollectionsCore(local, remote, syncMergeHelpers());
 }
+
 
 function mergePasskeyCollections(local, remote) {
   return mergePasskeyCollectionsCore(local, remote, syncMergeHelpers());
@@ -1953,109 +1983,6 @@ async function pushRemotePayloadWithMode(target, payload, syncMode) {
     return { payload };
   }
   return pushRemotePayloadWithRetry(target, payload);
-}
-
-function fillCredentialInPage(username, password) {
-  const visible = (element) => {
-    if (!(element instanceof HTMLElement)) return false;
-    const style = window.getComputedStyle(element);
-    if (style.display === "none" || style.visibility === "hidden") return false;
-    if (Number(style.opacity || "1") === 0) return false;
-    if (element.hasAttribute("disabled") || element.hasAttribute("readonly")) return false;
-    const rect = element.getBoundingClientRect();
-    if (rect.width < 2 || rect.height < 2) return false;
-    return true;
-  };
-
-  const semanticText = (input) => [
-    input.name,
-    input.id,
-    input.autocomplete,
-    input.placeholder,
-    input.getAttribute("aria-label"),
-  ].map((value) => String(value || "").toLowerCase()).join(" ");
-
-  const isUsernameCandidate = (input, strict) => {
-    if (!(input instanceof HTMLInputElement) || !visible(input)) return false;
-    const type = String(input.type || "text").toLowerCase();
-    if (type === "password") return false;
-    if (!["text", "email", "tel", "url", "search", ""].includes(type)) return false;
-    const semantic = semanticText(input);
-    const autocomplete = String(input.autocomplete || "").toLowerCase();
-    if (autocomplete.includes("username") || autocomplete.includes("email") || autocomplete === "tel") return true;
-    if (
-      semantic.includes("user")
-      || semantic.includes("email")
-      || semantic.includes("login")
-      || semantic.includes("account")
-      || semantic.includes("phone")
-      || semantic.includes("mobile")
-    ) {
-      return true;
-    }
-    return !strict && (type === "text" || type === "email" || type === "tel" || type === "");
-  };
-
-  const scoreUsername = (input, passwordInput) => {
-    let score = 0;
-    const type = String(input.type || "text").toLowerCase();
-    const semantic = semanticText(input);
-    const autocomplete = String(input.autocomplete || "").toLowerCase();
-    if (autocomplete.includes("username") || autocomplete.includes("email")) score += 50;
-    if (type === "email") score += 20;
-    if (type === "text" || type === "") score += 8;
-    if (semantic.includes("user") || semantic.includes("login") || semantic.includes("account")) score += 25;
-    if (semantic.includes("email")) score += 22;
-    if (passwordInput?.form && input.form === passwordInput.form) score += 30;
-    if (passwordInput && (passwordInput.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_PRECEDING)) score += 15;
-    return score;
-  };
-
-  const allInputs = Array.from(document.querySelectorAll("input"));
-  const passwordInputs = allInputs.filter((input) => input.type === "password" && visible(input));
-  const passwordInput = passwordInputs[0] || null;
-  if (!passwordInput && !username) return;
-
-  let usernameInput = null;
-  if (passwordInput) {
-    const form = passwordInput.form || passwordInput.closest("form");
-    const scoped = form
-      ? Array.from(form.querySelectorAll("input"))
-      : allInputs;
-    const candidates = scoped
-      .filter((input) => input !== passwordInput && (isUsernameCandidate(input, true) || (form && form.contains(input) && isUsernameCandidate(input, false))))
-      .sort((left, right) => scoreUsername(right, passwordInput) - scoreUsername(left, passwordInput));
-    usernameInput = candidates[0] || null;
-  }
-  if (!usernameInput) {
-    usernameInput = allInputs
-      .filter((input) => isUsernameCandidate(input, true))
-      .sort((left, right) => scoreUsername(right, passwordInput) - scoreUsername(left, passwordInput))[0] || null;
-  }
-
-  const setInputValue = (input, value) => {
-    if (!input) return;
-    try {
-      input.focus({ preventScroll: true });
-    } catch {
-      try { input.focus(); } catch { /* ignore */ }
-    }
-    const proto = window.HTMLInputElement.prototype;
-    const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
-    if (descriptor?.set) descriptor.set.call(input, value);
-    else input.value = value;
-    try {
-      input.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertReplacementText", data: value }));
-    } catch {
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    }
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-    input.dispatchEvent(new Event("blur", { bubbles: true }));
-  };
-
-  // Always attempt both fields: username first, then password.
-  setInputValue(usernameInput, username || "");
-  setInputValue(passwordInput, password || "");
 }
 
 function createAccount({ site, username, password, createdAtMs, deviceName }) {

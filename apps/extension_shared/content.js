@@ -1,28 +1,52 @@
 import { normalizeDomain } from "./account_core.js";
+import { PASS_EXTENSION_VERSION } from "./extension_version.js";
 
 const PASS_LOGIN_COOLDOWN_MS = 5000;
 const WEB_AUTHN_BRIDGE_SOURCE = "pass-webauthn-bridge";
 const WEB_AUTHN_REQUEST_TYPE = "PASSKEY_REQUEST";
 const WEB_AUTHN_RESPONSE_TYPE = "PASSKEY_RESPONSE";
 const WEB_AUTHN_NOTICE_TYPE = "PASSKEY_NOTICE";
-const PASS_PAGE_TOAST_ID = "pass-page-toast";
+const WEB_AUTHN_NOTICE_DOM_ATTR = "data-pass-webauthn-notice";
+const WEB_AUTHN_NOTICE_MAX_AGE_MS = 5000;
+const WEB_AUTHN_NOTICE_TOAST_DEDUPE_MS = 2500;
+const PASS_PAGE_TOAST_HOST_ID = "pass-page-toast-host";
 const PASS_PAGE_TOAST_DURATION_MS = 3000;
+const PASS_PAGE_TOAST_STAGGER_MS = 450;
+const PASS_PAGE_TOAST_MAX = 6;
 const PASSKEY_USE_BROWSER_FALLBACK = "__PASSKEY_USE_BROWSER_FALLBACK__";
 const PASSKEY_LOG_PREFIX = "[Pass content]";
-const PASS_EXTENSION_VERSION = "0.2.3";
 const PASS_FILL_CHOOSER_ID = "pass-fill-chooser";
 const PASS_FILL_LIST_COOLDOWN_MS = 400;
+// Brief post-success window for focus churn between username/password.
+const PASS_FILL_SUPPRESS_REOPEN_MS = 1200;
+// Longer window: skip untrusted/SPA re-focus while the field still holds a value we just wrote.
+// Explicit user activation (pointer on field, or Tab navigation) opts back in for re-pick.
+const PASS_FILL_RECENT_VALUE_MS = 8000;
+const PASS_FILL_USER_ACTIVATION_MS = 1000;
 
 let lastPromptKey = "";
 let lastPromptAt = 0;
-let passPageToastTimer = null;
+let lastWebAuthnNoticeToastKey = "";
+let lastWebAuthnNoticeToastAt = 0;
+let passPageToastSeq = 0;
+/** @type {{ id: number, el: HTMLDivElement, timer: number | null }[]} */
+let passPageToasts = [];
 let fillChooserHost = null;
 let fillChooserShadow = null;
-let fillChooserHideTimer = null;
 let fillChooserListInFlight = false;
 let fillChooserLastListAt = 0;
 let fillChooserActiveInput = null;
 let fillChooserLocked = false;
+let fillChooserSuppressUntil = 0;
+let fillChooserApplying = false;
+let fillChooserLastAccounts = [];
+// value → expiresAtMs. Identity-free so SPA remounts still match.
+const fillChooserRecentValues = new Map();
+// Monotonic generation so late LIST responses cannot repaint after a fill.
+let fillChooserListGeneration = 0;
+/** @type {{ input: EventTarget | null, at: number }} */
+let fillChooserPointerActivation = { input: null, at: 0 };
+let fillChooserKeyboardNavAt = 0;
 
 function logPasskeyContent(event, details = {}) {
   try {
@@ -50,8 +74,15 @@ function installPassContentBridge() {
   }
 
   window.addEventListener("message", onWebAuthnBridgeMessage, false);
+  // Injected may post notices before this isolated script reaches document_idle.
+  // Also re-drain a few times for late posts / DOM buffer rewrites during the
+  // injected FALLBACK_NOTICE_DELAY window.
+  drainPendingWebAuthnNotice();
+  for (const delayMs of [120, 400, 1000, 1600]) {
+    window.setTimeout(() => drainPendingWebAuthnNotice(), delayMs);
+  }
 
-  chrome.runtime.onMessage.addListener((message) => {
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "PASS_LOCKED") {
       fillChooserLocked = true;
       hideFillChooser();
@@ -61,10 +92,16 @@ function installPassContentBridge() {
       fillChooserLocked = false;
       return;
     }
+    if (message?.type === "PASS_FILL_CREDENTIALS") {
+      sendResponse(applyExternalFillCredentials(message.payload));
+      return;
+    }
   });
 
   document.addEventListener("focusin", onFillFieldFocusIn, true);
   document.addEventListener("pointerdown", onDocumentPointerDownForFillChooser, true);
+  document.addEventListener("pointerdown", onFillChooserUserPointer, true);
+  document.addEventListener("keydown", onFillChooserUserKeydown, true);
   window.addEventListener("scroll", () => hideFillChooser(), true);
   window.addEventListener("resize", () => hideFillChooser());
 
@@ -353,6 +390,7 @@ function setNativeInputValue(input, value) {
   }
   input.dispatchEvent(new Event("change", { bubbles: true }));
   input.dispatchEvent(new Event("blur", { bubbles: true }));
+  noteFillChooserRecentValue(value);
 }
 
 function fillFocusedCredentialFields(username, password) {
@@ -385,29 +423,53 @@ function fillFocusedCredentialFields(username, password) {
 
   let filledUsername = false;
   let filledPassword = false;
-  if (usernameInput && wantedUsername) {
+  // Always write when the target field exists — including empty strings — so vault
+  // empty passwords clear site autofill/old values instead of leaving them behind.
+  if (usernameInput) {
     setNativeInputValue(usernameInput, wantedUsername);
-    filledUsername = usernameInput.value === wantedUsername || Boolean(usernameInput.value);
+    filledUsername = usernameInput.value === wantedUsername;
   }
-  if (passwordInput && wantedPassword) {
+  if (passwordInput) {
     setNativeInputValue(passwordInput, wantedPassword);
-    filledPassword = passwordInput.value === wantedPassword || Boolean(passwordInput.value);
+    filledPassword = passwordInput.value === wantedPassword;
   }
 
   return {
     filledUsername,
     filledPassword,
     filledAny: filledUsername || filledPassword,
-    filledBoth: Boolean(wantedUsername ? filledUsername : true) && Boolean(wantedPassword ? filledPassword : true)
-      && (filledUsername || filledPassword),
+    filledBoth: Boolean(usernameInput ? filledUsername : !wantedUsername)
+      && Boolean(passwordInput ? filledPassword : !wantedPassword)
+      && (filledUsername || filledPassword || Boolean(usernameInput || passwordInput)),
+  };
+}
+
+// Popup / background "fill active tab" path: reuse the same field discovery + setter.
+function applyExternalFillCredentials(payload) {
+  const username = String(payload?.username || "");
+  const password = String(payload?.password || "");
+  if (!username && !password) {
+    return { ok: false, error: "缺少用户名和密码" };
+  }
+
+  const active = document.activeElement;
+  fillChooserActiveInput = isFillableCredentialInput(active) ? active : null;
+  // Popup fill should not leave the in-page chooser open over the updated fields.
+  hideFillChooser();
+  const result = fillFocusedCredentialFields(username, password);
+  if (result.filledAny) {
+    suppressFillChooserReopen();
+  }
+  fillChooserActiveInput = null;
+  return {
+    ok: result.filledAny,
+    filledUsername: result.filledUsername,
+    filledPassword: result.filledPassword,
+    error: result.filledAny ? undefined : "未找到可填充的用户名/密码输入框",
   };
 }
 
 function hideFillChooser() {
-  if (fillChooserHideTimer) {
-    clearTimeout(fillChooserHideTimer);
-    fillChooserHideTimer = null;
-  }
   if (fillChooserHost) {
     fillChooserHost.remove();
     fillChooserHost = null;
@@ -442,6 +504,7 @@ function ensureFillChooserHost() {
 function renderFillChooser(accounts, input) {
   hideFillChooser();
   if (!Array.isArray(accounts) || accounts.length === 0) return;
+  fillChooserLastAccounts = accounts;
   fillChooserActiveInput = input;
   const shadow = ensureFillChooserHost();
   positionFillChooserNear(input);
@@ -548,8 +611,90 @@ function runtimeSendMessage(message) {
   });
 }
 
-async function showFillChooserForInput(input) {
-  if (fillChooserLocked || !isFillableCredentialInput(input)) return;
+function suppressFillChooserReopen(ms = PASS_FILL_SUPPRESS_REOPEN_MS) {
+  fillChooserSuppressUntil = Math.max(fillChooserSuppressUntil, Date.now() + Math.max(0, Number(ms) || 0));
+}
+
+function noteFillChooserRecentValue(value) {
+  const text = String(value || "");
+  if (!text) return;
+  const expiresAt = Date.now() + PASS_FILL_RECENT_VALUE_MS;
+  fillChooserRecentValues.set(text, expiresAt);
+  // Opportunistic prune so the map cannot grow without bound.
+  if (fillChooserRecentValues.size > 32) {
+    const now = Date.now();
+    for (const [key, until] of fillChooserRecentValues) {
+      if (until <= now) fillChooserRecentValues.delete(key);
+    }
+  }
+}
+
+function isRecentFillChooserValue(value) {
+  const text = String(value || "");
+  if (!text) return false;
+  const until = fillChooserRecentValues.get(text);
+  if (!until) return false;
+  if (Date.now() >= until) {
+    fillChooserRecentValues.delete(text);
+    return false;
+  }
+  return true;
+}
+
+function isFillChooserBlocked() {
+  return fillChooserApplying || Date.now() < fillChooserSuppressUntil;
+}
+
+function resolveFillableInputFromEventTarget(target) {
+  if (isFillableCredentialInput(target)) return target;
+  if (target instanceof Element) {
+    const labeled = target.closest?.("label");
+    if (labeled instanceof HTMLLabelElement && isFillableCredentialInput(labeled.control)) {
+      return labeled.control;
+    }
+  }
+  if (target instanceof HTMLLabelElement && isFillableCredentialInput(target.control)) {
+    return target.control;
+  }
+  return null;
+}
+
+function hasUserActivationForFillChooser(input) {
+  const now = Date.now();
+  if (
+    fillChooserPointerActivation.input === input
+    && now - fillChooserPointerActivation.at < PASS_FILL_USER_ACTIVATION_MS
+  ) {
+    return true;
+  }
+  // Tab / Shift+Tab: allow only the immediate next focusin, then clear.
+  if (fillChooserKeyboardNavAt > 0 && now - fillChooserKeyboardNavAt < PASS_FILL_USER_ACTIVATION_MS) {
+    fillChooserKeyboardNavAt = 0;
+    return true;
+  }
+  return false;
+}
+
+// Skip auto/SPA/autofocus re-focus of fields that still hold a value we just wrote.
+// Explicit user activation (pointer on field or keyboard focus move) opts back in.
+function shouldSkipChooserForFilledInput(input, { userInitiated = false } = {}) {
+  if (userInitiated) return false;
+  if (!(input instanceof HTMLInputElement)) return false;
+  return isRecentFillChooserValue(input.value);
+}
+
+function reshowFillChooser(input) {
+  if (!(input instanceof HTMLElement) || fillChooserLocked || !isFillableCredentialInput(input)) return;
+  if (Array.isArray(fillChooserLastAccounts) && fillChooserLastAccounts.length > 0) {
+    renderFillChooser(fillChooserLastAccounts, input);
+    return;
+  }
+  void showFillChooserForInput(input, { userInitiated: true });
+}
+
+async function showFillChooserForInput(input, { userInitiated = false } = {}) {
+  if (fillChooserLocked || isFillChooserBlocked() || !isFillableCredentialInput(input)) return;
+  if (shouldSkipChooserForFilledInput(input, { userInitiated })) return;
   const now = Date.now();
   if (fillChooserListInFlight) return;
   if (now - fillChooserLastListAt < PASS_FILL_LIST_COOLDOWN_MS && fillChooserHost) {
@@ -558,10 +703,15 @@ async function showFillChooserForInput(input) {
     return;
   }
 
+  const listGeneration = ++fillChooserListGeneration;
   fillChooserListInFlight = true;
   try {
     const response = await runtimeSendMessage({ type: "PASS_CONTENT_LIST_FILL_ACCOUNTS" });
     fillChooserLastListAt = Date.now();
+    // Drop stale list work: a newer list started, or the user already filled.
+    if (listGeneration !== fillChooserListGeneration || isFillChooserBlocked()) {
+      return;
+    }
     if (!response?.ok) {
       if (response?.locked) fillChooserLocked = true;
       hideFillChooser();
@@ -572,46 +722,110 @@ async function showFillChooserForInput(input) {
       hideFillChooser();
       return;
     }
+    if (shouldSkipChooserForFilledInput(input, { userInitiated })) return;
     renderFillChooser(accounts, input);
   } finally {
-    fillChooserListInFlight = false;
+    if (listGeneration === fillChooserListGeneration) {
+      fillChooserListInFlight = false;
+    }
   }
 }
 
 async function applyFillAccount(accountId) {
   const id = String(accountId || "").trim();
-  if (!id) return;
-  const response = await runtimeSendMessage({
-    type: "PASS_CONTENT_FILL_ACCOUNT",
-    payload: { accountId: id },
-  });
-  if (!response?.ok) {
-    if (response?.locked) {
-      fillChooserLocked = true;
-      hideFillChooser();
-      showPassPageToast(response.error || "扩展已锁定", "warning");
+  if (!id || fillChooserApplying) return;
+  // Capture before hide: hide tears down the host but must not lose the fill target.
+  const targetInput = fillChooserActiveInput;
+  fillChooserApplying = true;
+  // Invalidate any in-flight list so its response cannot repaint after fill.
+  fillChooserListGeneration += 1;
+  fillChooserListInFlight = false;
+  // Close immediately on click so fill-related focus events cannot reopen mid-request.
+  // Suppress only after a successful fill — failures re-open the list for retry.
+  hideFillChooser();
+  let shouldReshow = false;
+  try {
+    const response = await runtimeSendMessage({
+      type: "PASS_CONTENT_FILL_ACCOUNT",
+      payload: { accountId: id },
+    });
+    if (!response?.ok) {
+      if (response?.locked) {
+        fillChooserLocked = true;
+        showPassPageToast(response.error || "扩展已锁定", "warning");
+        return;
+      }
+      showPassPageToast(response?.error || "填充失败", "error");
+      shouldReshow = true;
       return;
     }
-    showPassPageToast(response?.error || "填充失败", "error");
-    return;
+    // Keep the originating field as the fill anchor across the async gap.
+    fillChooserActiveInput = targetInput;
+    const result = fillFocusedCredentialFields(response.username || "", response.password || "");
+    suppressFillChooserReopen();
+    const hasUsernameValue = Boolean(String(response.username || "").trim());
+    const hasPasswordValue = Boolean(String(response.password || ""));
+    if (result.filledUsername && result.filledPassword) {
+      if (hasUsernameValue && hasPasswordValue) {
+        showPassPageToast(`已填充用户名和密码：${response.username || "账号"}`, "success");
+      } else if (hasUsernameValue) {
+        showPassPageToast(`已填充用户名（密码为空，已清空密码框）：${response.username || "账号"}`, "success");
+      } else if (hasPasswordValue) {
+        showPassPageToast("已填充密码（用户名为空，已清空用户名框）", "success");
+      } else {
+        showPassPageToast("已清空找到的用户名/密码输入框", "warning");
+      }
+    } else if (result.filledPassword && !result.filledUsername) {
+      showPassPageToast(
+        hasPasswordValue
+          ? `已填充密码，但未找到用户名框：${response.username || ""}`.trim()
+          : "已清空密码框，但未找到用户名框",
+        "warning",
+      );
+    } else if (result.filledUsername && !result.filledPassword) {
+      showPassPageToast(
+        hasUsernameValue
+          ? `已填充用户名，但未找到密码框：${response.username || ""}`.trim()
+          : "已清空用户名框，但未找到密码框",
+        "warning",
+      );
+    } else {
+      showPassPageToast("未找到可填充的用户名/密码输入框", "warning");
+    }
+  } finally {
+    fillChooserApplying = false;
+    // On failure reshow already rebound active input; clear only when still closed.
+    if (!fillChooserHost) fillChooserActiveInput = null;
   }
-  const result = fillFocusedCredentialFields(response.username || "", response.password || "");
-  hideFillChooser();
-  if (result.filledUsername && result.filledPassword) {
-    showPassPageToast(`已填充用户名和密码：${response.username || "账号"}`, "success");
-  } else if (result.filledPassword && !result.filledUsername) {
-    showPassPageToast(`已填充密码，但未找到用户名框：${response.username || ""}`.trim(), "warning");
-  } else if (result.filledUsername && !result.filledPassword) {
-    showPassPageToast(`已填充用户名，但未找到密码框：${response.username || ""}`.trim(), "warning");
-  } else {
-    showPassPageToast("未找到可填充的用户名/密码输入框", "warning");
+  // Reshow outside the applying window so render/show are not blocked.
+  if (shouldReshow) reshowFillChooser(targetInput);
+}
+
+function onFillChooserUserPointer(event) {
+  if (event.isTrusted === false) return;
+  const input = resolveFillableInputFromEventTarget(event.target);
+  if (!input) return;
+  fillChooserPointerActivation = { input, at: Date.now() };
+  // Re-clicking an already-focused field does not re-fire focusin; open explicitly.
+  if (document.activeElement === input && !isFillChooserBlocked()) {
+    void showFillChooserForInput(input, { userInitiated: true });
   }
 }
 
+function onFillChooserUserKeydown(event) {
+  if (event.isTrusted === false) return;
+  if (event.key !== "Tab") return;
+  fillChooserKeyboardNavAt = Date.now();
+}
+
 function onFillFieldFocusIn(event) {
+  if (isFillChooserBlocked()) return;
   const target = event.target;
   if (!isFillableCredentialInput(target)) return;
-  void showFillChooserForInput(target);
+  // Prefer explicit activation (pointer on field / Tab). Bare isTrusted is not enough:
+  // browser autofocus is also trusted and would reopen the chooser after SPA remount.
+  const userInitiated = hasUserActivationForFillChooser(target);
+  void showFillChooserForInput(target, { userInitiated });
 }
 
 function onDocumentPointerDownForFillChooser(event) {
@@ -652,15 +866,70 @@ function onWebAuthnBridgeMessage(event) {
   void handleWebAuthnBridgeRequest(requestId, payload);
 }
 
-function handleWebAuthnBridgeNotice(data) {
+function clearPendingWebAuthnNoticeAttr() {
+  try {
+    document.documentElement?.removeAttribute(WEB_AUTHN_NOTICE_DOM_ATTR);
+  } catch {
+    // Ignore DOM access failures.
+  }
+}
+
+function readPendingWebAuthnNotices() {
+  try {
+    const raw = document.documentElement?.getAttribute(WEB_AUTHN_NOTICE_DOM_ATTR);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.filter((item) => item && typeof item === "object");
+    // Backward-compatible: single object buffer.
+    if (parsed && typeof parsed === "object") return [parsed];
+  } catch {
+    // Ignore corrupt buffers.
+  }
+  return [];
+}
+
+function drainPendingWebAuthnNotice() {
+  try {
+    const notices = readPendingWebAuthnNotices();
+    if (notices.length === 0) return;
+    clearPendingWebAuthnNoticeAttr();
+    const now = Date.now();
+    for (const data of notices) {
+      if (!data || data.source !== WEB_AUTHN_BRIDGE_SOURCE || data.type !== WEB_AUTHN_NOTICE_TYPE) continue;
+      const postedAtMs = Number(data.postedAtMs || 0);
+      if (postedAtMs > 0 && now - postedAtMs > WEB_AUTHN_NOTICE_MAX_AGE_MS) continue;
+      handleWebAuthnBridgeNotice(data, { clearDomBuffer: false });
+    }
+  } catch {
+    // Ignore corrupt/stale buffers.
+  }
+}
+
+function handleWebAuthnBridgeNotice(data, { clearDomBuffer = true } = {}) {
   const message = String(data?.message || "").trim();
   if (!message) return;
+  // Live postMessage delivery supersedes the DOM buffer for this notice.
+  if (clearDomBuffer) clearPendingWebAuthnNoticeAttr();
   logPasskeyContent("bridge-notice-received", {
     reason: String(data?.reason || ""),
     operation: String(data?.operation || ""),
     message,
+    producerDeduped: Boolean(data?.deduped),
   });
-  showPassPageToast(message);
+  // Single toast owner: content script renders passkey fallback notices.
+  // Dedupe here (not only in injected) so a missed first postMessage + later
+  // producer-deduped retry can still surface once when content drains the DOM buffer.
+  const noticeKey = `${String(data?.operation || "")}|${String(data?.reason || "")}|${message}`;
+  const now = Date.now();
+  if (
+    noticeKey === lastWebAuthnNoticeToastKey
+    && now - lastWebAuthnNoticeToastAt < WEB_AUTHN_NOTICE_TOAST_DEDUPE_MS
+  ) {
+    return;
+  }
+  lastWebAuthnNoticeToastKey = noticeKey;
+  lastWebAuthnNoticeToastAt = now;
+  showPassPageToast(message, "warning");
 }
 
 async function handleWebAuthnBridgeRequest(requestId, payload) {
@@ -764,65 +1033,160 @@ function resolvePasskeyReadAccountLabel(response) {
   return "";
 }
 
-function showPassPageToast(message, tone = "success") {
-  const text = String(message || "").trim();
-  if (!text) return;
+function ensurePassPageToastHost() {
+  let host = document.getElementById(PASS_PAGE_TOAST_HOST_ID);
+  if (host instanceof HTMLDivElement) return host;
+  host = document.createElement("div");
+  host.id = PASS_PAGE_TOAST_HOST_ID;
+  host.style.position = "fixed";
+  host.style.top = "14px";
+  host.style.right = "14px";
+  host.style.zIndex = "2147483647";
+  host.style.display = "flex";
+  host.style.flexDirection = "column";
+  host.style.alignItems = "flex-end";
+  host.style.gap = "8px";
+  host.style.maxWidth = "min(520px, calc(100vw - 28px))";
+  host.style.pointerEvents = "none";
+  (document.documentElement || document.body).appendChild(host);
+  return host;
+}
 
-  let toast = document.getElementById(PASS_PAGE_TOAST_ID);
-  if (!(toast instanceof HTMLDivElement)) {
-    toast = document.createElement("div");
-    toast.id = PASS_PAGE_TOAST_ID;
-    toast.style.position = "fixed";
-    toast.style.top = "14px";
-    toast.style.right = "14px";
-    toast.style.zIndex = "2147483647";
-    toast.style.maxWidth = "min(420px, calc(100vw - 28px))";
-    toast.style.padding = "10px 12px";
-    toast.style.borderRadius = "10px";
-    toast.style.font = '600 24px/1.4 "SF Pro Text", "PingFang SC", sans-serif';
-    toast.style.pointerEvents = "none";
-    toast.style.opacity = "0";
-    toast.style.transition = "opacity 140ms ease-out";
-    (document.documentElement || document.body).appendChild(toast);
-  }
-
+function passPageToastToneStyle(tone) {
   const styles = {
     success: {
       border: "1px solid #63a56a",
       background: "linear-gradient(180deg, #e8f8ea 0%, #d5f2d9 100%)",
       color: "#1d5b2c",
       shadow: "0 12px 28px rgba(24, 68, 33, 0.22)",
+      badgeBg: "#1d5b2c",
+      badgeFg: "#e8f8ea",
     },
     error: {
       border: "1px solid #d46a6a",
       background: "linear-gradient(180deg, #fdecec 0%, #f8d4d4 100%)",
       color: "#8a1f1f",
       shadow: "0 12px 28px rgba(120, 24, 24, 0.22)",
+      badgeBg: "#8a1f1f",
+      badgeFg: "#fdecec",
     },
     warning: {
       border: "1px solid #d2b14a",
       background: "linear-gradient(180deg, #fff8df 0%, #ffe9a8 100%)",
       color: "#6a5208",
       shadow: "0 12px 28px rgba(120, 92, 16, 0.2)",
+      badgeBg: "#6a5208",
+      badgeFg: "#fff8df",
     },
   };
-  const style = styles[tone] || styles.success;
-  toast.style.border = style.border;
-  toast.style.background = style.background;
-  toast.style.color = style.color;
-  toast.style.boxShadow = style.shadow;
-  toast.textContent = text;
-  toast.style.opacity = "1";
+  return styles[tone] || styles.success;
+}
 
-  if (passPageToastTimer != null) {
-    clearTimeout(passPageToastTimer);
-    passPageToastTimer = null;
+function renumberPassPageToasts() {
+  passPageToasts.forEach((item, index) => {
+    const badge = item.el.querySelector("[data-role='toast-index']");
+    if (badge instanceof HTMLElement) {
+      badge.textContent = String(index + 1);
+    }
+  });
+}
+
+function dismissPassPageToast(id) {
+  const index = passPageToasts.findIndex((item) => item.id === id);
+  if (index < 0) return;
+  const [item] = passPageToasts.splice(index, 1);
+  if (item.timer != null) {
+    clearTimeout(item.timer);
+    item.timer = null;
   }
-  passPageToastTimer = window.setTimeout(() => {
-    const current = document.getElementById(PASS_PAGE_TOAST_ID);
-    if (!(current instanceof HTMLDivElement)) return;
-    current.style.opacity = "0";
-  }, PASS_PAGE_TOAST_DURATION_MS);
+  item.el.style.opacity = "0";
+  item.el.style.transform = "translateY(-4px)";
+  window.setTimeout(() => {
+    item.el.remove();
+    const host = document.getElementById(PASS_PAGE_TOAST_HOST_ID);
+    if (host instanceof HTMLDivElement && passPageToasts.length === 0) {
+      host.remove();
+    }
+  }, 160);
+  renumberPassPageToasts();
+}
+
+function showPassPageToast(message, tone = "success") {
+  const text = String(message || "").trim();
+  if (!text) return;
+
+  // Keep only the newest window of toasts if the stack is full.
+  while (passPageToasts.length >= PASS_PAGE_TOAST_MAX) {
+    const oldest = passPageToasts[0];
+    if (!oldest) break;
+    dismissPassPageToast(oldest.id);
+  }
+
+  const host = ensurePassPageToastHost();
+  const style = passPageToastToneStyle(tone);
+  const id = ++passPageToastSeq;
+  const el = document.createElement("div");
+  el.dataset.toastId = String(id);
+  el.style.display = "flex";
+  el.style.alignItems = "flex-start";
+  el.style.gap = "10px";
+  el.style.padding = "10px 12px";
+  el.style.borderRadius = "10px";
+  el.style.border = style.border;
+  el.style.background = style.background;
+  el.style.color = style.color;
+  el.style.boxShadow = style.shadow;
+  el.style.font = '600 24px/1.4 "SF Pro Text", "PingFang SC", sans-serif';
+  el.style.opacity = "0";
+  el.style.transform = "translateY(-4px)";
+  el.style.transition = "opacity 140ms ease-out, transform 140ms ease-out";
+  el.style.maxWidth = "100%";
+
+  const badge = document.createElement("span");
+  badge.dataset.role = "toast-index";
+  badge.textContent = String(passPageToasts.length + 1);
+  badge.style.flex = "0 0 auto";
+  badge.style.minWidth = "1.5em";
+  badge.style.height = "1.5em";
+  badge.style.display = "inline-flex";
+  badge.style.alignItems = "center";
+  badge.style.justifyContent = "center";
+  badge.style.borderRadius = "999px";
+  badge.style.background = style.badgeBg;
+  badge.style.color = style.badgeFg;
+  badge.style.fontSize = "16px";
+  badge.style.fontWeight = "700";
+  badge.style.lineHeight = "1";
+  badge.style.marginTop = "4px";
+
+  const body = document.createElement("div");
+  body.dataset.role = "toast-body";
+  body.textContent = text;
+  body.style.flex = "1 1 auto";
+  body.style.whiteSpace = "pre-wrap";
+  body.style.wordBreak = "break-word";
+
+  el.appendChild(badge);
+  el.appendChild(body);
+  host.appendChild(el);
+
+  // Force layout so the enter transition runs.
+  void el.offsetWidth;
+  el.style.opacity = "1";
+  el.style.transform = "translateY(0)";
+
+  // Dismiss oldest first: later toasts stay longer by a small stagger.
+  const lifetime = PASS_PAGE_TOAST_DURATION_MS + passPageToasts.length * PASS_PAGE_TOAST_STAGGER_MS;
+  const entry = {
+    id,
+    el,
+    timer: null,
+  };
+  entry.timer = window.setTimeout(() => {
+    dismissPassPageToast(id);
+  }, lifetime);
+  passPageToasts.push(entry);
+  renumberPassPageToasts();
 }
 
 async function handlePasskeyGetWithChooser(payload) {

@@ -1,6 +1,6 @@
 # pass
 
-跨平台密码管理器 Monorepo。包含 macOS、Windows、Linux（Ubuntu）、iOS、Android 客户端，以及 Chrome / Firefox / Safari 浏览器扩展。当前远程同步已在 macOS App、浏览器扩展和 Ubuntu 服务之间落地；其它客户端仍需接入 Rust FFI 后才能达到完整跨平台同步。
+跨平台密码管理器 Monorepo。包含 macOS、Windows、Linux（Ubuntu）、iOS、Android 客户端，以及 Chrome / Firefox / Safari 浏览器扩展。当前远程同步已在 macOS App、浏览器扩展和 Ubuntu 服务之间落地；macOS 与扩展的合并/别名语义以 Rust `pass_core` 为权威（FFI / JS 对拍），桌面 Tauri 骨架已接入 `pass-merge`/`pass-csvio`；完整五端产品化（尤其移动系统填充）仍在推进。
 
 > 完整设计文档见 [`docs/`](docs/README.md)。
 
@@ -68,7 +68,7 @@ pass/
 | Flutter 应用 | [`apps/app_flutter`](apps/app_flutter/README.md) | 🚧 规划中 | 五端（iOS/Android/Win/macOS/Linux）共享 UI |
 | Copilot Claude Flutter 桌面应用 | [`apps/copilot-Claude-flutter`](apps/copilot-Claude-flutter/README.md) | ✅ 可构建 | Windows / Ubuntu / macOS 统一 Flutter 桌面工程 |
 | Copilot 53 Flutter 桌面应用 | [`apps/copilot-53-flutter`](apps/copilot-53-flutter/README.md) | ✅ 可构建 | Windows / Ubuntu / macOS 统一 Flutter 桌面工程 |
-| Tauri 桌面应用 | [`apps/codex-tauri`](apps/codex-tauri/README.md) | ✅ 可构建 | Windows / Ubuntu / macOS 三端基础骨架 |
+| Tauri 桌面应用 | [`apps/codex-tauri`](apps/codex-tauri/README.md) | ✅ 可构建 | 已接 `pass-merge` 别名/merge 预览与 `pass-csvio` CSV |
 | Copilot 53 Tauri 桌面应用 | [`apps/copilot-53-tauri`](apps/copilot-53-tauri/README.md) | ✅ 可构建 | Windows / Ubuntu / macOS 三端基础骨架 |
 | Chrome 扩展 | [`apps/extension_chrome`](apps/extension_chrome/README.md) | ✅ 可构建 | MV3，自动填充 + 同步触发 |
 | Firefox 扩展 | [`apps/extension_firefox`](apps/extension_firefox/README.md) | ✅ 可构建 | WebExtension |

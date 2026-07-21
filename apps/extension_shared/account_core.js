@@ -1,4 +1,5 @@
 import { ETLD2_SUFFIXES as ETLD2_SUFFIX_LIST } from "../../core/pass_core/js/sync_policy.js";
+import { syncAliasGroups as syncAliasGroupsCore } from "../../core/pass_core/js/sync_alias_core.js";
 
 const ETLD2_SUFFIXES = new Set(ETLD2_SUFFIX_LIST);
 
@@ -18,9 +19,28 @@ export function normalizeDomain(input) {
   return value;
 }
 
+export function isIpHost(domain) {
+  const normalized = normalizeDomain(domain);
+  if (!normalized) return false;
+  // IPv4
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(normalized)) {
+    return normalized.split(".").every((part) => {
+      const value = Number(part);
+      return Number.isInteger(value) && value >= 0 && value <= 255;
+    });
+  }
+  // IPv6 (including bracket-stripped forms and compressed variants)
+  if (normalized.includes(":")) {
+    return /^[0-9a-f:]+$/i.test(normalized);
+  }
+  return false;
+}
+
 export function etldPlusOne(domain) {
   const normalized = normalizeDomain(domain);
   if (!normalized) return "";
+  // Never collapse IP addresses to a shared tail (e.g. 192.168.1.1 / 10.0.1.1 → 1.1).
+  if (isIpHost(normalized)) return normalized;
   const labels = normalized.split(".");
   if (labels.length < 2) return normalized;
 
@@ -95,60 +115,15 @@ export function sortAccountsForDisplay(inputAccounts) {
   return [...(Array.isArray(inputAccounts) ? inputAccounts : [])].sort(compareAccountsForDisplay);
 }
 
-export function syncAliasGroups(inputAccounts) {
-  const values = Array.isArray(inputAccounts) ? inputAccounts : [];
-  const nextAccounts = values.map((account) => ({
-    ...account,
-    sites: normalizeSites(account?.sites || []),
-  }));
-
-  const adjacency = new Map(nextAccounts.map((account) => [account.accountId, new Set()]));
-  for (let i = 0; i < nextAccounts.length; i += 1) {
-    for (let j = i + 1; j < nextAccounts.length; j += 1) {
-      const a = nextAccounts[i];
-      const b = nextAccounts[j];
-      const hasSiteOverlap = a.sites.some((site) => b.sites.includes(site));
-      const sameEtld1 = a.sites.some((siteA) => b.sites.some((siteB) => etldPlusOne(siteA) === etldPlusOne(siteB)));
-      if (hasSiteOverlap || sameEtld1) {
-        adjacency.get(a.accountId).add(b.accountId);
-        adjacency.get(b.accountId).add(a.accountId);
-      }
-    }
-  }
-
-  const visited = new Set();
-  for (const account of nextAccounts) {
-    if (visited.has(account.accountId)) continue;
-
-    const queue = [account.accountId];
-    const component = [];
-    visited.add(account.accountId);
-
-    while (queue.length > 0) {
-      const id = queue.shift();
-      component.push(id);
-      for (const neighbor of adjacency.get(id) || []) {
-        if (!visited.has(neighbor)) {
-          visited.add(neighbor);
-          queue.push(neighbor);
-        }
-      }
-    }
-
-    if (component.length <= 1) continue;
-
-    const mergedSites = normalizeSites(
-      component.flatMap((id) => nextAccounts.find((item) => item.accountId === id)?.sites || [])
-    );
-    for (const id of component) {
-      const target = nextAccounts.find((item) => item.accountId === id);
-      if (!target) continue;
-      if (JSON.stringify(target.sites) !== JSON.stringify(mergedSites)) {
-        target.sites = mergedSites;
-        target.updatedAtMs = Date.now();
-      }
-    }
-  }
-
-  return nextAccounts;
+export function syncAliasGroups(inputAccounts, options = {}) {
+  const helpers = {
+    normalizeDomain,
+    etldPlusOne,
+  };
+  const result = syncAliasGroupsCore(inputAccounts, helpers, {
+    nowMs: options.nowMs,
+    deviceName: options.deviceName || "Browser",
+  });
+  return result.accounts;
 }
+

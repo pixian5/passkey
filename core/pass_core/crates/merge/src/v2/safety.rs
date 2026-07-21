@@ -1,0 +1,144 @@
+use super::normalize::{normalize_account_shape, normalize_folder_id, normalize_folder_shape, normalize_passkey_shape};
+use super::types::{Folder, Passkey, PasswordAccount, SyncPayload};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncSafetyReport {
+    pub safe: bool,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PayloadSummary {
+    accounts: usize,
+    folders: usize,
+    passkeys: usize,
+    account_ids: std::collections::BTreeSet<String>,
+    folder_ids: std::collections::BTreeSet<String>,
+    passkey_ids: std::collections::BTreeSet<String>,
+}
+
+fn account_identity(account: &PasswordAccount) -> String {
+    let normalized = normalize_account_shape(account.clone());
+    let record = normalized.resolved_record_id();
+    if !record.is_empty() {
+        record
+    } else {
+        normalized.account_id.trim().to_ascii_lowercase()
+    }
+}
+
+fn folder_identity(folder: &Folder) -> String {
+    normalize_folder_id(&normalize_folder_shape(folder.clone()).id)
+}
+
+fn passkey_identity(passkey: &Passkey) -> String {
+    normalize_passkey_shape(passkey.clone())
+        .credential_id_b64u
+        .trim()
+        .to_string()
+}
+
+fn summarize(payload: &SyncPayload) -> PayloadSummary {
+    let accounts: Vec<PasswordAccount> = payload
+        .accounts
+        .iter()
+        .cloned()
+        .map(normalize_account_shape)
+        .collect();
+    let folders: Vec<Folder> = payload
+        .folders
+        .iter()
+        .cloned()
+        .map(normalize_folder_shape)
+        .collect();
+    let passkeys: Vec<Passkey> = payload
+        .passkeys
+        .iter()
+        .cloned()
+        .map(normalize_passkey_shape)
+        .collect();
+
+    let mut summary = PayloadSummary {
+        accounts: accounts.len(),
+        folders: folders.len(),
+        passkeys: passkeys.len(),
+        ..PayloadSummary::default()
+    };
+    for account in &accounts {
+        let id = account_identity(account);
+        if !id.is_empty() {
+            summary.account_ids.insert(id);
+        }
+    }
+    for folder in &folders {
+        let id = folder_identity(folder);
+        if !id.is_empty() {
+            summary.folder_ids.insert(id);
+        }
+    }
+    for passkey in &passkeys {
+        let id = passkey_identity(passkey);
+        if !id.is_empty() {
+            summary.passkey_ids.insert(id);
+        }
+    }
+    summary
+}
+
+fn missing_identities(
+    source: &[String],
+    target: &std::collections::BTreeSet<String>,
+) -> Vec<String> {
+    source
+        .iter()
+        .filter(|id| !id.is_empty() && !target.contains(id.as_str()))
+        .cloned()
+        .collect()
+}
+
+/// Validate a merged payload before it is written locally or uploaded.
+pub fn evaluate_sync_safety(
+    local: &SyncPayload,
+    remote: Option<&SyncPayload>,
+    merged: &SyncPayload,
+    mode: &str,
+) -> SyncSafetyReport {
+    let local_summary = summarize(local);
+    let remote_summary = remote.map(summarize);
+    let merged_summary = summarize(merged);
+    let mut reasons = Vec::new();
+
+    let local_non_empty =
+        local_summary.accounts + local_summary.folders + local_summary.passkeys > 0;
+    let remote_non_empty = remote_summary
+        .as_ref()
+        .map(|s| s.accounts + s.folders + s.passkeys > 0)
+        .unwrap_or(false);
+
+    if mode == "merge" {
+        if local_non_empty && remote_summary.is_some() && !remote_non_empty {
+            reasons.push("REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL".to_string());
+        }
+        let local_account_ids: Vec<String> = local_summary.account_ids.iter().cloned().collect();
+        let local_folder_ids: Vec<String> = local_summary.folder_ids.iter().cloned().collect();
+        let local_passkey_ids: Vec<String> = local_summary.passkey_ids.iter().cloned().collect();
+        if !missing_identities(&local_account_ids, &merged_summary.account_ids).is_empty() {
+            reasons.push("MERGED_MISSING_LOCAL_ACCOUNT_IDS".to_string());
+        }
+        if !missing_identities(&local_folder_ids, &merged_summary.folder_ids).is_empty() {
+            reasons.push("MERGED_MISSING_LOCAL_FOLDER_IDS".to_string());
+        }
+        if !missing_identities(&local_passkey_ids, &merged_summary.passkey_ids).is_empty() {
+            reasons.push("MERGED_MISSING_LOCAL_PASSKEY_IDS".to_string());
+        }
+    } else if mode == "remoteOverwriteLocal" {
+        if local_non_empty && !remote_non_empty {
+            reasons.push("REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL".to_string());
+        }
+    }
+
+    SyncSafetyReport {
+        safe: reasons.is_empty(),
+        reasons,
+    }
+}

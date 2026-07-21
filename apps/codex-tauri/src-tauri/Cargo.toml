@@ -9,10 +9,20 @@ edition = "2021"
 tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
+aes-gcm = "0.10"
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
+pass-csvio = { path = "../../../core/pass_core/crates/csvio" }
+pass-merge = { path = "../../../core/pass_core/crates/merge" }
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
+pbkdf2 = "0.12"
+hmac = "0.12"
+zeroize = { version = "1", features = ["derive"] }
 tauri = { version = "2.0", features = [] }
 uuid = { version = "1", features = ["v4", "serde"] }
 

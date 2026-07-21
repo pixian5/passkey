@@ -36,6 +36,7 @@
 		17B4E9C82F7689DA00EB61C1 /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = 17B4E9B52F7689DA00EB61C1 /* popup.css */; };
 		17B4E9C92F7689DA00EB61C1 /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 17B4E9B62F7689DA00EB61C1 /* content.js */; };
 		17B4E9CA2F7689DA00EB61C1 /* options.css in Resources */ = {isa = PBXBuildFile; fileRef = 17B4E9B72F7689DA00EB61C1 /* options.css */; };
+		17B4E9CB2F7689DA00EB61C1 /* icons in Resources */ = {isa = PBXBuildFile; fileRef = 17B4E9CC2F7689DA00EB61C1 /* icons */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -76,7 +77,7 @@
 		17B4E9932F7689D900EB61C1 /* PassSafari Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "PassSafari Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 		17B4E9982F7689D900EB61C1 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
 		17B4E99A2F7689D900EB61C1 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		17B4E9A52F7689DA00EB61C1 /* webauthn_injected.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = webauthn_injected.js; path = ../../../extension_shared/webauthn_injected.js; sourceTree = "<group>"; };
+		17B4E9A52F7689DA00EB61C1 /* webauthn_injected.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = webauthn_injected.js; path = ../../../extension_shared/dist/webauthn_injected.js; sourceTree = "<group>"; };
 		17B4E9A62F7689DA00EB61C1 /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = popup.js; path = ../../../extension_shared/popup.js; sourceTree = "<group>"; };
 		17B4E9A72F7689DA00EB61C1 /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = background.js; path = ../../../extension_shared/background.js; sourceTree = "<group>"; };
 		17B4E9A82F7689DA00EB61C1 /* dist */ = {isa = PBXFileReference; lastKnownFileType = folder; name = dist; path = ../../../extension_shared/dist; sourceTree = "<group>"; };
@@ -95,6 +96,7 @@
 		17B4E9B52F7689DA00EB61C1 /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = popup.css; path = ../../../extension_shared/popup.css; sourceTree = "<group>"; };
 		17B4E9B62F7689DA00EB61C1 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = content.js; path = ../../../extension_shared/content.js; sourceTree = "<group>"; };
 		17B4E9B72F7689DA00EB61C1 /* options.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = options.css; path = ../../../extension_shared/options.css; sourceTree = "<group>"; };
+		17B4E9CC2F7689DA00EB61C1 /* icons */ = {isa = PBXFileReference; lastKnownFileType = folder; name = icons; path = ../../../extension_shared/icons; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -183,6 +185,7 @@
 				17B4E9AF2F7689DA00EB61C1 /* package-lock.json */,
 				17B4E9B02F7689DA00EB61C1 /* package.json */,
 				17B4E9B12F7689DA00EB61C1 /* account_core.js */,
+				17B4E9CC2F7689DA00EB61C1 /* icons */,
 				17B4E9B22F7689DA00EB61C1 /* scripts */,
 				17B4E9B32F7689DA00EB61C1 /* manifest.json */,
 				17B4E9B42F7689DA00EB61C1 /* options.html */,
@@ -312,6 +315,7 @@
 				17B4E9B92F7689DA00EB61C1 /* popup.js in Resources */,
 				17B4E9CA2F7689DA00EB61C1 /* options.css in Resources */,
 				17B4E9C42F7689DA00EB61C1 /* account_core.js in Resources */,
+				17B4E9CB2F7689DA00EB61C1 /* icons in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

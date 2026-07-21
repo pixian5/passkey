@@ -6,4 +6,9 @@ license.workspace = true
 
 [dependencies]
 pass-domain = { path = "../domain" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
+[[bin]]
+name = "pass-merge-cli"
+path = "src/bin/pass_merge_cli.rs"

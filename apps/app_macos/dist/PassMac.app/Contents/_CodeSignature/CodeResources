@@ -19,14 +19,23 @@
 	</dict>
 	<key>files2</key>
 	<dict>
+		<key>Frameworks/libpass_core_ffi.dylib</key>
+		<dict>
+			<key>cdhash</key>
+			<data>
+			BSNvO92u2DJeuWptIKGmjBKyaM8=
+			</data>
+			<key>requirement</key>
+			<string>cdhash H"05236f3bddaed8325eb96a6d20a1a68c12b268cf"</string>
+		</dict>
 		<key>PlugIns/PassAutoFillExtension.appex</key>
 		<dict>
 			<key>cdhash</key>
 			<data>
-			AHfSwiknnbxNMcI1rE9JQZdLVNw=
+			iHwYk2MSLk5ONfjziD8Cqg1kQ4k=
 			</data>
 			<key>requirement</key>
-			<string>cdhash H"0077d2c229279dbc4d31c235ac4f4941974b54dc" or cdhash H"5b5e0058352d3b6f439b2b4a3e1a2752581741fb"</string>
+			<string>cdhash H"887c189363122e4e4e35f8f3883f02aa0d644389" or cdhash H"9ab23125aa4f1711528ab9f28eef9b0dea56c8f6"</string>
 		</dict>
 		<key>Resources/PassMac.icns</key>
 		<dict>
