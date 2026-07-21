@@ -2034,8 +2034,6 @@ fn main() {
         .manage(AppLockState::default())
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
-                let data_dir = app_data_dir(&app.handle())?;
-                window_state::restore(&window, &data_dir);
                 let state_window = window.clone();
                 window.on_window_event(move |event| {
                     if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
@@ -2044,8 +2042,6 @@ fn main() {
                         }
                     }
                 });
-                window.show()?;
-                window.set_focus()?;
             }
             #[cfg(target_os = "macos")]
             {
@@ -2155,8 +2151,18 @@ fn main() {
             lock_set_idle,
             lock_touch,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running codex-tauri");
+        .build(tauri::generate_context!())
+        .expect("error while building codex-tauri")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Ready) {
+                if let Some(window) = app.get_webview_window("main") {
+                    if let Ok(data_dir) = app_data_dir(app) {
+                        window_state::restore(&window, &data_dir);
+                        let _ = window.show();
+                    }
+                }
+            }
+        });
 }
 
 #[cfg(test)]
