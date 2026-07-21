@@ -88,27 +88,37 @@
     <!-- Edit sheet -->
     <div id="editModal" class="modal" hidden>
       <div class="modal-backdrop" data-close-edit></div>
-      <div class="modal-card">
+      <div class="modal-card account-editor-card">
         <header class="modal-head">
           <h2 id="editTitle">编辑账号</h2>
           <button type="button" class="icon-btn" data-close-edit>×</button>
         </header>
         <form id="accountForm" class="modal-body">
           <input type="hidden" id="accountId" />
-          <label>站点别名（逗号分隔）<input id="sites" required /></label>
-          <label>用户名<input id="username" required /></label>
-          <label>密码<input id="password" required /></label>
-          <label>TOTP 密钥<input id="totpSecret" placeholder="Base32" /></label>
-          <label>恢复码<input id="recoveryCodes" /></label>
-          <label>备注<textarea id="note"></textarea></label>
-          <label>文件夹（⌘/Ctrl 多选）
+          <label class="account-field account-sites-field">站点别名（每行一个）
+            <textarea id="sites" required rows="4"></textarea>
+          </label>
+          <label class="account-inline-field"><span>用户名</span><input id="username" required placeholder="例如 alice@icloud.com" /></label>
+          <label class="account-inline-field"><span>密码</span><span class="secret-field"><input id="password" type="password" required placeholder="请输入密码" /><button type="button" class="icon-btn secret-toggle" data-toggle-secret="password" title="显示密码" aria-label="显示密码">◎</button></span></label>
+          <section class="account-totp-field">
+            <label class="account-inline-field"><span>TOTP</span><span class="secret-field"><input id="totpSecret" type="password" placeholder="TOTP 种子密钥" /><button type="button" class="icon-btn secret-toggle" data-toggle-secret="totpSecret" title="显示 TOTP 密钥" aria-label="显示 TOTP 密钥">◎</button></span></label>
+            <div class="totp-actions">
+              <button type="button" id="btn-paste-totp-raw">粘贴原始密钥</button>
+              <button type="button" id="btn-paste-totp-uri">粘贴完整 otpauth URI</button>
+              <button type="button" id="btn-paste-totp-qr">粘贴二维码</button>
+            </div>
+          </section>
+          <label class="account-field">恢复码<textarea id="recoveryCodes" rows="4"></textarea></label>
+          <label class="account-field">备注<textarea id="note" rows="5"></textarea></label>
+          <label class="account-field account-folders-field">文件夹（⌘/Ctrl 多选）
             <select id="editFolders" multiple size="5"></select>
           </label>
-          <div class="form-actions">
-            <button type="submit" class="primary">保存</button>
+          <div class="form-actions account-actions">
+            <button type="button" id="btn-create-stay">创建账号</button>
+            <button type="submit" class="primary" id="btn-save-account">创建并关闭</button>
             <button type="button" id="btn-restore" class="primary" hidden>恢复账号</button>
             <button type="button" id="btn-delete" class="danger">移入回收站</button>
-            <button type="button" data-close-edit>取消</button>
+            <button type="button" data-close-edit id="btn-close-account">关闭</button>
           </div>
         </form>
       </div>
@@ -167,6 +177,23 @@
             <button type="button" id="btn-keep-earliest">保留全部最早账号</button>
           </div>
           <div id="folderDedupGroups" class="dedup-groups"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="folderDeleteModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close-folder-delete></div>
+      <div class="modal-card sm folder-delete-card">
+        <header class="modal-head">
+          <h2>删除文件夹</h2>
+          <button type="button" class="icon-btn" data-close-folder-delete>×</button>
+        </header>
+        <div class="modal-body">
+          <p id="folderDeleteMessage" class="delete-message"></p>
+          <div class="form-actions">
+            <button type="button" id="btn-confirm-folder-delete" class="danger">删除文件夹</button>
+            <button type="button" data-close-folder-delete>取消</button>
+          </div>
         </div>
       </div>
     </div>

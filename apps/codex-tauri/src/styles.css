@@ -14,6 +14,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   margin: 0;
@@ -340,6 +341,7 @@ button.icon-ghost:hover, button.icon-btn:hover { background: rgba(0,0,0,0.05); }
 }
 .modal-card.wide { width: min(760px, 94vw); }
 .modal-card.sm { width: min(400px, 94vw); }
+.account-editor-card { width: min(760px, 94vw); max-height: min(92vh, 900px); }
 .folder-sites-card { width: min(500px, 94vw); }
 .folder-dedup-card { width: min(820px, 94vw); }
 .modal-head {
@@ -397,6 +399,28 @@ textarea { min-height: 84px; resize: vertical; }
 .inline-actions { display: flex; gap: 8px; }
 .inline-actions input { flex: 1; }
 .form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.account-editor-card .modal-body { gap: 12px; padding: 18px; }
+.account-field { gap: 6px; font-size: 14px; font-weight: 600; }
+.account-sites-field textarea { min-height: 96px; max-height: 156px; }
+.account-inline-field {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.secret-field { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.secret-field input { min-width: 0; flex: 1; }
+.secret-toggle { flex: 0 0 28px; font-size: 17px; line-height: 1; }
+.account-totp-field { display: grid; gap: 7px; }
+.totp-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-left: 98px; }
+.totp-actions button { font-size: 12px; }
+.account-field textarea { min-height: 94px; }
+.account-folders-field { font-weight: 400; }
+.account-actions { padding-top: 2px; }
+.delete-message { margin: 0; line-height: 1.5; }
 
 .context-menu {
   position: fixed;
@@ -521,4 +545,6 @@ textarea { min-height: 84px; resize: vertical; }
   .sidebar { border-right: none; border-bottom: 1px solid var(--line); max-height: 38vh; }
   .merge-grid { grid-template-columns: 1fr; }
   .dedup-account { grid-template-columns: 1fr; }
+  .account-inline-field { grid-template-columns: 1fr; gap: 5px; }
+  .totp-actions { padding-left: 0; }
 }

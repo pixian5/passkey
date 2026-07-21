@@ -105,7 +105,16 @@ fn get_app_state(app: AppHandle, state: tauri::State<AppLockState>) -> Result<Ap
     let device_name = load_device_name(&conn)?;
     let mut accounts = load_accounts(&conn)?;
     sort_accounts(&mut accounts);
-    let folders = load_folders(&conn)?;
+    let mut folders = load_folders(&conn)?;
+    let (folders_changed, legacy_folder_ids) = ensure_fixed_new_account_folder(&mut folders);
+    let accounts_changed =
+        migrate_legacy_new_account_folder_ids(&mut accounts, &folders, &legacy_folder_ids);
+    if folders_changed {
+        save_folders(&conn, &folders)?;
+    }
+    if accounts_changed {
+        save_accounts(&conn, &accounts)?;
+    }
     let passkeys = load_passkeys(&conn)?;
     let active_accounts = accounts
         .iter()
@@ -149,22 +158,38 @@ fn create_account(
     app: AppHandle,
     state: tauri::State<AppLockState>,
     input: AccountInput,
-) -> Result<(), String> {
+) -> Result<PasswordAccount, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
 
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
-    let folders = load_folders(&conn)?;
+    let mut folders = load_folders(&conn)?;
+    let (folders_changed, legacy_folder_ids) = ensure_fixed_new_account_folder(&mut folders);
+    let accounts_changed =
+        migrate_legacy_new_account_folder_ids(&mut accounts, &folders, &legacy_folder_ids);
+    if folders_changed {
+        save_folders(&conn, &folders)?;
+    }
+    if accounts_changed {
+        save_accounts(&conn, &accounts)?;
+    }
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
     let sites = normalize_sites(input.sites);
     if sites.is_empty() {
         return Err("至少填写一个站点".into());
     }
+    let username = input.username.trim().to_string();
+    if username.is_empty() {
+        return Err("用户名不能为空".into());
+    }
+    if input.password.is_empty() {
+        return Err("密码不能为空".into());
+    }
     let canonical_site = sites[0].clone();
     let id = Uuid::new_v4().to_string();
-    let username = input.username.trim().to_string();
+    let created_id = id.clone();
     let mut account = PasswordAccount {
         record_id: Some(id.clone()),
         id: Some(id),
@@ -193,11 +218,17 @@ fn create_account(
         last_operated_device_name: device_name,
         ..Default::default()
     };
+    add_account_to_folder(&mut account, pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID);
     apply_automatic_folder_rules(&mut account, &folders);
     accounts.push(account);
     sync_alias_sites(&mut accounts);
+    let created = accounts
+        .iter()
+        .find(|item| item.resolved_record_id() == created_id)
+        .cloned()
+        .ok_or_else(|| "创建账号后未找到记录".to_string())?;
     save_accounts(&conn, &accounts)?;
-    Ok(())
+    Ok(created)
 }
 
 #[tauri::command]
@@ -902,6 +933,119 @@ fn save_folders(conn: &Connection, folders: &[Folder]) -> Result<(), String> {
     write_kv(conn, KEY_FOLDERS, &raw)
 }
 
+fn ensure_fixed_new_account_folder(folders: &mut Vec<Folder>) -> (bool, BTreeSet<String>) {
+    let fixed_id = pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID;
+    let fixed_name = pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_NAME;
+    let legacy_ids: BTreeSet<String> = folders
+        .iter()
+        .filter(|folder| {
+            !folder.id.eq_ignore_ascii_case(fixed_id)
+                && folder.name.trim().eq_ignore_ascii_case(fixed_name)
+        })
+        .map(|folder| folder.id.to_ascii_lowercase())
+        .collect();
+    let existing_fixed = folders
+        .iter()
+        .find(|folder| folder.id.eq_ignore_ascii_case(fixed_id));
+    let created_at_ms = existing_fixed
+        .map(|folder| folder.created_at_ms)
+        .or_else(|| {
+            folders
+                .iter()
+                .filter(|folder| legacy_ids.contains(&folder.id.to_ascii_lowercase()))
+                .map(|folder| folder.created_at_ms)
+                .min()
+        })
+        .filter(|value| *value > 0)
+        .unwrap_or_else(now_ms);
+    let updated_at_ms = existing_fixed
+        .map(|folder| folder.updated_at_ms)
+        .or_else(|| {
+            folders
+                .iter()
+                .filter(|folder| legacy_ids.contains(&folder.id.to_ascii_lowercase()))
+                .map(|folder| folder.updated_at_ms)
+                .max()
+        })
+        .filter(|value| *value > 0)
+        .unwrap_or(created_at_ms);
+    let fixed_folder = Folder {
+        id: fixed_id.to_string(),
+        name: fixed_name.to_string(),
+        matched_sites: existing_fixed
+            .map(|folder| folder.matched_sites.clone())
+            .unwrap_or_default(),
+        auto_add_matching_sites: existing_fixed
+            .map(|folder| folder.auto_add_matching_sites)
+            .unwrap_or(false),
+        created_at_ms,
+        updated_at_ms,
+        ..Default::default()
+    };
+    let original = folders.clone();
+    let mut normalized = vec![fixed_folder];
+    let mut seen_ids = BTreeSet::from([fixed_id.to_ascii_lowercase()]);
+    for folder in original.iter() {
+        let normalized_id = folder.id.to_ascii_lowercase();
+        if legacy_ids.contains(&normalized_id) || !seen_ids.insert(normalized_id) {
+            continue;
+        }
+        normalized.push(folder.clone());
+    }
+    let changed = *folders != normalized;
+    *folders = normalized;
+    (changed, legacy_ids)
+}
+
+fn migrate_legacy_new_account_folder_ids(
+    accounts: &mut [PasswordAccount],
+    folders: &[Folder],
+    legacy_ids: &BTreeSet<String>,
+) -> bool {
+    if legacy_ids.is_empty() {
+        return false;
+    }
+    let fixed_id = pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID.to_string();
+    let valid_ids: BTreeSet<String> = folders
+        .iter()
+        .filter(|folder| !folder.is_deleted && !folder.is_permanently_deleted)
+        .map(|folder| folder.id.to_ascii_lowercase())
+        .collect();
+    let mut changed = false;
+    for account in accounts {
+        let original = account.folder_ids.clone();
+        let mut next = account.folder_ids.clone();
+        if let Some(folder_id) = account.folder_id.clone() {
+            next.push(folder_id);
+        }
+        next = next
+            .into_iter()
+            .map(|folder_id| {
+                if legacy_ids.contains(&folder_id.to_ascii_lowercase()) {
+                    fixed_id.clone()
+                } else {
+                    folder_id
+                }
+            })
+            .filter(|folder_id| valid_ids.contains(&folder_id.to_ascii_lowercase()))
+            .fold(Vec::new(), |mut ids, folder_id| {
+                if !ids
+                    .iter()
+                    .any(|id: &String| id.eq_ignore_ascii_case(&folder_id))
+                {
+                    ids.push(folder_id);
+                }
+                ids
+            });
+        if next != original || account.folder_id.as_deref() != next.first().map(String::as_str) {
+            account.folder_ids = next.clone();
+            account.folder_id = next.first().cloned();
+            changed = true;
+        }
+    }
+    changed
+}
+
 fn load_passkeys(conn: &Connection) -> Result<Vec<Passkey>, String> {
     match read_kv(conn, KEY_PASSKEYS)? {
         Some(raw) => serde_json::from_str(&raw).map_err(|e| format!("解析通行密钥失败: {e}")),
@@ -1023,6 +1167,10 @@ fn create_folder(
     state.require_unlocked(&dir)?;
     let conn = open_db(&app)?;
     let mut folders = load_folders(&conn)?;
+    let (folders_changed, _) = ensure_fixed_new_account_folder(&mut folders);
+    if folders_changed {
+        save_folders(&conn, &folders)?;
+    }
     let trimmed = name.trim();
     if trimmed.is_empty() {
         return Err("文件夹名不能为空".into());
@@ -1055,20 +1203,51 @@ fn delete_folder(
     state.require_unlocked(&dir)?;
     let conn = open_db(&app)?;
     let mut folders = load_folders(&conn)?;
-    let id = id.trim().to_ascii_lowercase();
-    let before = folders.len();
-    folders.retain(|f| f.id.to_ascii_lowercase() != id);
-    if folders.len() == before {
-        return Err("未找到文件夹".into());
-    }
-    // Soft-remove membership references on accounts
     let mut accounts = load_accounts(&conn)?;
+    let (folders_changed, legacy_folder_ids) = ensure_fixed_new_account_folder(&mut folders);
+    let accounts_changed =
+        migrate_legacy_new_account_folder_ids(&mut accounts, &folders, &legacy_folder_ids);
+    let id = id.trim().to_ascii_lowercase();
+    if folders_changed || accounts_changed {
+        if folders_changed {
+            save_folders(&conn, &folders)?;
+        }
+        if accounts_changed {
+            save_accounts(&conn, &accounts)?;
+        }
+    }
+    let device = load_device_name(&conn)?;
+    let now = now_ms();
+    let folder = folders
+        .iter_mut()
+        .find(|folder| folder.id.eq_ignore_ascii_case(&id))
+        .ok_or_else(|| "未找到文件夹".to_string())?;
+    if folder
+        .id
+        .eq_ignore_ascii_case(pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID)
+    {
+        return Err("固定文件夹不可删除".into());
+    }
+    if folder.is_deleted || folder.is_permanently_deleted {
+        return Err("文件夹已删除".into());
+    }
+    folder.is_deleted = true;
+    folder.is_permanently_deleted = true;
+    folder.deleted_at_ms = Some(now);
+    folder.deleted_device_name = device.clone();
+    folder.updated_at_ms = now;
+
     for a in &mut accounts {
+        let was_in_folder = account_in_folder(a, &id);
         a.folder_ids.retain(|fid| fid.to_ascii_lowercase() != id);
         if let Some(fid) = a.folder_id.as_ref() {
             if fid.to_ascii_lowercase() == id {
-                a.folder_id = None;
+                a.folder_id = a.folder_ids.first().cloned();
             }
+        }
+        if was_in_folder {
+            a.updated_at_ms = now;
+            a.last_operated_device_name = device.clone();
         }
     }
     save_accounts(&conn, &accounts)?;
@@ -1393,5 +1572,40 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].accounts[0].resolved_record_id(), "account-new");
         assert_eq!(groups[0].accounts[1].resolved_record_id(), "account-old");
+    }
+
+    #[test]
+    fn fixed_new_account_folder_is_created_and_legacy_name_is_migrated() {
+        let mut folders = vec![Folder {
+            id: "legacy-folder".into(),
+            name: "新账号".into(),
+            created_at_ms: 10,
+            updated_at_ms: 20,
+            ..Default::default()
+        }];
+        let mut accounts = vec![test_account("account-1", "example.com", "demo", 10)];
+        accounts[0].folder_ids = vec!["legacy-folder".into()];
+        accounts[0].folder_id = Some("legacy-folder".into());
+
+        let (changed, legacy_ids) = ensure_fixed_new_account_folder(&mut folders);
+        assert!(changed);
+        assert_eq!(folders[0].id, pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID);
+        assert_eq!(
+            folders[0].name,
+            pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_NAME
+        );
+        assert!(migrate_legacy_new_account_folder_ids(
+            &mut accounts,
+            &folders,
+            &legacy_ids
+        ));
+        assert_eq!(
+            accounts[0].folder_ids,
+            vec![pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID]
+        );
+        assert_eq!(
+            accounts[0].folder_id.as_deref(),
+            Some(pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID)
+        );
     }
 }

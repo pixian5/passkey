@@ -37,6 +37,11 @@ const els = {
   editFolders: $("#editFolders"),
   editModal: $("#editModal"),
   editTitle: $("#editTitle"),
+  btnCreateStay: $("#btn-create-stay"),
+  btnSaveAccount: $("#btn-save-account"),
+  btnPasteTotpRaw: $("#btn-paste-totp-raw"),
+  btnPasteTotpUri: $("#btn-paste-totp-uri"),
+  btnPasteTotpQr: $("#btn-paste-totp-qr"),
   folderModal: $("#folderModal"),
   newFolderName: $("#newFolderName"),
   folderSitesModal: $("#folderSitesModal"),
@@ -50,6 +55,9 @@ const els = {
   folderDedupGroups: $("#folderDedupGroups"),
   btnKeepLatest: $("#btn-keep-latest"),
   btnKeepEarliest: $("#btn-keep-earliest"),
+  folderDeleteModal: $("#folderDeleteModal"),
+  folderDeleteMessage: $("#folderDeleteMessage"),
+  btnConfirmFolderDelete: $("#btn-confirm-folder-delete"),
   contextMenu: $("#contextMenu"),
   btnNewFolder: $("#btn-new-folder"),
   btnCreateFolder: $("#btn-create-folder"),
@@ -116,6 +124,7 @@ let filter = { type: "all" };
 let selectedId = "";
 let folderSitesTargetId = "";
 let folderDedupTarget = null;
+let folderDeleteTarget = null;
 
 const message = (text) => {
   const el = els.output || document.querySelector("#output");
@@ -448,6 +457,38 @@ const closeFolderDedup = () => {
   folderDedupTarget = null;
 };
 
+const openFolderDelete = (folder) => {
+  folderDeleteTarget = { id: String(folder.id), name: folder.name || "未命名文件夹" };
+  if (els.folderDeleteMessage) {
+    els.folderDeleteMessage.textContent = `删除「${folderDeleteTarget.name}」后，文件夹内账号会保留，但不再归属此文件夹。`;
+  }
+  if (els.folderDeleteModal) els.folderDeleteModal.hidden = false;
+};
+
+const closeFolderDelete = () => {
+  if (els.folderDeleteModal) els.folderDeleteModal.hidden = true;
+  folderDeleteTarget = null;
+};
+
+const confirmFolderDelete = async () => {
+  const target = folderDeleteTarget;
+  if (!target) return;
+  if (els.btnConfirmFolderDelete) els.btnConfirmFolderDelete.disabled = true;
+  try {
+    await invoke("delete_folder", { id: target.id });
+    if (filter.type === "folder" && String(filter.id).toLowerCase() === target.id.toLowerCase()) {
+      filter = { type: "all" };
+    }
+    closeFolderDelete();
+    await refreshState();
+    message(`文件夹「${target.name}」已删除`);
+  } catch (err) {
+    message(`删除文件夹失败：${err}`);
+  } finally {
+    if (els.btnConfirmFolderDelete) els.btnConfirmFolderDelete.disabled = false;
+  }
+};
+
 const deduplicateFolder = async (mode, accountId = null) => {
   if (!folderDedupTarget?.folderId) return;
   try {
@@ -594,16 +635,22 @@ const populateFolderSelect = (selected = []) => {
 
 const openEdit = (account = null) => {
   if (!els.editModal) return;
+  const card = els.editModal.querySelector(".account-editor-card");
+  const isNew = !account;
+  card?.classList.toggle("account-create-card", isNew);
+  els.editModal.querySelector(".account-folders-field")?.toggleAttribute("hidden", isNew);
   if (account) {
     selectedId = accountKey(account);
     els.accountId.value = selectedId;
-    els.sites.value = (account.sites || []).join(", ");
+    els.sites.value = (account.sites || []).join("\n");
     els.username.value = account.username || "";
     els.password.value = account.password || "";
     els.totpSecret.value = account.totpSecret || "";
     els.recoveryCodes.value = account.recoveryCodes || "";
     els.note.value = account.note || "";
     if (els.editTitle) els.editTitle.textContent = "编辑账号";
+    if (els.btnSaveAccount) els.btnSaveAccount.textContent = "保存";
+    if (els.btnCreateStay) els.btnCreateStay.hidden = true;
     populateFolderSelect(folderIdsOf(account));
     if (els.btnDelete) {
       els.btnDelete.hidden = false;
@@ -615,17 +662,133 @@ const openEdit = (account = null) => {
     els.accountId.value = "";
     els.accountForm?.reset();
     if (els.editTitle) els.editTitle.textContent = "新建账号";
+    if (els.btnSaveAccount) els.btnSaveAccount.textContent = "创建并关闭";
+    if (els.btnCreateStay) els.btnCreateStay.hidden = false;
     populateFolderSelect(
       filter.type === "folder" && filter.id ? [filter.id] : []
     );
     if (els.btnDelete) els.btnDelete.hidden = true;
     if (els.btnRestore) els.btnRestore.hidden = true;
   }
+  [els.password, els.totpSecret].forEach((input) => {
+    if (input) input.type = "password";
+  });
+  document.querySelectorAll("[data-toggle-secret]").forEach((button) => {
+    button.textContent = "◎";
+    button.title = `显示${button.dataset.toggleSecret === "password" ? "密码" : " TOTP 密钥"}`;
+    button.setAttribute("aria-label", button.title);
+  });
   els.editModal.hidden = false;
+  setTimeout(() => els.sites?.focus(), 50);
 };
 
 const closeEdit = () => {
   if (els.editModal) els.editModal.hidden = true;
+};
+
+const normalizedTotpSecret = (value) =>
+  String(value || "")
+    .toUpperCase()
+    .replace(/[\s-]/g, "")
+    .replace(/=+$/g, "");
+
+const isValidTotpSecret = (value) => {
+  const secret = normalizedTotpSecret(value);
+  return secret.length >= 8 && /^[A-Z2-7]+$/.test(secret) && base32Decode(secret).length > 0;
+};
+
+const normalizeImportedSite = (value) => {
+  const raw = String(value || "").trim().toLowerCase().replace(/\s+/g, "");
+  if (!raw) return "";
+  const withoutScheme = raw.replace(/^https?:\/\//, "").split(/[/?#]/)[0].split(":")[0];
+  if (!withoutScheme) return "";
+  return withoutScheme.includes(".") ? withoutScheme : `${withoutScheme}.com`;
+};
+
+const parseOtpAuthUri = (value) => {
+  let url;
+  try {
+    url = new URL(String(value || "").trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol.toLowerCase() !== "otpauth:" || url.hostname.toLowerCase() !== "totp") return null;
+  const secret = normalizedTotpSecret(url.searchParams.get("secret"));
+  if (!isValidTotpSecret(secret)) return null;
+  const label = decodeURIComponent(url.pathname || "")
+    .replace(/^\/+/, "")
+    .trim();
+  const colon = label.indexOf(":");
+  const labelIssuer = colon >= 0 ? label.slice(0, colon).trim() : "";
+  const username = (colon >= 0 ? label.slice(colon + 1) : label).trim();
+  const issuer = (url.searchParams.get("issuer") || labelIssuer).trim();
+  const site = normalizeImportedSite(issuer) || normalizeImportedSite(username.split("@").pop());
+  return { secret, username, site };
+};
+
+const readClipboardText = async () => {
+  if (!navigator.clipboard?.readText) throw new Error("当前系统不允许读取剪贴板文本");
+  const text = (await navigator.clipboard.readText()).trim();
+  if (!text) throw new Error("剪贴板没有文本内容");
+  return text;
+};
+
+const applyOtpAuthPayload = (payload, includeSiteAndUsername) => {
+  if (els.totpSecret) els.totpSecret.value = payload.secret;
+  if (includeSiteAndUsername) {
+    if (payload.site && els.sites) els.sites.value = payload.site;
+    if (payload.username && els.username) els.username.value = payload.username;
+  }
+  message(includeSiteAndUsername ? "已填充 TOTP、站点别名和用户名" : "已填充 TOTP 原始密钥");
+};
+
+const pasteTotpRaw = async () => {
+  try {
+    const secret = normalizedTotpSecret(await readClipboardText());
+    if (!isValidTotpSecret(secret)) throw new Error("原始密钥不是有效 TOTP");
+    applyOtpAuthPayload({ secret }, false);
+  } catch (err) {
+    message(`粘贴失败：${err}`);
+  }
+};
+
+const pasteTotpUri = async (rawValue = null) => {
+  try {
+    const payload = parseOtpAuthUri(rawValue ?? await readClipboardText());
+    if (!payload) throw new Error("不是有效的 otpauth://totp URI");
+    applyOtpAuthPayload(payload, true);
+  } catch (err) {
+    message(`粘贴失败：${err}`);
+  }
+};
+
+const pasteTotpQr = async () => {
+  try {
+    const text = await navigator.clipboard?.readText?.();
+    if (parseOtpAuthUri(text)) {
+      await pasteTotpUri(text);
+      return;
+    }
+    if (!navigator.clipboard?.read || !("BarcodeDetector" in window)) {
+      throw new Error("剪贴板没有可识别的二维码文本或图片");
+    }
+    const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const imageType = item.types.find((type) => type.startsWith("image/"));
+      if (!imageType) continue;
+      const bitmap = await createImageBitmap(await item.getType(imageType));
+      const codes = await detector.detect(bitmap);
+      bitmap.close?.();
+      if (codes[0]?.rawValue && parseOtpAuthUri(codes[0].rawValue)) {
+        await pasteTotpUri(codes[0].rawValue);
+        return;
+      }
+    }
+    throw new Error("二维码内容不是有效的 otpauth://totp URI");
+  } catch (err) {
+    message(`粘贴失败：${err}`);
+  }
 };
 
 const openSettings = (tab = "general") => {
@@ -737,15 +900,7 @@ document.addEventListener("contextmenu", (e) => {
       {
         label: "删除文件夹",
         danger: true,
-        action: async () => {
-          if (!confirm(`删除文件夹「${folder.name || "未命名文件夹"}」？文件夹内账号不会被删除。`)) return;
-          await invoke("delete_folder", { id: folder.id });
-          if (filter.type === "folder" && String(filter.id).toLowerCase() === String(folder.id).toLowerCase()) {
-            setFilter({ type: "all" });
-          }
-          await refreshState();
-          message(`文件夹「${folder.name || "未命名文件夹"}」已删除`);
-        },
+        action: () => openFolderDelete(folder),
       },
     ]);
     return;
@@ -847,6 +1002,9 @@ document.querySelectorAll("[data-close-folder-sites]").forEach((el) =>
 document.querySelectorAll("[data-close-folder-dedup]").forEach((el) =>
   el.addEventListener("click", closeFolderDedup)
 );
+document.querySelectorAll("[data-close-folder-delete]").forEach((el) =>
+  el.addEventListener("click", closeFolderDelete)
+);
 document.addEventListener("click", (e) => {
   if (!(e.target instanceof Element) || !e.target.closest("#contextMenu")) hideContextMenu();
 });
@@ -860,53 +1018,76 @@ window.addEventListener("keydown", (e) => {
     if (els.folderModal) els.folderModal.hidden = true;
     closeFolderSites();
     closeFolderDedup();
+    closeFolderDelete();
     hideContextMenu();
   }
 });
 
+const accountPayload = () => ({
+  sites: (els.sites.value || "")
+    .split(/[,，\n]/)
+    .map((site) => site.trim())
+    .filter(Boolean),
+  username: (els.username.value || "").trim(),
+  password: els.password.value || "",
+  totpSecret: normalizedTotpSecret(els.totpSecret.value),
+  recoveryCodes: els.recoveryCodes.value || "",
+  note: els.note.value || "",
+});
 
-els.accountForm?.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const payload = {
-    sites: (els.sites.value || "")
-      .split(/[,，\n]/)
-      .map((s) => s.trim())
-      .filter(Boolean),
-    username: els.username.value,
-    password: els.password.value,
-    totpSecret: els.totpSecret.value,
-    recoveryCodes: els.recoveryCodes.value,
-    note: els.note.value,
-  };
+const selectedFolderIds = () => [...(els.editFolders?.selectedOptions || [])].map((option) => option.value);
+
+const saveAccount = async (closeAfter) => {
+  if (!els.accountForm?.reportValidity()) return;
+  const payload = accountPayload();
+  const folderIds = selectedFolderIds();
   const id = els.accountId.value;
   try {
     if (id) {
       await invoke("update_account", { id, input: payload });
-      const selected = [...(els.editFolders?.selectedOptions || [])].map((o) => o.value);
-      await invoke("set_account_folders", { id, folderIds: selected });
+      await invoke("set_account_folders", { id, folderIds });
       message("已保存");
     } else {
-      await invoke("create_account", { input: payload });
-      await refreshState();
-      const created = state.activeAccounts.find(
-        (a) => a.username === payload.username && (a.sites || [])[0] === payload.sites[0]
-      );
-      if (created) {
-        const selected = [...(els.editFolders?.selectedOptions || [])].map((o) => o.value);
-        if (selected.length) {
-          await invoke("set_account_folders", {
-            id: accountKey(created),
-            folderIds: selected,
-          });
-        }
+      const created = await invoke("create_account", { input: payload });
+      if (folderIds.length && created) {
+        await invoke("set_account_folders", { id: accountKey(created), folderIds });
       }
-      message("已创建");
+      message("账号已创建");
     }
-    closeEdit();
     await refreshState();
+    if (id || closeAfter) {
+      closeEdit();
+    } else {
+      els.accountForm.reset();
+      els.accountId.value = "";
+      populateFolderSelect(folderIds);
+      els.sites.focus();
+    }
   } catch (err) {
     message(`保存失败：${err}`);
   }
+};
+
+els.accountForm?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await saveAccount(true);
+});
+
+els.btnCreateStay?.addEventListener("click", () => saveAccount(false));
+els.btnConfirmFolderDelete?.addEventListener("click", confirmFolderDelete);
+els.btnPasteTotpRaw?.addEventListener("click", pasteTotpRaw);
+els.btnPasteTotpUri?.addEventListener("click", () => pasteTotpUri());
+els.btnPasteTotpQr?.addEventListener("click", pasteTotpQr);
+document.querySelectorAll("[data-toggle-secret]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const input = document.querySelector(`#${button.dataset.toggleSecret}`);
+    if (!(input instanceof HTMLInputElement)) return;
+    const visible = input.type === "password";
+    input.type = visible ? "text" : "password";
+    button.textContent = visible ? "◉" : "◎";
+    button.title = `${visible ? "隐藏" : "显示"}${button.dataset.toggleSecret === "password" ? "密码" : " TOTP 密钥"}`;
+    button.setAttribute("aria-label", button.title);
+  });
 });
 
 els.folderSitesForm?.addEventListener("submit", async (e) => {
