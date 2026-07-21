@@ -179,6 +179,8 @@ let totpTimer = null;
 let autoSyncTimer = null;
 let filter = { type: "all" };
 let selectedId = "";
+let selectedAccountIds = new Set();
+let selectionAnchorId = "";
 let folderSitesTargetId = "";
 let folderDedupTarget = null;
 let folderDeleteTarget = null;
@@ -616,6 +618,40 @@ const filteredAccounts = () => {
   return sortAccounts(base.filter(matchesQuery));
 };
 
+const selectOnlyAccount = (key) => {
+  selectedId = key;
+  selectedAccountIds = key ? new Set([key]) : new Set();
+  selectionAnchorId = key;
+};
+
+const toggleAccountSelection = (key) => {
+  if (selectedAccountIds.has(key)) selectedAccountIds.delete(key);
+  else selectedAccountIds.add(key);
+  selectedId = key;
+  selectionAnchorId = key;
+};
+
+const selectAccountRange = (key, orderedKeys) => {
+  const anchor = selectionAnchorId || selectedId || key;
+  const anchorIndex = orderedKeys.indexOf(anchor);
+  const targetIndex = orderedKeys.indexOf(key);
+  if (anchorIndex === -1 || targetIndex === -1) {
+    selectOnlyAccount(key);
+    return;
+  }
+  const start = Math.min(anchorIndex, targetIndex);
+  const end = Math.max(anchorIndex, targetIndex);
+  selectedAccountIds = new Set(orderedKeys.slice(start, end + 1));
+  selectedId = key;
+  if (!selectionAnchorId) selectionAnchorId = anchor;
+};
+
+const clearAccountSelection = () => {
+  selectedId = "";
+  selectedAccountIds.clear();
+  selectionAnchorId = "";
+};
+
 const updateSidebarLabels = () => {
   const active = state.activeAccounts || [];
   if (els.labelAll) els.labelAll.textContent = `全部 (${active.length})`;
@@ -649,6 +685,7 @@ const applySidebarActive = () => {
 
 const setFilter = (next) => {
   filter = next || { type: "all" };
+  clearAccountSelection();
   if (els.searchInput) {
     if (filter.type === "passkeys") els.searchInput.placeholder = "搜索通行密钥账号（输入即搜）";
     else if (filter.type === "totp") els.searchInput.placeholder = "搜索验证码账号（输入即搜）";
@@ -656,8 +693,8 @@ const setFilter = (next) => {
     else if (filter.type === "folder") els.searchInput.placeholder = "搜索当前文件夹账号（输入即搜）";
     else els.searchInput.placeholder = "搜索全部账号（输入即搜）";
   }
-  // Clear multi-select style residue and re-render list + folders first,
-  // then mark the active sidebar item (folders are recreated in render).
+  // Re-render list + folders first, then mark the active sidebar item
+  // (folders are recreated in render).
   render();
   applySidebarActive();
 };
@@ -885,7 +922,7 @@ const render = () => {
   accounts.forEach((a) => {
     const key = accountKey(a);
     const row = document.createElement("div");
-    row.className = "account-row" + (key === selectedId ? " selected" : "");
+    row.className = "account-row" + (selectedAccountIds.has(key) ? " selected" : "");
     row.dataset.id = key;
 
     const title = a.accountId || a.username || (a.sites || [])[0] || "账号";
@@ -922,7 +959,18 @@ const render = () => {
         return;
       }
       if (t.closest(".row-otp button")) return;
-      selectedId = key;
+      const orderedKeys = accounts.map(accountKey);
+      if (e.shiftKey) {
+        selectAccountRange(key, orderedKeys);
+        render();
+        return;
+      }
+      if (e.metaKey || e.ctrlKey) {
+        toggleAccountSelection(key);
+        render();
+        return;
+      }
+      selectOnlyAccount(key);
       openEdit(a);
       render();
     });
@@ -981,7 +1029,7 @@ const openEdit = (account = null) => {
   card?.classList.toggle("account-create-card", isNew);
   els.editModal.querySelector(".account-folders-field")?.toggleAttribute("hidden", isNew);
   if (account) {
-    selectedId = accountKey(account);
+    selectOnlyAccount(accountKey(account));
     els.accountId.value = selectedId;
     els.sites.value = (account.sites || []).join("\n");
     els.username.value = account.username || "";
@@ -999,7 +1047,7 @@ const openEdit = (account = null) => {
     }
     if (els.btnRestore) els.btnRestore.hidden = filter.type !== "recycle";
   } else {
-    selectedId = "";
+    clearAccountSelection();
     els.accountId.value = "";
     els.accountForm?.reset();
     if (els.editTitle) els.editTitle.textContent = "新建账号";
@@ -1168,6 +1216,12 @@ const refreshState = async () => {
     passkeys: next.passkeys || [],
     deviceName: next.deviceName || "",
   };
+  const validIds = new Set([...state.activeAccounts, ...state.deletedAccounts].map(accountKey));
+  selectedAccountIds = new Set([...selectedAccountIds].filter((id) => validIds.has(id)));
+  if (selectedId && !validIds.has(selectedId)) selectedId = "";
+  if (selectionAnchorId && !validIds.has(selectionAnchorId)) {
+    selectionAnchorId = selectedAccountIds.values().next().value || "";
+  }
   render();
 };
 
@@ -1630,6 +1684,21 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
 });
 window.addEventListener("keydown", (e) => {
   const meta = e.metaKey || e.ctrlKey;
+  const target = e.target instanceof Element ? e.target : null;
+  const isTextInput = target?.closest("input, textarea, select, [contenteditable]");
+  const hasOpenModal = Boolean(document.querySelector(".modal:not([hidden])"));
+  // In the account list, Cmd/Ctrl+A mirrors PassMac: select all accounts
+  // currently visible under the active filter. Keep native text selection in forms.
+  if (meta && (e.key === "a" || e.key === "A") && !isTextInput && !hasOpenModal) {
+    e.preventDefault();
+    const visibleIds = filteredAccounts().map(accountKey).filter(Boolean);
+    selectedAccountIds = new Set(visibleIds);
+    selectedId = visibleIds[0] || "";
+    selectionAnchorId = selectedId;
+    render();
+    if (visibleIds.length) toastSuccess(`已选择 ${visibleIds.length} 个账号`);
+    return;
+  }
   // Cmd/Ctrl + , → settings (macOS PassMac parity)
   if (meta && (e.key === "," || e.code === "Comma")) {
     e.preventDefault();

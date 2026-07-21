@@ -28,6 +28,7 @@ macOS **系统级**能力（AutoFill、Credential Exchange）仍在 `apps/app_ma
 ### 快捷键
 - **⌘, / Ctrl+,**：打开设置（菜单「Pass → 设置...」与前端快捷键）
 - **⌘N / Ctrl+N**：新建账号（焦点不在输入框时）
+- **⌘A / Ctrl+A**：全选当前筛选结果中的账号（焦点不在输入框或弹层时）
 - **Esc**：关闭弹层
 
 ### Toast（提示条）
