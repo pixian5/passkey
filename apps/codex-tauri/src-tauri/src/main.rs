@@ -5,6 +5,7 @@ mod local_snapshots;
 mod provision;
 mod sync;
 mod ui_prefs;
+mod window_state;
 
 use chrono::{Local, Utc};
 use rusqlite::{params, Connection};
@@ -2032,6 +2033,20 @@ fn main() {
     tauri::Builder::default()
         .manage(AppLockState::default())
         .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                let data_dir = app_data_dir(&app.handle())?;
+                window_state::restore(&window, &data_dir);
+                let state_window = window.clone();
+                window.on_window_event(move |event| {
+                    if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                        if let Ok(data_dir) = app_data_dir(&state_window.app_handle()) {
+                            let _ = window_state::save(&state_window, &data_dir);
+                        }
+                    }
+                });
+                window.show()?;
+                window.set_focus()?;
+            }
             #[cfg(target_os = "macos")]
             {
                 use tauri::menu::{MenuBuilder, PredefinedMenuItem, SubmenuBuilder};

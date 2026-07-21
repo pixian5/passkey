@@ -15,6 +15,7 @@
         "title": "Pass Desktop",
         "width": 1280,
         "height": 800,
+        "visible": false,
         "resizable": true
       }
     ],
