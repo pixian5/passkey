@@ -1,0 +1,955 @@
+//! SSH provision of self-hosted pass-sync-server (parity with PassMac ServerProvisioning).
+
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::Duration;
+use uuid::Uuid;
+
+use crate::sync::crypto::is_valid_sync_key;
+use crate::local_vault;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshCredential {
+    #[serde(default = "default_user")]
+    pub username: String,
+    #[serde(default = "default_port")]
+    pub port: u16,
+    /// "password" | "privateKey"
+    #[serde(default = "default_auth")]
+    pub auth_mode: String,
+    /// Password or private key PEM content.
+    #[serde(default)]
+    pub secret: String,
+    #[serde(default)]
+    pub private_key_passphrase: String,
+}
+
+fn default_user() -> String {
+    "root".into()
+}
+fn default_port() -> u16 {
+    22
+}
+fn default_auth() -> String {
+    "privateKey".into()
+}
+
+impl Default for SshCredential {
+    fn default() -> Self {
+        Self {
+            username: default_user(),
+            port: default_port(),
+            auth_mode: default_auth(),
+            secret: String::new(),
+            private_key_passphrase: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct CredFile {
+    version: u32,
+    values: std::collections::BTreeMap<String, SshCredential>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProvisionResult {
+    pub host: String,
+    pub port: u16,
+    pub endpoint: String,
+    pub message: String,
+    #[serde(default)]
+    pub removed_existing: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExistingServiceReport {
+    pub host: String,
+    pub endpoint: String,
+    pub exists: bool,
+    /// Human-readable findings, e.g. unit active / files present.
+    pub findings: Vec<String>,
+    pub summary: String,
+}
+
+const CRED_FILE: &str = "server_ssh_credentials.json";
+
+pub fn load_ssh_credential(data_dir: &Path, host: &str) -> Option<SshCredential> {
+    let path = data_dir.join(CRED_FILE);
+    let raw = local_vault::read_text(data_dir, &path, "pass.tauri.ssh_credentials.v1")
+        .ok()
+        .flatten()?;
+    let file: CredFile = serde_json::from_str(&raw).ok()?;
+    file.values.get(&normalize_host(host)).cloned()
+}
+
+pub fn save_ssh_credential(data_dir: &Path, host: &str, cred: &SshCredential) -> Result<(), String> {
+    let path = data_dir.join(CRED_FILE);
+    let mut file: CredFile = local_vault::read_text(data_dir, &path, "pass.tauri.ssh_credentials.v1")
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(CredFile {
+            version: 1,
+            values: Default::default(),
+        });
+    file.version = 1;
+    file.values
+        .insert(normalize_host(host), cred.clone());
+    let raw = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
+    local_vault::write_text(data_dir, &path, "pass.tauri.ssh_credentials.v1", &raw)
+}
+
+fn normalize_host(host: &str) -> String {
+    host.trim().to_ascii_lowercase()
+}
+
+struct Endpoint {
+    host: String,
+    endpoint: String,
+    backend_port: u16,
+    uses_tls: bool,
+}
+
+fn parse_endpoint(raw: &str) -> Result<Endpoint, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("服务器地址必须是 HTTPS URL".into());
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if !lower.starts_with("https://") {
+        return Err("服务器地址必须是 HTTPS URL，并包含有效主机名".into());
+    }
+    let url = url::Url::parse(trimmed).map_err(|_| "服务器地址无效".to_string())?;
+    if url.scheme() != "https" {
+        return Err("服务器地址必须是 HTTPS URL".into());
+    }
+    let host = url
+        .host_str()
+        .filter(|h| !h.is_empty())
+        .ok_or_else(|| "服务器地址必须包含有效主机名".to_string())?
+        .to_string();
+    if url.username() != "" || url.password().is_some() {
+        return Err("服务器 URL 不要包含用户名或密码".into());
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err("服务器 URL 不要包含查询参数".into());
+    }
+    let path = url.path();
+    if !(path.is_empty() || path == "/") {
+        return Err("服务器 URL 不要包含路径".into());
+    }
+    let explicit_port = url.port();
+    let backend_port = explicit_port.unwrap_or(53333);
+    if backend_port == 0 {
+        return Err("端口无效".into());
+    }
+    let rendered_host = if host.contains(':') {
+        format!("[{host}]")
+    } else {
+        host.clone()
+    };
+    let endpoint = match explicit_port {
+        Some(p) => format!("https://{rendered_host}:{p}"),
+        None => format!("https://{rendered_host}"),
+    };
+    Ok(Endpoint {
+        host,
+        endpoint,
+        backend_port,
+        uses_tls: explicit_port.is_some(),
+    })
+}
+
+struct TempSsh {
+    dir: PathBuf,
+    key: Option<PathBuf>,
+    askpass: Option<PathBuf>,
+    password_file: Option<PathBuf>,
+    known_hosts: PathBuf,
+}
+
+impl Drop for TempSsh {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
+fn make_temp_ssh(data_dir: &Path, cred: &SshCredential) -> Result<TempSsh, String> {
+    let dir = std::env::temp_dir().join(format!("pass-tauri-ssh-{}", Uuid::new_v4()));
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
+    }
+
+    let known_hosts = data_dir.join("ssh-known-hosts");
+    if !known_hosts.exists() {
+        fs::write(&known_hosts, b"").map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&known_hosts, fs::Permissions::from_mode(0o600));
+        }
+    }
+
+    let mut key = None;
+    if cred.auth_mode == "privateKey" {
+        let path = dir.join("id_key");
+        let pem = cred.secret.replace("\r\n", "\n");
+        fs::write(&path, pem).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+        }
+        key = Some(path);
+    }
+
+    let mut askpass = None;
+    let mut password_file = None;
+    if cred.auth_mode == "password" || !cred.private_key_passphrase.trim().is_empty() {
+        let secret = if cred.auth_mode == "password" {
+            cred.secret.as_str()
+        } else {
+            cred.private_key_passphrase.as_str()
+        };
+        let value_path = dir.join("askpass-value");
+        fs::write(&value_path, secret).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&value_path, fs::Permissions::from_mode(0o600));
+        }
+        let script_path = dir.join("askpass.sh");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::write(
+                &script_path,
+                "#!/bin/sh\n/bin/cat \"$PASS_TAURI_SSH_PASSWORD_FILE\"\n",
+            )
+            .map_err(|e| e.to_string())?;
+            let _ = fs::set_permissions(&script_path, fs::Permissions::from_mode(0o700));
+        }
+        #[cfg(not(unix))]
+        {
+            return Err("当前平台暂不支持密码式 SSH 创建服务，请使用私钥".into());
+        }
+        askpass = Some(script_path);
+        password_file = Some(value_path);
+    }
+
+    Ok(TempSsh {
+        dir,
+        key,
+        askpass,
+        password_file,
+        known_hosts,
+    })
+}
+
+fn ssh_bin() -> &'static str {
+    if cfg!(windows) {
+        "ssh"
+    } else {
+        "/usr/bin/ssh"
+    }
+}
+
+fn scp_bin() -> &'static str {
+    if cfg!(windows) {
+        "scp"
+    } else {
+        "/usr/bin/scp"
+    }
+}
+
+fn base_ssh_args(cred: &SshCredential, temp: &TempSsh) -> Vec<String> {
+    let mut args = vec![
+        "-p".into(),
+        cred.port.to_string(),
+        "-o".into(),
+        "BatchMode=no".into(),
+        "-o".into(),
+        "NumberOfPasswordPrompts=1".into(),
+        "-o".into(),
+        "ConnectTimeout=15".into(),
+        "-o".into(),
+        "ServerAliveInterval=15".into(),
+        "-o".into(),
+        "ServerAliveCountMax=2".into(),
+        "-o".into(),
+        "StrictHostKeyChecking=accept-new".into(),
+        "-o".into(),
+        "LogLevel=ERROR".into(),
+        "-o".into(),
+        format!("UserKnownHostsFile={}", temp.known_hosts.display()),
+    ];
+    if let Some(ref key) = temp.key {
+        args.extend([
+            "-i".into(),
+            key.display().to_string(),
+            "-o".into(),
+            "IdentitiesOnly=yes".into(),
+            "-o".into(),
+            "PasswordAuthentication=no".into(),
+        ]);
+    } else {
+        args.extend(["-o".into(), "PubkeyAuthentication=no".into()]);
+    }
+    args
+}
+
+fn ssh_env(temp: &TempSsh) -> Vec<(String, String)> {
+    let mut env = vec![];
+    if let (Some(ask), Some(pw)) = (&temp.askpass, &temp.password_file) {
+        env.push(("SSH_ASKPASS".into(), ask.display().to_string()));
+        env.push(("SSH_ASKPASS_REQUIRE".into(), "force".into()));
+        env.push(("DISPLAY".into(), ":0".into()));
+        env.push((
+            "PASS_TAURI_SSH_PASSWORD_FILE".into(),
+            pw.display().to_string(),
+        ));
+    }
+    env
+}
+
+fn run_process(
+    exe: &str,
+    args: &[String],
+    env: &[(String, String)],
+    stdin_data: Option<&[u8]>,
+) -> Result<String, String> {
+    let mut cmd = Command::new(exe);
+    cmd.args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if stdin_data.is_some() {
+        cmd.stdin(Stdio::piped());
+    } else {
+        cmd.stdin(Stdio::null());
+    }
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("启动 {exe} 失败: {e}（请确认已安装 OpenSSH 客户端）"))?;
+    if let Some(data) = stdin_data {
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(data)
+                .map_err(|e| format!("写入 stdin 失败: {e}"))?;
+        }
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("等待 {exe} 失败: {e}"))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        let out = String::from_utf8_lossy(&output.stdout);
+        let detail = if err.trim().is_empty() {
+            out.trim()
+        } else {
+            err.trim()
+        };
+        let short: String = detail.chars().take(400).collect();
+        return Err(format!("SSH 操作失败：{short}"));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn ssh_host(endpoint: &Endpoint) -> String {
+    if endpoint.host.contains(':') {
+        format!("[{}]", endpoint.host)
+    } else {
+        endpoint.host.clone()
+    }
+}
+
+fn remote_target(cred: &SshCredential, endpoint: &Endpoint) -> String {
+    format!("{}@{}", cred.username.trim(), ssh_host(endpoint))
+}
+
+fn ssh_run(
+    cred: &SshCredential,
+    endpoint: &Endpoint,
+    temp: &TempSsh,
+    remote_cmd: &str,
+) -> Result<String, String> {
+    let mut args = base_ssh_args(cred, temp);
+    args.push(remote_target(cred, endpoint));
+    args.push(remote_cmd.to_string());
+    let env = ssh_env(temp);
+    run_process(ssh_bin(), &args, &env, None)
+}
+
+fn scp_file(
+    cred: &SshCredential,
+    endpoint: &Endpoint,
+    temp: &TempSsh,
+    local: &Path,
+    remote_path: &str,
+) -> Result<(), String> {
+    let mut args = base_ssh_args(cred, temp);
+    // scp uses -P for port
+    if let Some(i) = args.iter().position(|a| a == "-p") {
+        args[i] = "-P".into();
+    }
+    args.push(local.display().to_string());
+    args.push(format!(
+        "{}:{}",
+        remote_target(cred, endpoint),
+        remote_path
+    ));
+    let env = ssh_env(temp);
+    run_process(scp_bin(), &args, &env, None)?;
+    Ok(())
+}
+
+fn ssh_write(
+    cred: &SshCredential,
+    endpoint: &Endpoint,
+    temp: &TempSsh,
+    remote_path: &str,
+    data: &[u8],
+    mode: &str,
+) -> Result<(), String> {
+    let remote_cmd = format!("umask 077; cat > '{remote_path}'; chmod {mode} '{remote_path}'");
+    let mut args = base_ssh_args(cred, temp);
+    args.push(remote_target(cred, endpoint));
+    args.push(remote_cmd);
+    let env = ssh_env(temp);
+    run_process(ssh_bin(), &args, &env, Some(data))?;
+    Ok(())
+}
+
+fn ssh_file_exists(
+    cred: &SshCredential,
+    endpoint: &Endpoint,
+    temp: &TempSsh,
+    path: &str,
+) -> Result<bool, String> {
+    match ssh_run(cred, endpoint, temp, &format!("test -r '{path}'")) {
+        Ok(_) => Ok(true),
+        Err(_) => Ok(false),
+    }
+}
+
+fn service_text(endpoint: &Endpoint) -> String {
+    let mut lines = vec![
+        "[Unit]".into(),
+        "Description=Pass Sync Server".into(),
+        "After=network.target".into(),
+        "".into(),
+        "[Service]".into(),
+        "Type=simple".into(),
+        "User=pass".into(),
+        "Group=pass".into(),
+        "WorkingDirectory=/opt/pass-sync-server".into(),
+        format!(
+            "Environment=PASS_SYNC_HOST={}",
+            if endpoint.uses_tls {
+                "0.0.0.0"
+            } else {
+                "127.0.0.1"
+            }
+        ),
+        format!("Environment=PASS_SYNC_PORT={}", endpoint.backend_port),
+        "Environment=PASS_SYNC_DB_PATH=/var/lib/pass-sync/pass_sync.sqlite3".into(),
+        "Environment=PASS_SYNC_BEARER_TOKENS_FILE=/etc/pass-sync/tokens.conf".into(),
+        "EnvironmentFile=-/etc/pass-sync/pass-sync-server.env".into(),
+        "Environment=PASS_SYNC_LOG_LEVEL=INFO".into(),
+        "Environment=PASS_SYNC_RATE_LIMIT_PER_MINUTE=120".into(),
+        "Environment=PASS_SYNC_CLIENT_TIMEOUT_SECONDS=15".into(),
+        "Environment=PASS_SYNC_MAX_CONCURRENT_REQUESTS=32".into(),
+    ];
+    if endpoint.uses_tls {
+        lines.push("Environment=PASS_SYNC_TLS_CERT=/etc/pass-sync/tls/server.crt".into());
+        lines.push("Environment=PASS_SYNC_TLS_KEY=/etc/pass-sync/tls/server.key".into());
+    }
+    lines.extend([
+        "ExecStart=/usr/bin/python3 /opt/pass-sync-server/pass_sync_server.py".into(),
+        "Restart=always".into(),
+        "RestartSec=2".into(),
+        "".into(),
+        "[Install]".into(),
+        "WantedBy=multi-user.target".into(),
+        "".into(),
+    ]);
+    lines.join("\n")
+}
+
+const BACKUP_SERVICE: &str = r#"[Unit]
+Description=Backup Pass Sync Server database
+After=pass-sync-server.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/opt/pass-sync-server/backup_sync_db.sh
+"#;
+
+const BACKUP_TIMER: &str = r#"[Unit]
+Description=Daily Pass Sync Server database backup
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target
+"#;
+
+
+fn environment_text(sync_encryption_key: &str) -> String {
+    let configured = !sync_encryption_key.trim().is_empty();
+    format!(
+        "# 由 PassDesktop「在服务器创建服务」生成\nPASS_SYNC_ALLOW_PLAINTEXT={}\n",
+        if configured { "0" } else { "1" }
+    )
+}
+
+fn install_command(stage: &str, endpoint: &Endpoint) -> String {
+    let tls = if endpoint.uses_tls { "1" } else { "0" };
+    let port = endpoint.backend_port;
+    format!(
+        r#"
+set -eu
+if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
+$SUDO sh -c 'getent group pass >/dev/null 2>&1 || groupadd --system pass'
+$SUDO sh -c 'id -u pass >/dev/null 2>&1 || useradd --system --gid pass --home-dir /nonexistent --shell /usr/sbin/nologin pass'
+$SUDO install -d -m 0755 /opt/pass-sync-server /etc/pass-sync /var/lib/pass-sync /var/lib/pass-sync/backups
+if [ -f /var/lib/pass-sync/pass_sync.sqlite3 ]; then
+  stamp=$(date +%Y%m%d-%H%M%S)
+  $SUDO install -d -m 0750 "/var/lib/pass-sync/backups/$stamp-pre-provision"
+  if command -v sqlite3 >/dev/null 2>&1; then
+    $SUDO sqlite3 /var/lib/pass-sync/pass_sync.sqlite3 ".backup '/var/lib/pass-sync/backups/$stamp-pre-provision/pass_sync.sqlite3'"
+  else
+    $SUDO cp -a /var/lib/pass-sync/pass_sync.sqlite3 "/var/lib/pass-sync/backups/$stamp-pre-provision/pass_sync.sqlite3"
+  fi
+fi
+$SUDO install -m 0644 '{stage}/pass_sync_server.py' /opt/pass-sync-server/pass_sync_server.py
+$SUDO install -m 0755 '{stage}/backup_sync_db.sh' /opt/pass-sync-server/backup_sync_db.sh
+$SUDO install -m 0600 '{stage}/tokens.conf' /etc/pass-sync/tokens.conf
+$SUDO chown pass:pass /etc/pass-sync/tokens.conf
+$SUDO install -m 0600 '{stage}/pass-sync-server.env' /etc/pass-sync/pass-sync-server.env
+$SUDO chown root:root /etc/pass-sync/pass-sync-server.env
+if [ "{tls}" = "1" ]; then
+  $SUDO install -d -m 0750 -o pass -g pass /etc/pass-sync/tls
+  $SUDO install -m 0644 -o pass -g pass /etc/bz/certs/server.crt /etc/pass-sync/tls/server.crt
+  $SUDO install -m 0600 -o pass -g pass /etc/bz/certs/server.key /etc/pass-sync/tls/server.key
+fi
+$SUDO install -m 0644 '{stage}/pass-sync-server.service' /etc/systemd/system/pass-sync-server.service
+$SUDO install -m 0644 '{stage}/pass-sync-server-backup.service' /etc/systemd/system/pass-sync-server-backup.service
+$SUDO install -m 0644 '{stage}/pass-sync-server-backup.timer' /etc/systemd/system/pass-sync-server-backup.timer
+$SUDO chown -R pass:pass /var/lib/pass-sync
+$SUDO systemctl daemon-reload
+$SUDO systemctl enable pass-sync-server pass-sync-server-backup.timer >/dev/null
+$SUDO systemctl restart pass-sync-server
+$SUDO systemctl enable --now pass-sync-server-backup.timer >/dev/null
+if [ "{tls}" = "1" ]; then
+  if command -v ufw >/dev/null 2>&1 && $SUDO ufw status 2>/dev/null | grep -q "Status: active"; then
+    $SUDO ufw allow {port}/tcp >/dev/null
+  fi
+  healthy=0
+  for attempt in $(seq 1 30); do
+    if curl --fail --silent --show-error --insecure --max-time 15 https://127.0.0.1:{port}/healthz >/dev/null; then
+      healthy=1
+      break
+    fi
+    sleep 1
+  done
+else
+  healthy=0
+  for attempt in $(seq 1 30); do
+    if curl --fail --silent --show-error --max-time 15 http://127.0.0.1:{port}/healthz >/dev/null; then
+      healthy=1
+      break
+    fi
+    sleep 1
+  done
+fi
+if [ "$healthy" -ne 1 ]; then
+  echo "同步服务启动后健康检查失败" >&2
+  exit 1
+fi
+rm -rf '{stage}'
+"#,
+        stage = stage,
+        tls = tls,
+        port = port
+    )
+}
+
+fn resource_path(name: &str) -> Result<PathBuf, String> {
+    // Prefer bundled resource next to executable / resource dir.
+    let mut candidates = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("resources").join(name));
+            candidates.push(dir.join("../Resources/resources").join(name));
+            candidates.push(dir.join("../Resources").join(name));
+            // macOS .app Contents/MacOS -> Contents/Resources
+            candidates.push(dir.join("../Resources/resources").join(name));
+        }
+    }
+    // Dev: relative to CARGO_MANIFEST_DIR
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join(name));
+    // Workspace sibling
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../sync_server_ubuntu")
+            .join(name),
+    );
+    for c in candidates {
+        if c.is_file() {
+            return Ok(c);
+        }
+    }
+    Err(format!("未找到同步服务资源文件：{name}"))
+}
+
+pub fn verify_public_endpoint(endpoint: &str) -> bool {
+    let url = format!(
+        "{}/healthz",
+        endpoint.trim().trim_end_matches('/')
+    );
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .danger_accept_invalid_certs(true)
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    match client.get(&url).send() {
+        Ok(r) => r.status().is_success(),
+        Err(_) => false,
+    }
+}
+
+/// Remote shell that prints one finding per line (path or unit=state).
+fn detect_existing_command() -> &'static str {
+    r#"
+set -eu
+if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
+found=0
+if $SUDO test -f /etc/systemd/system/pass-sync-server.service 2>/dev/null; then
+  echo "unit_file=/etc/systemd/system/pass-sync-server.service"
+  found=1
+fi
+if $SUDO test -f /opt/pass-sync-server/pass_sync_server.py 2>/dev/null; then
+  echo "app=/opt/pass-sync-server/pass_sync_server.py"
+  found=1
+fi
+if $SUDO test -f /var/lib/pass-sync/pass_sync.sqlite3 2>/dev/null; then
+  echo "db=/var/lib/pass-sync/pass_sync.sqlite3"
+  found=1
+fi
+if $SUDO test -f /etc/pass-sync/tokens.conf 2>/dev/null; then
+  echo "tokens=/etc/pass-sync/tokens.conf"
+  found=1
+fi
+if command -v systemctl >/dev/null 2>&1; then
+  state=$($SUDO systemctl is-active pass-sync-server 2>/dev/null || true)
+  enabled=$($SUDO systemctl is-enabled pass-sync-server 2>/dev/null || true)
+  if [ -n "$state" ] && [ "$state" != "inactive" ] && [ "$state" != "unknown" ] && [ "$state" != "not-found" ]; then
+    echo "service_state=$state"
+    found=1
+  fi
+  if [ "$enabled" = "enabled" ] || [ "$enabled" = "enabled-runtime" ]; then
+    echo "service_enabled=$enabled"
+    found=1
+  fi
+fi
+if [ "$found" -eq 0 ]; then
+  echo "none"
+fi
+"#
+}
+
+fn remove_existing_command() -> &'static str {
+    r#"
+set -eu
+if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
+if command -v systemctl >/dev/null 2>&1; then
+  $SUDO systemctl stop pass-sync-server 2>/dev/null || true
+  $SUDO systemctl stop pass-sync-server-backup.timer 2>/dev/null || true
+  $SUDO systemctl stop pass-sync-server-backup.service 2>/dev/null || true
+  $SUDO systemctl disable pass-sync-server pass-sync-server-backup.timer 2>/dev/null || true
+  $SUDO systemctl disable pass-sync-server-backup.service 2>/dev/null || true
+fi
+$SUDO rm -f /etc/systemd/system/pass-sync-server.service \
+  /etc/systemd/system/pass-sync-server-backup.service \
+  /etc/systemd/system/pass-sync-server-backup.timer 2>/dev/null || true
+if command -v systemctl >/dev/null 2>&1; then
+  $SUDO systemctl daemon-reload 2>/dev/null || true
+  $SUDO systemctl reset-failed pass-sync-server 2>/dev/null || true
+fi
+$SUDO rm -rf /opt/pass-sync-server 2>/dev/null || true
+# Keep /var/lib/pass-sync data; reinstall will backup DB again.
+$SUDO rm -f /etc/pass-sync/tokens.conf /etc/pass-sync/pass-sync-server.env 2>/dev/null || true
+$SUDO rm -rf /etc/pass-sync/tls 2>/dev/null || true
+echo "removed"
+"#
+}
+
+fn findings_from_detect_output(raw: &str) -> (bool, Vec<String>) {
+    let mut findings = Vec::new();
+    let mut exists = false;
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line == "none" {
+            continue;
+        }
+        exists = true;
+        let pretty = if let Some(rest) = line.strip_prefix("unit_file=") {
+            format!("已安装 systemd 单元：{rest}")
+        } else if let Some(rest) = line.strip_prefix("app=") {
+            format!("已安装程序文件：{rest}")
+        } else if let Some(rest) = line.strip_prefix("db=") {
+            format!("已有同步数据库：{rest}")
+        } else if let Some(rest) = line.strip_prefix("tokens=") {
+            format!("已有令牌配置：{rest}")
+        } else if let Some(rest) = line.strip_prefix("service_state=") {
+            format!("服务状态：{rest}")
+        } else if let Some(rest) = line.strip_prefix("service_enabled=") {
+            format!("开机自启：{rest}")
+        } else {
+            line.to_string()
+        };
+        findings.push(pretty);
+    }
+    (exists, findings)
+}
+
+/// Probe remote host for an existing pass-sync-server installation (SSH only, no install).
+pub fn detect_existing_service(
+    data_dir: &Path,
+    server_url: &str,
+    credential: &SshCredential,
+) -> Result<ExistingServiceReport, String> {
+    let endpoint = parse_endpoint(server_url)?;
+    if credential.username.trim().is_empty() || credential.secret.trim().is_empty() {
+        return Err("请填写 SSH 密码或私钥".into());
+    }
+    if credential.port == 0 {
+        return Err("SSH 端口必须是 1 到 65535 之间的数字".into());
+    }
+    let temp = make_temp_ssh(data_dir, credential)?;
+    let out = ssh_run(credential, &endpoint, &temp, detect_existing_command())?;
+    let (exists, findings) = findings_from_detect_output(&out);
+    let summary = if exists {
+        format!(
+            "检测到服务器 {} 上已有 Pass 同步服务（{} 项）",
+            endpoint.host,
+            findings.len()
+        )
+    } else {
+        format!("服务器 {} 上未发现已安装的 Pass 同步服务", endpoint.host)
+    };
+    Ok(ExistingServiceReport {
+        host: endpoint.host,
+        endpoint: endpoint.endpoint,
+        exists,
+        findings,
+        summary,
+    })
+}
+
+pub fn provision_server(
+    data_dir: &Path,
+    server_url: &str,
+    credential: SshCredential,
+    access_token: &str,
+    sync_encryption_key: &str,
+    remove_existing: bool,
+) -> Result<ProvisionResult, String> {
+    let endpoint = parse_endpoint(server_url)?;
+    let token = access_token.trim();
+    if token.is_empty() {
+        return Err("请先填写访问令牌，再在服务器创建服务".into());
+    }
+    if token.contains(',') || token.contains('\n') || token.contains('\r') {
+        return Err("访问令牌不能包含逗号、换行或回车".into());
+    }
+    if !is_valid_sync_key(sync_encryption_key) {
+        return Err("同步加密密钥无效，必须是 256 位密钥；留空表示明文同步".into());
+    }
+    if credential.username.trim().is_empty() || credential.secret.trim().is_empty() {
+        return Err("请填写 SSH 密码或私钥".into());
+    }
+    if credential.port == 0 {
+        return Err("SSH 端口必须是 1 到 65535 之间的数字".into());
+    }
+
+    let server_py = resource_path("pass_sync_server.py")?;
+    let backup_sh = resource_path("backup_sync_db.sh")?;
+    let temp = make_temp_ssh(data_dir, &credential)?;
+
+    if endpoint.uses_tls {
+        let has_crt = ssh_file_exists(&credential, &endpoint, &temp, "/etc/bz/certs/server.crt")?;
+        let has_key = ssh_file_exists(&credential, &endpoint, &temp, "/etc/bz/certs/server.key")?;
+        if !has_crt || !has_key {
+            return Err(
+                "服务器 URL 使用了 HTTPS 端口，但服务器缺少 /etc/bz/certs/server.crt 或 server.key"
+                    .into(),
+            );
+        }
+    }
+
+    let detect_out = ssh_run(&credential, &endpoint, &temp, detect_existing_command())?;
+    let (exists, findings) = findings_from_detect_output(&detect_out);
+    if exists && !remove_existing {
+        return Err(format!(
+            "EXISTING_SERVICE:{}|{}",
+            endpoint.host,
+            findings.join("；")
+        ));
+    }
+
+    let mut removed_existing = false;
+    if exists && remove_existing {
+        ssh_run(&credential, &endpoint, &temp, remove_existing_command())?;
+        removed_existing = true;
+    }
+
+    let stage = format!("/tmp/pass-sync-provision-{}", Uuid::new_v4());
+    ssh_run(
+        &credential,
+        &endpoint,
+        &temp,
+        &format!("mkdir -p '{stage}'"),
+    )?;
+
+    let cleanup = || {
+        let _ = ssh_run(
+            &credential,
+            &endpoint,
+            &temp,
+            &format!("rm -rf '{stage}'"),
+        );
+    };
+
+    if let Err(e) = scp_file(
+        &credential,
+        &endpoint,
+        &temp,
+        &server_py,
+        &format!("{stage}/pass_sync_server.py"),
+    ) {
+        cleanup();
+        return Err(e);
+    }
+    if let Err(e) = scp_file(
+        &credential,
+        &endpoint,
+        &temp,
+        &backup_sh,
+        &format!("{stage}/backup_sync_db.sh"),
+    ) {
+        cleanup();
+        return Err(e);
+    }
+
+    let tokens = format!("default={token}\n");
+    if let Err(e) = ssh_write(
+        &credential,
+        &endpoint,
+        &temp,
+        &format!("{stage}/tokens.conf"),
+        tokens.as_bytes(),
+        "0600",
+    ) {
+        cleanup();
+        return Err(e);
+    }
+    if let Err(e) = ssh_write(
+        &credential,
+        &endpoint,
+        &temp,
+        &format!("{stage}/pass-sync-server.service"),
+        service_text(&endpoint).as_bytes(),
+        "0644",
+    ) {
+        cleanup();
+        return Err(e);
+    }
+    if let Err(e) = ssh_write(
+        &credential,
+        &endpoint,
+        &temp,
+        &format!("{stage}/pass-sync-server-backup.service"),
+        BACKUP_SERVICE.as_bytes(),
+        "0644",
+    ) {
+        cleanup();
+        return Err(e);
+    }
+    if let Err(e) = ssh_write(
+        &credential,
+        &endpoint,
+        &temp,
+        &format!("{stage}/pass-sync-server-backup.timer"),
+        BACKUP_TIMER.as_bytes(),
+        "0644",
+    ) {
+        cleanup();
+        return Err(e);
+    }
+    if let Err(e) = ssh_write(
+        &credential,
+        &endpoint,
+        &temp,
+        &format!("{stage}/pass-sync-server.env"),
+        environment_text(sync_encryption_key).as_bytes(),
+        "0600",
+    ) {
+        cleanup();
+        return Err(e);
+    }
+
+    let install = install_command(&stage, &endpoint);
+    if let Err(e) = ssh_run(&credential, &endpoint, &temp, &install) {
+        cleanup();
+        return Err(e);
+    }
+
+    save_ssh_credential(data_dir, &endpoint.host, &credential)?;
+
+    let ok = verify_public_endpoint(&endpoint.endpoint);
+    let mut message = if ok {
+        format!("已在服务器创建同步服务：{}", endpoint.endpoint)
+    } else {
+        format!(
+            "服务器已安装，但暂时无法从本机访问：{}/healthz；请检查防火墙、DNS、端口映射和证书",
+            endpoint.endpoint
+        )
+    };
+    if removed_existing {
+        message = format!("已删除旧服务后重新创建。{message}");
+    }
+
+    Ok(ProvisionResult {
+        host: endpoint.host,
+        port: endpoint.backend_port,
+        endpoint: endpoint.endpoint,
+        message,
+        removed_existing,
+    })
+}
+
+pub fn host_from_server_url(raw: &str) -> Option<String> {
+    parse_endpoint(raw).ok().map(|e| e.host)
+}

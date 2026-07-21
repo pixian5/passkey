@@ -1,5 +1,10 @@
 mod app_lock;
+mod exchange;
+mod local_vault;
+mod local_snapshots;
+mod provision;
 mod sync;
+mod ui_prefs;
 
 use chrono::{Local, Utc};
 use rusqlite::{params, Connection};
@@ -12,9 +17,22 @@ use uuid::Uuid;
 use pass_merge::v2::{sync_alias_groups, Folder, Passkey, PasswordAccount, SyncPayload};
 
 use app_lock::{AppLockPublicState, AppLockState};
-use sync::pipeline::{local_payload_from_vault, preview_sync, run_sync};
+use exchange::{
+    browser_entries_from_csv, build_bundle_bytes, build_csv_string, export_browser_csv,
+    import_bundle_content, list_sync_versions, local_from_parts, merge_imported_accounts,
+    restore_sync_version, run_sync_with_mode, ImportResult, PathResult, SyncVersionSummary,
+};
+use local_snapshots::LocalSnapshotSummary;
+use sync::crypto::key_id;
+use sync::pipeline::{local_payload_from_vault, preview_sync, run_sync, SyncMode};
 use sync::settings::{load_sync_settings, save_sync_settings, SyncSettings};
 use sync::{generate_sync_key, is_valid_sync_key};
+use provision::{
+    detect_existing_service, host_from_server_url, load_ssh_credential, provision_server,
+    save_ssh_credential, verify_public_endpoint, ExistingServiceReport, ProvisionResult,
+    SshCredential,
+};
+use ui_prefs::{load_ui_prefs, save_ui_prefs, UiPrefs};
 
 const KEY_ACCOUNTS: &str = "accounts.v2";
 const KEY_ACCOUNTS_LEGACY: &str = "accounts.v1";
@@ -218,6 +236,7 @@ fn create_account(
         last_operated_device_name: device_name,
         ..Default::default()
     };
+    snapshot_current_vault(&conn, &dir, "新建账号前自动备份")?;
     add_account_to_folder(&mut account, pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID);
     apply_automatic_folder_rules(&mut account, &folders);
     accounts.push(account);
@@ -250,6 +269,10 @@ fn update_account(
     if sites.is_empty() {
         return Err("至少填写一个站点".into());
     }
+    if !accounts.iter().any(|item| account_matches_id(item, &id)) {
+        return Err("未找到要更新的账号".into());
+    }
+    snapshot_current_vault(&conn, &dir, "编辑账号前自动备份")?;
     let mut found = false;
     for item in &mut accounts {
         if account_matches_id(item, &id) {
@@ -306,6 +329,10 @@ fn soft_delete_account(
 
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
+    if !accounts.iter().any(|item| account_matches_id(item, &id)) {
+        return Err("未找到要删除的账号".into());
+    }
+    snapshot_current_vault(&conn, &dir, "移入回收站前自动备份")?;
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
     if let Some(item) = accounts.iter_mut().find(|a| account_matches_id(a, &id)) {
@@ -313,8 +340,6 @@ fn soft_delete_account(
         item.deleted_at_ms = Some(now);
         item.deleted_device_name = device_name;
         item.updated_at_ms = now;
-    } else {
-        return Err("未找到要删除的账号".into());
     }
     save_accounts(&conn, &accounts)?;
     Ok(())
@@ -331,6 +356,10 @@ fn restore_account(
 
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
+    if !accounts.iter().any(|item| account_matches_id(item, &id)) {
+        return Err("未找到要恢复的账号".into());
+    }
+    snapshot_current_vault(&conn, &dir, "恢复账号前自动备份")?;
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
     if let Some(item) = accounts.iter_mut().find(|a| account_matches_id(a, &id)) {
@@ -339,8 +368,6 @@ fn restore_account(
         item.deleted_device_name.clear();
         item.updated_at_ms = now;
         item.last_operated_device_name = device_name;
-    } else {
-        return Err("未找到要恢复的账号".into());
     }
     sync_alias_sites(&mut accounts);
     save_accounts(&conn, &accounts)?;
@@ -358,6 +385,10 @@ fn hard_delete_account(
 
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
+    if !accounts.iter().any(|item| account_matches_id(item, &id)) {
+        return Err("未找到要彻底删除的账号".into());
+    }
+    snapshot_current_vault(&conn, &dir, "彻底删除账号前自动备份")?;
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
     let mut found = false;
@@ -375,9 +406,7 @@ fn hard_delete_account(
             break;
         }
     }
-    if !found {
-        return Err("未找到要彻底删除的账号".into());
-    }
+    debug_assert!(found);
     save_accounts(&conn, &accounts)?;
     Ok(())
 }
@@ -389,6 +418,7 @@ fn generate_demo_accounts(app: AppHandle, state: tauri::State<AppLockState>) -> 
 
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
+    snapshot_current_vault(&conn, &dir, "生成演示账号前自动备份")?;
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
     let samples = [
@@ -590,13 +620,494 @@ fn sync_now(app: AppHandle, state: tauri::State<AppLockState>) -> Result<String,
     let folders = load_folders(&conn)?;
     let passkeys = load_passkeys(&conn)?;
     let local = local_payload_from_vault(&accounts, &folders, &passkeys, &device);
-    let (report, applied) = run_sync(&settings, local, &device, current_platform())?;
+    let (report, applied) = run_sync(&settings, local.clone(), &device, current_platform())?;
     if report.applied {
+        local_snapshots::create(&dir, &local, "同步写入本地前自动备份")?;
         save_accounts(&conn, &applied.accounts)?;
         save_folders(&conn, &applied.folders)?;
         save_passkeys(&conn, &applied.passkeys)?;
     }
     serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
+}
+
+fn load_settings_unlocked(
+    app: &AppHandle,
+    state: &AppLockState,
+) -> Result<(PathBuf, SyncSettings, Connection), String> {
+    let dir = app_data_dir(app)?;
+    state.require_unlocked(&dir)?;
+    let conn = open_db(app)?;
+    let mut settings = load_sync_settings(&dir);
+    if let Ok((token, key)) = state.open_sync_secrets(&dir) {
+        if !token.is_empty() {
+            settings.auth_token = token;
+        }
+        if !key.is_empty() {
+            settings.encryption_key = key;
+        }
+    }
+    Ok((dir, settings, conn))
+}
+
+#[tauri::command]
+fn sync_now_mode(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    mode: String,
+) -> Result<String, String> {
+    let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
+    let _ = dir;
+    let device = load_device_name(&conn)?;
+    let accounts = load_accounts(&conn)?;
+    let folders = load_folders(&conn)?;
+    let passkeys = load_passkeys(&conn)?;
+    let local = local_payload_from_vault(&accounts, &folders, &passkeys, &device);
+    let mode = SyncMode::parse(&mode);
+    let (report, applied) =
+        run_sync_with_mode(&settings, local.clone(), &device, current_platform(), mode)?;
+    if report.applied {
+        local_snapshots::create(&dir, &local, "同步写入本地前自动备份")?;
+        save_accounts(&conn, &applied.accounts)?;
+        save_folders(&conn, &applied.folders)?;
+        save_passkeys(&conn, &applied.passkeys)?;
+    }
+    serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_ui_prefs(app: AppHandle) -> Result<UiPrefs, String> {
+    let dir = app_data_dir(&app)?;
+    Ok(load_ui_prefs(&dir))
+}
+
+#[tauri::command]
+fn set_ui_prefs(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    prefs: UiPrefs,
+) -> Result<(), String> {
+    let dir = app_data_dir(&app)?;
+    // Allow reading locked, but writing only when unlocked if lock enabled.
+    let lock = state.public_state(&dir);
+    if lock.enabled && lock.locked {
+        return Err("应用已锁定".into());
+    }
+    let mut prefs = prefs;
+    prefs.text_font_size = prefs.text_font_size.clamp(12.0, 40.0);
+    prefs.button_font_size = prefs.button_font_size.clamp(12.0, 52.0);
+    prefs.toast_duration_seconds = prefs.toast_duration_seconds.clamp(1.0, 10.0);
+    if ![0, 1, 5, 15, 30, 60].contains(&prefs.auto_sync_interval_minutes) {
+        prefs.auto_sync_interval_minutes = 0;
+    }
+    save_ui_prefs(&dir, &prefs)
+}
+
+#[tauri::command]
+fn sync_key_id(key: String) -> String {
+    key_id(&key)
+}
+
+#[tauri::command]
+fn export_sync_bundle(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    path: Option<String>,
+) -> Result<PathResult, String> {
+    let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
+    let device = load_device_name(&conn)?;
+    let accounts = load_accounts(&conn)?;
+    let folders = load_folders(&conn)?;
+    let passkeys = load_passkeys(&conn)?;
+    let local = local_from_parts(&accounts, &folders, &passkeys, &device);
+    let bytes = build_bundle_bytes(
+        &local,
+        &device,
+        current_platform(),
+        &settings.encryption_key,
+    )?;
+    let out = if let Some(p) = path.filter(|s| !s.trim().is_empty()) {
+        PathBuf::from(p)
+    } else {
+        let ts = Local::now().format("%Y%m%d-%H%M%S");
+        dir.join(format!("pass-sync-bundle-{ts}.json"))
+    };
+    if let Some(parent) = out.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+    }
+    fs::write(&out, bytes).map_err(|e| format!("写入同步包失败: {e}"))?;
+    Ok(PathResult {
+        path: out.to_string_lossy().to_string(),
+        message: format!("已导出同步包：{}", out.display()),
+    })
+}
+
+#[tauri::command]
+fn import_sync_bundle(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    path: String,
+    apply: bool,
+) -> Result<String, String> {
+    let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
+    let prefs = load_ui_prefs(&dir);
+    let content = fs::read(&path).map_err(|e| format!("读取同步包失败: {e}"))?;
+    let device = load_device_name(&conn)?;
+    let accounts = load_accounts(&conn)?;
+    let folders = load_folders(&conn)?;
+    let passkeys = load_passkeys(&conn)?;
+    let local = local_from_parts(&accounts, &folders, &passkeys, &device);
+    let result = import_bundle_content(
+        local.clone(),
+        &content,
+        &settings.encryption_key,
+        &prefs.previous_encryption_key,
+    )?;
+    if apply && result.safe {
+        local_snapshots::create(&dir, &local, "导入同步包前自动备份")?;
+        save_accounts(&conn, &result.payload.accounts)?;
+        save_folders(&conn, &result.payload.folders)?;
+        save_passkeys(&conn, &result.payload.passkeys)?;
+    }
+    serde_json::to_string(&result).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn import_sync_bundle_text(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    content: String,
+    apply: bool,
+) -> Result<String, String> {
+    let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
+    let prefs = load_ui_prefs(&dir);
+    let device = load_device_name(&conn)?;
+    let accounts = load_accounts(&conn)?;
+    let folders = load_folders(&conn)?;
+    let passkeys = load_passkeys(&conn)?;
+    let local = local_from_parts(&accounts, &folders, &passkeys, &device);
+    let result = import_bundle_content(
+        local.clone(),
+        content.as_bytes(),
+        &settings.encryption_key,
+        &prefs.previous_encryption_key,
+    )?;
+    if apply && result.safe {
+        local_snapshots::create(&dir, &local, "导入同步包前自动备份")?;
+        save_accounts(&conn, &result.payload.accounts)?;
+        save_folders(&conn, &result.payload.folders)?;
+        save_passkeys(&conn, &result.payload.passkeys)?;
+    }
+    serde_json::to_string(&result).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn export_browser_csv_cmd(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    format: String,
+    path: Option<String>,
+) -> Result<PathResult, String> {
+    let (dir, _settings, conn) = load_settings_unlocked(&app, &state)?;
+    let accounts = load_accounts(&conn)?;
+    let (headers, rows) = export_browser_csv(&accounts, &format)?;
+    let header_refs: Vec<&str> = headers.iter().copied().collect();
+    let csv = build_csv_string(&header_refs, &rows);
+    let out = if let Some(p) = path.filter(|s| !s.trim().is_empty()) {
+        PathBuf::from(p)
+    } else {
+        let ts = Local::now().format("%Y%m%d-%H%M%S");
+        dir.join(format!("pass-{format}-passwords-{ts}.csv"))
+    };
+    if let Some(parent) = out.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+    }
+    fs::write(&out, csv).map_err(|e| format!("写入 CSV 失败: {e}"))?;
+    Ok(PathResult {
+        path: out.to_string_lossy().to_string(),
+        message: format!("已导出 {} 密码 CSV：{}", format, out.display()),
+    })
+}
+
+#[tauri::command]
+fn import_browser_csv(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    path: String,
+) -> Result<ImportResult, String> {
+    let (dir, _settings, conn) = load_settings_unlocked(&app, &state)?;
+    let text = fs::read_to_string(&path).map_err(|e| format!("读取 CSV 失败: {e}"))?;
+    let imported = browser_entries_from_csv(&text)?;
+    let device = load_device_name(&conn)?;
+    let existing = load_accounts(&conn)?;
+    snapshot_current_vault(&conn, &dir, "导入浏览器密码前自动备份")?;
+    let before = existing.len();
+    let merged = merge_imported_accounts(existing, imported.clone(), &device);
+    save_accounts(&conn, &merged)?;
+    Ok(ImportResult {
+        format: "browser".into(),
+        imported: imported.len(),
+        skipped: 0,
+        message: format!(
+            "已导入 {} 条浏览器密码；账号 {} → {}",
+            imported.len(),
+            before,
+            merged.len()
+        ),
+    })
+}
+
+#[tauri::command]
+fn import_browser_csv_text(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    content: String,
+) -> Result<ImportResult, String> {
+    let (dir, _settings, conn) = load_settings_unlocked(&app, &state)?;
+    let imported = browser_entries_from_csv(&content)?;
+    let device = load_device_name(&conn)?;
+    let existing = load_accounts(&conn)?;
+    snapshot_current_vault(&conn, &dir, "导入浏览器密码前自动备份")?;
+    let before = existing.len();
+    let merged = merge_imported_accounts(existing, imported.clone(), &device);
+    save_accounts(&conn, &merged)?;
+    Ok(ImportResult {
+        format: "browser".into(),
+        imported: imported.len(),
+        skipped: 0,
+        message: format!(
+            "已导入 {} 条浏览器密码；账号 {} → {}",
+            imported.len(),
+            before,
+            merged.len()
+        ),
+    })
+}
+
+#[tauri::command]
+fn export_csv_to_path(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    path: Option<String>,
+) -> Result<PathResult, String> {
+    let (dir, _settings, conn) = load_settings_unlocked(&app, &state)?;
+    let prefs = load_ui_prefs(&dir);
+    let mut accounts = load_accounts(&conn)?;
+    sort_accounts(&mut accounts);
+    let timestamp = Local::now().format("%Y%m%d-%H%M%S");
+    let out = if let Some(p) = path.filter(|s| !s.trim().is_empty()) {
+        PathBuf::from(p)
+    } else if !prefs.export_directory.trim().is_empty() {
+        PathBuf::from(prefs.export_directory.trim())
+            .join(format!("pass-export-{timestamp}.csv"))
+    } else {
+        dir.join(format!("pass-export-{timestamp}.csv"))
+    };
+    if let Some(parent) = out.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建导出目录失败: {e}"))?;
+    }
+    let rows: Vec<Vec<String>> = accounts
+        .iter()
+        .filter(|a| !a.is_deleted)
+        .map(|item| {
+            vec![
+                item.resolved_record_id(),
+                item.sites.join(";"),
+                item.username.clone(),
+                item.password.clone(),
+                item.totp_secret.clone(),
+                item.recovery_codes.clone(),
+                item.note.clone(),
+                format_timestamp(item.updated_at_ms),
+            ]
+        })
+        .collect();
+    let headers = [
+        "id",
+        "sites",
+        "username",
+        "password",
+        "totp",
+        "recovery_codes",
+        "note",
+        "updated_at",
+    ];
+    let csv = pass_csvio::build_csv(&headers, &rows);
+    fs::write(&out, csv).map_err(|e| format!("写入 CSV 失败: {e}"))?;
+    Ok(PathResult {
+        path: out.to_string_lossy().to_string(),
+        message: format!("已导出全部账号 CSV：{}", out.display()),
+    })
+}
+
+#[tauri::command]
+fn list_server_versions(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<Vec<SyncVersionSummary>, String> {
+    let (_dir, settings, _conn) = load_settings_unlocked(&app, &state)?;
+    list_sync_versions(&settings)
+}
+
+#[tauri::command]
+fn restore_server_version(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    version_id: String,
+) -> Result<String, String> {
+    let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
+    let device = load_device_name(&conn)?;
+    let local = local_payload_from_vault(
+        &load_accounts(&conn)?,
+        &load_folders(&conn)?,
+        &load_passkeys(&conn)?,
+        &device,
+    );
+    let (payload, _) = restore_sync_version(&settings, &version_id)?;
+    local_snapshots::create(&dir, &local, "恢复服务器快照前自动备份")?;
+    save_accounts(&conn, &payload.accounts)?;
+    save_folders(&conn, &payload.folders)?;
+    save_passkeys(&conn, &payload.passkeys)?;
+    Ok(format!(
+        "已恢复快照 {}：账号 {}，文件夹 {}，通行密钥 {}",
+        version_id,
+        payload.accounts.len(),
+        payload.folders.len(),
+        payload.passkeys.len()
+    ))
+}
+
+fn snapshot_current_vault(
+    conn: &Connection,
+    data_dir: &std::path::Path,
+    reason: &str,
+) -> Result<(), String> {
+    let device = load_device_name(conn)?;
+    let payload = local_payload_from_vault(
+        &load_accounts(conn)?,
+        &load_folders(conn)?,
+        &load_passkeys(conn)?,
+        &device,
+    );
+    local_snapshots::create(data_dir, &payload, reason)
+}
+
+#[tauri::command]
+fn list_local_snapshots(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<Vec<LocalSnapshotSummary>, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    local_snapshots::list(&dir)
+}
+
+#[tauri::command]
+fn restore_local_snapshot(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    snapshot_id: String,
+) -> Result<String, String> {
+    let (dir, _settings, conn) = load_settings_unlocked(&app, &state)?;
+    let device = load_device_name(&conn)?;
+    let current = local_payload_from_vault(
+        &load_accounts(&conn)?,
+        &load_folders(&conn)?,
+        &load_passkeys(&conn)?,
+        &device,
+    );
+    let payload = local_snapshots::get(&dir, &snapshot_id)?;
+    local_snapshots::create(&dir, &current, "恢复本地安全快照前自动备份")?;
+    save_accounts(&conn, &payload.accounts)?;
+    save_folders(&conn, &payload.folders)?;
+    save_passkeys(&conn, &payload.passkeys)?;
+    Ok(format!(
+        "已恢复本地安全快照：账号 {}，文件夹 {}，通行密钥 {}",
+        payload.accounts.len(),
+        payload.folders.len(),
+        payload.passkeys.len()
+    ))
+}
+
+#[tauri::command]
+fn get_ssh_credential(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    server_url: String,
+) -> Result<SshCredential, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let host = host_from_server_url(&server_url).unwrap_or_default();
+    Ok(load_ssh_credential(&dir, &host).unwrap_or_default())
+}
+
+#[tauri::command]
+fn save_ssh_credential_cmd(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    server_url: String,
+    credential: SshCredential,
+) -> Result<(), String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let host = host_from_server_url(&server_url)
+        .ok_or_else(|| "服务器地址无效，无法保存 SSH 凭据".to_string())?;
+    save_ssh_credential(&dir, &host, &credential)
+}
+
+#[tauri::command]
+fn detect_existing_sync_service(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    server_url: String,
+    credential: SshCredential,
+) -> Result<ExistingServiceReport, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    detect_existing_service(&dir, &server_url, &credential)
+}
+
+#[tauri::command]
+fn provision_self_hosted_server(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    server_url: String,
+    credential: SshCredential,
+    access_token: String,
+    sync_encryption_key: String,
+    remove_existing: Option<bool>,
+) -> Result<ProvisionResult, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let result = provision_server(
+        &dir,
+        &server_url,
+        credential,
+        &access_token,
+        &sync_encryption_key,
+        remove_existing.unwrap_or(false),
+    )?;
+    // Persist sync settings used for this endpoint.
+    let mut settings = load_sync_settings(&dir);
+    settings.enabled = true;
+    settings.base_url = result.endpoint.clone();
+    settings.auth_token = access_token.trim().to_string();
+    settings.encryption_key = sync_encryption_key.trim().to_string();
+    let lock = state.public_state(&dir);
+    if lock.enabled && lock.has_password {
+        state.seal_sync_secrets(&dir, &settings.auth_token, &settings.encryption_key)?;
+        let mut stored = settings.clone();
+        stored.auth_token.clear();
+        stored.encryption_key.clear();
+        save_sync_settings(&dir, &stored)?;
+    } else {
+        save_sync_settings(&dir, &settings)?;
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+fn verify_sync_endpoint(endpoint: String) -> bool {
+    verify_public_endpoint(&endpoint)
 }
 
 fn account_matches_id(account: &PasswordAccount, id: &str) -> bool {
@@ -1066,20 +1577,42 @@ fn read_kv(conn: &Connection, key: &str) -> Result<Option<String>, String> {
         .query(params![key])
         .map_err(|e| format!("读取数据失败: {e}"))?;
     if let Some(row) = rows.next().map_err(|e| format!("读取数据行失败: {e}"))? {
-        let value: String = row.get(0).map_err(|e| format!("读取字段失败: {e}"))?;
-        Ok(Some(value))
+        let stored: String = row.get(0).map_err(|e| format!("读取字段失败: {e}"))?;
+        let db_path = conn
+            .path()
+            .ok_or_else(|| "无法确定本地数据库路径".to_string())?;
+        let data_dir = PathBuf::from(db_path)
+            .parent()
+            .ok_or_else(|| "本地数据库路径无父目录".to_string())?
+            .to_path_buf();
+        match local_vault::decrypt_text(&data_dir, "pass.tauri.sqlite.kv.v1", &stored)? {
+            Some(value) => Ok(Some(value)),
+            None => {
+                // Existing plaintext rows migrate immediately after a successful read.
+                write_kv(conn, key, &stored)?;
+                Ok(Some(stored))
+            }
+        }
     } else {
         Ok(None)
     }
 }
 
 fn write_kv(conn: &Connection, key: &str, value: &str) -> Result<(), String> {
+    let db_path = conn
+        .path()
+        .ok_or_else(|| "无法确定本地数据库路径".to_string())?;
+    let db_path = PathBuf::from(db_path);
+    let data_dir = db_path
+        .parent()
+        .ok_or_else(|| "本地数据库路径无父目录".to_string())?;
+    let encrypted = local_vault::encrypt_text(data_dir, "pass.tauri.sqlite.kv.v1", value)?;
     conn.execute(
         "
         INSERT INTO kv (key, value) VALUES (?1, ?2)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
     ",
-        params![key, value],
+        params![key, encrypted],
     )
     .map_err(|e| format!("写入数据失败: {e}"))?;
     Ok(())
@@ -1188,6 +1721,7 @@ fn create_folder(
         created_at_ms: now,
         updated_at_ms: now,
     };
+    snapshot_current_vault(&conn, &dir, "新建文件夹前自动备份")?;
     folders.push(folder.clone());
     save_folders(&conn, &folders)?;
     Ok(folder)
@@ -1216,21 +1750,23 @@ fn delete_folder(
             save_accounts(&conn, &accounts)?;
         }
     }
+    let folder = folders
+        .iter()
+        .find(|folder| folder.id.eq_ignore_ascii_case(&id))
+        .ok_or_else(|| "未找到文件夹".to_string())?;
+    if folder.id.eq_ignore_ascii_case(pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID) {
+        return Err("固定文件夹不可删除".into());
+    }
+    if folder.is_deleted || folder.is_permanently_deleted {
+        return Err("文件夹已删除".into());
+    }
+    snapshot_current_vault(&conn, &dir, "删除文件夹前自动备份")?;
     let device = load_device_name(&conn)?;
     let now = now_ms();
     let folder = folders
         .iter_mut()
         .find(|folder| folder.id.eq_ignore_ascii_case(&id))
         .ok_or_else(|| "未找到文件夹".to_string())?;
-    if folder
-        .id
-        .eq_ignore_ascii_case(pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID)
-    {
-        return Err("固定文件夹不可删除".into());
-    }
-    if folder.is_deleted || folder.is_permanently_deleted {
-        return Err("文件夹已删除".into());
-    }
     folder.is_deleted = true;
     folder.is_permanently_deleted = true;
     folder.deleted_at_ms = Some(now);
@@ -1266,6 +1802,10 @@ fn set_account_folders(
     state.require_unlocked(&dir)?;
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
+    if !accounts.iter().any(|account| account_matches_id(account, &id)) {
+        return Err("未找到账号".into());
+    }
+    snapshot_current_vault(&conn, &dir, "调整账号文件夹前自动备份")?;
     let device = load_device_name(&conn)?;
     let now = now_ms();
     let normalized: Vec<String> = folder_ids
@@ -1284,9 +1824,7 @@ fn set_account_folders(
             break;
         }
     }
-    if !found {
-        return Err("未找到账号".into());
-    }
+    debug_assert!(found);
     save_accounts(&conn, &accounts)?;
     Ok(())
 }
@@ -1304,13 +1842,18 @@ fn configure_folder_site_rules(
     let conn = open_db(&app)?;
     let mut folders = load_folders(&conn)?;
     let normalized_id = folder_id.trim().to_ascii_lowercase();
+    let existing = folders
+        .iter()
+        .find(|folder| folder.id.eq_ignore_ascii_case(&normalized_id))
+        .ok_or_else(|| "未找到文件夹".to_string())?;
+    if existing.is_deleted || existing.is_permanently_deleted {
+        return Err("目标文件夹已删除".into());
+    }
+    snapshot_current_vault(&conn, &dir, "调整文件夹规则前自动备份")?;
     let folder = folders
         .iter_mut()
         .find(|folder| folder.id.eq_ignore_ascii_case(&normalized_id))
         .ok_or_else(|| "未找到文件夹".to_string())?;
-    if folder.is_deleted || folder.is_permanently_deleted {
-        return Err("目标文件夹已删除".into());
-    }
 
     let normalized_sites = normalize_rule_sites(site_inputs);
     folder.matched_sites = normalized_sites.clone();
@@ -1444,6 +1987,8 @@ fn deduplicate_folder(
         _ => return Err("未知去重方式".into()),
     }
 
+    snapshot_current_vault(&conn, &dir, "文件夹去重前自动备份")?;
+
     let duplicate_ids: BTreeSet<String> = groups
         .iter()
         .flat_map(|group| {
@@ -1486,6 +2031,64 @@ fn deduplicate_folder(
 fn main() {
     tauri::Builder::default()
         .manage(AppLockState::default())
+        .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::{MenuBuilder, PredefinedMenuItem, SubmenuBuilder};
+                // Native app menu with Settings (⌘,) for macOS parity with PassMac.
+                let app_submenu = SubmenuBuilder::new(app, "Pass Desktop")
+                    .item(&PredefinedMenuItem::about(app, Some("关于 Pass Desktop"), None)?)
+                    .separator()
+                    .item(&PredefinedMenuItem::hide(app, Some("隐藏 Pass Desktop"))?)
+                    .item(&PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?)
+                    .item(&PredefinedMenuItem::show_all(app, Some("全部显示"))?)
+                    .separator()
+                    .item(&PredefinedMenuItem::quit(app, Some("退出 Pass Desktop"))?)
+                    .build()?;
+                // Custom Settings item with accelerator
+                use tauri::menu::{MenuItemBuilder};
+                let settings_item = MenuItemBuilder::with_id("open_settings", "设置...")
+                    .accelerator("CmdOrCtrl+,")
+                    .build(app)?;
+                let edit_submenu = SubmenuBuilder::new(app, "编辑")
+                    .item(&PredefinedMenuItem::undo(app, Some("撤销"))?)
+                    .item(&PredefinedMenuItem::redo(app, Some("重做"))?)
+                    .separator()
+                    .item(&PredefinedMenuItem::cut(app, Some("剪切"))?)
+                    .item(&PredefinedMenuItem::copy(app, Some("拷贝"))?)
+                    .item(&PredefinedMenuItem::paste(app, Some("粘贴"))?)
+                    .item(&PredefinedMenuItem::select_all(app, Some("全选"))?)
+                    .build()?;
+                let window_submenu = SubmenuBuilder::new(app, "窗口")
+                    .item(&PredefinedMenuItem::minimize(app, Some("最小化"))?)
+                    .item(&PredefinedMenuItem::maximize(app, Some("缩放"))?)
+                    .separator()
+                    .item(&PredefinedMenuItem::close_window(app, Some("关闭窗口"))?)
+                    .build()?;
+                let app_menu = MenuBuilder::new(app)
+                    .item(&app_submenu)
+                    .item(
+                        &SubmenuBuilder::new(app, "Pass")
+                            .item(&settings_item)
+                            .build()?,
+                    )
+                    .item(&edit_submenu)
+                    .item(&window_submenu)
+                    .build()?;
+                app.set_menu(app_menu)?;
+                let handle = app.handle().clone();
+                app.on_menu_event(move |_app, event| {
+                    if event.id() == "open_settings" {
+                        if let Some(window) = handle.get_webview_window("main") {
+                            let _ = window.eval(
+                                "window.dispatchEvent(new CustomEvent('pass-open-settings'));",
+                            );
+                        }
+                    }
+                });
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             health_check,
             get_app_state,
@@ -1503,12 +2106,32 @@ fn main() {
             get_folder_duplicate_groups,
             deduplicate_folder,
             export_csv,
+            export_csv_to_path,
             merge_sync_payloads,
             get_sync_settings,
             set_sync_settings,
             generate_sync_encryption_key,
+            sync_key_id,
             sync_preview,
             sync_now,
+            sync_now_mode,
+            get_ui_prefs,
+            set_ui_prefs,
+            export_sync_bundle,
+            import_sync_bundle,
+            import_sync_bundle_text,
+            export_browser_csv_cmd,
+            import_browser_csv,
+            import_browser_csv_text,
+            list_server_versions,
+            restore_server_version,
+            list_local_snapshots,
+            restore_local_snapshot,
+            get_ssh_credential,
+            save_ssh_credential_cmd,
+            detect_existing_sync_service,
+            provision_self_hosted_server,
+            verify_sync_endpoint,
             get_lock_state,
             lock_enable,
             lock_disable,

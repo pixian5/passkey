@@ -19,7 +19,7 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'",
       "capabilities": [
         "default"
       ]
@@ -38,8 +38,11 @@
       "icons/icon.ico"
     ],
     "category": "Productivity",
-    "shortDescription": "pass \u684c\u9762\u7aef Tauri \u7248\u672c",
-    "longDescription": "\u7528\u4e8e Windows\u3001Ubuntu \u548c macOS \u7684 pass \u684c\u9762\u7aef\u3002",
-    "createUpdaterArtifacts": false
+    "shortDescription": "pass 桌面端 Tauri 版本",
+    "longDescription": "用于 Windows、Ubuntu 和 macOS 的 pass 桌面端。",
+    "createUpdaterArtifacts": false,
+    "resources": [
+      "resources/*"
+    ]
   }
 }

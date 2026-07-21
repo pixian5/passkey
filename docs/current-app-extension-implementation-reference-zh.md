@@ -178,7 +178,10 @@
 
 ### 6.3 复制与提示
 - 可复制：用户名、站点、验证码等。
-- Toast 为绿色，默认 3 秒，可在设置中改时长。
+- Toast 规范（桌面 Tauri `codex-tauri` 已落地，见 `apps/codex-tauri/docs/toast-spec-zh.md`）：
+  - **成功 → 绿**、**失败 → 红**、**警告 → 黄**
+  - 默认展示时长可在设置中改（`toastDurationSeconds` / 历史键 `pass.ui.toast.duration`）
+- macOS PassMac 历史实现以成功绿条 + 可配置时长为主；跨端新增提示时按上述三色约定对齐。
 
 ### 6.4 设置
 - 设备名称

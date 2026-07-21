@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::local_vault;
+
 const SETTINGS_FILE: &str = "sync_settings.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,22 +44,15 @@ pub fn settings_path(data_dir: &PathBuf) -> PathBuf {
 
 pub fn load_sync_settings(data_dir: &PathBuf) -> SyncSettings {
     let path = settings_path(data_dir);
-    match std::fs::read_to_string(&path) {
-        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-        Err(_) => SyncSettings::default(),
-    }
+    local_vault::read_text(data_dir, &path, "pass.tauri.sync_settings.v1")
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
 }
 
 pub fn save_sync_settings(data_dir: &PathBuf, settings: &SyncSettings) -> Result<(), String> {
-    std::fs::create_dir_all(data_dir).map_err(|e| format!("创建数据目录失败: {e}"))?;
     let path = settings_path(data_dir);
     let raw = serde_json::to_string_pretty(settings).map_err(|e| format!("序列化同步设置失败: {e}"))?;
-    std::fs::write(&path, raw).map_err(|e| format!("写入同步设置失败: {e}"))?;
-    // Best-effort restrictive perms on Unix.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
-    Ok(())
+    local_vault::write_text(data_dir, &path, "pass.tauri.sync_settings.v1", &raw)
 }

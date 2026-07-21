@@ -202,76 +202,296 @@
 
     <div id="settingsModal" class="modal" hidden>
       <div class="modal-backdrop" data-close-settings></div>
-      <div class="modal-card wide">
+      <div class="modal-card settings-card">
         <header class="modal-head">
           <h2>设置</h2>
-          <button type="button" class="icon-btn" data-close-settings>×</button>
+          <button type="button" class="icon-btn" data-close-settings title="关闭 (Esc)">×</button>
         </header>
         <nav class="settings-nav">
           <button type="button" class="nav-btn active" data-settings-tab="general">通用</button>
-          <button type="button" class="nav-btn" data-settings-tab="sync">同步</button>
+          <button type="button" class="nav-btn" data-settings-tab="sync">数据同步</button>
+          <button type="button" class="nav-btn" data-settings-tab="export">导入导出</button>
           <button type="button" class="nav-btn" data-settings-tab="lock">应用锁</button>
-          <button type="button" class="nav-btn" data-settings-tab="tools">工具</button>
           <button type="button" class="nav-btn" data-settings-tab="debug">开发</button>
         </nav>
-        <div class="modal-body">
+        <div class="modal-body settings-body">
+          <!-- 通用 -->
           <section class="settings-pane active" data-pane="general">
-            <label>设备名
-              <div class="inline-actions">
-                <input id="deviceName" />
-                <button type="button" id="btn-save-device">保存</button>
+            <div class="settings-group">
+              <h3>设备</h3>
+              <div class="form-row">
+                <span class="form-label">设备名称</span>
+                <div class="inline-actions grow">
+                  <input id="deviceName" placeholder="例如 PassDevice" />
+                  <button type="button" id="btn-save-device">保存</button>
+                </div>
               </div>
-            </label>
+              <p class="hint">设备名称会写入账号的最后操作设备字段，便于多端合并裁决。</p>
+            </div>
+
+            <div class="settings-group">
+              <h3>界面字体</h3>
+              <div class="form-row">
+                <span class="form-label">字体</span>
+                <select id="uiFontFamily">
+                  <option value="系统默认">系统默认</option>
+                  <option value="SF Pro Text">SF Pro Text</option>
+                  <option value="PingFang SC">PingFang SC</option>
+                  <option value="Helvetica Neue">Helvetica Neue</option>
+                  <option value="Menlo">Menlo</option>
+                  <option value="monospace">monospace</option>
+                </select>
+              </div>
+              <div class="form-row">
+                <span class="form-label">文本字号</span>
+                <input id="uiTextSize" type="range" min="12" max="40" step="1" />
+                <span class="form-value" id="uiTextSizeVal">14</span>
+              </div>
+              <div class="form-row">
+                <span class="form-label">按钮字号</span>
+                <input id="uiButtonSize" type="range" min="12" max="52" step="1" />
+                <span class="form-value" id="uiButtonSizeVal">13</span>
+              </div>
+              <div class="form-row">
+                <span class="form-label">提示时长</span>
+                <input id="uiToastDuration" type="range" min="1" max="10" step="0.5" />
+                <span class="form-value" id="uiToastDurationVal">2.5s</span>
+              </div>
+            </div>
+
+            <div class="settings-group">
+              <h3>密码显示</h3>
+              <label class="row-check">
+                <input type="checkbox" id="showPasswordsGlobally" />
+                全局显示密码、令牌和密钥
+              </label>
+              <p class="hint">关闭后密码框默认隐藏；字段旁的眼睛按钮仍可临时切换单个字段。</p>
+            </div>
+            <div class="form-actions">
+              <button type="button" class="primary" id="btn-save-ui">保存界面设置</button>
+            </div>
           </section>
+
+          <!-- 同步 -->
           <section class="settings-pane" data-pane="sync">
-            <p class="hint">与 macOS 共用自建同步 <code>/v2/sync/state</code>。</p>
-            <label class="row-check"><input type="checkbox" id="syncEnabled" /> 启用同步</label>
-            <label>Base URL<input id="syncBaseUrl" /></label>
-            <label>Bearer Token<input id="syncToken" type="password" /></label>
-            <label>同步密钥（可选）
-              <div class="inline-actions">
-                <input id="syncEncKey" type="password" />
-                <button type="button" id="btn-gen-sync-key">生成</button>
+            <div class="settings-group">
+              <h3>自建服务器</h3>
+              <p class="hint">主接口 <code>GET/PUT /v2/sync/state</code>，与 macOS PassMac 互通；交换 <code>pass.sync.bundle.v2</code>（可选 AES 信封）。</p>
+              <label class="row-check"><input type="checkbox" id="syncEnabled" /> 启用自建服务器同步</label>
+              <div class="form-row">
+                <span class="form-label">服务地址</span>
+                <input id="syncBaseUrl" placeholder="https://host:port 或 http://127.0.0.1:53334" class="grow" />
+                <button type="button" id="btn-open-provision" class="primary">在服务器创建服务</button>
               </div>
-            </label>
-            <label>模式
-              <select id="syncMode">
-                <option value="merge">合并</option>
-                <option value="remoteOverwriteLocal">云端覆盖本地</option>
-                <option value="localOverwriteRemote">本地覆盖云端</option>
-              </select>
-            </label>
-            <div class="form-actions">
-              <button type="button" id="btn-save-sync">保存</button>
-              <button type="button" id="btn-sync-preview">预览合并</button>
-              <button type="button" id="btn-sync-now-settings">立即同步</button>
+              <div class="form-row">
+                <span class="form-label">访问令牌</span>
+                <span class="secret-field grow">
+                  <input id="syncToken" type="password" placeholder="Bearer Token" autocomplete="off" />
+                  <button type="button" class="icon-btn secret-toggle" data-toggle-secret="syncToken" title="显示令牌">◎</button>
+                </span>
+              </div>
+              <p class="hint">通过 SSH 安装/更新远端 <code>pass-sync-server</code>（与 PassMac 同能力）。HTTPS 且带显式端口时，远端需已有 <code>/etc/bz/certs/server.crt|key</code>。</p>
             </div>
-            <pre id="syncPreviewOut" class="mini-log" hidden></pre>
+
+            <div class="settings-group">
+              <h3>WebDAV（镜像，实验）</h3>
+              <label class="row-check"><input type="checkbox" id="webdavEnabled" /> 启用 WebDAV 配置（本版仅保存，同步仍走自建服务器）</label>
+              <div class="form-row">
+                <span class="form-label">WebDAV 地址</span>
+                <input id="webdavBaseUrl" class="grow" placeholder="https://dav.example.com/..." />
+              </div>
+              <div class="form-row">
+                <span class="form-label">远端路径</span>
+                <input id="webdavRemotePath" class="grow" placeholder="pass-sync-bundle-v2.json" />
+              </div>
+              <div class="form-row">
+                <span class="form-label">用户名</span>
+                <input id="webdavUsername" class="grow" placeholder="可选" />
+              </div>
+              <div class="form-row">
+                <span class="form-label">密码</span>
+                <span class="secret-field grow">
+                  <input id="webdavPassword" type="password" placeholder="可选（仅本机）" />
+                  <button type="button" class="icon-btn secret-toggle" data-toggle-secret="webdavPassword" title="显示密码">◎</button>
+                </span>
+              </div>
+            </div>
+
+            <div class="settings-group">
+              <h3>同步加密</h3>
+              <div class="form-row">
+                <span class="form-label">同步密钥</span>
+                <span class="secret-field grow">
+                  <input id="syncEncKey" type="password" placeholder="留空则明文同步" autocomplete="off" />
+                  <button type="button" class="icon-btn secret-toggle" data-toggle-secret="syncEncKey" title="显示密钥">◎</button>
+                </span>
+                <button type="button" id="btn-gen-sync-key">生成</button>
+                <button type="button" id="btn-copy-sync-key">复制</button>
+              </div>
+              <p class="hint" id="syncKeyIdHint">当前未配置同步密钥，将使用明文同步包。</p>
+              <div class="form-row">
+                <span class="form-label">轮换前密钥</span>
+                <span class="secret-field grow">
+                  <input id="prevSyncEncKey" type="password" placeholder="可选：仅用于读取旧加密数据" autocomplete="off" />
+                  <button type="button" class="icon-btn secret-toggle" data-toggle-secret="prevSyncEncKey" title="显示密钥">◎</button>
+                </span>
+              </div>
+              <p class="hint" id="prevSyncKeyIdHint">轮换前密钥未配置。</p>
+            </div>
+
+            <div class="settings-group">
+              <h3>自动同步</h3>
+              <div class="form-row">
+                <span class="form-label">间隔</span>
+                <select id="autoSyncInterval">
+                  <option value="0">关闭</option>
+                  <option value="1">每 1 分钟</option>
+                  <option value="5">每 5 分钟</option>
+                  <option value="15">每 15 分钟</option>
+                  <option value="30">每 30 分钟</option>
+                  <option value="60">每 60 分钟</option>
+                </select>
+              </div>
+              <p class="hint" id="autoSyncStatus">自动同步：关闭</p>
+            </div>
+
+            <div class="settings-group">
+              <h3>同步操作</h3>
+              <div class="form-row">
+                <span class="form-label">默认模式</span>
+                <select id="syncMode">
+                  <option value="merge">合并</option>
+                  <option value="remoteOverwriteLocal">云端覆盖本地</option>
+                  <option value="localOverwriteRemote">本地覆盖云端</option>
+                </select>
+              </div>
+              <div class="form-actions wrap">
+                <button type="button" class="primary" id="btn-save-sync">保存同步设置</button>
+                <button type="button" id="btn-sync-preview">预览合并</button>
+                <button type="button" id="btn-sync-merge">合并同步</button>
+                <button type="button" id="btn-sync-remote-overwrite">云端覆盖本地</button>
+                <button type="button" id="btn-sync-local-overwrite">本地覆盖云端</button>
+                <button type="button" id="btn-sync-now-settings">立即同步（默认模式）</button>
+              </div>
+              <p class="hint">合并：保留双方变更。云端覆盖本地：用远端替换本机。本地覆盖云端：把本机推到远端。危险操作会二次确认。</p>
+              <pre id="syncPreviewOut" class="mini-log" hidden></pre>
+            </div>
+
+            <div class="settings-group">
+              <h3>服务器快照</h3>
+              <div class="form-actions">
+                <button type="button" id="btn-load-versions">读取快照</button>
+              </div>
+              <p class="hint" id="syncVersionsStatus"></p>
+              <div id="syncVersionsList" class="versions-list"></div>
+            </div>
+
+            <div class="settings-group">
+              <h3>本地安全快照</h3>
+              <div class="form-actions">
+                <button type="button" id="btn-load-local-snapshots">读取本地快照</button>
+              </div>
+              <p class="hint" id="localSnapshotsStatus">同步、同步包导入与服务器版本恢复前会自动保留最近 20 个加密快照。</p>
+              <div id="localSnapshotsList" class="versions-list"></div>
+            </div>
           </section>
+
+          <!-- 导入导出 -->
+          <section class="settings-pane" data-pane="export">
+            <div class="settings-group">
+              <h3>数据导出</h3>
+              <div class="form-row">
+                <span class="form-label">导出目录</span>
+                <input id="exportDirectory" class="grow" placeholder="为空则写入应用数据目录" />
+              </div>
+              <div class="form-actions wrap">
+                <button type="button" id="btn-export">导出全部账号 CSV</button>
+                <button type="button" id="btn-export-chrome">导出 Chrome CSV</button>
+                <button type="button" id="btn-export-firefox">导出 Firefox CSV</button>
+                <button type="button" id="btn-export-safari">导出 Safari CSV</button>
+              </div>
+            </div>
+
+            <div class="settings-group">
+              <h3>浏览器导入</h3>
+              <div class="form-actions wrap">
+                <button type="button" id="btn-import-browser">导入 Chrome/Firefox/Safari 密码 CSV</button>
+              </div>
+              <input type="file" id="fileBrowserCsv" accept=".csv,text/csv,text/plain" hidden />
+              <p class="hint">按站点与用户名合并到本地账号。</p>
+            </div>
+
+            <div class="settings-group">
+              <h3>同步包</h3>
+              <div class="form-actions wrap">
+                <button type="button" id="btn-export-bundle">导出同步包</button>
+                <button type="button" id="btn-import-bundle">导入并合并同步包</button>
+              </div>
+              <input type="file" id="fileSyncBundle" accept=".json,application/json" hidden />
+              <p class="hint">JSON 同步包与 macOS 兼容；导入后走安全检查再写入。</p>
+            </div>
+
+            <div class="settings-group">
+              <h3>其他</h3>
+              <div class="form-actions">
+                <button type="button" id="btn-demo">生成演示数据</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- 应用锁 -->
           <section class="settings-pane" data-pane="lock">
-            <div id="lockStatus">状态：未启用</div>
-            <label>主密码<input id="lockPassword" type="password" /></label>
-            <label>确认<input id="lockPassword2" type="password" /></label>
-            <label>空闲分钟<input id="idleMinutes" type="number" min="1" max="60" value="5" /></label>
-            <div class="form-actions">
-              <button type="button" id="btn-lock-enable">启用</button>
-              <button type="button" id="btn-lock-disable">关闭</button>
-              <button type="button" id="btn-lock-idle">保存空闲</button>
+            <div class="settings-group">
+              <h3>应用解锁</h3>
+              <div id="lockStatus">状态：未启用</div>
+              <p class="hint">启用后锁定时隐藏 vault 与同步密钥；空闲超时自动锁定。</p>
+              <div class="form-row">
+                <span class="form-label">主密码</span>
+                <span class="secret-field grow">
+                  <input id="lockPassword" type="password" placeholder="至少 4 位" autocomplete="new-password" />
+                  <button type="button" class="icon-btn secret-toggle" data-toggle-secret="lockPassword" title="显示">◎</button>
+                </span>
+              </div>
+              <div class="form-row">
+                <span class="form-label">确认密码</span>
+                <span class="secret-field grow">
+                  <input id="lockPassword2" type="password" placeholder="再次输入" autocomplete="new-password" />
+                  <button type="button" class="icon-btn secret-toggle" data-toggle-secret="lockPassword2" title="显示">◎</button>
+                </span>
+              </div>
+              <div class="form-row">
+                <span class="form-label">空闲锁定</span>
+                <select id="idleMinutes">
+                  <option value="1">1 分钟</option>
+                  <option value="3">3 分钟</option>
+                  <option value="5" selected>5 分钟</option>
+                  <option value="10">10 分钟</option>
+                  <option value="15">15 分钟</option>
+                  <option value="30">30 分钟</option>
+                  <option value="60">60 分钟</option>
+                </select>
+              </div>
+              <div class="form-actions wrap">
+                <button type="button" class="primary" id="btn-lock-enable">设置主密码并启用</button>
+                <button type="button" id="btn-lock-disable">关闭解锁</button>
+                <button type="button" id="btn-lock-idle">保存空闲时间</button>
+                <button type="button" id="btn-lock-now-settings">立即锁定</button>
+              </div>
             </div>
           </section>
-          <section class="settings-pane" data-pane="tools">
-            <div class="form-actions">
-              <button type="button" id="btn-export">导出 CSV</button>
-              <button type="button" id="btn-demo">生成演示数据</button>
-            </div>
-          </section>
+
+          <!-- 开发 -->
           <section class="settings-pane" data-pane="debug">
-            <div class="form-actions">
-              <button type="button" id="btn-health">健康检查</button>
-              <button type="button" id="btn-open-merge">JSON 合并预览</button>
+            <div class="settings-group">
+              <h3>诊断</h3>
+              <div class="form-actions">
+                <button type="button" id="btn-health">健康检查</button>
+                <button type="button" id="btn-open-merge">JSON 合并预览</button>
+              </div>
+              <pre id="debugOut" class="mini-log"></pre>
             </div>
-            <pre id="debugOut" class="mini-log"></pre>
-            <div id="mergePanel" hidden>
+            <div id="mergePanel" class="settings-group" hidden>
+              <h3>粘贴 JSON 合并</h3>
               <div class="merge-grid">
                 <div>
                   <button type="button" id="btn-load-local">填充本地</button>
@@ -283,13 +503,88 @@
                   <textarea id="remotePayload"></textarea>
                 </div>
               </div>
-              <button type="button" id="btn-merge-preview">运行</button>
+              <button type="button" id="btn-merge-preview">运行合并</button>
               <div id="mergeResult" hidden>
                 <div id="mergeSummary" class="mini-log"></div>
                 <pre id="mergePayloadOut" class="mini-log"></pre>
               </div>
             </div>
           </section>
+        </div>
+      </div>
+    </div>
+
+    <!-- Apple 菜单风格提示：快捷键在应用内处理 -->
+    <div id="shortcutHint" class="shortcut-hint" hidden>⌘, 打开设置</div>
+
+    <!-- 在服务器创建服务 -->
+    <div id="provisionModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close-provision></div>
+      <div class="modal-card wide provision-card">
+        <header class="modal-head">
+          <h2>在服务器创建同步服务</h2>
+          <button type="button" class="icon-btn" data-close-provision>×</button>
+        </header>
+        <div class="modal-body">
+          <p class="hint">通过系统 <code>ssh</code>/<code>scp</code> 在目标服务器上创建或更新同步服务。默认用户 root；非 root 需免密 sudo。服务器 URL 用于提取主机并验证创建结果，SSH 端口单独填写。</p>
+          <div class="form-row">
+            <span class="form-label">服务器地址</span>
+            <input id="provisionServerUrl" class="grow" placeholder="https://example.com:5443" />
+            <button type="button" id="btn-load-ssh-cred">读取已保存</button>
+          </div>
+          <div class="form-row">
+            <span class="form-label">SSH 用户名</span>
+            <input id="provisionSshUser" class="grow" placeholder="root" value="root" />
+            <span class="form-label" style="flex:0 0 auto">SSH 端口</span>
+            <input id="provisionSshPort" style="width:80px" value="22" />
+          </div>
+          <div class="form-row">
+            <span class="form-label">认证方式</span>
+            <select id="provisionAuthMode">
+              <option value="privateKey">私钥</option>
+              <option value="password">密码</option>
+            </select>
+          </div>
+          <div id="provisionPasswordRow" class="form-row" hidden>
+            <span class="form-label">SSH 密码</span>
+            <span class="secret-field grow">
+              <input id="provisionSecretPassword" type="password" placeholder="服务器登录密码" autocomplete="off" />
+              <button type="button" class="icon-btn secret-toggle" data-toggle-secret="provisionSecretPassword" title="显示">◎</button>
+            </span>
+          </div>
+          <div id="provisionKeyRow">
+            <label class="account-field">SSH 私钥
+              <textarea id="provisionSecretKey" rows="4" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" class="mono"></textarea>
+            </label>
+            <div class="form-row">
+              <span class="form-label">私钥口令</span>
+              <span class="secret-field grow">
+                <input id="provisionKeyPassphrase" type="password" placeholder="可选" autocomplete="off" />
+                <button type="button" class="icon-btn secret-toggle" data-toggle-secret="provisionKeyPassphrase" title="显示">◎</button>
+              </span>
+            </div>
+          </div>
+          <div class="form-row">
+            <span class="form-label">访问令牌</span>
+            <span class="secret-field grow">
+              <input id="provisionToken" type="password" placeholder="服务端 Bearer Token" autocomplete="off" />
+              <button type="button" class="icon-btn secret-toggle" data-toggle-secret="provisionToken" title="显示">◎</button>
+            </span>
+            <button type="button" id="btn-gen-provision-token">生成</button>
+          </div>
+          <div class="form-row">
+            <span class="form-label">同步加密密钥</span>
+            <span class="secret-field grow">
+              <input id="provisionEncKey" type="password" placeholder="留空则允许明文同步" autocomplete="off" />
+              <button type="button" class="icon-btn secret-toggle" data-toggle-secret="provisionEncKey" title="显示">◎</button>
+            </span>
+          </div>
+          <p class="hint">创建服务前会先备份服务器现有同步数据库。同步加密密钥不会发送给服务器，只决定是否强制加密同步包（配置了密钥则 PASS_SYNC_ALLOW_PLAINTEXT=0）。</p>
+          <pre id="provisionStatus" class="mini-log" hidden></pre>
+          <div class="form-actions">
+            <button type="button" class="primary" id="btn-run-provision">创建服务</button>
+            <button type="button" data-close-provision>取消</button>
+          </div>
         </div>
       </div>
     </div>

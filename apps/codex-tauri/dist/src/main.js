@@ -67,7 +67,25 @@ const els = {
   btnHealth: $("#btn-health"),
   btnDemo: $("#btn-demo"),
   btnExport: $("#btn-export"),
+  btnExportChrome: $("#btn-export-chrome"),
+  btnExportFirefox: $("#btn-export-firefox"),
+  btnExportSafari: $("#btn-export-safari"),
+  btnImportBrowser: $("#btn-import-browser"),
+  btnExportBundle: $("#btn-export-bundle"),
+  btnImportBundle: $("#btn-import-bundle"),
+  fileBrowserCsv: $("#fileBrowserCsv"),
+  fileSyncBundle: $("#fileSyncBundle"),
+  exportDirectory: $("#exportDirectory"),
   btnSaveDevice: $("#btn-save-device"),
+  btnSaveUi: $("#btn-save-ui"),
+  uiFontFamily: $("#uiFontFamily"),
+  uiTextSize: $("#uiTextSize"),
+  uiTextSizeVal: $("#uiTextSizeVal"),
+  uiButtonSize: $("#uiButtonSize"),
+  uiButtonSizeVal: $("#uiButtonSizeVal"),
+  uiToastDuration: $("#uiToastDuration"),
+  uiToastDurationVal: $("#uiToastDurationVal"),
+  showPasswordsGlobally: $("#showPasswordsGlobally"),
   localPayload: $("#localPayload"),
   remotePayload: $("#remotePayload"),
   btnLoadLocal: $("#btn-load-local"),
@@ -82,12 +100,32 @@ const els = {
   syncBaseUrl: $("#syncBaseUrl"),
   syncToken: $("#syncToken"),
   syncEncKey: $("#syncEncKey"),
+  prevSyncEncKey: $("#prevSyncEncKey"),
   syncMode: $("#syncMode"),
+  autoSyncInterval: $("#autoSyncInterval"),
+  autoSyncStatus: $("#autoSyncStatus"),
+  syncKeyIdHint: $("#syncKeyIdHint"),
+  prevSyncKeyIdHint: $("#prevSyncKeyIdHint"),
+  webdavEnabled: $("#webdavEnabled"),
+  webdavBaseUrl: $("#webdavBaseUrl"),
+  webdavRemotePath: $("#webdavRemotePath"),
+  webdavUsername: $("#webdavUsername"),
+  webdavPassword: $("#webdavPassword"),
   btnSaveSync: $("#btn-save-sync"),
   btnGenSyncKey: $("#btn-gen-sync-key"),
+  btnCopySyncKey: $("#btn-copy-sync-key"),
   btnSyncPreview: $("#btn-sync-preview"),
+  btnSyncMerge: $("#btn-sync-merge"),
+  btnSyncRemoteOverwrite: $("#btn-sync-remote-overwrite"),
+  btnSyncLocalOverwrite: $("#btn-sync-local-overwrite"),
   btnSyncNow: $("#btn-sync-now"),
   btnSyncNowSettings: $("#btn-sync-now-settings"),
+  btnLoadVersions: $("#btn-load-versions"),
+  syncVersionsStatus: $("#syncVersionsStatus"),
+  syncVersionsList: $("#syncVersionsList"),
+  btnLoadLocalSnapshots: $("#btn-load-local-snapshots"),
+  localSnapshotsStatus: $("#localSnapshotsStatus"),
+  localSnapshotsList: $("#localSnapshotsList"),
   syncPreviewOut: $("#syncPreviewOut"),
   lockOverlay: $("#lockOverlay"),
   unlockPassword: $("#unlockPassword"),
@@ -101,11 +139,29 @@ const els = {
   btnLockDisable: $("#btn-lock-disable"),
   btnLockIdle: $("#btn-lock-idle"),
   btnLockNow: $("#btn-lock-now"),
+  btnLockNowSettings: $("#btn-lock-now-settings"),
   appMain: $("#appMain"),
   sidebar: $("#sidebar"),
   settingsModal: $("#settingsModal"),
   btnOpenSettings: $("#btn-open-settings"),
   btnOpenMerge: $("#btn-open-merge"),
+  btnOpenProvision: $("#btn-open-provision"),
+  provisionModal: $("#provisionModal"),
+  provisionServerUrl: $("#provisionServerUrl"),
+  provisionSshUser: $("#provisionSshUser"),
+  provisionSshPort: $("#provisionSshPort"),
+  provisionAuthMode: $("#provisionAuthMode"),
+  provisionPasswordRow: $("#provisionPasswordRow"),
+  provisionKeyRow: $("#provisionKeyRow"),
+  provisionSecretPassword: $("#provisionSecretPassword"),
+  provisionSecretKey: $("#provisionSecretKey"),
+  provisionKeyPassphrase: $("#provisionKeyPassphrase"),
+  provisionToken: $("#provisionToken"),
+  provisionEncKey: $("#provisionEncKey"),
+  provisionStatus: $("#provisionStatus"),
+  btnLoadSshCred: $("#btn-load-ssh-cred"),
+  btnGenProvisionToken: $("#btn-gen-provision-token"),
+  btnRunProvision: $("#btn-run-provision"),
   debugOut: $("#debugOut"),
 };
 
@@ -120,32 +176,317 @@ let state = {
 let lockState = { enabled: false, locked: false, idleLockMinutes: 5, hasPassword: false };
 let activityTimer = null;
 let totpTimer = null;
+let autoSyncTimer = null;
 let filter = { type: "all" };
 let selectedId = "";
 let folderSitesTargetId = "";
 let folderDedupTarget = null;
 let folderDeleteTarget = null;
+let uiPrefs = {
+  fontFamily: "系统默认",
+  textFontSize: 14,
+  buttonFontSize: 13,
+  toastDurationSeconds: 2.5,
+  showPasswordsGlobally: false,
+  exportDirectory: "",
+  autoSyncIntervalMinutes: 0,
+  previousEncryptionKey: "",
+  webdavEnabled: false,
+  webdavBaseUrl: "",
+  webdavRemotePath: "pass-sync-bundle-v2.json",
+  webdavUsername: "",
+  webdavPassword: "",
+};
 
-const message = (text) => {
+/**
+ * Toast levels (see docs + apps/codex-tauri/README.md):
+ * - success → green
+ * - error   → red
+ * - warn    → yellow
+ * Prefer toastSuccess / toastError / toastWarn; plain message() auto-detects.
+ */
+const TOAST_LEVELS = ["success", "error", "warn"];
+
+const inferToastLevel = (text) => {
+  const s = String(text ?? "");
+  // Explicit failure cues first
+  if (
+    /失败|错误|无法|拒绝|异常|超时|未通过|无效|不能|禁止|未配置|不可达|412|401|403|500|HTTP\s*\d{3}/i.test(
+      s
+    )
+  ) {
+    return "error";
+  }
+  // Warnings / cancellations / empty / risk
+  if (
+    /取消|警告|风险|注意|未写入|未启用|为空|跳过|请先|请填写|可能|暂无|无已保存|停止|安全检查/i.test(
+      s
+    )
+  ) {
+    return "warn";
+  }
+  return "success";
+};
+
+const showToast = (text, level) => {
   const el = els.output || document.querySelector("#output");
+  const body = String(text ?? "");
+  const kind = TOAST_LEVELS.includes(level) ? level : inferToastLevel(body);
   if (!el) {
-    console.log("[pass]", text);
+    console.log(`[pass:${kind}]`, body);
     return;
   }
   el.hidden = false;
-  el.textContent = String(text);
-  clearTimeout(message._t);
-  message._t = setTimeout(() => {
+  el.textContent = body;
+  el.classList.remove("toast-success", "toast-error", "toast-warn");
+  el.classList.add(`toast-${kind}`);
+  el.dataset.level = kind;
+  clearTimeout(showToast._t);
+  const ms = Math.round((uiPrefs.toastDurationSeconds || 2.5) * 1000);
+  showToast._t = setTimeout(() => {
     el.hidden = true;
-  }, 4000);
+  }, Math.max(1000, ms));
 };
+
+const message = (text, level) => showToast(text, level);
+const toastSuccess = (text) => showToast(text, "success");
+const toastError = (text) => showToast(text, "error");
+const toastWarn = (text) => showToast(text, "warn");
+
+const applyUiPrefs = () => {
+  const root = document.documentElement;
+  const textSize = Number(uiPrefs.textFontSize || 14);
+  const buttonSize = Number(uiPrefs.buttonFontSize || 13);
+  const font =
+    !uiPrefs.fontFamily || uiPrefs.fontFamily === "系统默认"
+      ? '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif'
+      : `"${uiPrefs.fontFamily}", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif`;
+
+  root.style.setProperty("--ui-font", font);
+  root.style.setProperty("--ui-text-size", `${textSize}px`);
+  root.style.setProperty("--ui-button-size", `${buttonSize}px`);
+  root.style.setProperty("--ui-scale", String(textSize / 14));
+  root.style.setProperty("--ui-btn-scale", String(buttonSize / 13));
+  root.style.fontSize = `${textSize}px`;
+  root.style.fontFamily = font;
+  document.body.style.fontSize = `${textSize}px`;
+  document.body.style.fontFamily = font;
+
+  // Global password visibility for form secrets (respect per-field forceVisible).
+  const secretIds = [
+    "password",
+    "totpSecret",
+    "syncToken",
+    "syncEncKey",
+    "prevSyncEncKey",
+    "webdavPassword",
+    "lockPassword",
+    "lockPassword2",
+    "provisionSecretPassword",
+    "provisionKeyPassphrase",
+    "provisionToken",
+    "provisionEncKey",
+  ];
+  for (const id of secretIds) {
+    const input = document.getElementById(id);
+    if (!(input instanceof HTMLInputElement)) continue;
+    if (input.dataset.forceVisible === "1") continue;
+    input.type = uiPrefs.showPasswordsGlobally ? "text" : "password";
+  }
+  document.querySelectorAll("[data-toggle-secret]").forEach((button) => {
+    const input = document.querySelector(`#${button.dataset.toggleSecret}`);
+    if (!(input instanceof HTMLInputElement)) return;
+    const visible = input.type !== "password";
+    button.textContent = visible ? "◉" : "◎";
+    button.title = visible ? "隐藏" : "显示";
+  });
+};
+
+let uiPrefsSaveTimer = null;
+const scheduleSaveUiPrefs = () => {
+  clearTimeout(uiPrefsSaveTimer);
+  uiPrefsSaveTimer = setTimeout(async () => {
+    try {
+      await invoke("set_ui_prefs", { prefs: collectUiPrefs() });
+    } catch (err) {
+      console.warn("auto-save ui prefs", err);
+    }
+  }, 250);
+};
+
+const applyUiPrefsFromFormLive = () => {
+  // Pull live values from form controls without waiting for Save button.
+  if (els.uiFontFamily) uiPrefs.fontFamily = els.uiFontFamily.value || "系统默认";
+  if (els.uiTextSize) uiPrefs.textFontSize = Number(els.uiTextSize.value || 14);
+  if (els.uiButtonSize) uiPrefs.buttonFontSize = Number(els.uiButtonSize.value || 13);
+  if (els.uiToastDuration) {
+    uiPrefs.toastDurationSeconds = Number(els.uiToastDuration.value || 2.5);
+  }
+  if (els.showPasswordsGlobally) {
+    uiPrefs.showPasswordsGlobally = Boolean(els.showPasswordsGlobally.checked);
+  }
+  if (els.exportDirectory) uiPrefs.exportDirectory = (els.exportDirectory.value || "").trim();
+  if (els.autoSyncInterval) {
+    uiPrefs.autoSyncIntervalMinutes = Number(els.autoSyncInterval.value || 0);
+  }
+  if (els.prevSyncEncKey) {
+    uiPrefs.previousEncryptionKey = (els.prevSyncEncKey.value || "").trim();
+  }
+  applyUiPrefs();
+  updateAutoSyncStatus();
+};
+
+const collectUiPrefs = () => ({
+  fontFamily: els.uiFontFamily?.value || "系统默认",
+  textFontSize: Number(els.uiTextSize?.value || 14),
+  buttonFontSize: Number(els.uiButtonSize?.value || 13),
+  toastDurationSeconds: Number(els.uiToastDuration?.value || 2.5),
+  showPasswordsGlobally: Boolean(els.showPasswordsGlobally?.checked),
+  exportDirectory: (els.exportDirectory?.value || "").trim(),
+  autoSyncIntervalMinutes: Number(els.autoSyncInterval?.value || 0),
+  previousEncryptionKey: (els.prevSyncEncKey?.value || "").trim(),
+  webdavEnabled: Boolean(els.webdavEnabled?.checked),
+  webdavBaseUrl: (els.webdavBaseUrl?.value || "").trim(),
+  webdavRemotePath: (els.webdavRemotePath?.value || "pass-sync-bundle-v2.json").trim(),
+  webdavUsername: (els.webdavUsername?.value || "").trim(),
+  webdavPassword: els.webdavPassword?.value || "",
+});
+
+const fillUiPrefsForm = () => {
+  if (els.uiFontFamily) els.uiFontFamily.value = uiPrefs.fontFamily || "系统默认";
+  if (els.uiTextSize) {
+    els.uiTextSize.value = String(uiPrefs.textFontSize || 14);
+    if (els.uiTextSizeVal) els.uiTextSizeVal.textContent = String(uiPrefs.textFontSize || 14);
+  }
+  if (els.uiButtonSize) {
+    els.uiButtonSize.value = String(uiPrefs.buttonFontSize || 13);
+    if (els.uiButtonSizeVal) els.uiButtonSizeVal.textContent = String(uiPrefs.buttonFontSize || 13);
+  }
+  if (els.uiToastDuration) {
+    els.uiToastDuration.value = String(uiPrefs.toastDurationSeconds || 2.5);
+    if (els.uiToastDurationVal) {
+      els.uiToastDurationVal.textContent = `${uiPrefs.toastDurationSeconds || 2.5}s`;
+    }
+  }
+  if (els.showPasswordsGlobally) {
+    els.showPasswordsGlobally.checked = Boolean(uiPrefs.showPasswordsGlobally);
+  }
+  if (els.exportDirectory) els.exportDirectory.value = uiPrefs.exportDirectory || "";
+  if (els.autoSyncInterval) {
+    els.autoSyncInterval.value = String(uiPrefs.autoSyncIntervalMinutes || 0);
+  }
+  if (els.prevSyncEncKey) els.prevSyncEncKey.value = uiPrefs.previousEncryptionKey || "";
+  if (els.webdavEnabled) els.webdavEnabled.checked = Boolean(uiPrefs.webdavEnabled);
+  if (els.webdavBaseUrl) els.webdavBaseUrl.value = uiPrefs.webdavBaseUrl || "";
+  if (els.webdavRemotePath) {
+    els.webdavRemotePath.value = uiPrefs.webdavRemotePath || "pass-sync-bundle-v2.json";
+  }
+  if (els.webdavUsername) els.webdavUsername.value = uiPrefs.webdavUsername || "";
+  if (els.webdavPassword) els.webdavPassword.value = uiPrefs.webdavPassword || "";
+  updateAutoSyncStatus();
+};
+
+const loadUiPrefs = async () => {
+  try {
+    const p = await invoke("get_ui_prefs");
+    uiPrefs = { ...uiPrefs, ...p };
+    // Coerce numbers (serde may return floats)
+    uiPrefs.textFontSize = Number(uiPrefs.textFontSize || 14);
+    uiPrefs.buttonFontSize = Number(uiPrefs.buttonFontSize || 13);
+    uiPrefs.toastDurationSeconds = Number(uiPrefs.toastDurationSeconds || 2.5);
+    uiPrefs.autoSyncIntervalMinutes = Number(uiPrefs.autoSyncIntervalMinutes || 0);
+    fillUiPrefsForm();
+    applyUiPrefs();
+    scheduleAutoSync();
+  } catch (err) {
+    console.warn("load ui prefs", err);
+    applyUiPrefs();
+  }
+};
+
+const saveUiPrefs = async () => {
+  uiPrefs = collectUiPrefs();
+  await invoke("set_ui_prefs", { prefs: uiPrefs });
+  applyUiPrefs();
+  scheduleAutoSync();
+  await refreshSyncKeyHints();
+};
+
+const updateAutoSyncStatus = () => {
+  const m = Number(uiPrefs.autoSyncIntervalMinutes || 0);
+  if (els.autoSyncStatus) {
+    els.autoSyncStatus.textContent =
+      m > 0 ? `自动同步：每 ${m} 分钟（仅在同步已启用时）` : "自动同步：关闭";
+  }
+};
+
+const scheduleAutoSync = () => {
+  if (autoSyncTimer) {
+    clearInterval(autoSyncTimer);
+    autoSyncTimer = null;
+  }
+  const m = Number(uiPrefs.autoSyncIntervalMinutes || 0);
+  updateAutoSyncStatus();
+  if (m <= 0) return;
+  autoSyncTimer = setInterval(async () => {
+    try {
+      if (lockState.enabled && lockState.locked) return;
+      if (!els.syncEnabled?.checked) return;
+      await runSyncNow({ quiet: true });
+    } catch (_) {}
+  }, m * 60 * 1000);
+};
+
+const refreshSyncKeyHints = async () => {
+  try {
+    const key = (els.syncEncKey?.value || "").trim();
+    const prev = (els.prevSyncEncKey?.value || "").trim();
+    if (els.syncKeyIdHint) {
+      if (!key) {
+        els.syncKeyIdHint.textContent = "当前未配置同步密钥，将使用明文同步包。";
+      } else {
+        const id = await invoke("sync_key_id", { key });
+        els.syncKeyIdHint.textContent = id
+          ? `当前同步密钥 ID：${id}。配对或排查密钥不匹配时请核对此标识。`
+          : "同步密钥格式无效（需要 256 位 base64url 或留空）。";
+      }
+    }
+    if (els.prevSyncKeyIdHint) {
+      if (!prev) {
+        els.prevSyncKeyIdHint.textContent = "轮换前密钥未配置。";
+      } else {
+        const id = await invoke("sync_key_id", { key: prev });
+        els.prevSyncKeyIdHint.textContent = id
+          ? `轮换前密钥 ID：${id}。确认所有设备已更新后再清空。`
+          : "轮换前密钥格式无效。";
+      }
+    }
+  } catch (_) {}
+};
+
+const formatTimeMs = (ms) => {
+  const n = Number(ms || 0);
+  if (!n) return "-";
+  const d = new Date(n);
+  if (Number.isNaN(d.getTime())) return String(ms);
+  const yy = String(d.getFullYear()).slice(2);
+  return `${yy}-${d.getMonth() + 1}-${d.getDate()} ${d.getHours()}:${d.getMinutes()}:${d.getSeconds()}`;
+};
+
+const readFileAsText = (file) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
+    reader.readAsText(file);
+  });
 
 // Surface unexpected errors so "no reaction" is visible.
 window.addEventListener("error", (e) => {
-  message(`脚本错误: ${e.message || e}`);
+  toastError(`脚本错误: ${e.message || e}`);
 });
 window.addEventListener("unhandledrejection", (e) => {
-  message(`请求失败: ${e.reason || e}`);
+  toastError(`请求失败: ${e.reason || e}`);
 });
 
 const escapeHtml = (s) =>
@@ -324,9 +665,9 @@ const setFilter = (next) => {
 const copyText = async (text, okMsg) => {
   try {
     await navigator.clipboard.writeText(text);
-    message(okMsg);
+    toastSuccess(okMsg);
   } catch {
-    message("复制失败");
+    toastError("复制失败");
   }
 };
 
@@ -351,7 +692,7 @@ const showContextMenu = (event, items) => {
       try {
         await action();
       } catch (err) {
-        message(`操作失败：${err}`);
+        toastError(`操作失败：${err}`);
       }
     });
     els.contextMenu.appendChild(item);
@@ -448,7 +789,7 @@ const openFolderDedup = async (folder) => {
   try {
     await refreshFolderDedup();
   } catch (err) {
-    message(`读取重复账号失败：${err}`);
+    toastError(`读取重复账号失败：${err}`);
   }
 };
 
@@ -481,9 +822,9 @@ const confirmFolderDelete = async () => {
     }
     closeFolderDelete();
     await refreshState();
-    message(`文件夹「${target.name}」已删除`);
+    toastSuccess(`文件夹「${target.name}」已删除`);
   } catch (err) {
-    message(`删除文件夹失败：${err}`);
+    toastError(`删除文件夹失败：${err}`);
   } finally {
     if (els.btnConfirmFolderDelete) els.btnConfirmFolderDelete.disabled = false;
   }
@@ -499,9 +840,9 @@ const deduplicateFolder = async (mode, accountId = null) => {
     });
     await refreshState();
     await refreshFolderDedup();
-    message(result.message || `去重完成，已移入回收站 ${result.deletedCount || 0} 个账号`);
+    toastSuccess(result.message || `去重完成，已移入回收站 ${result.deletedCount || 0} 个账号`);
   } catch (err) {
-    message(`去重失败：${err}`);
+    toastError(`去重失败：${err}`);
   }
 };
 
@@ -671,11 +1012,15 @@ const openEdit = (account = null) => {
     if (els.btnRestore) els.btnRestore.hidden = true;
   }
   [els.password, els.totpSecret].forEach((input) => {
-    if (input) input.type = "password";
+    if (!input) return;
+    delete input.dataset.forceVisible;
+    input.type = uiPrefs.showPasswordsGlobally ? "text" : "password";
   });
   document.querySelectorAll("[data-toggle-secret]").forEach((button) => {
-    button.textContent = "◎";
-    button.title = `显示${button.dataset.toggleSecret === "password" ? "密码" : " TOTP 密钥"}`;
+    const input = document.querySelector(`#${button.dataset.toggleSecret}`);
+    const visible = input instanceof HTMLInputElement && input.type !== "password";
+    button.textContent = visible ? "◉" : "◎";
+    button.title = visible ? "隐藏" : "显示";
     button.setAttribute("aria-label", button.title);
   });
   els.editModal.hidden = false;
@@ -739,7 +1084,7 @@ const applyOtpAuthPayload = (payload, includeSiteAndUsername) => {
     if (payload.site && els.sites) els.sites.value = payload.site;
     if (payload.username && els.username) els.username.value = payload.username;
   }
-  message(includeSiteAndUsername ? "已填充 TOTP、站点别名和用户名" : "已填充 TOTP 原始密钥");
+  toastSuccess(includeSiteAndUsername ? "已填充 TOTP、站点别名和用户名" : "已填充 TOTP 原始密钥");
 };
 
 const pasteTotpRaw = async () => {
@@ -748,7 +1093,7 @@ const pasteTotpRaw = async () => {
     if (!isValidTotpSecret(secret)) throw new Error("原始密钥不是有效 TOTP");
     applyOtpAuthPayload({ secret }, false);
   } catch (err) {
-    message(`粘贴失败：${err}`);
+    toastError(`粘贴失败：${err}`);
   }
 };
 
@@ -758,7 +1103,7 @@ const pasteTotpUri = async (rawValue = null) => {
     if (!payload) throw new Error("不是有效的 otpauth://totp URI");
     applyOtpAuthPayload(payload, true);
   } catch (err) {
-    message(`粘贴失败：${err}`);
+    toastError(`粘贴失败：${err}`);
   }
 };
 
@@ -787,11 +1132,11 @@ const pasteTotpQr = async () => {
     }
     throw new Error("二维码内容不是有效的 otpauth://totp URI");
   } catch (err) {
-    message(`粘贴失败：${err}`);
+    toastError(`粘贴失败：${err}`);
   }
 };
 
-const openSettings = (tab = "general") => {
+const openSettings = async (tab = "general") => {
   if (!els.settingsModal) return;
   els.settingsModal.hidden = false;
   document.querySelectorAll(".nav-btn").forEach((b) => {
@@ -800,6 +1145,15 @@ const openSettings = (tab = "general") => {
   document.querySelectorAll(".settings-pane").forEach((p) => {
     p.classList.toggle("active", p.dataset.pane === tab);
   });
+  try {
+    await loadUiPrefs();
+    await loadSyncSettings();
+    if (els.deviceName) els.deviceName.value = state.deviceName || els.deviceName.value || "";
+    await refreshSyncKeyHints();
+    await refreshLock();
+  } catch (err) {
+    toastError(`打开设置失败：${err}`);
+  }
 };
 const closeSettings = () => {
   if (els.settingsModal) els.settingsModal.hidden = true;
@@ -852,7 +1206,7 @@ const loadSyncSettings = async () => {
     if (els.syncEncKey) els.syncEncKey.value = s.encryptionKey || "";
     if (els.syncMode) els.syncMode.value = s.mode || "merge";
   } catch (err) {
-    message(`读取同步设置失败：${err}`);
+    toastError(`读取同步设置失败：${err}`);
   }
 };
 
@@ -863,6 +1217,14 @@ const collectSyncSettings = () => ({
   encryptionKey: (els.syncEncKey?.value || "").trim(),
   mode: els.syncMode?.value || "merge",
 });
+
+const saveAllSyncRelated = async () => {
+  await invoke("set_sync_settings", { settings: collectSyncSettings() });
+  uiPrefs = collectUiPrefs();
+  await invoke("set_ui_prefs", { prefs: uiPrefs });
+  scheduleAutoSync();
+  await refreshSyncKeyHints();
+};
 
 const buildLocalSyncPayload = () => ({
   accounts: [...(state.activeAccounts || []), ...(state.deletedAccounts || [])],
@@ -877,13 +1239,28 @@ const extractPayload = (text, label) => {
   return obj?.payload ?? obj;
 };
 
-const runSyncNow = async () => {
-  await invoke("set_sync_settings", { settings: collectSyncSettings() });
+const runSyncNow = async ({ quiet = false } = {}) => {
+  await saveAllSyncRelated();
   const raw = await invoke("sync_now");
   const result = typeof raw === "string" ? JSON.parse(raw) : raw;
   const report = result.report || {};
   await refreshState();
-  message(report.message || "同步完成");
+  if (!quiet) toastSuccess(report.message || "同步完成");
+  return report;
+};
+
+const runSyncMode = async (mode) => {
+  await saveAllSyncRelated();
+  const raw = await invoke("sync_now_mode", { mode });
+  const result = typeof raw === "string" ? JSON.parse(raw) : raw;
+  const report = result.report || {};
+  await refreshState();
+  toastSuccess(report.message || "同步完成");
+  if (els.syncPreviewOut) {
+    els.syncPreviewOut.hidden = false;
+    els.syncPreviewOut.textContent = JSON.stringify(report, null, 2);
+  }
+  return report;
 };
 
 document.addEventListener("contextmenu", (e) => {
@@ -935,10 +1312,10 @@ document.addEventListener("click", (e) => {
         els.folderModal.hidden = false;
         els.folderModal.removeAttribute("hidden");
       }
-      message("请输入文件夹名称");
+      toastWarn("请输入文件夹名称");
       setTimeout(() => els.newFolderName?.focus(), 50);
     } catch (err) {
-      message(`打开新建文件夹失败: ${err}`);
+      toastError(`打开新建文件夹失败: ${err}`);
     }
     return;
   }
@@ -951,7 +1328,7 @@ document.addEventListener("click", (e) => {
       try {
         const name = (els.newFolderName?.value || "").trim();
         if (!name) {
-          message("文件夹名不能为空");
+          toastWarn("文件夹名不能为空");
           return;
         }
         await invoke("create_folder", { name });
@@ -960,9 +1337,9 @@ document.addEventListener("click", (e) => {
           els.folderModal.setAttribute("hidden", "");
         }
         await refreshState();
-        message(`文件夹「${name}」已创建`);
+        toastSuccess(`文件夹「${name}」已创建`);
       } catch (err) {
-        message(`创建文件夹失败: ${err}`);
+        toastError(`创建文件夹失败: ${err}`);
       }
     })();
     return;
@@ -980,7 +1357,7 @@ document.addEventListener("click", (e) => {
     else if (f === "totp") setFilter({ type: "totp" });
     else if (f === "recycle") setFilter({ type: "recycle" });
     else if (f.startsWith("folder:")) setFilter({ type: "folder", id: f.slice(7) });
-    else message(`未知筛选: ${f}`);
+    else toastWarn(`未知筛选: ${f}`);
     return;
   }
 });
@@ -989,7 +1366,247 @@ els.searchInput?.addEventListener("input", () => render());
 els.sortMode?.addEventListener("change", () => render());
 els.btnNew?.addEventListener("click", () => openEdit(null));
 els.btnOpenSettings?.addEventListener("click", () => openSettings("general"));
+window.addEventListener("pass-open-settings", () => openSettings("general"));
 document.querySelectorAll("[data-close-settings]").forEach((el) => el.addEventListener("click", closeSettings));
+
+const setProvisionStatus = (text, isError = false) => {
+  if (!els.provisionStatus) return;
+  const value = String(text || "").trim();
+  els.provisionStatus.hidden = !value;
+  els.provisionStatus.textContent = value;
+  els.provisionStatus.style.color = isError ? "var(--danger)" : "var(--muted)";
+  // Empty status must not reserve layout height (avoids crushed footer on short windows).
+  if (!value) {
+    els.provisionStatus.removeAttribute("style");
+    els.provisionStatus.hidden = true;
+  }
+};
+
+const updateProvisionAuthUi = () => {
+  const mode = els.provisionAuthMode?.value || "privateKey";
+  if (els.provisionPasswordRow) els.provisionPasswordRow.hidden = mode !== "password";
+  if (els.provisionKeyRow) els.provisionKeyRow.hidden = mode !== "privateKey";
+};
+
+const openProvisionModal = async () => {
+  if (!els.provisionModal) return;
+  if (els.provisionServerUrl) {
+    els.provisionServerUrl.value =
+      (els.syncBaseUrl?.value || "").trim() || "https://";
+  }
+  if (els.provisionToken) els.provisionToken.value = els.syncToken?.value || "";
+  if (els.provisionEncKey) els.provisionEncKey.value = els.syncEncKey?.value || "";
+  // Clear per-field forceVisible so global show-passwords can apply.
+  for (const id of [
+    "provisionSecretPassword",
+    "provisionKeyPassphrase",
+    "provisionToken",
+    "provisionEncKey",
+  ]) {
+    const input = document.getElementById(id);
+    if (input) delete input.dataset.forceVisible;
+  }
+  setProvisionStatus("");
+  updateProvisionAuthUi();
+  els.provisionModal.hidden = false;
+  applyUiPrefs();
+  try {
+    await loadSavedSshCredential();
+    // Re-apply after credentials load (values changed, still respect global).
+    applyUiPrefs();
+  } catch (_) {}
+};
+
+const closeProvisionModal = () => {
+  if (els.provisionModal) els.provisionModal.hidden = true;
+};
+
+const collectProvisionCredential = () => {
+  const mode = els.provisionAuthMode?.value || "privateKey";
+  const secret =
+    mode === "password"
+      ? els.provisionSecretPassword?.value || ""
+      : els.provisionSecretKey?.value || "";
+  return {
+    username: (els.provisionSshUser?.value || "root").trim() || "root",
+    port: Number(els.provisionSshPort?.value || 22),
+    authMode: mode,
+    secret,
+    privateKeyPassphrase: els.provisionKeyPassphrase?.value || "",
+  };
+};
+
+const loadSavedSshCredential = async () => {
+  const serverUrl = (els.provisionServerUrl?.value || els.syncBaseUrl?.value || "").trim();
+  if (!serverUrl) return;
+  const cred = await invoke("get_ssh_credential", { serverUrl });
+  if (els.provisionSshUser) els.provisionSshUser.value = cred.username || "root";
+  if (els.provisionSshPort) els.provisionSshPort.value = String(cred.port || 22);
+  if (els.provisionAuthMode) els.provisionAuthMode.value = cred.authMode || "privateKey";
+  updateProvisionAuthUi();
+  if ((cred.authMode || "privateKey") === "password") {
+    if (els.provisionSecretPassword) els.provisionSecretPassword.value = cred.secret || "";
+  } else if (els.provisionSecretKey) {
+    els.provisionSecretKey.value = cred.secret || "";
+  }
+  if (els.provisionKeyPassphrase) {
+    els.provisionKeyPassphrase.value = cred.privateKeyPassphrase || "";
+  }
+  setProvisionStatus(cred.secret ? "已载入该主机保存的 SSH 凭据" : "无已保存凭据");
+  applyUiPrefs();
+};
+
+els.btnOpenProvision?.addEventListener("click", () => openProvisionModal());
+document.querySelectorAll("[data-close-provision]").forEach((el) => {
+  el.addEventListener("click", closeProvisionModal);
+});
+els.provisionAuthMode?.addEventListener("change", updateProvisionAuthUi);
+els.btnLoadSshCred?.addEventListener("click", async () => {
+  try {
+    await loadSavedSshCredential();
+  } catch (err) {
+    setProvisionStatus(String(err), true);
+  }
+});
+els.btnGenProvisionToken?.addEventListener("click", () => {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const token = btoa(String.fromCharCode(...bytes))
+    .replace(/=+$/g, "")
+    .replace(/\+/g, "")
+    .replace(/\//g, "");
+  if (els.provisionToken) {
+    els.provisionToken.value = token;
+    delete els.provisionToken.dataset.forceVisible;
+  }
+  applyUiPrefs();
+  toastSuccess("已生成访问令牌");
+});
+els.btnRunProvision?.addEventListener("click", async () => {
+  const serverUrl = (els.provisionServerUrl?.value || "").trim();
+  const accessToken = (els.provisionToken?.value || "").trim();
+  const syncEncryptionKey = (els.provisionEncKey?.value || "").trim();
+  const credential = collectProvisionCredential();
+  if (!serverUrl.startsWith("https://")) {
+    setProvisionStatus("服务器地址必须是 HTTPS URL", true);
+    toastWarn("服务器地址必须是 HTTPS URL");
+    return;
+  }
+  if (!accessToken) {
+    setProvisionStatus("请填写访问令牌", true);
+    toastWarn("请填写访问令牌");
+    return;
+  }
+  if (!credential.secret.trim()) {
+    setProvisionStatus("请填写 SSH 密码或私钥", true);
+    toastWarn("请填写 SSH 密码或私钥");
+    return;
+  }
+  if (els.btnRunProvision) els.btnRunProvision.disabled = true;
+
+  const runCreate = async (removeExisting) => {
+    setProvisionStatus(
+      removeExisting
+        ? "正在删除旧服务并创建新服务，请稍候…"
+        : "正在通过 SSH 在服务器上创建服务，请稍候…"
+    );
+    const result = await invoke("provision_self_hosted_server", {
+      serverUrl,
+      credential,
+      accessToken,
+      syncEncryptionKey,
+      removeExisting: Boolean(removeExisting),
+    });
+    if (els.syncEnabled) els.syncEnabled.checked = true;
+    if (els.syncBaseUrl) els.syncBaseUrl.value = result.endpoint || serverUrl;
+    if (els.syncToken) els.syncToken.value = accessToken;
+    if (els.syncEncKey) els.syncEncKey.value = syncEncryptionKey;
+    try {
+      await saveAllSyncRelated();
+    } catch (_) {}
+    setProvisionStatus(result.message || "服务创建完成");
+    toastSuccess(result.message || "已在服务器创建同步服务");
+    const healthy = await invoke("verify_sync_endpoint", {
+      endpoint: result.endpoint || serverUrl,
+    });
+    if (healthy) {
+      setTimeout(() => closeProvisionModal(), 800);
+      openSettings("sync");
+    }
+  };
+
+  try {
+    setProvisionStatus("正在检测服务器是否已有旧服务…");
+    const report = await invoke("detect_existing_sync_service", {
+      serverUrl,
+      credential,
+    });
+    let removeExisting = false;
+    if (report?.exists) {
+      const detail = (report.findings || []).map((x) => `• ${x}`).join("\n");
+      const ok = window.confirm(
+        [
+          report.summary || "检测到服务器上已有 Pass 同步服务",
+          "",
+          detail || "• 已安装相关文件或单元",
+          "",
+          "是否删除旧服务后再创建？",
+          "",
+          "选择「取消」将中止创建（不会改动服务器）。",
+          "选择「确定」将停止并移除旧服务单元与程序文件（数据库目录会保留，创建时仍会再备份）。",
+        ].join("\n")
+      );
+      if (!ok) {
+        setProvisionStatus("已取消：未删除旧服务，也未创建新服务");
+        toastWarn("已取消创建服务");
+        return;
+      }
+      removeExisting = true;
+    } else {
+      setProvisionStatus(report?.summary || "未发现旧服务，开始创建…");
+    }
+    await runCreate(removeExisting);
+  } catch (err) {
+    const raw = String(err ?? "");
+    if (raw.includes("EXISTING_SERVICE:")) {
+      const payload = raw.split("EXISTING_SERVICE:")[1] || "";
+      const parts = payload.split("|");
+      const host = parts[0] || "";
+      const findings = (parts[1] || "")
+        .split("；")
+        .filter(Boolean)
+        .map((x) => `• ${x}`)
+        .join("\n");
+      const ok = window.confirm(
+        [
+          `检测到服务器 ${host} 上已有 Pass 同步服务。`,
+          "",
+          findings || "• 已安装相关文件或单元",
+          "",
+          "是否删除旧服务后再创建？",
+          "选择「取消」将中止。",
+        ].join("\n")
+      );
+      if (!ok) {
+        setProvisionStatus("已取消：未删除旧服务，也未创建新服务");
+        toastWarn("已取消创建服务");
+        return;
+      }
+      try {
+        await runCreate(true);
+        return;
+      } catch (err2) {
+        setProvisionStatus(String(err2), true);
+        toastError(`创建服务失败：${err2}`);
+        return;
+      }
+    }
+    setProvisionStatus(raw, true);
+    toastError(`创建服务失败：${raw}`);
+  } finally {
+    if (els.btnRunProvision) els.btnRunProvision.disabled = false;
+  }
+});
 document.querySelectorAll("[data-close-edit]").forEach((el) => el.addEventListener("click", closeEdit));
 document.querySelectorAll("[data-close-folder]").forEach((el) =>
   el.addEventListener("click", () => {
@@ -1012,15 +1629,104 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
   btn.addEventListener("click", () => openSettings(btn.dataset.settingsTab || "general"));
 });
 window.addEventListener("keydown", (e) => {
+  const meta = e.metaKey || e.ctrlKey;
+  // Cmd/Ctrl + , → settings (macOS PassMac parity)
+  if (meta && (e.key === "," || e.code === "Comma")) {
+    e.preventDefault();
+    openSettings("general");
+    return;
+  }
+  // Cmd/Ctrl + N → new account
+  if (meta && (e.key === "n" || e.key === "N") && !e.shiftKey) {
+    const tag = (e.target && e.target.tagName) || "";
+    if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
+      e.preventDefault();
+      openEdit(null);
+    }
+    return;
+  }
   if (e.key === "Escape") {
     closeSettings();
     closeEdit();
+    closeProvisionModal();
     if (els.folderModal) els.folderModal.hidden = true;
     closeFolderSites();
     closeFolderDedup();
     closeFolderDelete();
     hideContextMenu();
   }
+});
+
+// Live UI controls: apply immediately + debounced persist
+const bindRange = (input, label, suffix = "") => {
+  input?.addEventListener("input", () => {
+    if (label) label.textContent = `${input.value}${suffix}`;
+    applyUiPrefsFromFormLive();
+    scheduleSaveUiPrefs();
+  });
+  input?.addEventListener("change", () => {
+    applyUiPrefsFromFormLive();
+    scheduleSaveUiPrefs();
+  });
+};
+bindRange(els.uiTextSize, els.uiTextSizeVal);
+bindRange(els.uiButtonSize, els.uiButtonSizeVal);
+bindRange(els.uiToastDuration, els.uiToastDurationVal, "s");
+
+els.uiFontFamily?.addEventListener("change", () => {
+  applyUiPrefsFromFormLive();
+  scheduleSaveUiPrefs();
+});
+
+els.btnSaveUi?.addEventListener("click", async () => {
+  try {
+    await saveUiPrefs();
+    toastSuccess("界面设置已保存");
+  } catch (err) {
+    toastError(`保存界面设置失败：${err}`);
+  }
+});
+els.showPasswordsGlobally?.addEventListener("change", async () => {
+  applyUiPrefsFromFormLive();
+  try {
+    await saveUiPrefs();
+    toastSuccess(uiPrefs.showPasswordsGlobally ? "已全局显示密码" : "已全局隐藏密码");
+  } catch (err) {
+    toastError(`保存失败：${err}`);
+  }
+});
+els.exportDirectory?.addEventListener("change", () => {
+  applyUiPrefsFromFormLive();
+  scheduleSaveUiPrefs();
+});
+els.syncEncKey?.addEventListener("change", () => refreshSyncKeyHints());
+els.prevSyncEncKey?.addEventListener("change", () => {
+  applyUiPrefsFromFormLive();
+  scheduleSaveUiPrefs();
+  refreshSyncKeyHints();
+});
+els.autoSyncInterval?.addEventListener("change", async () => {
+  applyUiPrefsFromFormLive();
+  try {
+    await saveUiPrefs();
+    scheduleAutoSync();
+    toastSuccess(uiPrefs.autoSyncIntervalMinutes > 0
+      ? `自动同步已设为每 ${uiPrefs.autoSyncIntervalMinutes} 分钟`
+      : "自动同步已关闭");
+  } catch (err) {
+    toastError(`保存失败：${err}`);
+  }
+});
+els.webdavEnabled?.addEventListener("change", () => {
+  applyUiPrefsFromFormLive();
+  scheduleSaveUiPrefs();
+});
+["webdavBaseUrl", "webdavRemotePath", "webdavUsername", "webdavPassword"].forEach((id) => {
+  const el = document.getElementById(id);
+  el?.addEventListener("change", () => {
+    applyUiPrefsFromFormLive();
+    scheduleSaveUiPrefs();
+  });
 });
 
 const accountPayload = () => ({
@@ -1046,13 +1752,13 @@ const saveAccount = async (closeAfter) => {
     if (id) {
       await invoke("update_account", { id, input: payload });
       await invoke("set_account_folders", { id, folderIds });
-      message("已保存");
+      toastSuccess("已保存");
     } else {
       const created = await invoke("create_account", { input: payload });
       if (folderIds.length && created) {
         await invoke("set_account_folders", { id: accountKey(created), folderIds });
       }
-      message("账号已创建");
+      toastSuccess("账号已创建");
     }
     await refreshState();
     if (id || closeAfter) {
@@ -1064,7 +1770,7 @@ const saveAccount = async (closeAfter) => {
       els.sites.focus();
     }
   } catch (err) {
-    message(`保存失败：${err}`);
+    toastError(`保存失败：${err}`);
   }
 };
 
@@ -1078,16 +1784,19 @@ els.btnConfirmFolderDelete?.addEventListener("click", confirmFolderDelete);
 els.btnPasteTotpRaw?.addEventListener("click", pasteTotpRaw);
 els.btnPasteTotpUri?.addEventListener("click", () => pasteTotpUri());
 els.btnPasteTotpQr?.addEventListener("click", pasteTotpQr);
-document.querySelectorAll("[data-toggle-secret]").forEach((button) => {
-  button.addEventListener("click", () => {
-    const input = document.querySelector(`#${button.dataset.toggleSecret}`);
-    if (!(input instanceof HTMLInputElement)) return;
-    const visible = input.type === "password";
-    input.type = visible ? "text" : "password";
-    button.textContent = visible ? "◉" : "◎";
-    button.title = `${visible ? "隐藏" : "显示"}${button.dataset.toggleSecret === "password" ? "密码" : " TOTP 密钥"}`;
-    button.setAttribute("aria-label", button.title);
-  });
+// Event delegation so provision modal secrets also work.
+document.addEventListener("click", (e) => {
+  const button = e.target instanceof Element ? e.target.closest("[data-toggle-secret]") : null;
+  if (!button) return;
+  const input = document.querySelector(`#${button.dataset.toggleSecret}`);
+  if (!(input instanceof HTMLInputElement)) return;
+  const visible = input.type === "password";
+  input.type = visible ? "text" : "password";
+  if (visible) input.dataset.forceVisible = "1";
+  else delete input.dataset.forceVisible;
+  button.textContent = visible ? "◉" : "◎";
+  button.title = visible ? "隐藏" : "显示";
+  button.setAttribute("aria-label", button.title);
 });
 
 els.folderSitesForm?.addEventListener("submit", async (e) => {
@@ -1105,9 +1814,9 @@ els.folderSitesForm?.addEventListener("submit", async (e) => {
     });
     closeFolderSites();
     await refreshState();
-    message(result.message || `已加入 ${result.addedCount || 0} 个账号`);
+    toastSuccess(result.message || `已加入 ${result.addedCount || 0} 个账号`);
   } catch (err) {
-    message(`保存文件夹规则失败：${err}`);
+    toastError(`保存文件夹规则失败：${err}`);
   }
 });
 
@@ -1119,10 +1828,10 @@ els.btnDelete?.addEventListener("click", async () => {
   if (!id) return;
   if (filter.type === "recycle") {
     await invoke("hard_delete_account", { id });
-    message("已永久删除");
+    toastSuccess("已永久删除");
   } else {
     await invoke("soft_delete_account", { id });
-    message("已移入回收站");
+    toastSuccess("已移入回收站");
   }
   closeEdit();
   await refreshState();
@@ -1134,22 +1843,107 @@ els.btnRestore?.addEventListener("click", async () => {
   await invoke("restore_account", { id });
   closeEdit();
   await refreshState();
-  message("已恢复");
+  toastSuccess("已恢复");
 });
 
 els.btnSaveDevice?.addEventListener("click", async () => {
   await invoke("set_device_name", { deviceName: els.deviceName.value });
   await refreshState();
-  message("设备名已保存");
+  toastSuccess("设备名已保存");
 });
 els.btnExport?.addEventListener("click", async () => {
-  const r = await invoke("export_csv");
-  message(`CSV：${r.csvPath}`);
+  try {
+    await saveUiPrefs().catch(() => {});
+    const r = await invoke("export_csv_to_path", {
+      path: null,
+    });
+    toastSuccess(r.message || `CSV：${r.path}`);
+  } catch (err) {
+    try {
+      const r = await invoke("export_csv");
+      toastSuccess(`CSV：${r.csvPath}`);
+    } catch (e2) {
+      toastError(`导出失败：${err}`);
+    }
+  }
 });
+
+const exportBrowser = async (format) => {
+  try {
+    const r = await invoke("export_browser_csv_cmd", { format, path: null });
+    toastSuccess(r.message || r.path);
+  } catch (err) {
+    toastError(`导出失败：${err}`);
+  }
+};
+els.btnExportChrome?.addEventListener("click", () => exportBrowser("chrome"));
+els.btnExportFirefox?.addEventListener("click", () => exportBrowser("firefox"));
+els.btnExportSafari?.addEventListener("click", () => exportBrowser("safari"));
+
+els.btnImportBrowser?.addEventListener("click", () => els.fileBrowserCsv?.click());
+els.fileBrowserCsv?.addEventListener("change", async () => {
+  const file = els.fileBrowserCsv.files?.[0];
+  if (!file) return;
+  try {
+    const text = await readFileAsText(file);
+    const r = await invoke("import_browser_csv_text", { content: text });
+    await refreshState();
+    toastSuccess(r.message || `已导入 ${r.imported} 条`);
+  } catch (err) {
+    toastError(`导入失败：${err}`);
+  } finally {
+    els.fileBrowserCsv.value = "";
+  }
+});
+
+els.btnExportBundle?.addEventListener("click", async () => {
+  try {
+    await saveAllSyncRelated().catch(() => {});
+    const r = await invoke("export_sync_bundle", { path: null });
+    toastSuccess(r.message || r.path);
+  } catch (err) {
+    toastError(`导出同步包失败：${err}`);
+  }
+});
+els.btnImportBundle?.addEventListener("click", () => els.fileSyncBundle?.click());
+els.fileSyncBundle?.addEventListener("change", async () => {
+  const file = els.fileSyncBundle.files?.[0];
+  if (!file) return;
+  try {
+    const text = await readFileAsText(file);
+    const raw = await invoke("import_sync_bundle_text", { content: text, apply: false });
+    const result = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!result.safe) {
+      toastWarn(result.message || "安全检查未通过，未写入");
+      if (els.syncPreviewOut) {
+        els.syncPreviewOut.hidden = false;
+        els.syncPreviewOut.textContent = JSON.stringify(result, null, 2);
+      }
+      openSettings("sync");
+      return;
+    }
+    const ok = window.confirm(
+      `${result.message || "可以合并"}\n\n确定写入本地 vault 吗？`
+    );
+    if (!ok) {
+      toastWarn("已取消导入");
+      return;
+    }
+    const raw2 = await invoke("import_sync_bundle_text", { content: text, apply: true });
+    const result2 = typeof raw2 === "string" ? JSON.parse(raw2) : raw2;
+    await refreshState();
+    toastSuccess(result2.message || "同步包已合并写入");
+  } catch (err) {
+    toastError(`导入同步包失败：${err}`);
+  } finally {
+    els.fileSyncBundle.value = "";
+  }
+});
+
 els.btnDemo?.addEventListener("click", async () => {
   await invoke("generate_demo_accounts");
   await refreshState();
-  message("已生成演示数据");
+  toastSuccess("已生成演示数据");
 });
 els.btnHealth?.addEventListener("click", async () => {
   const h = await invoke("health_check");
@@ -1159,36 +1953,88 @@ els.btnHealth?.addEventListener("click", async () => {
 
 els.btnSaveSync?.addEventListener("click", async () => {
   try {
-    await invoke("set_sync_settings", { settings: collectSyncSettings() });
-    message("同步设置已保存");
+    await saveAllSyncRelated();
+    toastSuccess("同步设置已保存");
   } catch (err) {
-    message(`保存失败：${err}`);
+    toastError(`保存失败：${err}`);
   }
 });
 els.btnGenSyncKey?.addEventListener("click", async () => {
   const key = await invoke("generate_sync_encryption_key");
   if (els.syncEncKey) els.syncEncKey.value = key;
-  message("已生成同步密钥");
+  await refreshSyncKeyHints();
+  toastSuccess("已生成同步密钥");
+});
+els.btnCopySyncKey?.addEventListener("click", async () => {
+  const key = els.syncEncKey?.value || "";
+  if (!key) {
+    toastWarn("当前无同步密钥");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(key);
+    toastSuccess("同步密钥已复制");
+  } catch {
+    toastError("复制失败");
+  }
 });
 els.btnSyncPreview?.addEventListener("click", async () => {
   try {
-    await invoke("set_sync_settings", { settings: collectSyncSettings() });
+    await saveAllSyncRelated();
     const raw = await invoke("sync_preview");
     const result = typeof raw === "string" ? JSON.parse(raw) : raw;
     if (els.syncPreviewOut) {
       els.syncPreviewOut.hidden = false;
       els.syncPreviewOut.textContent = JSON.stringify(result.report || result, null, 2);
     }
-    message(result.report?.message || "预览完成");
+    toastSuccess(result.report?.message || "预览完成");
   } catch (err) {
-    message(`预览失败：${err}`);
+    toastError(`预览失败：${err}`);
+  }
+});
+els.btnSyncMerge?.addEventListener("click", async () => {
+  try {
+    if (els.syncMode) els.syncMode.value = "merge";
+    await runSyncMode("merge");
+  } catch (err) {
+    toastError(`同步失败：${err}`);
+  }
+});
+els.btnSyncRemoteOverwrite?.addEventListener("click", async () => {
+  if (
+    !window.confirm(
+      "云端覆盖本地会用远端数据替换本机 vault。\n若远端为空或不可达可能导致数据丢失。\n确定继续吗？"
+    )
+  ) {
+    return;
+  }
+  try {
+    if (els.syncMode) els.syncMode.value = "remoteOverwriteLocal";
+    await runSyncMode("remoteOverwriteLocal");
+  } catch (err) {
+    toastError(`同步失败：${err}`);
+  }
+});
+els.btnSyncLocalOverwrite?.addEventListener("click", async () => {
+  if (
+    !window.confirm(
+      "本地覆盖云端会把本机数据推到服务器并覆盖远端。\n确定继续吗？"
+    )
+  ) {
+    return;
+  }
+  try {
+    if (els.syncMode) els.syncMode.value = "localOverwriteRemote";
+    await runSyncMode("localOverwriteRemote");
+  } catch (err) {
+    toastError(`同步失败：${err}`);
   }
 });
 els.btnSyncNow?.addEventListener("click", async () => {
   try {
     await runSyncNow();
   } catch (err) {
-    message(`同步失败：${err}`);
+    toastError(`同步失败：${err}`);
     openSettings("sync");
   }
 });
@@ -1196,7 +2042,84 @@ els.btnSyncNowSettings?.addEventListener("click", async () => {
   try {
     await runSyncNow();
   } catch (err) {
-    message(`同步失败：${err}`);
+    toastError(`同步失败：${err}`);
+  }
+});
+
+els.btnLoadVersions?.addEventListener("click", async () => {
+  try {
+    await saveAllSyncRelated().catch(() => {});
+    const list = await invoke("list_server_versions");
+    if (els.syncVersionsStatus) {
+      els.syncVersionsStatus.textContent = list.length
+        ? `共 ${list.length} 个快照`
+        : "暂无快照";
+    }
+    if (els.syncVersionsList) {
+      els.syncVersionsList.innerHTML = "";
+      for (const v of list) {
+        const row = document.createElement("div");
+        row.className = "version-row";
+        const span = document.createElement("span");
+        span.textContent = `版本 ${v.id} · 导出 ${formatTimeMs(v.exportedAtMs)} · 保存 ${formatTimeMs(v.savedAtMs)} · ${(v.payloadSha256 || "").slice(0, 12)}`;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "恢复";
+        btn.addEventListener("click", async () => {
+          if (!window.confirm(`恢复服务器快照 ${v.id}？本机数据将被替换。`)) return;
+          try {
+            const msg = await invoke("restore_server_version", { versionId: v.id });
+            await refreshState();
+            toastSuccess(msg);
+          } catch (err) {
+            toastError(`恢复失败：${err}`);
+          }
+        });
+        row.append(span, btn);
+        els.syncVersionsList.appendChild(row);
+      }
+    }
+  } catch (err) {
+    if (els.syncVersionsStatus) els.syncVersionsStatus.textContent = String(err);
+    toastError(`读取快照失败：${err}`);
+  }
+});
+
+els.btnLoadLocalSnapshots?.addEventListener("click", async () => {
+  try {
+    const list = await invoke("list_local_snapshots");
+    if (els.localSnapshotsStatus) {
+      els.localSnapshotsStatus.textContent = list.length
+        ? `共 ${list.length} 个本地安全快照`
+        : "暂无本地安全快照";
+    }
+    if (els.localSnapshotsList) {
+      els.localSnapshotsList.innerHTML = "";
+      for (const snapshot of list) {
+        const row = document.createElement("div");
+        row.className = "version-row";
+        const span = document.createElement("span");
+        span.textContent = `${snapshot.reason} · ${formatTimeMs(snapshot.createdAtMs)} · 账号 ${snapshot.accounts} · 文件夹 ${snapshot.folders} · 通行密钥 ${snapshot.passkeys}`;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "恢复";
+        btn.addEventListener("click", async () => {
+          if (!window.confirm("恢复本地安全快照会替换当前 vault；当前数据也会先自动备份。确定继续吗？")) return;
+          try {
+            const msg = await invoke("restore_local_snapshot", { snapshotId: snapshot.id });
+            await refreshState();
+            toastSuccess(msg);
+          } catch (err) {
+            toastError(`恢复本地安全快照失败：${err}`);
+          }
+        });
+        row.append(span, btn);
+        els.localSnapshotsList.appendChild(row);
+      }
+    }
+  } catch (err) {
+    if (els.localSnapshotsStatus) els.localSnapshotsStatus.textContent = String(err);
+    toastError(`读取本地安全快照失败：${err}`);
   }
 });
 
@@ -1232,9 +2155,9 @@ els.btnMergePreview?.addEventListener("click", async () => {
       els.mergeSummary.textContent = `safe=${result.safe}\n${(result.reasons || []).join(", ")}`;
     }
     if (els.mergePayloadOut) els.mergePayloadOut.textContent = JSON.stringify(result.payload, null, 2);
-    message("JSON 合并预览完成");
+    toastSuccess("JSON 合并预览完成");
   } catch (err) {
-    message(`预览失败：${err}`);
+    toastError(`预览失败：${err}`);
   }
 });
 
@@ -1246,7 +2169,8 @@ els.btnUnlock?.addEventListener("click", async () => {
     applyLockUi();
     await refreshState();
     await loadSyncSettings();
-    message("已解锁");
+    await loadUiPrefs();
+    toastSuccess("已解锁");
   } catch (err) {
     if (els.lockError) els.lockError.textContent = String(err);
   }
@@ -1259,46 +2183,49 @@ els.btnLockEnable?.addEventListener("click", async () => {
       idleLockMinutes: Number(els.idleMinutes?.value || 5),
     });
     try {
-      await invoke("set_sync_settings", { settings: collectSyncSettings() });
+      await saveAllSyncRelated();
     } catch (_) {}
     if (els.lockPassword) els.lockPassword.value = "";
     if (els.lockPassword2) els.lockPassword2.value = "";
     applyLockUi();
-    message("应用锁已启用");
+    toastSuccess("应用锁已启用");
   } catch (err) {
-    message(`启用失败：${err}`);
+    toastError(`启用失败：${err}`);
   }
 });
 els.btnLockDisable?.addEventListener("click", async () => {
   try {
     lockState = await invoke("lock_disable", { password: els.lockPassword?.value || "" });
     applyLockUi();
-    message("应用锁已关闭");
+    toastSuccess("应用锁已关闭");
   } catch (err) {
-    message(`关闭失败：${err}`);
+    toastError(`关闭失败：${err}`);
   }
 });
 els.btnLockIdle?.addEventListener("click", async () => {
   try {
     lockState = await invoke("lock_set_idle", { minutes: Number(els.idleMinutes?.value || 5) });
     applyLockUi();
-    message("空闲时间已保存");
+    toastSuccess("空闲时间已保存");
   } catch (err) {
-    message(String(err));
+    toastError(String(err));
   }
 });
-els.btnLockNow?.addEventListener("click", async () => {
+const doLockNow = async () => {
   await invoke("lock_now");
   await refreshLock();
   state = { activeAccounts: [], deletedAccounts: [], folders: [], passkeys: [], deviceName: "" };
   closeEdit();
   closeSettings();
   render();
-  message("已锁定");
-});
+  toastSuccess("已锁定");
+};
+els.btnLockNow?.addEventListener("click", doLockNow);
+els.btnLockNowSettings?.addEventListener("click", doLockNow);
 
 const boot = async () => {
   await refreshLock();
+  await loadUiPrefs();
   if (!(lockState.enabled && lockState.locked)) {
     await refreshState();
     await loadSyncSettings();
@@ -1313,7 +2240,7 @@ const boot = async () => {
         closeEdit();
         closeSettings();
         render();
-        message("空闲超时，已锁定");
+        toastSuccess("空闲超时，已锁定");
       }
     } catch (_) {}
   }, 15000);
