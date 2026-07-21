@@ -52,7 +52,7 @@
 
             <div class="side-divider"></div>
 
-            <div class="folder-head">
+            <div class="folder-head" id="folderHead">
               <span id="label-folders">文件夹 (0)</span>
               <button type="button" class="folder-new" id="btn-new-folder">新建</button>
             </div>
@@ -130,6 +130,48 @@
         </div>
       </div>
     </div>
+
+    <div id="folderSitesModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close-folder-sites></div>
+      <div class="modal-card sm folder-sites-card">
+        <header class="modal-head">
+          <h2 id="folderSitesTitle">加入指定网站全部账号</h2>
+          <button type="button" class="icon-btn" data-close-folder-sites>×</button>
+        </header>
+        <form id="folderSitesForm" class="modal-body">
+          <label>网站（每行一个，支持网址或域名）
+            <textarea id="folderSitesInput" rows="7" placeholder="github.com&#10;google.com"></textarea>
+          </label>
+          <label class="row-check"><input type="checkbox" id="folderAutoAdd" /> 后续自动加入匹配账号</label>
+          <div class="form-actions">
+            <button type="submit" class="primary">加入文件夹</button>
+            <button type="button" data-close-folder-sites>取消</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="folderDedupModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close-folder-dedup></div>
+      <div class="modal-card wide folder-dedup-card">
+        <header class="modal-head">
+          <div>
+            <h2 id="folderDedupTitle">文件夹内去重</h2>
+            <p id="folderDedupSummary" class="hint"></p>
+          </div>
+          <button type="button" class="icon-btn" data-close-folder-dedup>×</button>
+        </header>
+        <div class="modal-body">
+          <div class="dedup-toolbar">
+            <button type="button" class="primary" id="btn-keep-latest">保留全部最新账号</button>
+            <button type="button" id="btn-keep-earliest">保留全部最早账号</button>
+          </div>
+          <div id="folderDedupGroups" class="dedup-groups"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="contextMenu" class="context-menu" hidden></div>
 
     <div id="settingsModal" class="modal" hidden>
       <div class="modal-backdrop" data-close-settings></div>

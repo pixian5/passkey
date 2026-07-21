@@ -4,6 +4,7 @@ mod sync;
 use chrono::{Local, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 use std::{fs, path::PathBuf};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
@@ -46,6 +47,33 @@ struct AppState {
 #[serde(rename_all = "camelCase")]
 struct ExportResult {
     csv_path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FolderRuleResult {
+    folder: Folder,
+    matched_count: usize,
+    added_count: usize,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FolderDuplicateGroup {
+    id: String,
+    site_aliases: Vec<String>,
+    username: String,
+    accounts: Vec<PasswordAccount>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeduplicateResult {
+    deleted_count: usize,
+    kept_count: usize,
+    group_count: usize,
+    message: String,
 }
 
 #[tauri::command]
@@ -99,7 +127,11 @@ fn get_app_state(app: AppHandle, state: tauri::State<AppLockState>) -> Result<Ap
 }
 
 #[tauri::command]
-fn set_device_name(app: AppHandle, state: tauri::State<AppLockState>, device_name: String) -> Result<(), String> {
+fn set_device_name(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    device_name: String,
+) -> Result<(), String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
 
@@ -113,12 +145,17 @@ fn set_device_name(app: AppHandle, state: tauri::State<AppLockState>, device_nam
 }
 
 #[tauri::command]
-fn create_account(app: AppHandle, state: tauri::State<AppLockState>, input: AccountInput) -> Result<(), String> {
+fn create_account(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    input: AccountInput,
+) -> Result<(), String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
 
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
+    let folders = load_folders(&conn)?;
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
     let sites = normalize_sites(input.sites);
@@ -128,7 +165,7 @@ fn create_account(app: AppHandle, state: tauri::State<AppLockState>, input: Acco
     let canonical_site = sites[0].clone();
     let id = Uuid::new_v4().to_string();
     let username = input.username.trim().to_string();
-    let account = PasswordAccount {
+    let mut account = PasswordAccount {
         record_id: Some(id.clone()),
         id: Some(id),
         account_id: format!("{canonical_site}-{now}-{username}"),
@@ -156,6 +193,7 @@ fn create_account(app: AppHandle, state: tauri::State<AppLockState>, input: Acco
         last_operated_device_name: device_name,
         ..Default::default()
     };
+    apply_automatic_folder_rules(&mut account, &folders);
     accounts.push(account);
     sync_alias_sites(&mut accounts);
     save_accounts(&conn, &accounts)?;
@@ -163,12 +201,18 @@ fn create_account(app: AppHandle, state: tauri::State<AppLockState>, input: Acco
 }
 
 #[tauri::command]
-fn update_account(app: AppHandle, state: tauri::State<AppLockState>, id: String, input: AccountInput) -> Result<(), String> {
+fn update_account(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    id: String,
+    input: AccountInput,
+) -> Result<(), String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
 
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
+    let folders = load_folders(&conn)?;
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
     let sites = normalize_sites(input.sites);
@@ -205,6 +249,7 @@ fn update_account(app: AppHandle, state: tauri::State<AppLockState>, id: String,
             }
             item.sites = sites.clone();
             item.canonical_site = sites[0].clone();
+            apply_automatic_folder_rules(item, &folders);
             item.updated_at_ms = now;
             item.last_operated_device_name = device_name.clone();
             found = true;
@@ -220,7 +265,11 @@ fn update_account(app: AppHandle, state: tauri::State<AppLockState>, id: String,
 }
 
 #[tauri::command]
-fn soft_delete_account(app: AppHandle, state: tauri::State<AppLockState>, id: String) -> Result<(), String> {
+fn soft_delete_account(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    id: String,
+) -> Result<(), String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
 
@@ -241,7 +290,11 @@ fn soft_delete_account(app: AppHandle, state: tauri::State<AppLockState>, id: St
 }
 
 #[tauri::command]
-fn restore_account(app: AppHandle, state: tauri::State<AppLockState>, id: String) -> Result<(), String> {
+fn restore_account(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    id: String,
+) -> Result<(), String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
 
@@ -264,7 +317,11 @@ fn restore_account(app: AppHandle, state: tauri::State<AppLockState>, id: String
 }
 
 #[tauri::command]
-fn hard_delete_account(app: AppHandle, state: tauri::State<AppLockState>, id: String) -> Result<(), String> {
+fn hard_delete_account(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    id: String,
+) -> Result<(), String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
 
@@ -401,7 +458,10 @@ fn merge_sync_payloads(local_json: String, remote_json: String) -> Result<String
 }
 
 #[tauri::command]
-fn get_sync_settings(app: AppHandle, state: tauri::State<AppLockState>) -> Result<SyncSettings, String> {
+fn get_sync_settings(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<SyncSettings, String> {
     let dir = app_data_dir(&app)?;
     let mut s = load_sync_settings(&dir);
     let pub_lock = state.public_state(&dir);
@@ -458,8 +518,12 @@ fn sync_preview(app: AppHandle, state: tauri::State<AppLockState>) -> Result<Str
     let dir = app_data_dir(&app)?;
     let mut settings = load_sync_settings(&dir);
     if let Ok((token, key)) = state.open_sync_secrets(&dir) {
-        if !token.is_empty() { settings.auth_token = token; }
-        if !key.is_empty() { settings.encryption_key = key; }
+        if !token.is_empty() {
+            settings.auth_token = token;
+        }
+        if !key.is_empty() {
+            settings.encryption_key = key;
+        }
     }
     let device = load_device_name(&conn)?;
     let accounts = load_accounts(&conn)?;
@@ -483,8 +547,12 @@ fn sync_now(app: AppHandle, state: tauri::State<AppLockState>) -> Result<String,
     let dir = app_data_dir(&app)?;
     let mut settings = load_sync_settings(&dir);
     if let Ok((token, key)) = state.open_sync_secrets(&dir) {
-        if !token.is_empty() { settings.auth_token = token; }
-        if !key.is_empty() { settings.encryption_key = key; }
+        if !token.is_empty() {
+            settings.auth_token = token;
+        }
+        if !key.is_empty() {
+            settings.encryption_key = key;
+        }
     }
     let device = load_device_name(&conn)?;
     let accounts = load_accounts(&conn)?;
@@ -497,8 +565,7 @@ fn sync_now(app: AppHandle, state: tauri::State<AppLockState>) -> Result<String,
         save_folders(&conn, &applied.folders)?;
         save_passkeys(&conn, &applied.passkeys)?;
     }
-    serde_json::to_string(&serde_json::json!({ "report": report }))
-        .map_err(|e| e.to_string())
+    serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
 }
 
 fn account_matches_id(account: &PasswordAccount, id: &str) -> bool {
@@ -519,6 +586,160 @@ fn sync_alias_sites(accounts: &mut [PasswordAccount]) {
         .map(|a| a.last_operated_device_name.clone())
         .unwrap_or_else(|| "Desktop".into());
     let _ = sync_alias_groups(accounts, now_ms(), &device);
+}
+
+fn normalize_rule_sites(site_inputs: Vec<String>) -> Vec<String> {
+    let expanded = site_inputs
+        .into_iter()
+        .flat_map(|input| {
+            input
+                .split([',', '，', '\n'])
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    normalize_sites(expanded)
+}
+
+fn account_matches_site_rule(account: &PasswordAccount, rule_sites: &[String]) -> bool {
+    if rule_sites.is_empty() {
+        return false;
+    }
+    let account_sites = normalize_sites(account.sites.clone());
+    let canonical = pass_merge::v2::normalize::normalize_domain(&account.canonical_site);
+    rule_sites.iter().any(|site| {
+        account_sites
+            .iter()
+            .any(|account_site| account_site == site)
+            || canonical == *site
+    })
+}
+
+fn account_in_folder(account: &PasswordAccount, folder_id: &str) -> bool {
+    account
+        .folder_ids
+        .iter()
+        .any(|id| id.eq_ignore_ascii_case(folder_id))
+        || account
+            .folder_id
+            .as_deref()
+            .map(|id| id.eq_ignore_ascii_case(folder_id))
+            .unwrap_or(false)
+}
+
+fn add_account_to_folder(account: &mut PasswordAccount, folder_id: &str) -> bool {
+    if account_in_folder(account, folder_id) {
+        return false;
+    }
+    account.folder_ids.push(folder_id.to_string());
+    if account.folder_id.is_none() {
+        account.folder_id = Some(folder_id.to_string());
+    }
+    true
+}
+
+fn apply_automatic_folder_rules(account: &mut PasswordAccount, folders: &[Folder]) {
+    if account.is_deleted || account.is_permanently_deleted {
+        return;
+    }
+    for folder in folders.iter().filter(|folder| {
+        folder.auto_add_matching_sites && !folder.is_deleted && !folder.is_permanently_deleted
+    }) {
+        let matched_sites = normalize_sites(folder.matched_sites.clone());
+        if account_matches_site_rule(account, &matched_sites) {
+            add_account_to_folder(account, &folder.id);
+        }
+    }
+}
+
+fn folder_duplicate_groups(
+    accounts: &[PasswordAccount],
+    folder_id: &str,
+) -> Vec<FolderDuplicateGroup> {
+    let mut grouped: BTreeMap<String, Vec<PasswordAccount>> = BTreeMap::new();
+    for account in accounts.iter().filter(|account| {
+        !account.is_deleted
+            && !account.is_permanently_deleted
+            && account_in_folder(account, folder_id)
+    }) {
+        let site_aliases = {
+            let aliases = normalize_sites(account.sites.clone());
+            if aliases.is_empty() {
+                let canonical =
+                    pass_merge::v2::normalize::normalize_domain(&account.canonical_site);
+                if canonical.is_empty() {
+                    vec![]
+                } else {
+                    vec![canonical]
+                }
+            } else {
+                aliases
+            }
+        };
+        let username_key = account.username.trim().to_ascii_lowercase();
+        let key = format!("{}\n{}", site_aliases.join("|"), username_key);
+        grouped.entry(key).or_default().push(account.clone());
+    }
+
+    let mut result: Vec<FolderDuplicateGroup> = grouped
+        .into_iter()
+        .filter_map(|(id, mut grouped_accounts)| {
+            if grouped_accounts.len() < 2 {
+                return None;
+            }
+            grouped_accounts.sort_by(|left, right| {
+                right
+                    .updated_at_ms
+                    .cmp(&left.updated_at_ms)
+                    .then_with(|| right.created_at_ms.cmp(&left.created_at_ms))
+                    .then_with(|| left.account_id.cmp(&right.account_id))
+            });
+            let first = grouped_accounts.first()?;
+            let site_aliases = {
+                let aliases = normalize_sites(first.sites.clone());
+                if aliases.is_empty() {
+                    vec![pass_merge::v2::normalize::normalize_domain(
+                        &first.canonical_site,
+                    )]
+                    .into_iter()
+                    .filter(|site| !site.is_empty())
+                    .collect()
+                } else {
+                    aliases
+                }
+            };
+            let username = {
+                let display = first.username.trim();
+                if display.is_empty() {
+                    "(空用户名)".to_string()
+                } else {
+                    display.to_string()
+                }
+            };
+            Some(FolderDuplicateGroup {
+                id,
+                site_aliases,
+                username,
+                accounts: grouped_accounts,
+            })
+        })
+        .collect();
+    result.sort_by(|left, right| {
+        let left_time = left
+            .accounts
+            .first()
+            .map(|account| account.updated_at_ms)
+            .unwrap_or(0);
+        let right_time = right
+            .accounts
+            .first()
+            .map(|account| account.updated_at_ms)
+            .unwrap_or(0);
+        right_time
+            .cmp(&left_time)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    result
 }
 
 fn now_ms() -> i64 {
@@ -726,13 +947,15 @@ fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("解析应用数据目录失败: {e}"))
 }
 
-
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app_data_dir(app)
 }
 
 #[tauri::command]
-fn get_lock_state(app: AppHandle, state: tauri::State<AppLockState>) -> Result<AppLockPublicState, String> {
+fn get_lock_state(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<AppLockPublicState, String> {
     let dir = data_dir(&app)?;
     Ok(state.public_state(&dir))
 }
@@ -790,10 +1013,12 @@ fn lock_touch(state: tauri::State<AppLockState>) {
     state.touch();
 }
 
-
-
 #[tauri::command]
-fn create_folder(app: AppHandle, state: tauri::State<AppLockState>, name: String) -> Result<Folder, String> {
+fn create_folder(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    name: String,
+) -> Result<Folder, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
     let conn = open_db(&app)?;
@@ -821,7 +1046,11 @@ fn create_folder(app: AppHandle, state: tauri::State<AppLockState>, name: String
 }
 
 #[tauri::command]
-fn delete_folder(app: AppHandle, state: tauri::State<AppLockState>, id: String) -> Result<(), String> {
+fn delete_folder(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    id: String,
+) -> Result<(), String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
     let conn = open_db(&app)?;
@@ -883,6 +1112,197 @@ fn set_account_folders(
     Ok(())
 }
 
+#[tauri::command]
+fn configure_folder_site_rules(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    folder_id: String,
+    site_inputs: Vec<String>,
+    auto_add: bool,
+) -> Result<FolderRuleResult, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let conn = open_db(&app)?;
+    let mut folders = load_folders(&conn)?;
+    let normalized_id = folder_id.trim().to_ascii_lowercase();
+    let folder = folders
+        .iter_mut()
+        .find(|folder| folder.id.eq_ignore_ascii_case(&normalized_id))
+        .ok_or_else(|| "未找到文件夹".to_string())?;
+    if folder.is_deleted || folder.is_permanently_deleted {
+        return Err("目标文件夹已删除".into());
+    }
+
+    let normalized_sites = normalize_rule_sites(site_inputs);
+    folder.matched_sites = normalized_sites.clone();
+    folder.auto_add_matching_sites = auto_add;
+    folder.updated_at_ms = now_ms();
+    let folder_snapshot = folder.clone();
+
+    let mut accounts = load_accounts(&conn)?;
+    let device_name = load_device_name(&conn)?;
+    let now = now_ms();
+    let mut matched_count = 0;
+    let mut added_count = 0;
+    for account in accounts
+        .iter_mut()
+        .filter(|account| !account.is_deleted && !account.is_permanently_deleted)
+    {
+        if account_matches_site_rule(account, &normalized_sites) {
+            matched_count += 1;
+            if add_account_to_folder(account, &normalized_id) {
+                account.updated_at_ms = now;
+                account.last_operated_device_name = device_name.clone();
+                added_count += 1;
+            }
+        }
+    }
+    save_accounts(&conn, &accounts)?;
+    save_folders(&conn, &folders)?;
+    Ok(FolderRuleResult {
+        folder: folder_snapshot,
+        matched_count,
+        added_count,
+        message: format!(
+            "已保存文件夹规则，匹配 {} 个账号，新增加入 {} 个账号",
+            matched_count, added_count
+        ),
+    })
+}
+
+#[tauri::command]
+fn get_folder_duplicate_groups(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    folder_id: String,
+) -> Result<Vec<FolderDuplicateGroup>, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let conn = open_db(&app)?;
+    let folders = load_folders(&conn)?;
+    let normalized_id = folder_id.trim().to_ascii_lowercase();
+    if !folders.iter().any(|folder| {
+        folder.id.eq_ignore_ascii_case(&normalized_id)
+            && !folder.is_deleted
+            && !folder.is_permanently_deleted
+    }) {
+        return Err("未找到文件夹".into());
+    }
+    let accounts = load_accounts(&conn)?;
+    Ok(folder_duplicate_groups(&accounts, &normalized_id))
+}
+
+#[tauri::command]
+fn deduplicate_folder(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    folder_id: String,
+    mode: String,
+    account_id: Option<String>,
+) -> Result<DeduplicateResult, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let conn = open_db(&app)?;
+    let folders = load_folders(&conn)?;
+    let normalized_id = folder_id.trim().to_ascii_lowercase();
+    if !folders.iter().any(|folder| {
+        folder.id.eq_ignore_ascii_case(&normalized_id)
+            && !folder.is_deleted
+            && !folder.is_permanently_deleted
+    }) {
+        return Err("未找到文件夹".into());
+    }
+
+    let accounts = load_accounts(&conn)?;
+    let groups = folder_duplicate_groups(&accounts, &normalized_id);
+    if groups.is_empty() {
+        return Ok(DeduplicateResult {
+            deleted_count: 0,
+            kept_count: 0,
+            group_count: 0,
+            message: "当前文件夹暂无重复账号".into(),
+        });
+    }
+
+    let mut keep_ids = BTreeSet::new();
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "latest" => {
+            for group in &groups {
+                if let Some(account) = group.accounts.first() {
+                    keep_ids.insert(account.resolved_record_id());
+                }
+            }
+        }
+        "earliest" => {
+            for group in &groups {
+                if let Some(account) = group.accounts.last() {
+                    keep_ids.insert(account.resolved_record_id());
+                }
+            }
+        }
+        "account" => {
+            let requested_id = account_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| "未指定要保留的账号".to_string())?;
+            let group = groups.iter().find(|group| {
+                group
+                    .accounts
+                    .iter()
+                    .any(|account| account_matches_id(account, requested_id))
+            });
+            let group = group.ok_or_else(|| "当前重复分组中未找到指定账号".to_string())?;
+            keep_ids.insert(
+                group
+                    .accounts
+                    .iter()
+                    .find(|account| account_matches_id(account, requested_id))
+                    .map(|account| account.resolved_record_id())
+                    .unwrap_or_default(),
+            );
+        }
+        _ => return Err("未知去重方式".into()),
+    }
+
+    let duplicate_ids: BTreeSet<String> = groups
+        .iter()
+        .flat_map(|group| {
+            group
+                .accounts
+                .iter()
+                .map(PasswordAccount::resolved_record_id)
+        })
+        .collect();
+    let device_name = load_device_name(&conn)?;
+    let now = now_ms();
+    let mut accounts = accounts;
+    let mut deleted_count = 0;
+    for account in accounts.iter_mut() {
+        let id = account.resolved_record_id();
+        if duplicate_ids.contains(&id) && !keep_ids.contains(&id) && !account.is_deleted {
+            account.is_deleted = true;
+            account.deleted_at_ms = Some(now);
+            account.deleted_device_name = device_name.clone();
+            account.updated_at_ms = now;
+            account.last_operated_device_name = device_name.clone();
+            deleted_count += 1;
+        }
+    }
+    if deleted_count > 0 {
+        save_accounts(&conn, &accounts)?;
+    }
+    Ok(DeduplicateResult {
+        deleted_count,
+        kept_count: keep_ids.len(),
+        group_count: groups.len(),
+        message: format!(
+            "去重完成，已移入回收站 {} 个重复账号，保留 {} 个账号",
+            deleted_count,
+            keep_ids.len()
+        ),
+    })
+}
 
 fn main() {
     tauri::Builder::default()
@@ -900,6 +1320,9 @@ fn main() {
             create_folder,
             delete_folder,
             set_account_folders,
+            configure_folder_site_rules,
+            get_folder_duplicate_groups,
+            deduplicate_folder,
             export_csv,
             merge_sync_payloads,
             get_sync_settings,
@@ -917,4 +1340,58 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running codex-tauri");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_account(id: &str, site: &str, username: &str, updated_at_ms: i64) -> PasswordAccount {
+        PasswordAccount {
+            record_id: Some(id.to_string()),
+            id: Some(id.to_string()),
+            account_id: id.to_string(),
+            canonical_site: site.to_string(),
+            sites: vec![site.to_string()],
+            username: username.to_string(),
+            folder_ids: vec!["folder-1".to_string()],
+            folder_id: Some("folder-1".to_string()),
+            updated_at_ms,
+            created_at_ms: updated_at_ms,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn automatic_folder_rule_adds_matching_account() {
+        let folder = Folder {
+            id: "folder-1".into(),
+            matched_sites: vec!["example.com".into()],
+            auto_add_matching_sites: true,
+            ..Default::default()
+        };
+        let mut account = test_account("account-1", "https://example.com/login", "demo", 1);
+        account.folder_ids.clear();
+        account.folder_id = None;
+
+        apply_automatic_folder_rules(&mut account, &[folder]);
+
+        assert_eq!(account.folder_ids, vec!["folder-1"]);
+        assert_eq!(account.folder_id.as_deref(), Some("folder-1"));
+    }
+
+    #[test]
+    fn duplicate_groups_match_aliases_and_username_and_sort_newest_first() {
+        let accounts = vec![
+            test_account("account-old", "example.com", "Demo", 10),
+            test_account("account-new", "https://example.com/path", "demo", 20),
+            test_account("account-other", "example.com", "other", 30),
+        ];
+
+        let groups = folder_duplicate_groups(&accounts, "folder-1");
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].accounts[0].resolved_record_id(), "account-new");
+        assert_eq!(groups[0].accounts[1].resolved_record_id(), "account-old");
+    }
 }

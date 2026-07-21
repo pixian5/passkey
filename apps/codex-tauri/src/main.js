@@ -18,6 +18,7 @@ const els = {
   listEmpty: $("#listEmpty"),
   folderList: $("#folderList"),
   folderEmpty: $("#folderEmpty"),
+  folderHead: $("#folderHead"),
   searchInput: $("#searchInput"),
   sortMode: $("#sortMode"),
   labelAll: $("#label-all"),
@@ -38,6 +39,18 @@ const els = {
   editTitle: $("#editTitle"),
   folderModal: $("#folderModal"),
   newFolderName: $("#newFolderName"),
+  folderSitesModal: $("#folderSitesModal"),
+  folderSitesForm: $("#folderSitesForm"),
+  folderSitesTitle: $("#folderSitesTitle"),
+  folderSitesInput: $("#folderSitesInput"),
+  folderAutoAdd: $("#folderAutoAdd"),
+  folderDedupModal: $("#folderDedupModal"),
+  folderDedupTitle: $("#folderDedupTitle"),
+  folderDedupSummary: $("#folderDedupSummary"),
+  folderDedupGroups: $("#folderDedupGroups"),
+  btnKeepLatest: $("#btn-keep-latest"),
+  btnKeepEarliest: $("#btn-keep-earliest"),
+  contextMenu: $("#contextMenu"),
   btnNewFolder: $("#btn-new-folder"),
   btnCreateFolder: $("#btn-create-folder"),
   btnNew: $("#btn-new"),
@@ -101,6 +114,8 @@ let activityTimer = null;
 let totpTimer = null;
 let filter = { type: "all" };
 let selectedId = "";
+let folderSitesTargetId = "";
+let folderDedupTarget = null;
 
 const message = (text) => {
   const el = els.output || document.querySelector("#output");
@@ -306,6 +321,149 @@ const copyText = async (text, okMsg) => {
   }
 };
 
+const hideContextMenu = () => {
+  if (els.contextMenu) els.contextMenu.hidden = true;
+};
+
+const showContextMenu = (event, items) => {
+  if (!els.contextMenu) return;
+  event.preventDefault();
+  event.stopPropagation();
+  els.contextMenu.innerHTML = "";
+  items.forEach(({ label, action, danger = false }) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.textContent = label;
+    if (danger) item.classList.add("danger");
+    item.addEventListener("click", async (clickEvent) => {
+      clickEvent.preventDefault();
+      clickEvent.stopPropagation();
+      hideContextMenu();
+      try {
+        await action();
+      } catch (err) {
+        message(`操作失败：${err}`);
+      }
+    });
+    els.contextMenu.appendChild(item);
+  });
+  els.contextMenu.hidden = false;
+  const menuRect = els.contextMenu.getBoundingClientRect();
+  const left = Math.min(event.clientX, window.innerWidth - menuRect.width - 8);
+  const top = Math.min(event.clientY, window.innerHeight - menuRect.height - 8);
+  els.contextMenu.style.left = `${Math.max(8, left)}px`;
+  els.contextMenu.style.top = `${Math.max(8, top)}px`;
+};
+
+const openFolderSites = (folder) => {
+  folderSitesTargetId = String(folder.id);
+  if (els.folderSitesTitle) els.folderSitesTitle.textContent = `加入「${folder.name || "未命名文件夹"}」中的指定网站账号`;
+  if (els.folderSitesInput) els.folderSitesInput.value = (folder.matchedSites || []).join("\n");
+  if (els.folderAutoAdd) els.folderAutoAdd.checked = Boolean(folder.autoAddMatchingSites);
+  if (els.folderSitesModal) els.folderSitesModal.hidden = false;
+  setTimeout(() => els.folderSitesInput?.focus(), 50);
+};
+
+const closeFolderSites = () => {
+  if (els.folderSitesModal) els.folderSitesModal.hidden = true;
+  folderSitesTargetId = "";
+};
+
+const formatTime = (ms) => {
+  if (!ms) return "-";
+  try {
+    return new Date(Number(ms)).toLocaleString();
+  } catch {
+    return "-";
+  }
+};
+
+const renderFolderDedupGroups = () => {
+  const groups = folderDedupTarget?.groups || [];
+  if (els.folderDedupSummary) {
+    els.folderDedupSummary.textContent = groups.length
+      ? `重复组 ${groups.length} 组，按站点别名和用户名分组`
+      : "当前文件夹暂无重复账号";
+  }
+  if (els.btnKeepLatest) els.btnKeepLatest.disabled = groups.length === 0;
+  if (els.btnKeepEarliest) els.btnKeepEarliest.disabled = groups.length === 0;
+  if (!els.folderDedupGroups) return;
+  els.folderDedupGroups.innerHTML = "";
+  if (!groups.length) {
+    els.folderDedupGroups.innerHTML = '<div class="dedup-empty">当前文件夹暂无重复账号</div>';
+    return;
+  }
+  groups.forEach((group) => {
+    const card = document.createElement("section");
+    card.className = "dedup-group";
+    const head = document.createElement("div");
+    head.className = "dedup-group-head";
+    head.innerHTML = `<div><div class="dedup-group-title">${escapeHtml((group.siteAliases || []).join(", ") || "未命名站点")}</div><div class="dedup-account-meta">用户名：${escapeHtml(group.username || "(空用户名)")} · ${group.accounts.length} 个账号</div></div>`;
+    card.appendChild(head);
+    group.accounts.forEach((account, index) => {
+      const row = document.createElement("div");
+      row.className = "dedup-account";
+      const label = index === 0 ? "最新" : index === group.accounts.length - 1 ? "最早" : "";
+      row.innerHTML = `
+        <div class="dedup-account-main">
+          <div class="dedup-account-id">${label ? `<span class="dedup-keep-label">${label}</span>` : ""}${escapeHtml(account.accountId || accountKey(account) || "账号")}</div>
+          <div class="dedup-account-sites">站点：${escapeHtml((account.sites || []).join(", ") || account.canonicalSite || "-")}</div>
+          <div class="dedup-account-meta">更新时间：${escapeHtml(formatTime(account.updatedAtMs))} · 创建时间：${escapeHtml(formatTime(account.createdAtMs))}</div>
+        </div>`;
+      const keep = document.createElement("button");
+      keep.type = "button";
+      keep.className = "primary";
+      keep.textContent = "仅保留此账号";
+      keep.addEventListener("click", () => deduplicateFolder("account", accountKey(account)));
+      row.appendChild(keep);
+      card.appendChild(row);
+    });
+    els.folderDedupGroups.appendChild(card);
+  });
+};
+
+const refreshFolderDedup = async () => {
+  if (!folderDedupTarget?.folderId) return;
+  const groups = await invoke("get_folder_duplicate_groups", {
+    folderId: folderDedupTarget.folderId,
+  });
+  folderDedupTarget.groups = groups || [];
+  renderFolderDedupGroups();
+};
+
+const openFolderDedup = async (folder) => {
+  folderDedupTarget = { folderId: String(folder.id), folderName: folder.name || "未命名文件夹", groups: [] };
+  if (els.folderDedupTitle) els.folderDedupTitle.textContent = `${folderDedupTarget.folderName} 内去重`;
+  if (els.folderDedupModal) els.folderDedupModal.hidden = false;
+  renderFolderDedupGroups();
+  try {
+    await refreshFolderDedup();
+  } catch (err) {
+    message(`读取重复账号失败：${err}`);
+  }
+};
+
+const closeFolderDedup = () => {
+  if (els.folderDedupModal) els.folderDedupModal.hidden = true;
+  folderDedupTarget = null;
+};
+
+const deduplicateFolder = async (mode, accountId = null) => {
+  if (!folderDedupTarget?.folderId) return;
+  try {
+    const result = await invoke("deduplicate_folder", {
+      folderId: folderDedupTarget.folderId,
+      mode,
+      accountId,
+    });
+    await refreshState();
+    await refreshFolderDedup();
+    message(result.message || `去重完成，已移入回收站 ${result.deletedCount || 0} 个账号`);
+  } catch (err) {
+    message(`去重失败：${err}`);
+  }
+};
+
 const renderFolders = () => {
   if (!els.folderList) return;
   const folders = (state.folders || []).filter((f) => !f.isDeleted && !f.isPermanentlyDeleted);
@@ -325,19 +483,6 @@ const renderFolders = () => {
       e.preventDefault();
       e.stopPropagation();
       setFilter({ type: "folder", id: String(folder.id) });
-    });
-    btn.addEventListener("contextmenu", async (e) => {
-      e.preventDefault();
-      if (confirm(`删除文件夹「${folder.name}」？`)) {
-        await invoke("delete_folder", { id: folder.id });
-        if (
-          filter.type === "folder" &&
-          String(filter.id).toLowerCase() === String(folder.id).toLowerCase()
-        ) {
-          setFilter({ type: "all" });
-        }
-        await refreshState();
-      }
     });
     els.folderList.appendChild(btn);
   });
@@ -578,6 +723,48 @@ const runSyncNow = async () => {
   message(report.message || "同步完成");
 };
 
+document.addEventListener("contextmenu", (e) => {
+  const folderButton = e.target instanceof Element
+    ? e.target.closest("#folderList .side-item[data-filter^='folder:']")
+    : null;
+  if (folderButton) {
+    const folderId = String(folderButton.dataset.filter || "").slice(7);
+    const folder = (state.folders || []).find((item) => String(item.id) === folderId);
+    if (!folder) return;
+    showContextMenu(e, [
+      { label: "加入指定网站全部账号", action: () => openFolderSites(folder) },
+      { label: "文件夹内去重", action: () => openFolderDedup(folder) },
+      {
+        label: "删除文件夹",
+        danger: true,
+        action: async () => {
+          if (!confirm(`删除文件夹「${folder.name || "未命名文件夹"}」？文件夹内账号不会被删除。`)) return;
+          await invoke("delete_folder", { id: folder.id });
+          if (filter.type === "folder" && String(filter.id).toLowerCase() === String(folder.id).toLowerCase()) {
+            setFilter({ type: "all" });
+          }
+          await refreshState();
+          message(`文件夹「${folder.name || "未命名文件夹"}」已删除`);
+        },
+      },
+    ]);
+    return;
+  }
+
+  const sideButton = e.target instanceof Element
+    ? e.target.closest("#sidebar .side-item[data-filter]")
+    : null;
+  if (sideButton) {
+    showContextMenu(e, [{ label: "新建账号", action: () => openEdit(null) }]);
+    return;
+  }
+
+  const folderHead = e.target instanceof Element ? e.target.closest("#folderHead") : null;
+  if (folderHead) {
+    showContextMenu(e, [{ label: "新建账号", action: () => openEdit(null) }]);
+  }
+});
+
 // Robust sidebar + folder actions via document-level delegation.
 document.addEventListener("click", (e) => {
   const t = e.target;
@@ -654,6 +841,15 @@ document.querySelectorAll("[data-close-folder]").forEach((el) =>
     if (els.folderModal) els.folderModal.hidden = true;
   })
 );
+document.querySelectorAll("[data-close-folder-sites]").forEach((el) =>
+  el.addEventListener("click", closeFolderSites)
+);
+document.querySelectorAll("[data-close-folder-dedup]").forEach((el) =>
+  el.addEventListener("click", closeFolderDedup)
+);
+document.addEventListener("click", (e) => {
+  if (!(e.target instanceof Element) || !e.target.closest("#contextMenu")) hideContextMenu();
+});
 document.querySelectorAll(".nav-btn").forEach((btn) => {
   btn.addEventListener("click", () => openSettings(btn.dataset.settingsTab || "general"));
 });
@@ -662,6 +858,9 @@ window.addEventListener("keydown", (e) => {
     closeSettings();
     closeEdit();
     if (els.folderModal) els.folderModal.hidden = true;
+    closeFolderSites();
+    closeFolderDedup();
+    hideContextMenu();
   }
 });
 
@@ -709,6 +908,30 @@ els.accountForm?.addEventListener("submit", async (e) => {
     message(`保存失败：${err}`);
   }
 });
+
+els.folderSitesForm?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!folderSitesTargetId) return;
+  const siteInputs = (els.folderSitesInput?.value || "")
+    .split(/[,，\n]/)
+    .map((site) => site.trim())
+    .filter(Boolean);
+  try {
+    const result = await invoke("configure_folder_site_rules", {
+      folderId: folderSitesTargetId,
+      siteInputs,
+      autoAdd: Boolean(els.folderAutoAdd?.checked),
+    });
+    closeFolderSites();
+    await refreshState();
+    message(result.message || `已加入 ${result.addedCount || 0} 个账号`);
+  } catch (err) {
+    message(`保存文件夹规则失败：${err}`);
+  }
+});
+
+els.btnKeepLatest?.addEventListener("click", () => deduplicateFolder("latest"));
+els.btnKeepEarliest?.addEventListener("click", () => deduplicateFolder("earliest"));
 
 els.btnDelete?.addEventListener("click", async () => {
   const id = els.accountId.value;

@@ -340,6 +340,8 @@ button.icon-ghost:hover, button.icon-btn:hover { background: rgba(0,0,0,0.05); }
 }
 .modal-card.wide { width: min(760px, 94vw); }
 .modal-card.sm { width: min(400px, 94vw); }
+.folder-sites-card { width: min(500px, 94vw); }
+.folder-dedup-card { width: min(820px, 94vw); }
 .modal-head {
   display: flex;
   align-items: center;
@@ -396,6 +398,81 @@ textarea { min-height: 84px; resize: vertical; }
 .inline-actions input { flex: 1; }
 .form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
+.context-menu {
+  position: fixed;
+  z-index: 90;
+  min-width: 190px;
+  padding: 5px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18);
+}
+.context-menu[hidden] { display: none !important; }
+.context-menu button {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  padding: 7px 10px;
+  text-align: left;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.context-menu button:hover { background: rgba(0, 122, 255, 0.1); }
+.context-menu button.danger { color: var(--danger); }
+
+.dedup-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dedup-groups {
+  display: grid;
+  gap: 10px;
+  max-height: 58vh;
+  overflow: auto;
+}
+.dedup-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+.dedup-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.dedup-group-title { font-weight: 650; word-break: break-all; }
+.dedup-account {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 7px;
+  background: #f5f5f7;
+}
+.dedup-account-main { min-width: 0; display: grid; gap: 3px; }
+.dedup-account-id, .dedup-account-sites {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dedup-account-id { font-size: 13px; font-weight: 600; }
+.dedup-account-sites, .dedup-account-meta { color: var(--muted); font-size: 12px; }
+.dedup-keep-label {
+  color: #0056c7;
+  font-size: 11px;
+  font-weight: 600;
+  margin-right: 7px;
+}
+.dedup-empty { color: var(--muted); padding: 28px 4px; text-align: center; }
+
 .mini-log {
   margin: 0;
   padding: 8px 10px;
@@ -443,4 +520,5 @@ textarea { min-height: 84px; resize: vertical; }
   .workspace { grid-template-columns: 1fr; }
   .sidebar { border-right: none; border-bottom: 1px solid var(--line); max-height: 38vh; }
   .merge-grid { grid-template-columns: 1fr; }
+  .dedup-account { grid-template-columns: 1fr; }
 }
