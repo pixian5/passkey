@@ -173,7 +173,7 @@ class PassSyncServerTests(unittest.TestCase):
         self.assertEqual(context.exception.code, 401)
         context.exception.close()
 
-    def test_rejects_payload_requests_without_token_configuration(self) -> None:
+    def test_allows_payload_requests_without_token_configuration(self) -> None:
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)
@@ -189,9 +189,12 @@ class PassSyncServerTests(unittest.TestCase):
         self.thread.start()
         self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}"
 
+        # Empty token configuration is the explicit open-server mode used by
+        # the desktop provisioning UI.  An empty database still returns 404,
+        # but the request reaches payload handling instead of AUTH_NOT_CONFIGURED.
         with self.assertRaises(urllib.error.HTTPError) as context:
             self.request("GET", "/v1/sync/payload")
-        self.assertEqual(context.exception.code, 503)
+        self.assertEqual(context.exception.code, 404)
         context.exception.close()
 
     def test_put_then_get_roundtrip(self) -> None:

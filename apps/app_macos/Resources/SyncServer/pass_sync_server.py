@@ -981,11 +981,11 @@ class PassSyncHTTPServer(ThreadingHTTPServer):
 
     def resolve_scope(self, authorization_header: str | None) -> str:
         if not self.config.auth_enabled:
-            raise RequestError(
-                HTTPStatus.SERVICE_UNAVAILABLE,
-                "AUTH_NOT_CONFIGURED",
-                "服务器尚未配置 PASS_SYNC_BEARER_TOKENS。",
-            )
+            # An empty token configuration is an explicit open-server mode.
+            # The desktop provisioning UI supports leaving the token blank;
+            # use one stable scope so payloads remain isolated from any
+            # future token-enabled deployment.
+            return "default"
         if not authorization_header:
             raise RequestError(HTTPStatus.UNAUTHORIZED, "AUTH_REQUIRED", "缺少 Bearer Token。")
         scheme, _, token = authorization_header.partition(" ")

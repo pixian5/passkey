@@ -66,14 +66,14 @@ python3 pass_sync_server.py
 - `PASS_SYNC_DB_PATH`
   - 默认 `./data/pass_sync.sqlite3`
 - `PASS_SYNC_BEARER_TOKENS`
-  - 必填；未配置时 `/v2/sync/state`（以及兼容的 `/v1/sync/payload`）会拒绝所有请求
+  - 可选；未配置时进入开放模式，`/v2/sync/state`（以及兼容的 `/v1/sync/payload`）不要求 Bearer Token。生产环境建议配置令牌
   - 支持：
     - `token-value`
     - `default=token-value`
     - `family=token-a,work=token-b`
 - `PASS_SYNC_BEARER_TOKENS_FILE`
   - 可选；从权限为 `0600` 的文件读取同样的 `scope=token` 列表，便于轮换令牌
-  - 文件不存在时会回退到 `PASS_SYNC_BEARER_TOKENS`；两者都未配置时服务启动但所有同步请求返回 `AUTH_NOT_CONFIGURED`
+  - 文件不存在时会回退到 `PASS_SYNC_BEARER_TOKENS`；两者都未配置时进入开放模式
 - `PASS_SYNC_LOG_LEVEL`
   - 默认 `INFO`
 - `PASS_SYNC_MAX_BODY_BYTES`
