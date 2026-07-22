@@ -482,6 +482,9 @@ body.is-reordering {
 .provision-confirm-modal { z-index: 60; }
 .provision-confirm-card { max-height: min(72vh, 560px); }
 .provision-confirm-card .modal-body { gap: 12px; }
+.bundle-import-confirm-modal { z-index: 60; }
+.bundle-import-confirm-card { max-height: min(72vh, 560px); }
+.bundle-import-confirm-card .modal-body { gap: 12px; }
 .confirm-summary { margin: 0; line-height: 1.5; font-weight: 600; }
 .confirm-findings { max-height: min(180px, 24vh); margin: 0; white-space: pre-wrap; overflow: auto; }
 .provision-tls-fields { display: grid; gap: 10px; }

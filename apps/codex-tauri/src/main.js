@@ -172,6 +172,11 @@ const els = {
   provisionConfirmFindings: $("#provisionConfirmFindings"),
   btnProvisionConfirmReplace: $("#btn-provision-confirm-replace"),
   btnProvisionConfirmCancel: $("#btn-provision-confirm-cancel"),
+  bundleImportConfirmModal: $("#bundleImportConfirmModal"),
+  bundleImportConfirmSummary: $("#bundleImportConfirmSummary"),
+  bundleImportConfirmDetails: $("#bundleImportConfirmDetails"),
+  btnBundleImportConfirm: $("#btn-bundle-import-confirm"),
+  btnBundleImportCancel: $("#btn-bundle-import-cancel"),
   provisionProgress: $("#provisionProgress"),
   provisionProgressText: $("#provisionProgressText"),
   provisionProgressElapsed: $("#provisionProgressElapsed"),
@@ -2529,6 +2534,41 @@ els.btnProvisionConfirmReplace?.addEventListener("click", () => {
 });
 els.btnProvisionConfirmCancel?.addEventListener("click", () => closeProvisionConfirm(false));
 
+let bundleImportConfirmResolve = null;
+const closeBundleImportConfirm = (confirmed = false) => {
+  if (els.bundleImportConfirmModal) els.bundleImportConfirmModal.hidden = true;
+  const resolve = bundleImportConfirmResolve;
+  bundleImportConfirmResolve = null;
+  resolve?.(confirmed);
+};
+
+const requestBundleImportConfirmation = (result) => new Promise((resolve) => {
+  bundleImportConfirmResolve = resolve;
+  if (els.bundleImportConfirmSummary) {
+    els.bundleImportConfirmSummary.textContent = result?.message || "可以合并同步包。";
+  }
+  if (els.bundleImportConfirmDetails) {
+    els.bundleImportConfirmDetails.textContent = [
+      `本地账号：${result?.localAccounts ?? "-"}`,
+      `同步包账号：${result?.remoteAccounts ?? "-"}`,
+      `合并后账号：${result?.mergedAccounts ?? "-"}`,
+      result?.reasons?.length
+        ? `安全检查提示：${result.reasons.join("；")}`
+        : "安全检查：通过",
+      "",
+      "确认后才会写入本地 vault。",
+    ].join("\n");
+  }
+  if (els.bundleImportConfirmModal) els.bundleImportConfirmModal.hidden = false;
+  els.btnBundleImportConfirm?.focus();
+});
+
+document.querySelectorAll("[data-close-bundle-import-confirm]").forEach((el) => {
+  el.addEventListener("click", () => closeBundleImportConfirm(false));
+});
+els.btnBundleImportConfirm?.addEventListener("click", () => closeBundleImportConfirm(true));
+els.btnBundleImportCancel?.addEventListener("click", () => closeBundleImportConfirm(false));
+
 const collectProvisionCredential = () => {
   const mode = els.provisionAuthMode?.value || "privateKey";
   const secret =
@@ -3225,16 +3265,7 @@ els.fileSyncBundle?.addEventListener("change", async () => {
       openSettings("sync");
       return;
     }
-    const preview = [
-      result.message || "可以合并",
-      `本地账号：${result.localAccounts ?? "-"}`,
-      `同步包账号：${result.remoteAccounts ?? "-"}`,
-      `合并后账号：${result.mergedAccounts ?? "-"}`,
-      result.reasons?.length ? `安全检查提示：${result.reasons.join("；")}` : "安全检查：通过",
-      "",
-      "确认后才会写入本地 vault。",
-    ].join("\n");
-    const ok = window.confirm(preview);
+    const ok = await requestBundleImportConfirmation(result);
     if (!ok) {
       toastWarn("已取消导入");
       return;

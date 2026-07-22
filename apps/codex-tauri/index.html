@@ -704,6 +704,25 @@
       </div>
     </div>
 
+    <!-- 导入同步包确认使用应用内弹窗，避免 Tauri WebView 原生 confirm 行为不稳定。 -->
+    <div id="bundleImportConfirmModal" class="modal bundle-import-confirm-modal" hidden>
+      <div class="modal-backdrop" data-close-bundle-import-confirm></div>
+      <div class="modal-card sm bundle-import-confirm-card" role="dialog" aria-modal="true" aria-labelledby="bundleImportConfirmTitle">
+        <header class="modal-head">
+          <h2 id="bundleImportConfirmTitle">导入并合并同步包</h2>
+          <button type="button" class="icon-btn" data-close-bundle-import-confirm aria-label="关闭">×</button>
+        </header>
+        <div class="modal-body">
+          <p id="bundleImportConfirmSummary" class="confirm-summary"></p>
+          <pre id="bundleImportConfirmDetails" class="mini-log confirm-findings"></pre>
+          <div class="form-actions">
+            <button type="button" class="primary" id="btn-bundle-import-confirm">确认导入</button>
+            <button type="button" id="btn-bundle-import-cancel">取消</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <script src="/vendor/jsQR.js"></script>
     <script type="module" src="/src/main.js"></script>
   </body>
