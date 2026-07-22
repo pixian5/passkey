@@ -31,6 +31,7 @@
         </div>
         <div class="titlebar-right">
           <button type="button" id="btn-new" class="primary">新建账号</button>
+          <button type="button" id="btn-undo" disabled title="没有可撤销的本地操作">撤销</button>
           <button type="button" id="btn-restore-all" hidden>全部恢复</button>
           <button type="button" id="btn-purge-recycle" class="danger" hidden>清空回收站</button>
           <button type="button" id="btn-sync-now">同步</button>
@@ -289,6 +290,13 @@
               <p class="hint">主接口 <code>GET/PUT /v2/sync/state</code>，与 macOS PassMac 互通；交换 <code>pass.sync.bundle.v2</code>（可选 AES 信封）。</p>
               <label class="row-check"><input type="checkbox" id="syncEnabled" /> 启用自建服务器同步</label>
               <div class="form-row">
+                <span class="form-label">主同步源</span>
+                <select id="syncPrimarySource">
+                  <option value="selfHosted">自建服务器</option>
+                  <option value="webdav">WebDAV</option>
+                </select>
+              </div>
+              <div class="form-row">
                 <span class="form-label">服务地址</span>
                 <input id="syncBaseUrl" placeholder="https://host:port 或 http://127.0.0.1:53334" class="grow" />
                 <button type="button" id="btn-open-provision" class="primary">在服务器创建服务</button>
@@ -304,8 +312,8 @@
             </div>
 
             <div class="settings-group">
-              <h3>WebDAV（镜像，实验）</h3>
-              <label class="row-check"><input type="checkbox" id="webdavEnabled" /> 启用 WebDAV 配置（本版仅保存，同步仍走自建服务器）</label>
+              <h3>WebDAV（镜像）</h3>
+              <label class="row-check"><input type="checkbox" id="webdavEnabled" /> 启用 WebDAV 同步（与已启用的自建服务器依次同步）</label>
               <div class="form-row">
                 <span class="form-label">WebDAV 地址</span>
                 <input id="webdavBaseUrl" class="grow" placeholder="https://dav.example.com/..." />

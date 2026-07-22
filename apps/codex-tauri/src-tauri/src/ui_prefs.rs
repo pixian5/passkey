@@ -36,6 +36,10 @@ pub struct UiPrefs {
     pub webdav_username: String,
     #[serde(default)]
     pub webdav_password: String,
+    /// The source that decides merge / overwrite semantics; other enabled
+    /// sources receive a local-overwrite mirror after it completes.
+    #[serde(default = "default_sync_primary_source")]
+    pub sync_primary_source: String,
     /// Manual folder sidebar order (folder ids). Missing folders append at end.
     #[serde(default)]
     pub folder_order: Vec<String>,
@@ -59,6 +63,9 @@ fn default_auto_sync() -> i32 {
 fn default_webdav_path() -> String {
     "pass-sync-bundle-v2.json".into()
 }
+fn default_sync_primary_source() -> String {
+    "selfHosted".into()
+}
 
 impl Default for UiPrefs {
     fn default() -> Self {
@@ -76,6 +83,7 @@ impl Default for UiPrefs {
             webdav_remote_path: default_webdav_path(),
             webdav_username: String::new(),
             webdav_password: String::new(),
+            sync_primary_source: default_sync_primary_source(),
             folder_order: Vec::new(),
         }
     }

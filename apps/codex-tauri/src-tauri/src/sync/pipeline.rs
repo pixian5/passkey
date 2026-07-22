@@ -207,6 +207,87 @@ fn pull_remote(settings: &SyncSettings) -> Result<(Option<SyncPayload>, Option<S
     Ok((Some(payload), fetched.etag))
 }
 
+/// Shared merge/safety/write loop for non-server transports such as WebDAV.
+/// The transport owns conditional reads/writes; this layer remains the only
+/// authority for merge, encryption envelope and safety decisions.
+pub(crate) fn run_sync_with_transport<P, U>(
+    mode: SyncMode,
+    local: SyncPayload,
+    device_name: &str,
+    platform: &str,
+    encryption_key: &str,
+    mut pull: P,
+    mut push: U,
+) -> Result<(SyncReport, SyncPayload), String>
+where
+    P: FnMut() -> Result<(Option<SyncPayload>, Option<String>), String>,
+    U: FnMut(&[u8], Option<&str>) -> Result<String, String>,
+{
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let (remote_opt, etag) = pull()?;
+        let remote_count = remote_opt.as_ref().map(|p| p.accounts.len()).unwrap_or(0);
+        let (merged, report) = decide_merged(mode, local.clone(), remote_opt);
+        if !report.safe {
+            return Ok((
+                SyncReport {
+                    ok: false,
+                    dry_run: false,
+                    mode: mode.as_str().into(),
+                    message: format!("同步停止：安全检查未通过（{}）", report.reasons.join(", ")),
+                    safe: false,
+                    reasons: report.reasons,
+                    local_accounts: local.accounts.len(),
+                    remote_accounts: remote_count,
+                    merged_accounts: merged.accounts.len(),
+                    applied: false,
+                    pushed: false,
+                    etag,
+                },
+                local,
+            ));
+        }
+        let mut to_store = match mode {
+            SyncMode::LocalOverwriteRemote => local.clone(),
+            _ => merged.clone(),
+        };
+        ensure_field_clocks(&mut to_store, device_name);
+        let _ = sync_alias_groups(&mut to_store.accounts, now_ms(), device_name);
+        let wire = encrypt_bundle_document(
+            &build_bundle_document(&to_store, device_name, platform),
+            encryption_key,
+        )?;
+        match push(&wire, etag.as_deref()) {
+            Ok(new_etag) => {
+                return Ok((
+                    SyncReport {
+                        ok: true,
+                        dry_run: false,
+                        mode: mode.as_str().into(),
+                        message: format!(
+                            "同步完成：账号 {}->{}（已写入本地并推送）",
+                            local.accounts.len(),
+                            to_store.accounts.len()
+                        ),
+                        safe: true,
+                        reasons: vec![],
+                        local_accounts: local.accounts.len(),
+                        remote_accounts: remote_count,
+                        merged_accounts: to_store.accounts.len(),
+                        applied: true,
+                        pushed: true,
+                        etag: Some(new_etag),
+                    },
+                    to_store,
+                ));
+            }
+            Err(e) if e == "PRECONDITION_FAILED" && attempt < MAX_CONFLICT_RETRIES => continue,
+            Err(e) => return Err(e),
+        }
+    }
+}
+
 /// Full sync: pull → merge → safety → apply local (via callback data) → push.
 /// Returns report + payload to apply locally (caller writes vault).
 pub fn run_sync(

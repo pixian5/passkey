@@ -62,6 +62,7 @@ const els = {
   contextMenu: $("#contextMenu"),
   btnCreateFolder: $("#btn-create-folder"),
   btnNew: $("#btn-new"),
+  btnUndo: $("#btn-undo"),
   btnRestoreAll: $("#btn-restore-all"),
   btnPurgeRecycle: $("#btn-purge-recycle"),
   btnDelete: $("#btn-delete"),
@@ -99,6 +100,7 @@ const els = {
   mergeSummary: $("#mergeSummary"),
   mergePayloadOut: $("#mergePayloadOut"),
   syncEnabled: $("#syncEnabled"),
+  syncPrimarySource: $("#syncPrimarySource"),
   syncBaseUrl: $("#syncBaseUrl"),
   syncToken: $("#syncToken"),
   syncEncKey: $("#syncEncKey"),
@@ -230,6 +232,7 @@ let uiPrefs = {
   webdavRemotePath: "pass-sync-bundle-v2.json",
   webdavUsername: "",
   webdavPassword: "",
+  syncPrimarySource: "selfHosted",
 };
 
 /**
@@ -384,6 +387,7 @@ const collectUiPrefs = () => ({
   webdavRemotePath: (els.webdavRemotePath?.value || "pass-sync-bundle-v2.json").trim(),
   webdavUsername: (els.webdavUsername?.value || "").trim(),
   webdavPassword: els.webdavPassword?.value || "",
+  syncPrimarySource: els.syncPrimarySource?.value || "selfHosted",
 });
 
 const fillUiPrefsForm = () => {
@@ -417,6 +421,9 @@ const fillUiPrefsForm = () => {
   }
   if (els.webdavUsername) els.webdavUsername.value = uiPrefs.webdavUsername || "";
   if (els.webdavPassword) els.webdavPassword.value = uiPrefs.webdavPassword || "";
+  if (els.syncPrimarySource) {
+    els.syncPrimarySource.value = uiPrefs.syncPrimarySource || "selfHosted";
+  }
   updateAutoSyncStatus();
 };
 
@@ -465,7 +472,7 @@ const scheduleAutoSync = () => {
   autoSyncTimer = setInterval(async () => {
     try {
       if (lockState.enabled && lockState.locked) return;
-      if (!els.syncEnabled?.checked) return;
+      if (!els.syncEnabled?.checked && !els.webdavEnabled?.checked) return;
       await runSyncNow({ quiet: true });
     } catch (_) {}
   }, m * 60 * 1000);
@@ -1787,6 +1794,20 @@ const refreshState = async () => {
     selectionAnchorId = selectedAccountIds.values().next().value || "";
   }
   render();
+  await refreshUndoStatus();
+};
+
+const refreshUndoStatus = async () => {
+  try {
+    const status = await invoke("get_undo_status");
+    if (els.btnUndo) {
+      els.btnUndo.disabled = !status;
+      els.btnUndo.title = status ? `撤销：${status.title}` : "没有可撤销的本地操作";
+      els.btnUndo.textContent = status ? `撤销：${status.title}` : "撤销";
+    }
+  } catch (_) {
+    if (els.btnUndo) els.btnUndo.disabled = true;
+  }
 };
 
 const applyLockUi = () => {
@@ -1915,25 +1936,46 @@ const extractPayload = (text, label) => {
 };
 
 const runSyncNow = async ({ quiet = false } = {}) => {
-  await saveAllSyncRelated();
-  const raw = await invoke("sync_now");
-  const result = typeof raw === "string" ? JSON.parse(raw) : raw;
-  const report = result.report || {};
-  await refreshState();
-  if (!quiet) toastSuccess(report.message || "同步完成");
-  return report;
+  return runSyncMode(els.syncMode?.value || "merge", { quiet });
 };
 
-const runSyncMode = async (mode) => {
+const runSyncMode = async (mode, { quiet = false } = {}) => {
   await saveAllSyncRelated();
-  const raw = await invoke("sync_now_mode", { mode });
-  const result = typeof raw === "string" ? JSON.parse(raw) : raw;
-  const report = result.report || {};
+  const reports = [];
+  const failures = [];
+  const sources = [];
+  if (els.syncEnabled?.checked) sources.push("selfHosted");
+  if (els.webdavEnabled?.checked) sources.push("webdav");
+  if (!sources.length) {
+    throw new Error("请先启用自建服务器或 WebDAV 同步");
+  }
+  const configuredPrimary = els.syncPrimarySource?.value || "selfHosted";
+  const preferred = sources.includes(configuredPrimary) ? configuredPrimary : sources[0];
+  const ordered = [...sources].sort((left, right) => (right === preferred) - (left === preferred));
+  for (const source of ordered) {
+    // The primary source makes merge / overwrite decisions. Other enabled
+    // targets are mirrors and only receive the post-primary local payload.
+    const sourceMode = source === preferred ? mode : "localOverwriteRemote";
+    try {
+      const raw = await invoke(
+        source === "selfHosted" ? "sync_now_mode" : "sync_webdav_now_mode",
+        { mode: sourceMode }
+      );
+      const result = typeof raw === "string" ? JSON.parse(raw) : raw;
+      reports.push({ source: source === "selfHosted" ? "自建服务器" : "WebDAV", ...(result.report || {}) });
+    } catch (err) {
+      failures.push(`${source === "selfHosted" ? "自建服务器" : "WebDAV"}：${err}`);
+    }
+  }
   await refreshState();
-  toastSuccess(report.message || "同步完成");
+  if (failures.length) {
+    throw new Error(`${failures.join("；")}。已完成 ${reports.length} 个来源`);
+  }
+  const report = reports[reports.length - 1] || {};
+  if (!quiet) toastSuccess(reports.map((item) => `${item.source}：${item.message || "完成"}`).join("；"));
   if (els.syncPreviewOut) {
     els.syncPreviewOut.hidden = false;
-    els.syncPreviewOut.textContent = JSON.stringify(report, null, 2);
+    els.syncPreviewOut.textContent = JSON.stringify(reports, null, 2);
   }
   return report;
 };
@@ -2712,6 +2754,21 @@ els.btnPurgeRecycle?.addEventListener("click", async () => {
     toastError(`清空回收站失败：${err}`);
   } finally {
     restore();
+  }
+});
+
+els.btnUndo?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnUndo, "正在撤销…");
+  try {
+    const message = await invoke("undo_last_operation");
+    await refreshState();
+    toastSuccess(message || "已撤销最近一次操作");
+  } catch (err) {
+    toastError(`撤销失败：${err}`);
+    await refreshUndoStatus();
+  } finally {
+    restore();
+    await refreshUndoStatus();
   }
 });
 

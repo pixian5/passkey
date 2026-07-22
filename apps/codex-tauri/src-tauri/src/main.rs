@@ -2,6 +2,7 @@ mod app_lock;
 mod exchange;
 mod local_snapshots;
 mod local_vault;
+mod operation_history;
 mod provision;
 mod sync;
 mod ui_prefs;
@@ -24,6 +25,7 @@ use exchange::{
     restore_sync_version, run_sync_with_mode, ImportResult, PathResult, SyncVersionSummary,
 };
 use local_snapshots::LocalSnapshotSummary;
+use operation_history::HistoryEntry;
 use provision::{
     detect_existing_service, host_from_server_url, load_ssh_credential, provision_server,
     save_ssh_credential, verify_public_endpoint, ExistingServiceReport, ProvisionResult,
@@ -32,6 +34,7 @@ use provision::{
 use sync::crypto::key_id;
 use sync::pipeline::{local_payload_from_vault, preview_sync, run_sync, SyncMode};
 use sync::settings::{load_sync_settings, save_sync_settings, SyncSettings};
+use sync::webdav::{self, WebDavSettings};
 use sync::{generate_sync_key, is_valid_sync_key};
 use ui_prefs::{load_ui_prefs, save_ui_prefs, UiPrefs};
 
@@ -66,6 +69,13 @@ struct AppState {
 #[serde(rename_all = "camelCase")]
 struct ExportResult {
     csv_path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UndoStatus {
+    title: String,
+    created_at_ms: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -113,6 +123,42 @@ fn health_check() -> serde_json::Value {
         ],
         "sharedCore": ["pass-merge", "pass-csvio"]
     })
+}
+
+#[tauri::command]
+fn get_undo_status(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<Option<UndoStatus>, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    Ok(operation_history::latest(&dir).map(|entry| UndoStatus {
+        title: entry.title,
+        created_at_ms: entry.created_at_ms,
+    }))
+}
+
+#[tauri::command]
+fn undo_last_operation(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<String, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let entry: HistoryEntry =
+        operation_history::latest(&dir).ok_or_else(|| "没有可撤销的本地操作".to_string())?;
+    let mut conn = open_db(&app)?;
+    let current_device = load_device_name(&conn)?;
+    let current = local_payload_from_vault(
+        &load_accounts(&conn)?,
+        &load_folders(&conn)?,
+        &load_passkeys(&conn)?,
+        &current_device,
+    );
+    local_snapshots::create(&dir, &current, "撤销本地操作前自动备份")?;
+    save_payload_atomic(&mut conn, &entry.payload)?;
+    operation_history::remove_latest(&dir, &entry.id)?;
+    Ok(format!("已撤销：{}", entry.title))
 }
 
 #[tauri::command]
@@ -744,6 +790,41 @@ fn sync_now_mode(
 }
 
 #[tauri::command]
+fn sync_webdav_now_mode(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    mode: String,
+) -> Result<String, String> {
+    let (dir, settings, mut conn) = load_settings_unlocked(&app, &state)?;
+    let prefs = load_ui_prefs(&dir);
+    let webdav_settings = WebDavSettings {
+        enabled: prefs.webdav_enabled,
+        base_url: prefs.webdav_base_url,
+        remote_path: prefs.webdav_remote_path,
+        username: prefs.webdav_username,
+        password: prefs.webdav_password,
+    };
+    let device = load_device_name(&conn)?;
+    let accounts = load_accounts(&conn)?;
+    let folders = load_folders(&conn)?;
+    let passkeys = load_passkeys(&conn)?;
+    let local = local_payload_from_vault(&accounts, &folders, &passkeys, &device);
+    let (report, applied) = webdav::run_sync(
+        &webdav_settings,
+        SyncMode::parse(&mode),
+        local.clone(),
+        &device,
+        current_platform(),
+        &settings.encryption_key,
+    )?;
+    if report.applied {
+        local_snapshots::create(&dir, &local, "WebDAV 同步写入本地前自动备份")?;
+        save_payload_atomic(&mut conn, &applied)?;
+    }
+    serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_ui_prefs(app: AppHandle, state: tauri::State<AppLockState>) -> Result<UiPrefs, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
@@ -1051,7 +1132,8 @@ fn snapshot_current_vault(
         &load_passkeys(conn)?,
         &device,
     );
-    local_snapshots::create(data_dir, &payload, reason)
+    local_snapshots::create(data_dir, &payload, reason)?;
+    operation_history::push(&data_dir.to_path_buf(), reason, payload)
 }
 
 #[tauri::command]
@@ -2599,6 +2681,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             health_check,
+            get_undo_status,
+            undo_last_operation,
             get_app_state,
             set_device_name,
             create_account,
@@ -2625,6 +2709,7 @@ fn main() {
             sync_preview,
             sync_now,
             sync_now_mode,
+            sync_webdav_now_mode,
             get_ui_prefs,
             set_ui_prefs,
             export_sync_bundle,
