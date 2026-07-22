@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use crate::sync::crypto::{decrypt_wire_body, encrypt_bundle_document, PLAINTEXT_SCHEMA};
 use crate::sync::http::{get_sync_state, put_sync_state, validate_base_url};
-use crate::sync::pipeline::{local_payload_from_vault, SyncMode};
+use crate::sync::pipeline::{local_payload_from_vault, visible_account_count, SyncMode};
 use crate::sync::settings::SyncSettings;
 
 #[derive(Debug, Serialize)]
@@ -96,24 +96,10 @@ pub fn import_bundle_content(
         }
     })?;
     let remote = extract_payload(&doc)?;
-    // 永久删除记录仅作为同步墓碑保留，不应在用户可见的导入统计或差异中
-    // 被当作待导入账号。
-    let remote_count = remote
-        .accounts
-        .iter()
-        .filter(|account| !account.is_permanently_deleted)
-        .count();
-    let local_count = local
-        .accounts
-        .iter()
-        .filter(|account| !account.is_permanently_deleted)
-        .count();
+    let remote_count = visible_account_count(&remote);
+    let local_count = visible_account_count(&local);
     let merged = merge_sync_payloads(local.clone(), remote.clone());
-    let merged_count = merged
-        .accounts
-        .iter()
-        .filter(|account| !account.is_permanently_deleted)
-        .count();
+    let merged_count = visible_account_count(&merged);
     let report = evaluate_sync_safety(&local, Some(&remote), &merged, "merge");
     Ok(BundleImportResult {
         ok: report.safe,

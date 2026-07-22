@@ -723,6 +723,24 @@
       </div>
     </div>
 
+    <!-- 通用危险操作确认，避免 Tauri WebView 的原生 confirm 返回异常。 -->
+    <div id="actionConfirmModal" class="modal action-confirm-modal" hidden>
+      <div class="modal-backdrop" data-close-action-confirm></div>
+      <div class="modal-card action-confirm-card" role="dialog" aria-modal="true" aria-labelledby="actionConfirmTitle">
+        <header class="modal-head">
+          <h2 id="actionConfirmTitle">确认操作</h2>
+          <button type="button" class="icon-btn" data-close-action-confirm aria-label="关闭">×</button>
+        </header>
+        <div class="modal-body">
+          <p id="actionConfirmMessage" class="confirm-summary"></p>
+          <div class="form-actions">
+            <button type="button" class="primary" id="btn-action-confirm">确认</button>
+            <button type="button" id="btn-action-cancel">取消</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <script src="/vendor/jsQR.js"></script>
     <script type="module" src="/src/main.js"></script>
   </body>

@@ -551,7 +551,7 @@ body.is-reordering {
   font-size: calc(0.8571 * var(--ui-text-size));
 }
 .version-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.history-card { width: min(700px, 94vw); }
+.modal-card.history-card { width: min(700px, 94vw); }
 .history-toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
 .history-list { display: grid; gap: 7px; max-height: min(52vh, 420px); overflow: auto; }
 .history-row { display: grid; gap: 3px; padding: 10px 12px; border-radius: 9px; background: #f5f5f7; }
@@ -587,8 +587,8 @@ input, textarea, select, label, .hint, .form-label, .mini-log {
   font-size: calc(0.8571 * var(--ui-text-size));
 }
 .account-editor-card { width: min(760px, 94vw); max-height: min(92vh, 900px); }
-.folder-sites-card { width: min(500px, 94vw); }
-.folder-dedup-card { width: min(820px, 94vw); }
+.modal-card.folder-sites-card { width: min(500px, 94vw); }
+.modal-card.folder-dedup-card { width: min(820px, 94vw); }
 .modal-head {
   display: flex;
   align-items: center;
@@ -833,7 +833,7 @@ textarea { min-height: 84px; resize: vertical; }
   .totp-actions { padding-left: 0; }
 }
 
-.provision-card {
+.modal-card.provision-card {
   width: min(680px, 96vw);
   max-height: min(92vh, 900px);
   min-height: 0;

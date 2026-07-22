@@ -177,6 +177,11 @@ const els = {
   bundleImportConfirmDetails: $("#bundleImportConfirmDetails"),
   btnBundleImportConfirm: $("#btn-bundle-import-confirm"),
   btnBundleImportCancel: $("#btn-bundle-import-cancel"),
+  actionConfirmModal: $("#actionConfirmModal"),
+  actionConfirmTitle: $("#actionConfirmTitle"),
+  actionConfirmMessage: $("#actionConfirmMessage"),
+  btnActionConfirm: $("#btn-action-confirm"),
+  btnActionCancel: $("#btn-action-cancel"),
   provisionProgress: $("#provisionProgress"),
   provisionProgressText: $("#provisionProgressText"),
   provisionProgressElapsed: $("#provisionProgressElapsed"),
@@ -2139,6 +2144,8 @@ const previewAccountFields = [
 
 const previewValue = (value) => JSON.stringify(value ?? null);
 const isVisibleSyncAccount = (account) => !account?.isPermanentlyDeleted;
+const isVisibleSyncFolder = (folder) => !folder?.isPermanentlyDeleted;
+const isVisibleSyncPasskey = (passkey) => !passkey?.isPermanentlyDeleted;
 const previewRecordKey = (record, fallbackPrefix) =>
   String(record?.accountId?.trim() || record?.recordId?.trim() || record?.id?.trim() || `${fallbackPrefix}:${record?.canonicalSite || ""}:${record?.username || ""}`);
 const previewAccountLabel = (account) => {
@@ -2205,8 +2212,10 @@ const renderSyncPreviewDiff = (localPayload, mergedPayload) => {
     const uniqueFields = [...new Set(fields)];
     if (uniqueFields.length) changed.push({ account: mergedAccount, fields: uniqueFields });
   }
-  const folderDelta = (mergedPayload?.folders || []).length - (localPayload?.folders || []).length;
-  const passkeyDelta = (mergedPayload?.passkeys || []).length - (localPayload?.passkeys || []).length;
+  const folderDelta = (mergedPayload?.folders || []).filter(isVisibleSyncFolder).length
+    - (localPayload?.folders || []).filter(isVisibleSyncFolder).length;
+  const passkeyDelta = (mergedPayload?.passkeys || []).filter(isVisibleSyncPasskey).length
+    - (localPayload?.passkeys || []).filter(isVisibleSyncPasskey).length;
   const totalChanges = added.length + removed.length + changed.length + Math.abs(folderDelta) + Math.abs(passkeyDelta);
   els.syncPreviewDiff.innerHTML = "";
   els.syncPreviewDiff.hidden = false;
@@ -2609,6 +2618,34 @@ document.querySelectorAll("[data-close-bundle-import-confirm]").forEach((el) => 
 });
 els.btnBundleImportConfirm?.addEventListener("click", () => closeBundleImportConfirm(true));
 els.btnBundleImportCancel?.addEventListener("click", () => closeBundleImportConfirm(false));
+
+let actionConfirmResolve = null;
+const closeActionConfirm = (confirmed = false) => {
+  if (els.actionConfirmModal) els.actionConfirmModal.hidden = true;
+  const resolve = actionConfirmResolve;
+  actionConfirmResolve = null;
+  resolve?.(confirmed);
+};
+
+const requestActionConfirmation = ({ title = "确认操作", message, confirmText = "确认", danger = false }) =>
+  new Promise((resolve) => {
+    actionConfirmResolve = resolve;
+    if (els.actionConfirmTitle) els.actionConfirmTitle.textContent = title;
+    if (els.actionConfirmMessage) els.actionConfirmMessage.textContent = message || "确定继续吗？";
+    if (els.btnActionConfirm) {
+      els.btnActionConfirm.textContent = confirmText;
+      els.btnActionConfirm.classList.toggle("primary", !danger);
+      els.btnActionConfirm.classList.toggle("danger", danger);
+    }
+    if (els.actionConfirmModal) els.actionConfirmModal.hidden = false;
+    els.btnActionConfirm?.focus();
+  });
+
+document.querySelectorAll("[data-close-action-confirm]").forEach((el) => {
+  el.addEventListener("click", () => closeActionConfirm(false));
+});
+els.btnActionConfirm?.addEventListener("click", () => closeActionConfirm(true));
+els.btnActionCancel?.addEventListener("click", () => closeActionConfirm(false));
 
 const collectProvisionCredential = () => {
   const mode = els.provisionAuthMode?.value || "privateKey";
@@ -3133,7 +3170,12 @@ els.btnRestoreAll?.addEventListener("click", async () => {
 els.btnPurgeRecycle?.addEventListener("click", async () => {
   const count = (state.deletedAccounts || []).length;
   if (!count) return;
-  if (!window.confirm(`将永久删除回收站中的 ${count} 个账号，且无法直接撤销。已自动创建本地安全快照。是否继续？`)) {
+  if (!(await requestActionConfirmation({
+    title: "永久删除回收站",
+    message: `将永久删除回收站中的 ${count} 个账号，且无法直接撤销。已自动创建本地安全快照。`,
+    confirmText: "永久删除",
+    danger: true,
+  }))) {
     return;
   }
   const restore = setButtonBusy(els.btnPurgeRecycle, "正在清空…");
@@ -3404,11 +3446,12 @@ els.btnSyncMerge?.addEventListener("click", async () => {
   }
 });
 els.btnSyncRemoteOverwrite?.addEventListener("click", async () => {
-  if (
-    !window.confirm(
-      "云端覆盖本地会用远端数据替换本机 vault。\n若远端为空或不可达可能导致数据丢失。\n确定继续吗？"
-    )
-  ) {
+  if (!(await requestActionConfirmation({
+    title: "云端覆盖本地",
+    message: "云端覆盖本地会用远端数据替换本机 vault。若远端为空或不可达可能导致数据丢失。",
+    confirmText: "继续覆盖",
+    danger: true,
+  }))) {
     return;
   }
   const restore = setButtonBusy(els.btnSyncRemoteOverwrite, "正在同步…");
@@ -3421,11 +3464,12 @@ els.btnSyncRemoteOverwrite?.addEventListener("click", async () => {
   }
 });
 els.btnSyncLocalOverwrite?.addEventListener("click", async () => {
-  if (
-    !window.confirm(
-      "本地覆盖云端会把本机数据推到服务器并覆盖远端。\n确定继续吗？"
-    )
-  ) {
+  if (!(await requestActionConfirmation({
+    title: "本地覆盖云端",
+    message: "本地覆盖云端会把本机数据推到服务器并覆盖远端。",
+    confirmText: "继续覆盖",
+    danger: true,
+  }))) {
     return;
   }
   const restore = setButtonBusy(els.btnSyncLocalOverwrite, "正在同步…");
@@ -3469,7 +3513,12 @@ els.btnLoadVersions?.addEventListener("click", async () => {
         btn.type = "button";
         btn.textContent = "恢复";
         btn.addEventListener("click", async () => {
-          if (!window.confirm(`恢复服务器快照 ${v.id}？本机数据将被替换。`)) return;
+          if (!(await requestActionConfirmation({
+            title: "恢复服务器快照",
+            message: `恢复服务器快照 ${v.id} 会替换本机数据。`,
+            confirmText: "恢复快照",
+            danger: true,
+          }))) return;
           const restoreBtn = setButtonBusy(btn, "正在恢复…");
           try {
             const msg = await invoke("restore_server_version", { versionId: v.id });
@@ -3513,7 +3562,12 @@ els.btnLoadLocalSnapshots?.addEventListener("click", async () => {
         btn.type = "button";
         btn.textContent = "恢复";
         btn.addEventListener("click", async () => {
-          if (!window.confirm("恢复本地安全快照会替换当前 vault；当前数据也会先自动备份。确定继续吗？")) return;
+          if (!(await requestActionConfirmation({
+            title: "恢复本地安全快照",
+            message: "恢复本地安全快照会替换当前 vault；当前数据会先自动备份。",
+            confirmText: "恢复快照",
+            danger: true,
+          }))) return;
           const restoreBtn = setButtonBusy(btn, "正在恢复…");
           try {
             const msg = await invoke("restore_local_snapshot", { snapshotId: snapshot.id });

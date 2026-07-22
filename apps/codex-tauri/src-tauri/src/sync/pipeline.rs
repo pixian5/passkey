@@ -135,6 +135,33 @@ pub fn local_payload_from_vault(
     payload
 }
 
+/// Counts accounts that are still user-visible. Permanently deleted records are
+/// sync tombstones: they must stay in payloads to prevent resurrection, but
+/// must never inflate the account totals shown to users.
+pub fn visible_account_count(payload: &SyncPayload) -> usize {
+    payload
+        .accounts
+        .iter()
+        .filter(|account| !account.is_permanently_deleted)
+        .count()
+}
+
+pub fn visible_folder_count(payload: &SyncPayload) -> usize {
+    payload
+        .folders
+        .iter()
+        .filter(|folder| !folder.is_permanently_deleted)
+        .count()
+}
+
+pub fn visible_passkey_count(payload: &SyncPayload) -> usize {
+    payload
+        .passkeys
+        .iter()
+        .filter(|passkey| !passkey.is_permanently_deleted)
+        .count()
+}
+
 fn decide_merged(
     mode: SyncMode,
     local: SyncPayload,
@@ -159,14 +186,14 @@ pub fn preview_sync(
 ) -> Result<(SyncReport, SyncPayload), String> {
     let mode = SyncMode::parse(&settings.mode);
     let (remote_opt, _) = pull_remote(settings)?;
-    let remote_count = remote_opt.as_ref().map(|p| p.accounts.len()).unwrap_or(0);
+    let local_count = visible_account_count(&local);
+    let remote_count = remote_opt.as_ref().map(visible_account_count).unwrap_or(0);
     let (merged, report) = decide_merged(mode, local.clone(), remote_opt);
+    let merged_count = visible_account_count(&merged);
     let message = if report.safe {
         format!(
             "预览（未写入）：账号 {}->{}，远端 {}，safe=true",
-            local.accounts.len(),
-            merged.accounts.len(),
-            remote_count
+            local_count, merged_count, remote_count
         )
     } else {
         format!("预览停止：安全检查未通过（{}）", report.reasons.join(", "))
@@ -180,9 +207,9 @@ pub fn preview_sync(
             message,
             safe: report.safe,
             reasons: report.reasons.clone(),
-            local_accounts: local.accounts.len(),
+            local_accounts: local_count,
             remote_accounts: remote_count,
-            merged_accounts: merged.accounts.len(),
+            merged_accounts: merged_count,
             applied: false,
             pushed: false,
             etag: None,
@@ -227,8 +254,10 @@ where
     loop {
         attempt += 1;
         let (remote_opt, etag) = pull()?;
-        let remote_count = remote_opt.as_ref().map(|p| p.accounts.len()).unwrap_or(0);
+        let local_count = visible_account_count(&local);
+        let remote_count = remote_opt.as_ref().map(visible_account_count).unwrap_or(0);
         let (merged, report) = decide_merged(mode, local.clone(), remote_opt);
+        let merged_count = visible_account_count(&merged);
         if !report.safe {
             return Ok((
                 SyncReport {
@@ -238,9 +267,9 @@ where
                     message: format!("同步停止：安全检查未通过（{}）", report.reasons.join(", ")),
                     safe: false,
                     reasons: report.reasons,
-                    local_accounts: local.accounts.len(),
+                    local_accounts: local_count,
                     remote_accounts: remote_count,
-                    merged_accounts: merged.accounts.len(),
+                    merged_accounts: merged_count,
                     applied: false,
                     pushed: false,
                     etag,
@@ -267,14 +296,14 @@ where
                         mode: mode.as_str().into(),
                         message: format!(
                             "同步完成：账号 {}->{}（已写入本地并推送）",
-                            local.accounts.len(),
-                            to_store.accounts.len()
+                            local_count,
+                            visible_account_count(&to_store)
                         ),
                         safe: true,
                         reasons: vec![],
-                        local_accounts: local.accounts.len(),
+                        local_accounts: local_count,
                         remote_accounts: remote_count,
-                        merged_accounts: to_store.accounts.len(),
+                        merged_accounts: visible_account_count(&to_store),
                         applied: true,
                         pushed: true,
                         etag: Some(new_etag),
@@ -304,8 +333,10 @@ pub fn run_sync(
     loop {
         attempt += 1;
         let (remote_opt, etag) = pull_remote(settings)?;
-        let remote_count = remote_opt.as_ref().map(|p| p.accounts.len()).unwrap_or(0);
+        let local_count = visible_account_count(&local);
+        let remote_count = remote_opt.as_ref().map(visible_account_count).unwrap_or(0);
         let (merged, report) = decide_merged(mode, local.clone(), remote_opt);
+        let merged_count = visible_account_count(&merged);
         if !report.safe {
             return Ok((
                 SyncReport {
@@ -315,9 +346,9 @@ pub fn run_sync(
                     message: format!("同步停止：安全检查未通过（{}）", report.reasons.join(", ")),
                     safe: false,
                     reasons: report.reasons,
-                    local_accounts: local.accounts.len(),
+                    local_accounts: local_count,
                     remote_accounts: remote_count,
-                    merged_accounts: merged.accounts.len(),
+                    merged_accounts: merged_count,
                     applied: false,
                     pushed: false,
                     etag,
@@ -351,14 +382,14 @@ pub fn run_sync(
                         mode: mode.as_str().into(),
                         message: format!(
                             "同步完成：账号 {}->{}（已写入本地并推送）",
-                            local.accounts.len(),
-                            to_store.accounts.len()
+                            local_count,
+                            visible_account_count(&to_store)
                         ),
                         safe: true,
                         reasons: vec![],
-                        local_accounts: local.accounts.len(),
+                        local_accounts: local_count,
                         remote_accounts: remote_count,
-                        merged_accounts: to_store.accounts.len(),
+                        merged_accounts: visible_account_count(&to_store),
                         applied: true,
                         pushed: true,
                         etag: Some(new_etag),
@@ -371,5 +402,39 @@ pub fn run_sync(
             }
             Err(e) => return Err(e),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pass_merge::v2::{Folder, Passkey, PasswordAccount};
+
+    #[test]
+    fn visible_account_count_excludes_permanent_deletion_tombstones() {
+        let mut tombstone = PasswordAccount::default();
+        tombstone.is_permanently_deleted = true;
+        let payload = SyncPayload {
+            accounts: vec![PasswordAccount::default(), tombstone],
+            ..SyncPayload::default()
+        };
+
+        assert_eq!(visible_account_count(&payload), 1);
+    }
+
+    #[test]
+    fn visible_counts_exclude_all_permanent_deletion_tombstones() {
+        let mut deleted_folder = Folder::default();
+        deleted_folder.is_permanently_deleted = true;
+        let mut deleted_passkey = Passkey::default();
+        deleted_passkey.is_permanently_deleted = true;
+        let payload = SyncPayload {
+            folders: vec![Folder::default(), deleted_folder],
+            passkeys: vec![Passkey::default(), deleted_passkey],
+            ..SyncPayload::default()
+        };
+
+        assert_eq!(visible_folder_count(&payload), 1);
+        assert_eq!(visible_passkey_count(&payload), 1);
     }
 }

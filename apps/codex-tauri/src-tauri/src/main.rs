@@ -34,7 +34,10 @@ use provision::{
 };
 use provision_settings::ProvisionDraft;
 use sync::crypto::key_id;
-use sync::pipeline::{local_payload_from_vault, preview_sync, run_sync, SyncMode};
+use sync::pipeline::{
+    local_payload_from_vault, preview_sync, run_sync, visible_account_count, visible_folder_count,
+    visible_passkey_count, SyncMode,
+};
 use sync::settings::{load_sync_settings, save_sync_settings, SyncSettings};
 use sync::webdav::{self, WebDavSettings};
 use sync::{generate_sync_key, is_valid_sync_key};
@@ -1033,9 +1036,9 @@ fn export_sync_bundle(
         message: format!(
             "已导出同步包：{}（账号 {}，文件夹 {}，通行密钥 {}）",
             out.display(),
-            local.accounts.len(),
-            local.folders.len(),
-            local.passkeys.len()
+            visible_account_count(&local),
+            visible_folder_count(&local),
+            visible_passkey_count(&local)
         ),
     })
 }
@@ -1365,9 +1368,9 @@ fn restore_server_version(
     Ok(format!(
         "已恢复快照 {}：账号 {}，文件夹 {}，通行密钥 {}",
         version_id,
-        payload.accounts.len(),
-        payload.folders.len(),
-        payload.passkeys.len()
+        visible_account_count(&payload),
+        visible_folder_count(&payload),
+        visible_passkey_count(&payload)
     ))
 }
 
@@ -1416,9 +1419,9 @@ fn restore_local_snapshot(
     save_payload_atomic(&mut conn, &payload)?;
     Ok(format!(
         "已恢复本地安全快照：账号 {}，文件夹 {}，通行密钥 {}",
-        payload.accounts.len(),
-        payload.folders.len(),
-        payload.passkeys.len()
+        visible_account_count(&payload),
+        visible_folder_count(&payload),
+        visible_passkey_count(&payload)
     ))
 }
 

@@ -17,7 +17,10 @@ mod local_vault;
 mod sync;
 
 use pass_merge::v2::{Folder, Passkey, PasswordAccount};
-use sync::pipeline::{local_payload_from_vault, run_sync};
+use sync::pipeline::{
+    local_payload_from_vault, run_sync, visible_account_count, visible_folder_count,
+    visible_passkey_count,
+};
 use sync::settings::load_sync_settings;
 
 fn data_dir() -> PathBuf {
@@ -92,26 +95,20 @@ fn main() {
         eprintln!("sync disabled");
         std::process::exit(2);
     }
-    if settings.auth_token.trim().is_empty() {
-        eprintln!("auth token empty");
-        std::process::exit(2);
-    }
-
     let conn = open_db(&dir);
     let device =
         read_kv(&conn, &dir, "settings.device_name").unwrap_or_else(|| "CodexDesktop".into());
     let accounts: Vec<PasswordAccount> = load_json_vec(&conn, &dir, "accounts.v2");
     let folders: Vec<Folder> = load_json_vec(&conn, &dir, "folders.v1");
     let passkeys: Vec<Passkey> = load_json_vec(&conn, &dir, "passkeys.v1");
+    let local = local_payload_from_vault(&accounts, &folders, &passkeys, &device);
     eprintln!(
         "local before: accounts={} folders={} passkeys={} device={}",
-        accounts.len(),
-        folders.len(),
-        passkeys.len(),
+        visible_account_count(&local),
+        visible_folder_count(&local),
+        visible_passkey_count(&local),
         device
     );
-
-    let local = local_payload_from_vault(&accounts, &folders, &passkeys, &device);
     let platform = if cfg!(target_os = "macos") {
         "macos"
     } else if cfg!(target_os = "windows") {
@@ -151,17 +148,11 @@ fn main() {
                     "passkeys.v1",
                     &serde_json::to_string(&applied.passkeys).expect("ser passkeys"),
                 );
-                let active = applied
-                    .accounts
-                    .iter()
-                    .filter(|a| !a.is_deleted && !a.is_permanently_deleted)
-                    .count();
                 eprintln!(
-                    "TAURI_SYNC_OK accounts={} active={} folders={} passkeys={}",
-                    applied.accounts.len(),
-                    active,
-                    applied.folders.len(),
-                    applied.passkeys.len()
+                    "TAURI_SYNC_OK accounts={} folders={} passkeys={}",
+                    visible_account_count(&applied),
+                    visible_folder_count(&applied),
+                    visible_passkey_count(&applied)
                 );
             } else {
                 eprintln!("not applied; reasons={:?}", report.reasons);

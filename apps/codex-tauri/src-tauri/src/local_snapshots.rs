@@ -7,6 +7,7 @@ use std::path::Path;
 use uuid::Uuid;
 
 use crate::local_vault;
+use crate::sync::pipeline::{visible_account_count, visible_folder_count, visible_passkey_count};
 
 const SNAPSHOTS_FILE: &str = "local_sync_snapshots.json";
 const SNAPSHOTS_CONTEXT: &str = "pass.tauri.local_sync_snapshots.v1";
@@ -71,9 +72,9 @@ pub fn list(data_dir: &Path) -> Result<Vec<LocalSnapshotSummary>, String> {
             id: snapshot.id,
             created_at_ms: snapshot.created_at_ms,
             reason: snapshot.reason,
-            accounts: snapshot.payload.accounts.len(),
-            folders: snapshot.payload.folders.len(),
-            passkeys: snapshot.payload.passkeys.len(),
+            accounts: visible_account_count(&snapshot.payload),
+            folders: visible_folder_count(&snapshot.payload),
+            passkeys: visible_passkey_count(&snapshot.payload),
         })
         .collect())
 }
