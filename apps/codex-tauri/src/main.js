@@ -988,9 +988,30 @@ const closeFolderDedup = () => {
 };
 
 const openFolderDelete = (folder) => {
-  folderDeleteTarget = { id: String(folder.id), name: folder.name || "未命名文件夹" };
+  const folderId = String(folder.id);
+  const folderIdLower = folderId.toLowerCase();
+  const activeMembers = (state.activeAccounts || []).filter((account) =>
+    folderIdsOf(account).some((id) => id.toLowerCase() === folderIdLower)
+  );
+  const recycleMembers = (state.deletedAccounts || []).filter((account) =>
+    folderIdsOf(account).some((id) => id.toLowerCase() === folderIdLower)
+  );
+  folderDeleteTarget = {
+    id: folderId,
+    name: folder.name || "未命名文件夹",
+    activeCount: activeMembers.length,
+    recycleCount: recycleMembers.length,
+  };
   if (els.folderDeleteMessage) {
-    els.folderDeleteMessage.textContent = `删除「${folderDeleteTarget.name}」后，文件夹内账号会保留，但不再归属此文件夹。`;
+    const { activeCount, recycleCount } = folderDeleteTarget;
+    const total = activeCount + recycleCount;
+    if (!total) {
+      els.folderDeleteMessage.textContent =
+        `删除「${folderDeleteTarget.name}」不会删除账号；当前没有账号属于此文件夹。`;
+    } else {
+      els.folderDeleteMessage.textContent =
+        `删除「${folderDeleteTarget.name}」不会删除账号。当前有 ${activeCount} 个活动账号、${recycleCount} 个回收站账号属于此文件夹。删除后，活动账号仍在“全部”（没有其他文件夹的会变为未分类），回收站账号仍在“回收站”；有其他文件夹归属的账号会保留其他归属。`;
+    }
   }
   if (els.folderDeleteModal) els.folderDeleteModal.hidden = false;
 };
