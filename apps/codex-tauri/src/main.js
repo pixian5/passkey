@@ -1900,26 +1900,32 @@ const refreshState = async () => {
 const refreshUndoStatus = async () => {
   try {
     const status = await invoke("get_undo_status");
+    const operationName = String(status?.title || "最近一次本地操作")
+      .replace(/前自动备份$/, "")
+      .trim();
+    const undoTooltip = status
+      ? `最近一次操作：${operationName}\n点击后恢复到该操作之前的数据`
+      : "当前没有可撤销的本地操作";
     if (els.btnUndo) {
       els.btnUndo.disabled = !status;
-      els.btnUndo.dataset.tooltip = status ? status.title : "没有可撤销的本地操作";
+      els.btnUndo.dataset.tooltip = undoTooltip;
       els.btnUndo.textContent = "撤销";
     }
     if (els.historyUndoLatest) {
       els.historyUndoLatest.disabled = !status;
-      els.historyUndoLatest.dataset.tooltip = status ? status.title : "没有可撤销的本地操作";
+      els.historyUndoLatest.dataset.tooltip = undoTooltip;
       els.historyUndoLatest.textContent = "撤销";
     }
   } catch (_) {
     if (els.btnUndo) {
       els.btnUndo.disabled = true;
       els.btnUndo.textContent = "撤销";
-      els.btnUndo.dataset.tooltip = "没有可撤销的本地操作";
+      els.btnUndo.dataset.tooltip = "当前没有可撤销的本地操作";
     }
     if (els.historyUndoLatest) {
       els.historyUndoLatest.disabled = true;
       els.historyUndoLatest.textContent = "撤销";
-      els.historyUndoLatest.dataset.tooltip = "没有可撤销的本地操作";
+      els.historyUndoLatest.dataset.tooltip = "当前没有可撤销的本地操作";
     }
   }
 };
@@ -1927,26 +1933,32 @@ const refreshUndoStatus = async () => {
 const refreshRedoStatus = async () => {
   try {
     const status = await invoke("get_redo_status");
+    const operationName = String(status?.title || "待重做的本地操作")
+      .replace(/前自动备份$/, "")
+      .trim();
+    const redoTooltip = status
+      ? `待重做操作：${operationName}\n点击后再次应用该操作`
+      : "当前没有可重做的本地操作";
     if (els.btnRedo) {
       els.btnRedo.disabled = !status;
-      els.btnRedo.dataset.tooltip = status ? status.title : "没有可重做的操作";
+      els.btnRedo.dataset.tooltip = redoTooltip;
       els.btnRedo.textContent = "重做";
     }
     if (els.historyRedoLatest) {
       els.historyRedoLatest.disabled = !status;
-      els.historyRedoLatest.dataset.tooltip = status ? status.title : "没有可重做的操作";
+      els.historyRedoLatest.dataset.tooltip = redoTooltip;
       els.historyRedoLatest.textContent = "重做";
     }
   } catch (_) {
     if (els.btnRedo) {
       els.btnRedo.disabled = true;
       els.btnRedo.textContent = "重做";
-      els.btnRedo.dataset.tooltip = "没有可重做的操作";
+      els.btnRedo.dataset.tooltip = "当前没有可重做的本地操作";
     }
     if (els.historyRedoLatest) {
       els.historyRedoLatest.disabled = true;
       els.historyRedoLatest.textContent = "重做";
-      els.historyRedoLatest.dataset.tooltip = "没有可重做的操作";
+      els.historyRedoLatest.dataset.tooltip = "当前没有可重做的本地操作";
     }
   }
 };
