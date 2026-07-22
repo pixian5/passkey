@@ -126,7 +126,7 @@ button.icon-ghost:hover, button.icon-btn:hover { background: rgba(0,0,0,0.05); }
   padding: 8px 10px;
   font-size: calc(1.0000 * var(--ui-text-size));
   color: var(--text);
-  cursor: pointer;
+  cursor: default;
   pointer-events: auto;
   position: relative;
   z-index: 2;
@@ -141,7 +141,7 @@ button.icon-ghost:hover, button.icon-btn:hover { background: rgba(0,0,0,0.05); }
   position: relative;
   z-index: 3;
 }
-.side-item:hover { background: rgba(0,0,0,0.045); }
+.side-item:hover { background: var(--select); }
 .side-item.active {
   background: var(--select);
   color: #0056c7;
@@ -203,9 +203,11 @@ button.icon-ghost:hover, button.icon-btn:hover { background: rgba(0,0,0,0.05); }
   padding: 8px 10px;
   border-radius: 10px;
   background: var(--search);
+  min-width: 0;
 }
 .search-wrap input {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
   border: none;
   outline: none;
   background: transparent;
@@ -213,12 +215,31 @@ button.icon-ghost:hover, button.icon-btn:hover { background: rgba(0,0,0,0.05); }
   padding: 2px 0;
 }
 .search-wrap input::placeholder { color: #8e8e93; }
+.search-field-select,
 .sort-select {
+  flex: 0 0 auto;
   border: none;
   background: transparent;
   color: var(--muted);
   font-size: calc(0.9286 * var(--ui-text-size));
-  max-width: 120px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 2px 14px 2px 2px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 8px) calc(50% - 2px), calc(100% - 3px) calc(50% - 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.search-field-select {
+  width: 5.5em;
+  max-width: 5.5em;
+}
+.sort-select {
+  width: 6.5em;
+  max-width: 6.5em;
+  white-space: nowrap;
 }
 
 .account-scroll {
@@ -244,13 +265,84 @@ button.icon-ghost:hover, button.icon-btn:hover { background: rgba(0,0,0,0.05); }
   background: transparent;
   border-radius: 10px;
   padding: 8px 10px;
-  cursor: pointer;
+  cursor: default;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  position: relative;
 }
-.account-row:hover { background: rgba(0,0,0,0.035); }
+.account-row:hover { background: var(--select); }
 .account-row.selected { background: var(--select); }
+.account-row.pinned { box-shadow: inset 3px 0 0 var(--accent); }
+.account-row.drag-source,
+.side-item.drag-source {
+  opacity: 0.28;
+}
+.account-row.drop-before::before,
+.side-item.drop-before::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: -3px;
+  height: 3px;
+  background: var(--accent);
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 20;
+  box-shadow: 0 0 0 1px rgba(0, 122, 255, 0.25);
+}
+.account-row.drop-after::after,
+.side-item.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: -3px;
+  height: 3px;
+  background: var(--accent);
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 20;
+  box-shadow: 0 0 0 1px rgba(0, 122, 255, 0.25);
+}
+.side-item.reorderable,
+.account-row.reorderable {
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
+.side-item.reorderable:active,
+.account-row.reorderable:active,
+body.is-reordering .side-item.reorderable,
+body.is-reordering .account-row.reorderable {
+  cursor: grabbing;
+}
+body.is-reordering {
+  cursor: grabbing;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.account-row.drag-source,
+.side-item.drag-source {
+  opacity: 0.35;
+}
+/* Native HTML5 drag image inherits styles; keep a translucent look when possible. */
+.account-row.reorderable,
+.side-item.reorderable {
+  -webkit-user-drag: none;
+}
+.pinned-tag {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: calc(0.7857 * var(--ui-text-size));
+  color: var(--accent);
+  background: rgba(0, 122, 255, 0.12);
+  border-radius: 999px;
+  padding: 1px 6px;
+  vertical-align: middle;
+}
 
 .row-title {
   font-size: calc(1.2143 * var(--ui-text-size));
@@ -277,19 +369,27 @@ button.icon-ghost:hover, button.icon-btn:hover { background: rgba(0,0,0,0.05); }
   font-variant-numeric: tabular-nums;
   color: var(--text);
   cursor: pointer;
+  border-radius: 8px;
+  padding: 2px 4px;
+  margin: 0 -4px;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .row-otp:hover,
-.row-otp:hover button {
+.row-otp:hover .otp-digits,
+.row-otp:hover .otp-remain {
   color: var(--accent);
+  background: rgba(0, 122, 255, 0.06);
 }
-.row-otp button {
-  border: none;
-  background: transparent;
-  padding: 0;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  pointer-events: none;
+.row-otp .otp-digits {
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+.row-otp .otp-remain {
+  color: var(--muted);
+}
+.row-otp:hover .otp-remain {
+  color: var(--accent);
 }
 .deleted-tag {
   display: inline-block;
@@ -679,13 +779,17 @@ textarea { min-height: 84px; resize: vertical; }
   flex-shrink: 0;
 }
 .provision-card #provisionKeyRow {
-  flex: 0 1 auto;
+  /* Keep the textarea in normal document flow.  If the dialog is short, the
+     modal body scrolls instead of shrinking this block under the next rows. */
+  flex: 0 0 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 .provision-card #provisionSecretKey {
+  box-sizing: border-box;
+  width: 100%;
   min-height: 72px;
   max-height: min(160px, 18vh);
   resize: vertical;
@@ -727,13 +831,37 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 
 /* Prevent status strip / short windows from crushing provision form */
 .provision-card .form-label {
-  flex: 0 0 auto;
+  flex: 0 1 110px;
   min-width: 5.5em;
 }
 .provision-card .form-row {
-  align-items: flex-start;
-}
-.provision-card .secret-field {
-  width: 100%;
+  align-items: center;
 }
 
+
+
+.drop-line {
+  position: fixed;
+  height: 3px;
+  background: var(--accent);
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 10001;
+  box-shadow: 0 0 0 1px rgba(0, 122, 255, 0.25);
+}
+.drag-float {
+  position: fixed;
+  z-index: 10000;
+  margin: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  background: rgba(255, 255, 255, 0.42);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.12),
+    0 2px 6px rgba(0, 0, 0, 0.06);
+  backdrop-filter: blur(8px) saturate(140%);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  transform: scale(1.02);
+}

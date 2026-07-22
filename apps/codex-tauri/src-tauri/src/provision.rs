@@ -520,9 +520,67 @@ fn environment_text(sync_encryption_key: &str) -> String {
     )
 }
 
+/// Preferred TLS certificate sources on the remote host (checked in order).
+/// Service always consumes copies under `/etc/pass-sync/tls/`.
+const TLS_SOURCE_CANDIDATES: &[&str] = &[
+    // acme.sh ECC issue for sbbz.tech (user-provided live path)
+    "/root/.acme.sh/sbbz.tech_ecc",
+    // acme.sh RSA / alternate layout
+    "/root/.acme.sh/sbbz.tech",
+    // legacy fixed paths used by older deploy scripts
+    "/etc/bz/certs",
+];
+
+/// Shell snippet: resolve remote cert/key into CERT_SRC / KEY_SRC, or exit with error.
+fn tls_resolve_shell() -> &'static str {
+    r#"
+CERT_SRC=""
+KEY_SRC=""
+# Prefer fullchain + private key names used by acme.sh / Let's Encrypt.
+for dir in \
+  '/root/.acme.sh/sbbz.tech_ecc' \
+  '/root/.acme.sh/sbbz.tech' \
+  '/etc/bz/certs'
+do
+  if [ -z "$CERT_SRC" ]; then
+    for c in \
+      "$dir/fullchain.cer" \
+      "$dir/fullchain.pem" \
+      "$dir/sbbz.tech.cer" \
+      "$dir/server.crt" \
+      "$dir/cert.pem"
+    do
+      if [ -f "$c" ]; then CERT_SRC="$c"; break; fi
+    done
+  fi
+  if [ -z "$KEY_SRC" ]; then
+    for k in \
+      "$dir/sbbz.tech.key" \
+      "$dir/server.key" \
+      "$dir/privkey.pem" \
+      "$dir/private.key"
+    do
+      if [ -f "$k" ]; then KEY_SRC="$k"; break; fi
+    done
+  fi
+  if [ -n "$CERT_SRC" ] && [ -n "$KEY_SRC" ]; then
+    break
+  fi
+  # Incomplete pair in this dir — keep looking.
+  CERT_SRC=""
+  KEY_SRC=""
+done
+if [ -z "$CERT_SRC" ] || [ -z "$KEY_SRC" ]; then
+  echo "未找到可用的 TLS 证书/私钥。已检查: /root/.acme.sh/sbbz.tech_ecc、/root/.acme.sh/sbbz.tech、/etc/bz/certs" >&2
+  exit 1
+fi
+"#
+}
+
 fn install_command(stage: &str, endpoint: &Endpoint) -> String {
     let tls = if endpoint.uses_tls { "1" } else { "0" };
     let port = endpoint.backend_port;
+    let tls_resolve = tls_resolve_shell();
     format!(
         r#"
 set -eu
@@ -546,9 +604,10 @@ $SUDO chown pass:pass /etc/pass-sync/tokens.conf
 $SUDO install -m 0600 '{stage}/pass-sync-server.env' /etc/pass-sync/pass-sync-server.env
 $SUDO chown root:root /etc/pass-sync/pass-sync-server.env
 if [ "{tls}" = "1" ]; then
+{tls_resolve}
   $SUDO install -d -m 0750 -o pass -g pass /etc/pass-sync/tls
-  $SUDO install -m 0644 -o pass -g pass /etc/bz/certs/server.crt /etc/pass-sync/tls/server.crt
-  $SUDO install -m 0600 -o pass -g pass /etc/bz/certs/server.key /etc/pass-sync/tls/server.key
+  $SUDO install -m 0644 -o pass -g pass "$CERT_SRC" /etc/pass-sync/tls/server.crt
+  $SUDO install -m 0600 -o pass -g pass "$KEY_SRC" /etc/pass-sync/tls/server.key
 fi
 $SUDO install -m 0644 '{stage}/pass-sync-server.service' /etc/systemd/system/pass-sync-server.service
 $SUDO install -m 0644 '{stage}/pass-sync-server-backup.service' /etc/systemd/system/pass-sync-server-backup.service
@@ -588,7 +647,8 @@ rm -rf '{stage}'
 "#,
         stage = stage,
         tls = tls,
-        port = port
+        port = port,
+        tls_resolve = tls_resolve,
     )
 }
 
@@ -778,12 +838,11 @@ pub fn provision_server(
 ) -> Result<ProvisionResult, String> {
     let endpoint = parse_endpoint(server_url)?;
     let token = access_token.trim();
-    if token.is_empty() {
-        return Err("请先填写访问令牌，再在服务器创建服务".into());
-    }
+    // Token is optional: empty means provision an open server (no bearer auth).
     if token.contains(',') || token.contains('\n') || token.contains('\r') {
         return Err("访问令牌不能包含逗号、换行或回车".into());
     }
+    // Empty encryption key is plaintext mode; non-empty must be a valid 256-bit key.
     if !is_valid_sync_key(sync_encryption_key) {
         return Err("同步加密密钥无效，必须是 256 位密钥；留空表示明文同步".into());
     }
@@ -799,13 +858,53 @@ pub fn provision_server(
     let temp = make_temp_ssh(data_dir, &credential)?;
 
     if endpoint.uses_tls {
-        let has_crt = ssh_file_exists(&credential, &endpoint, &temp, "/etc/bz/certs/server.crt")?;
-        let has_key = ssh_file_exists(&credential, &endpoint, &temp, "/etc/bz/certs/server.key")?;
-        if !has_crt || !has_key {
-            return Err(
-                "服务器 URL 使用了 HTTPS 端口，但服务器缺少 /etc/bz/certs/server.crt 或 server.key"
-                    .into(),
-            );
+        // Probe preferred certificate locations (acme.sh first, then legacy).
+        let mut found = false;
+        let mut last_hint = String::new();
+        for dir in TLS_SOURCE_CANDIDATES {
+            let cert_names = [
+                "fullchain.cer",
+                "fullchain.pem",
+                "sbbz.tech.cer",
+                "server.crt",
+                "cert.pem",
+            ];
+            let key_names = [
+                "sbbz.tech.key",
+                "server.key",
+                "privkey.pem",
+                "private.key",
+            ];
+            let mut has_cert = false;
+            let mut has_key = false;
+            for name in cert_names {
+                let path = format!("{dir}/{name}");
+                if ssh_file_exists(&credential, &endpoint, &temp, &path)? {
+                    has_cert = true;
+                    break;
+                }
+            }
+            for name in key_names {
+                let path = format!("{dir}/{name}");
+                if ssh_file_exists(&credential, &endpoint, &temp, &path)? {
+                    has_key = true;
+                    break;
+                }
+            }
+            if has_cert && has_key {
+                found = true;
+                break;
+            }
+            if has_cert || has_key {
+                last_hint = format!("{dir} 下证书/私钥不完整");
+            }
+        }
+        if !found {
+            return Err(format!(
+                "服务器 URL 使用了 HTTPS，但未找到可用 TLS 证书。请确认至少一处完整：{}。{}",
+                TLS_SOURCE_CANDIDATES.join("、"),
+                last_hint
+            ));
         }
     }
 
@@ -863,7 +962,11 @@ pub fn provision_server(
         return Err(e);
     }
 
-    let tokens = format!("default={token}\n");
+    let tokens = if token.is_empty() {
+        String::new()
+    } else {
+        format!("default={token}\n")
+    };
     if let Err(e) = ssh_write(
         &credential,
         &endpoint,

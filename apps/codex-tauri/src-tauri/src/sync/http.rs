@@ -38,13 +38,22 @@ fn state_url(base: &str) -> Result<String, String> {
     Ok(format!("{base}/v2/sync/state"))
 }
 
-fn auth_header(token: &str) -> Result<HeaderValue, String> {
+/// Optional Authorization header. Empty token → no auth header (server may allow open access).
+fn maybe_auth_header(token: &str) -> Result<Option<HeaderValue>, String> {
     let token = token.trim();
     if token.is_empty() {
-        return Err("Bearer Token 不能为空".into());
+        return Ok(None);
     }
     HeaderValue::from_str(&format!("Bearer {token}"))
+        .map(Some)
         .map_err(|_| "Bearer Token 含非法字符".to_string())
+}
+
+fn apply_auth(headers: &mut HeaderMap, token: &str) -> Result<(), String> {
+    if let Some(value) = maybe_auth_header(token)? {
+        headers.insert(AUTHORIZATION, value);
+    }
+    Ok(())
 }
 
 /// GET /v2/sync/state — 404 means empty remote.
@@ -52,7 +61,7 @@ pub fn get_sync_state(base_url: &str, token: &str) -> Result<FetchResult, String
     let url = state_url(base_url)?;
     let client = build_client()?;
     let mut headers = HeaderMap::new();
-    headers.insert(AUTHORIZATION, auth_header(token)?);
+    apply_auth(&mut headers, token)?;
     let resp = client
         .get(&url)
         .headers(headers)
@@ -104,7 +113,7 @@ pub fn put_sync_state(
     let url = state_url(base_url)?;
     let client = build_client()?;
     let mut headers = HeaderMap::new();
-    headers.insert(AUTHORIZATION, auth_header(token)?);
+    apply_auth(&mut headers, token)?;
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     if let Some(etag) = if_match {
         if !etag.trim().is_empty() {

@@ -36,6 +36,9 @@ pub struct UiPrefs {
     pub webdav_username: String,
     #[serde(default)]
     pub webdav_password: String,
+    /// Manual folder sidebar order (folder ids). Missing folders append at end.
+    #[serde(default)]
+    pub folder_order: Vec<String>,
 }
 
 fn default_font() -> String {
@@ -73,6 +76,7 @@ impl Default for UiPrefs {
             webdav_remote_path: default_webdav_path(),
             webdav_username: String::new(),
             webdav_password: String::new(),
+            folder_order: Vec::new(),
         }
     }
 }

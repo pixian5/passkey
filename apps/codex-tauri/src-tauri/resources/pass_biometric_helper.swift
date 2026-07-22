@@ -6,11 +6,18 @@ func fail(_ message: String) -> Never {
     exit(1)
 }
 
+let args = CommandLine.arguments
+let checkOnly = args.contains("--check")
+
 let context = LAContext()
 context.localizedFallbackTitle = "输入主密码"
 var availabilityError: NSError?
 guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &availabilityError) else {
-    fail(availabilityError?.localizedDescription ?? "当前设备不支持 Touch ID")
+    fail(availabilityError?.localizedDescription ?? "当前设备不支持指纹/面容解锁")
+}
+
+if checkOnly {
+    exit(0)
 }
 
 let semaphore = DispatchSemaphore(value: 0)
@@ -27,5 +34,5 @@ context.evaluatePolicy(
 semaphore.wait()
 
 guard authenticated else {
-    fail(evaluationError?.localizedDescription ?? "Touch ID 验证失败")
+    fail(evaluationError?.localizedDescription ?? "生物识别验证失败")
 }

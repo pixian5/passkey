@@ -204,8 +204,8 @@ fn pull_remote(settings: &SyncSettings) -> Result<(Option<SyncPayload>, Option<S
     if !settings.enabled {
         return Ok((None, None));
     }
-    if settings.base_url.trim().is_empty() || settings.auth_token.trim().is_empty() {
-        return Err("请先配置同步服务器 URL 与 Token".into());
+    if settings.base_url.trim().is_empty() {
+        return Err("请先配置同步服务器 URL（访问令牌与加密密钥可留空）".into());
     }
     let fetched = get_sync_state(&settings.base_url, &settings.auth_token)?;
     if fetched.empty || fetched.body.is_none() {

@@ -134,6 +134,8 @@ fn get_app_state(app: AppHandle, state: tauri::State<AppLockState>) -> Result<Ap
     if accounts_changed {
         save_accounts(&conn, &accounts)?;
     }
+    let prefs = load_ui_prefs(&dir);
+    apply_folder_order(&mut folders, &prefs.folder_order);
     let passkeys = load_passkeys(&conn)?;
     let active_accounts = accounts
         .iter()
@@ -1300,7 +1302,48 @@ fn normalize_sites(sites: Vec<String>) -> Vec<String> {
 }
 
 fn sort_accounts(accounts: &mut [PasswordAccount]) {
-    accounts.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+    accounts.sort_by(|a, b| {
+        match (a.is_pinned, b.is_pinned) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            (true, true) => match (a.pinned_sort_order, b.pinned_sort_order) {
+                (Some(lo), Some(ro)) if lo != ro => lo.cmp(&ro),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                _ => b
+                    .updated_at_ms
+                    .cmp(&a.updated_at_ms)
+                    .then_with(|| a.account_id.cmp(&b.account_id)),
+            },
+            (false, false) => match (a.regular_sort_order, b.regular_sort_order) {
+                (Some(lo), Some(ro)) if lo != ro => lo.cmp(&ro),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                _ => b
+                    .updated_at_ms
+                    .cmp(&a.updated_at_ms)
+                    .then_with(|| a.account_id.cmp(&b.account_id)),
+            },
+        }
+    });
+}
+
+fn apply_folder_order(folders: &mut [Folder], order: &[String]) {
+    if order.is_empty() || folders.is_empty() {
+        return;
+    }
+    let rank: BTreeMap<String, usize> = order
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.to_ascii_lowercase(), i))
+        .collect();
+    folders.sort_by(|a, b| {
+        let ra = rank.get(&a.id.to_ascii_lowercase()).copied().unwrap_or(usize::MAX);
+        let rb = rank.get(&b.id.to_ascii_lowercase()).copied().unwrap_or(usize::MAX);
+        ra.cmp(&rb)
+            .then_with(|| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()))
+            .then_with(|| a.id.to_ascii_lowercase().cmp(&b.id.to_ascii_lowercase()))
+    });
 }
 
 fn current_platform() -> &'static str {
@@ -1646,9 +1689,9 @@ fn lock_enable(
     idle_lock_minutes: u32,
 ) -> Result<AppLockPublicState, String> {
     let dir = data_dir(&app)?;
-    let result = state.enable(&dir, &password, &confirm, idle_lock_minutes)?;
+    let _ = state.enable(&dir, &password, &confirm, idle_lock_minutes)?;
     let _ = state.store_biometric_key(&app);
-    Ok(result)
+    Ok(state.public_state(&dir))
 }
 
 #[tauri::command]
@@ -1658,9 +1701,9 @@ fn lock_disable(
     password: String,
 ) -> Result<AppLockPublicState, String> {
     let dir = data_dir(&app)?;
-    let result = state.disable(&dir, &password)?;
+    let _ = state.disable(&dir, &password)?;
     let _ = state.clear_biometric_key(&app);
-    Ok(result)
+    Ok(state.public_state(&dir))
 }
 
 #[tauri::command]
@@ -1670,9 +1713,9 @@ fn lock_unlock(
     password: String,
 ) -> Result<AppLockPublicState, String> {
     let dir = data_dir(&app)?;
-    let result = state.unlock(&dir, &password)?;
+    let _ = state.unlock(&dir, &password)?;
     let _ = state.store_biometric_key(&app);
-    Ok(result)
+    Ok(state.public_state(&dir))
 }
 
 #[tauri::command]
@@ -1682,6 +1725,11 @@ fn lock_unlock_biometric(
 ) -> Result<AppLockPublicState, String> {
     let dir = data_dir(&app)?;
     state.unlock_biometric(&app, &dir)
+}
+
+#[tauri::command]
+fn lock_biometric_available(app: AppHandle) -> bool {
+    app_lock::biometric_available(&app)
 }
 
 #[tauri::command]
@@ -1703,6 +1751,232 @@ fn lock_set_idle(
 #[tauri::command]
 fn lock_touch(state: tauri::State<AppLockState>) {
     state.touch();
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn reorder_folders(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    ordered_ids: Vec<String>,
+) -> Result<(), String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let conn = open_db(&app)?;
+    let folders = load_folders(&conn)?;
+    let known: BTreeSet<String> = folders
+        .iter()
+        .filter(|f| !f.is_deleted && !f.is_permanently_deleted)
+        .map(|f| f.id.to_ascii_lowercase())
+        .collect();
+    let mut prefs = load_ui_prefs(&dir);
+    let mut seen = BTreeSet::new();
+    let mut order = Vec::new();
+    for id in ordered_ids {
+        let key = id.trim().to_string();
+        if key.is_empty() {
+            continue;
+        }
+        let lower = key.to_ascii_lowercase();
+        if !known.contains(&lower) {
+            continue;
+        }
+        if seen.insert(lower) {
+            order.push(key);
+        }
+    }
+    // Append any folders missing from the payload (keep relative append order).
+    for folder in &folders {
+        if folder.is_deleted || folder.is_permanently_deleted {
+            continue;
+        }
+        let lower = folder.id.to_ascii_lowercase();
+        if seen.insert(lower) {
+            order.push(folder.id.clone());
+        }
+    }
+    prefs.folder_order = order;
+    save_ui_prefs(&dir, &prefs)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn toggle_account_pin(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    id: String,
+) -> Result<PasswordAccount, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let conn = open_db(&app)?;
+    let mut accounts = load_accounts(&conn)?;
+    let device_name = load_device_name(&conn)?;
+    let now = now_ms();
+    let target = accounts
+        .iter()
+        .find(|item| account_matches_id(item, &id))
+        .cloned()
+        .ok_or_else(|| "未找到账号".to_string())?;
+    if target.is_deleted || target.is_permanently_deleted {
+        return Err("回收站账号不支持置顶".into());
+    }
+    snapshot_current_vault(&conn, &dir, "置顶状态变更前自动备份")?;
+    let next_pinned = !target.is_pinned;
+    let next_pinned_order = if next_pinned {
+        let max = accounts
+            .iter()
+            .filter(|a| !a.is_deleted && !a.is_permanently_deleted && a.is_pinned)
+            .filter_map(|a| a.pinned_sort_order)
+            .max()
+            .unwrap_or(-1);
+        Some(max + 1)
+    } else {
+        None
+    };
+    for item in &mut accounts {
+        if account_matches_id(item, &id) {
+            item.is_pinned = next_pinned;
+            item.pinned_sort_order = next_pinned_order;
+            if !next_pinned {
+                item.regular_sort_order = None;
+            }
+            item.updated_at_ms = now;
+            item.last_operated_device_name = device_name.clone();
+            break;
+        }
+    }
+    save_accounts(&conn, &accounts)?;
+    accounts
+        .into_iter()
+        .find(|item| account_matches_id(item, &id))
+        .ok_or_else(|| "置顶后未找到账号".into())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn reorder_accounts(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    ordered_ids: Vec<String>,
+    pinned: bool,
+) -> Result<(), String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let conn = open_db(&app)?;
+    let mut accounts = load_accounts(&conn)?;
+    let device_name = load_device_name(&conn)?;
+
+    let mut requested = Vec::new();
+    let mut seen = BTreeSet::new();
+    for id in ordered_ids {
+        let key = id.trim().to_string();
+        if key.is_empty() {
+            continue;
+        }
+        let lower = key.to_ascii_lowercase();
+        if !seen.insert(lower.clone()) {
+            continue;
+        }
+        if accounts
+            .iter()
+            .any(|a| account_matches_id(a, &key) && a.is_pinned == pinned && !a.is_deleted)
+        {
+            // Normalize to resolved record id for stable matching.
+            if let Some(rec) = accounts
+                .iter()
+                .find(|a| account_matches_id(a, &key))
+                .map(|a| a.resolved_record_id())
+            {
+                requested.push(rec);
+            }
+        }
+    }
+    if requested.is_empty() {
+        return Err("没有可排序的账号".into());
+    }
+
+    let mut full_group: Vec<String> = accounts
+        .iter()
+        .filter(|a| !a.is_deleted && !a.is_permanently_deleted && a.is_pinned == pinned)
+        .map(|a| a.resolved_record_id())
+        .collect();
+    full_group.sort_by(|left, right| {
+        let a = accounts
+            .iter()
+            .find(|item| item.resolved_record_id() == *left);
+        let b = accounts
+            .iter()
+            .find(|item| item.resolved_record_id() == *right);
+        match (a, b) {
+            (Some(a), Some(b)) => {
+                let lo = if pinned {
+                    a.pinned_sort_order
+                } else {
+                    a.regular_sort_order
+                };
+                let ro = if pinned {
+                    b.pinned_sort_order
+                } else {
+                    b.regular_sort_order
+                };
+                match (lo, ro) {
+                    (Some(x), Some(y)) if x != y => x.cmp(&y),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    _ => b
+                        .updated_at_ms
+                        .cmp(&a.updated_at_ms)
+                        .then_with(|| a.account_id.cmp(&b.account_id)),
+                }
+            }
+            _ => left.cmp(right),
+        }
+    });
+
+    let requested_set: BTreeSet<String> = requested.iter().cloned().collect();
+    let mut merged = Vec::with_capacity(full_group.len());
+    let mut cursor = 0usize;
+    for id in &full_group {
+        if requested_set.contains(id) {
+            if let Some(next) = requested.get(cursor) {
+                merged.push(next.clone());
+                cursor += 1;
+            }
+        } else {
+            merged.push(id.clone());
+        }
+    }
+    while cursor < requested.len() {
+        let id = &requested[cursor];
+        if !merged.iter().any(|x| x == id) {
+            merged.push(id.clone());
+        }
+        cursor += 1;
+    }
+
+    // Skip snapshot on pure reorder for snappier UX (order fields only).
+    let mut changed = false;
+    for (order, id) in merged.iter().enumerate() {
+        let order_i = order as i64;
+        for item in &mut accounts {
+            if item.resolved_record_id() == *id && item.is_pinned == pinned {
+                if pinned {
+                    if item.pinned_sort_order != Some(order_i) {
+                        item.pinned_sort_order = Some(order_i);
+                        // Do not bump updated_at_ms — keeps manual order authoritative.
+                        item.last_operated_device_name = device_name.clone();
+                        changed = true;
+                    }
+                } else if item.regular_sort_order != Some(order_i) {
+                    item.regular_sort_order = Some(order_i);
+                    item.last_operated_device_name = device_name.clone();
+                    changed = true;
+                }
+                break;
+            }
+        }
+    }
+    if changed {
+        save_accounts(&conn, &accounts)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -2172,9 +2446,13 @@ fn main() {
             lock_disable,
             lock_unlock,
             lock_unlock_biometric,
+            lock_biometric_available,
             lock_now,
             lock_set_idle,
             lock_touch,
+            reorder_folders,
+            toggle_account_pin,
+            reorder_accounts,
         ])
         .build(tauri::generate_context!())
         .expect("error while building codex-tauri")

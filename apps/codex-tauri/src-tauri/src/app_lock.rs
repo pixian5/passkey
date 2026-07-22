@@ -38,6 +38,9 @@ pub struct AppLockPublicState {
     pub locked: bool,
     pub idle_lock_minutes: u32,
     pub has_password: bool,
+    /// Biometric unlock is ready (session key sealed after a successful password unlock).
+    #[serde(default)]
+    pub biometric_ready: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,6 +160,7 @@ impl AppLockState {
             locked: enabled && !guard.unlocked,
             idle_lock_minutes: idle,
             has_password,
+            biometric_ready: data_dir.join(BIOMETRIC_SESSION_FILE).is_file(),
         }
     }
 
@@ -184,8 +188,8 @@ impl AppLockState {
     ) -> Result<AppLockPublicState, String> {
         let password = password.trim();
         let confirm = confirm.trim();
-        if password.len() < 6 {
-            return Err("主密码至少 6 位".into());
+        if password.is_empty() {
+            return Err("请输入主密码".into());
         }
         if password != confirm {
             return Err("两次输入的主密码不一致".into());
@@ -223,6 +227,7 @@ impl AppLockState {
         // Keep verifier so re-enable can reuse or user can set again; for simplicity remove lock file secrets stay encrypted.
         let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         guard.unlocked = true;
+        drop(guard);
         Ok(self.public_state(data_dir))
     }
 
@@ -231,6 +236,7 @@ impl AppLockState {
         if !record.enabled {
             let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             guard.unlocked = true;
+            drop(guard);
             return Ok(self.public_state(data_dir));
         }
         let salt = STANDARD
@@ -248,6 +254,7 @@ impl AppLockState {
         guard.unlocked = true;
         guard.session_key = Some(key);
         guard.last_activity_ms = now_ms();
+        drop(guard);
         Ok(self.public_state(data_dir))
     }
 
@@ -338,6 +345,7 @@ impl AppLockState {
             locked: true,
             idle_lock_minutes: 5,
             has_password: true,
+            biometric_ready: false,
         }
     }
 
@@ -480,10 +488,11 @@ fn biometric_helper_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 #[cfg(target_os = "macos")]
-fn run_biometric_helper(app: &AppHandle) -> Result<(), String> {
+fn run_biometric_helper_cmd(app: &AppHandle, args: &[&str]) -> Result<(), String> {
     let helper = biometric_helper_path(app)?;
     let mut command = Command::new(helper);
     command
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -502,4 +511,20 @@ fn run_biometric_helper(app: &AppHandle) -> Result<(), String> {
         });
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn run_biometric_helper(app: &AppHandle) -> Result<(), String> {
+    run_biometric_helper_cmd(app, &[])
+}
+
+/// Probe whether Touch ID / biometrics can be used (no prompt).
+#[cfg(target_os = "macos")]
+pub fn biometric_available(app: &AppHandle) -> bool {
+    run_biometric_helper_cmd(app, &["--check"]).is_ok()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn biometric_available(_app: &tauri::AppHandle) -> bool {
+    false
 }

@@ -10,11 +10,13 @@
     <div id="lockOverlay" class="lock-overlay" hidden>
       <div class="lock-card">
         <h2>Pass 已锁定</h2>
-        <p class="hint">输入主密码解锁 vault 与同步密钥。</p>
+        <p class="hint">可用指纹解锁，或输入主密码。</p>
+        <div class="form-actions" id="biometricUnlockActions">
+          <button type="button" id="btn-unlock-biometric" class="primary" hidden>使用指纹解锁</button>
+        </div>
         <label>主密码<input id="unlockPassword" type="password" autocomplete="current-password" /></label>
         <div class="form-actions">
-          <button type="button" id="btn-unlock" class="primary">解锁</button>
-          <button type="button" id="btn-unlock-biometric">使用指纹解锁</button>
+          <button type="button" id="btn-unlock">密码解锁</button>
         </div>
         <p id="lockError" class="error"></p>
       </div>
@@ -53,9 +55,8 @@
 
             <div class="side-divider"></div>
 
-            <div class="folder-head" id="folderHead">
+            <div class="folder-head" id="folderHead" title="右键新建文件夹">
               <span id="label-folders">文件夹 (0)</span>
-              <button type="button" class="folder-new" id="btn-new-folder">新建</button>
             </div>
             <div id="folderEmpty" class="folder-empty" hidden>暂无文件夹</div>
             <div class="folder-scroll" id="folderList"></div>
@@ -66,10 +67,16 @@
 
         <section class="content">
           <div class="search-wrap">
-            <button type="button" class="icon-ghost" id="btn-sort" title="排序">⇅</button>
+            <select id="searchField" class="search-field-select" title="搜索项目">
+              <option value="all">全部</option>
+              <option value="site">站点名</option>
+              <option value="username">用户名</option>
+              <option value="password">密码</option>
+              <option value="note">备注</option>
+            </select>
             <input id="searchInput" type="search" placeholder="搜索全部账号（输入即搜）" />
             <select id="sortMode" class="sort-select" title="排序">
-              <option value="default">默认排序</option>
+              <option value="default">手动排序</option>
               <option value="updatedNewest">最近修改</option>
               <option value="usernameAZ">用户名 A-Z</option>
               <option value="siteAZ">站点 A-Z</option>
@@ -287,7 +294,7 @@
               <div class="form-row">
                 <span class="form-label">访问令牌</span>
                 <span class="secret-field grow">
-                  <input id="syncToken" type="password" placeholder="Bearer Token" autocomplete="off" />
+                  <input id="syncToken" type="password" placeholder="可选；留空表示不发送 Bearer" autocomplete="off" />
                   <button type="button" class="icon-btn secret-toggle" data-toggle-secret="syncToken" title="显示令牌">◎</button>
                 </span>
               </div>
@@ -445,11 +452,11 @@
             <div class="settings-group">
               <h3>应用解锁</h3>
               <div id="lockStatus">状态：未启用</div>
-              <p class="hint">启用后锁定时隐藏 vault 与同步密钥；空闲超时自动锁定。macOS 可使用 Touch ID 解锁。</p>
+              <p class="hint">启用后锁定时隐藏 vault 与同步密钥；空闲超时自动锁定。系统支持指纹时优先用指纹解锁（仍可用主密码）。</p>
               <div class="form-row">
                 <span class="form-label">主密码</span>
                 <span class="secret-field grow">
-                  <input id="lockPassword" type="password" placeholder="至少 4 位" autocomplete="new-password" />
+                  <input id="lockPassword" type="password" placeholder="设置主密码" autocomplete="new-password" />
                   <button type="button" class="icon-btn secret-toggle" data-toggle-secret="lockPassword" title="显示">◎</button>
                 </span>
               </div>
@@ -568,7 +575,7 @@
           <div class="form-row">
             <span class="form-label">访问令牌</span>
             <span class="secret-field grow">
-              <input id="provisionToken" type="password" placeholder="服务端 Bearer Token" autocomplete="off" />
+              <input id="provisionToken" type="password" placeholder="可选；留空则服务端不校验 Token" autocomplete="off" />
               <button type="button" class="icon-btn secret-toggle" data-toggle-secret="provisionToken" title="显示">◎</button>
             </span>
             <button type="button" id="btn-gen-provision-token">生成</button>
@@ -580,7 +587,7 @@
               <button type="button" class="icon-btn secret-toggle" data-toggle-secret="provisionEncKey" title="显示">◎</button>
             </span>
           </div>
-          <p class="hint">创建服务前会先备份服务器现有同步数据库。同步加密密钥不会发送给服务器，只决定是否强制加密同步包（配置了密钥则 PASS_SYNC_ALLOW_PLAINTEXT=0）。</p>
+          <p class="hint">访问令牌与同步加密密钥均可留空。令牌为空则服务端不启用 Bearer 校验；加密密钥为空则允许明文同步包（PASS_SYNC_ALLOW_PLAINTEXT=1）。HTTPS 创建时证书优先从 <code>/root/.acme.sh/sbbz.tech_ecc/</code> 复制（兼容 fullchain.cer / sbbz.tech.key），其次 acme.sh RSA 目录与 <code>/etc/bz/certs/</code>。创建前会备份服务器现有同步数据库。</p>
           <pre id="provisionStatus" class="mini-log" hidden></pre>
           <div class="form-actions">
             <button type="button" class="primary" id="btn-run-provision">创建服务</button>

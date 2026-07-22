@@ -369,8 +369,8 @@ pub fn build_csv_string(headers: &[&str], rows: &[Vec<String>]) -> String {
 // --- Sync versions ---
 
 pub fn list_sync_versions(settings: &SyncSettings) -> Result<Vec<SyncVersionSummary>, String> {
-    if settings.base_url.trim().is_empty() || settings.auth_token.trim().is_empty() {
-        return Err("请先配置同步服务器 URL 与 Token".into());
+    if settings.base_url.trim().is_empty() {
+        return Err("请先配置同步服务器 URL（访问令牌可留空）".into());
     }
     let base = settings.base_url.trim().trim_end_matches('/');
     let url = format!("{base}/v2/sync/versions");
@@ -378,12 +378,12 @@ pub fn list_sync_versions(settings: &SyncSettings) -> Result<Vec<SyncVersionSumm
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())?;
-    let resp = client
-        .get(&url)
-        .header(
-            "Authorization",
-            format!("Bearer {}", settings.auth_token.trim()),
-        )
+    let mut req = client.get(&url);
+    let token = settings.auth_token.trim();
+    if !token.is_empty() {
+        req = req.header("Authorization", format!("Bearer {token}"));
+    }
+    let resp = req
         .send()
         .map_err(|e| format!("读取快照失败: {e}"))?;
     if !resp.status().is_success() {
@@ -437,8 +437,8 @@ pub fn restore_sync_version(
     settings: &SyncSettings,
     version_id: &str,
 ) -> Result<(SyncPayload, Option<String>), String> {
-    if settings.base_url.trim().is_empty() || settings.auth_token.trim().is_empty() {
-        return Err("请先配置同步服务器 URL 与 Token".into());
+    if settings.base_url.trim().is_empty() {
+        return Err("请先配置同步服务器 URL（访问令牌可留空）".into());
     }
     let base = settings.base_url.trim().trim_end_matches('/');
     let id = version_id.trim();
@@ -451,15 +451,15 @@ pub fn restore_sync_version(
     // Need current etag for restore
     let fetched = get_sync_state(&settings.base_url, &settings.auth_token)?;
     let etag = fetched.etag.clone();
+    let token = settings.auth_token.trim();
 
     let restore_url = format!("{base}/v2/sync/versions/{id}/restore");
     let mut req = client
         .post(&restore_url)
-        .header(
-            "Authorization",
-            format!("Bearer {}", settings.auth_token.trim()),
-        )
         .header("Content-Type", "application/json");
+    if !token.is_empty() {
+        req = req.header("Authorization", format!("Bearer {token}"));
+    }
     if let Some(ref tag) = etag {
         req = req.header("If-Match", tag);
     }
@@ -477,12 +477,11 @@ pub fn restore_sync_version(
 
     // Fallback: GET version content then PUT as localOverwrite
     let get_url = format!("{base}/v2/sync/versions/{id}");
-    let resp = client
-        .get(&get_url)
-        .header(
-            "Authorization",
-            format!("Bearer {}", settings.auth_token.trim()),
-        )
+    let mut get_req = client.get(&get_url);
+    if !token.is_empty() {
+        get_req = get_req.header("Authorization", format!("Bearer {token}"));
+    }
+    let resp = get_req
         .send()
         .map_err(|e| format!("下载快照失败: {e}"))?;
     if !resp.status().is_success() {

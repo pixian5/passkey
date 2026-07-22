@@ -20,6 +20,7 @@ const els = {
   folderEmpty: $("#folderEmpty"),
   folderHead: $("#folderHead"),
   searchInput: $("#searchInput"),
+  searchField: $("#searchField"),
   sortMode: $("#sortMode"),
   labelAll: $("#label-all"),
   labelPasskeys: $("#label-passkeys"),
@@ -59,7 +60,6 @@ const els = {
   folderDeleteMessage: $("#folderDeleteMessage"),
   btnConfirmFolderDelete: $("#btn-confirm-folder-delete"),
   contextMenu: $("#contextMenu"),
-  btnNewFolder: $("#btn-new-folder"),
   btnCreateFolder: $("#btn-create-folder"),
   btnNew: $("#btn-new"),
   btnDelete: $("#btn-delete"),
@@ -166,9 +166,8 @@ const els = {
   debugOut: $("#debugOut"),
 };
 
-if (els.btnUnlockBiometric) {
-  els.btnUnlockBiometric.hidden = !/Mac/i.test(navigator.platform || navigator.userAgent);
-}
+let biometricAvailable = null;
+let biometricAutoTried = false;
 
 let state = {
   activeAccounts: [],
@@ -178,7 +177,13 @@ let state = {
   deviceName: "",
 };
 
-let lockState = { enabled: false, locked: false, idleLockMinutes: 5, hasPassword: false };
+let lockState = {
+  enabled: false,
+  locked: false,
+  idleLockMinutes: 5,
+  hasPassword: false,
+  biometricReady: false,
+};
 let activityTimer = null;
 let totpTimer = null;
 let autoSyncTimer = null;
@@ -586,14 +591,34 @@ function formatOtpDisplay(code) {
 }
 
 const query = () => (els.searchInput?.value || "").trim().toLowerCase();
+const searchField = () => els.searchField?.value || "all";
 const matchesQuery = (a) => {
   const q = query();
   if (!q) return true;
-  const hay = [a.username, a.accountId, a.note, ...(a.sites || [])]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
+  const field = searchField();
+  const parts =
+    field === "site"
+      ? a.sites || []
+      : field === "username"
+        ? [a.username, a.accountId]
+        : field === "password"
+          ? [a.password]
+          : field === "note"
+            ? [a.note]
+            : [a.username, a.accountId, a.password, a.note, ...(a.sites || [])];
+  const hay = parts.filter(Boolean).join(" ").toLowerCase();
   return hay.includes(q);
+};
+
+const isPinnedAccount = (a) => Boolean(a?.isPinned);
+const accountRecordId = (a) =>
+  String(a?.recordId || a?.id || a?.accountId || "").trim();
+
+const compareOptionalOrder = (lo, ro) => {
+  if (lo != null && ro != null && lo !== ro) return lo - ro;
+  if (lo != null && ro == null) return -1;
+  if (lo == null && ro != null) return 1;
+  return 0;
 };
 
 const sortAccounts = (list) => {
@@ -603,7 +628,20 @@ const sortAccounts = (list) => {
   arr.sort((a, b) => {
     if (mode === "usernameAZ") return cmp(a.username, b.username);
     if (mode === "siteAZ") return cmp((a.sites || [])[0], (b.sites || [])[0]);
-    return (b.updatedAtMs || 0) - (a.updatedAtMs || 0);
+    // default: pinned first, then manual order within each section
+    const ap = isPinnedAccount(a);
+    const bp = isPinnedAccount(b);
+    if (ap !== bp) return ap ? -1 : 1;
+    if (ap && bp) {
+      const byPin = compareOptionalOrder(a.pinnedSortOrder, b.pinnedSortOrder);
+      if (byPin) return byPin;
+    } else {
+      const byReg = compareOptionalOrder(a.regularSortOrder, b.regularSortOrder);
+      if (byReg) return byReg;
+    }
+    const byUpdated = (b.updatedAtMs || 0) - (a.updatedAtMs || 0);
+    if (byUpdated) return byUpdated;
+    return cmp(a.accountId, b.accountId);
   });
   return arr;
 };
@@ -623,6 +661,15 @@ const filteredAccounts = () => {
   return sortAccounts(base.filter(matchesQuery));
 };
 
+const isApplePlatform = () =>
+  /Mac|iPhone|iPad|iPod/i.test(
+    `${navigator.platform || ""} ${navigator.userAgent || ""}`
+  );
+
+/** ⌘ on macOS, Ctrl elsewhere — never Ctrl on Apple (reserved for context menu). */
+const isMultiSelectModifier = (e) =>
+  isApplePlatform() ? Boolean(e.metaKey && !e.ctrlKey) : Boolean(e.metaKey || e.ctrlKey);
+
 const selectOnlyAccount = (key) => {
   selectedId = key;
   selectedAccountIds = key ? new Set([key]) : new Set();
@@ -633,22 +680,41 @@ const toggleAccountSelection = (key) => {
   if (selectedAccountIds.has(key)) selectedAccountIds.delete(key);
   else selectedAccountIds.add(key);
   selectedId = key;
-  selectionAnchorId = key;
+  // Keep selectionAnchorId unchanged so Shift+click can still expand from original anchor.
+  if (!selectionAnchorId) selectionAnchorId = key;
 };
 
 const selectAccountRange = (key, orderedKeys) => {
-  const anchor = selectionAnchorId || selectedId || key;
-  const anchorIndex = orderedKeys.indexOf(anchor);
-  const targetIndex = orderedKeys.indexOf(key);
+  const keys = (orderedKeys || []).map(String);
+  const target = String(key || "");
+  // If no anchor yet, fall back to first selected or the target itself.
+  let anchor = selectionAnchorId || selectedId || target;
+  if (!keys.includes(String(anchor))) {
+    // Anchor not in current list (filter changed) — use first selected still visible, else target.
+    const visibleSelected = [...selectedAccountIds].find((id) => keys.includes(String(id)));
+    anchor = visibleSelected || target;
+    selectionAnchorId = anchor;
+  }
+  const anchorIndex = keys.indexOf(String(anchor));
+  const targetIndex = keys.indexOf(target);
   if (anchorIndex === -1 || targetIndex === -1) {
     selectOnlyAccount(key);
     return;
   }
   const start = Math.min(anchorIndex, targetIndex);
   const end = Math.max(anchorIndex, targetIndex);
-  selectedAccountIds = new Set(orderedKeys.slice(start, end + 1));
-  selectedId = key;
-  if (!selectionAnchorId) selectionAnchorId = anchor;
+  selectedAccountIds = new Set(keys.slice(start, end + 1));
+  selectedId = target;
+  // Do not move anchor — subsequent Shift+clicks expand from the same origin.
+};
+
+/** Update row selected styles without rebuilding the list (avoids flash). */
+const applyAccountSelectionStyles = () => {
+  if (!els.accountRows) return;
+  els.accountRows.querySelectorAll(".account-row").forEach((row) => {
+    const id = row.dataset.id || "";
+    row.classList.toggle("selected", selectedAccountIds.has(id));
+  });
 };
 
 const clearAccountSelection = () => {
@@ -692,11 +758,30 @@ const setFilter = (next) => {
   filter = next || { type: "all" };
   clearAccountSelection();
   if (els.searchInput) {
-    if (filter.type === "passkeys") els.searchInput.placeholder = "搜索通行密钥账号（输入即搜）";
-    else if (filter.type === "totp") els.searchInput.placeholder = "搜索验证码账号（输入即搜）";
-    else if (filter.type === "recycle") els.searchInput.placeholder = "搜索回收站账号（输入即搜）";
-    else if (filter.type === "folder") els.searchInput.placeholder = "搜索当前文件夹账号（输入即搜）";
-    else els.searchInput.placeholder = "搜索全部账号（输入即搜）";
+    const field = searchField();
+    const fieldLabel =
+      field === "site"
+        ? "站点名"
+        : field === "username"
+          ? "用户名"
+          : field === "password"
+            ? "密码"
+            : field === "note"
+              ? "备注"
+              : "";
+    const scope =
+      filter.type === "passkeys"
+        ? "通行密钥账号"
+        : filter.type === "totp"
+          ? "验证码账号"
+          : filter.type === "recycle"
+            ? "回收站账号"
+            : filter.type === "folder"
+              ? "当前文件夹账号"
+              : "全部账号";
+    els.searchInput.placeholder = fieldLabel
+      ? `按${fieldLabel}搜索${scope}（输入即搜）`
+      : `搜索${scope}（输入即搜）`;
   }
   // Re-render list + folders first, then mark the active sidebar item
   // (folders are recreated in render).
@@ -888,6 +973,367 @@ const deduplicateFolder = async (mode, accountId = null) => {
   }
 };
 
+// Account / folder reorder via mouse gesture (HTML5 DnD is unreliable in WKWebView).
+const dnd = {
+  kind: "", // "folder" | "account"
+  sourceId: "",
+  sourcePinned: null,
+  overId: "",
+  before: true,
+  active: false,
+  moved: false,
+  suppressClick: false,
+  startX: 0,
+  startY: 0,
+  sourceEl: null,
+  floatEl: null,
+  lineEl: null,
+  committing: false,
+};
+
+const sameId = (a, b) =>
+  String(a || "").toLowerCase() === String(b || "").toLowerCase();
+
+const ensureLineEl = () => {
+  if (dnd.lineEl && document.body.contains(dnd.lineEl)) return dnd.lineEl;
+  const line = document.createElement("div");
+  line.className = "drop-line";
+  line.hidden = true;
+  document.body.appendChild(line);
+  dnd.lineEl = line;
+  return line;
+};
+
+const hideLineEl = () => {
+  if (dnd.lineEl) dnd.lineEl.hidden = true;
+};
+
+const showLineAt = (targetEl, before) => {
+  if (!targetEl) {
+    hideLineEl();
+    return;
+  }
+  const line = ensureLineEl();
+  const rect = targetEl.getBoundingClientRect();
+  const y = before ? rect.top : rect.bottom;
+  line.hidden = false;
+  line.style.left = `${Math.max(8, rect.left + 4)}px`;
+  line.style.width = `${Math.max(40, rect.width - 8)}px`;
+  line.style.top = `${Math.max(0, y - 1.5)}px`;
+};
+
+const clearSourceMarks = () => {
+  document.querySelectorAll(".drag-source").forEach((n) => n.classList.remove("drag-source"));
+};
+
+const removeFloatEl = () => {
+  if (dnd.floatEl) {
+    dnd.floatEl.remove();
+    dnd.floatEl = null;
+  }
+};
+
+const armClickSuppression = () => {
+  dnd.suppressClick = true;
+  const block = (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (typeof ev.stopImmediatePropagation === "function") ev.stopImmediatePropagation();
+  };
+  window.addEventListener("click", block, true);
+  setTimeout(() => {
+    window.removeEventListener("click", block, true);
+    dnd.suppressClick = false;
+  }, 450);
+};
+
+const shouldIgnoreClick = (e) => {
+  if (!dnd.suppressClick && !dnd.moved && !dnd.active) return false;
+  e.preventDefault();
+  e.stopPropagation();
+  if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+  return true;
+};
+
+const moveIdInList = (ids, sourceId, targetId, before) => {
+  const list = ids.map(String);
+  const from = list.findIndex((id) => sameId(id, sourceId));
+  const to = list.findIndex((id) => sameId(id, targetId));
+  if (from < 0 || to < 0) return null;
+  let dest = before ? to : to + 1;
+  if (from < dest) dest -= 1;
+  if (dest === from) return null;
+  const next = [...list];
+  const [moved] = next.splice(from, 1);
+  next.splice(Math.max(0, Math.min(next.length, dest)), 0, moved);
+  return next;
+};
+
+const findAccountByAnyId = (id) =>
+  (state.activeAccounts || []).find(
+    (a) =>
+      sameId(accountKey(a), id) ||
+      sameId(accountRecordId(a), id) ||
+      sameId(a.accountId, id)
+  );
+
+const pinScopeAccounts = (pinned) =>
+  sortAccounts((state.activeAccounts || []).filter((a) => isPinnedAccount(a) === pinned));
+
+const reorderFolderRelative = async (sourceId, targetId, before) => {
+  const folders = (state.folders || []).filter((f) => !f.isDeleted && !f.isPermanentlyDeleted);
+  const ids = folders.map((f) => String(f.id));
+  const next = moveIdInList(ids, sourceId, targetId, before);
+  if (!next) {
+    toastWarn("位置未变化");
+    return false;
+  }
+  try {
+    await invoke("reorder_folders", { orderedIds: next });
+    const byId = new Map(folders.map((f) => [String(f.id).toLowerCase(), f]));
+    const deleted = (state.folders || []).filter((f) => f.isDeleted || f.isPermanentlyDeleted);
+    state.folders = next
+      .map((id) => byId.get(String(id).toLowerCase()))
+      .filter(Boolean)
+      .concat(deleted);
+    renderFolders();
+    applySidebarActive();
+    toastSuccess("文件夹顺序已更新");
+    return true;
+  } catch (err) {
+    toastError(`文件夹排序失败：${err}`);
+    return false;
+  }
+};
+
+const reorderAccountRelative = async (sourceId, targetId, before) => {
+  const source = findAccountByAnyId(sourceId);
+  if (!source) {
+    toastError("未找到拖动的账号");
+    return false;
+  }
+  const pinned = isPinnedAccount(source);
+  const visible = filteredAccounts().filter((a) => isPinnedAccount(a) === pinned && !a.isDeleted);
+  const group = visible.length ? visible : pinScopeAccounts(pinned);
+  const ids = group.map((a) => accountRecordId(a) || accountKey(a));
+  const sourceRec = accountRecordId(source) || accountKey(source);
+  const target = findAccountByAnyId(targetId);
+  if (!target) {
+    toastError("未找到放置目标");
+    return false;
+  }
+  let targetRec = accountRecordId(target) || accountKey(target);
+  let placeBefore = before;
+  if (isPinnedAccount(target) !== pinned) {
+    if (!ids.length) return false;
+    targetRec = pinned ? ids[ids.length - 1] : ids[0];
+    placeBefore = !pinned;
+  }
+  const next = moveIdInList(ids, sourceRec, targetRec, placeBefore);
+  if (!next) {
+    toastWarn("位置未变化");
+    return false;
+  }
+  try {
+    await invoke("reorder_accounts", { orderedIds: next, pinned });
+    const orderRank = new Map(next.map((id, i) => [String(id).toLowerCase(), i]));
+    for (const acc of state.activeAccounts || []) {
+      if (isPinnedAccount(acc) !== pinned) continue;
+      const rid = String(accountRecordId(acc) || accountKey(acc)).toLowerCase();
+      if (!orderRank.has(rid)) continue;
+      if (pinned) acc.pinnedSortOrder = orderRank.get(rid);
+      else acc.regularSortOrder = orderRank.get(rid);
+    }
+    render();
+    toastSuccess(pinned ? "置顶顺序已更新" : "账号顺序已更新");
+    refreshState().catch(() => {});
+    return true;
+  } catch (err) {
+    toastError(`账号排序失败：${err}`);
+    return false;
+  }
+};
+
+const findDropTargetAtPoint = (clientX, clientY) => {
+  // Temporarily hide float so hit-testing sees list rows.
+  const prev = dnd.floatEl?.style.pointerEvents;
+  if (dnd.floatEl) dnd.floatEl.style.pointerEvents = "none";
+  if (dnd.lineEl) dnd.lineEl.style.pointerEvents = "none";
+  let target = null;
+  const stack = document.elementsFromPoint(clientX, clientY) || [];
+  if (dnd.kind === "account") {
+    for (const el of stack) {
+      const row = el?.closest?.(".account-row");
+      if (!row) continue;
+      if (sameId(row.dataset.recordId || row.dataset.id, dnd.sourceId)) continue;
+      target = row;
+      break;
+    }
+  } else if (dnd.kind === "folder") {
+    for (const el of stack) {
+      const item = el?.closest?.(".side-item[data-folder-id]");
+      if (!item) continue;
+      if (sameId(item.dataset.folderId, dnd.sourceId)) continue;
+      target = item;
+      break;
+    }
+  }
+  if (dnd.floatEl) dnd.floatEl.style.pointerEvents = prev || "none";
+  return target;
+};
+
+const ensureFloatEl = (clientX, clientY) => {
+  if (dnd.floatEl) return dnd.floatEl;
+  const source = dnd.sourceEl;
+  if (!source) return null;
+  const rect = source.getBoundingClientRect();
+  const ghost = source.cloneNode(true);
+  ghost.classList.add("drag-float");
+  ghost.classList.remove("selected", "drag-source");
+  ghost.style.width = `${rect.width}px`;
+  ghost.style.left = `${rect.left}px`;
+  ghost.style.top = `${rect.top}px`;
+  ghost.dataset.offsetX = String(clientX - rect.left);
+  ghost.dataset.offsetY = String(clientY - rect.top);
+  document.body.appendChild(ghost);
+  dnd.floatEl = ghost;
+  source.classList.add("drag-source");
+  return ghost;
+};
+
+const moveFloatEl = (clientX, clientY) => {
+  const ghost = ensureFloatEl(clientX, clientY);
+  if (!ghost) return;
+  const ox = Number(ghost.dataset.offsetX || 0);
+  const oy = Number(ghost.dataset.offsetY || 0);
+  ghost.style.left = `${clientX - ox}px`;
+  ghost.style.top = `${clientY - oy}px`;
+};
+
+const updateHoverTarget = (clientX, clientY) => {
+  const target = findDropTargetAtPoint(clientX, clientY);
+  if (!target) {
+    dnd.overId = "";
+    hideLineEl();
+    return;
+  }
+  const rect = target.getBoundingClientRect();
+  let before = clientY < rect.top + rect.height / 2;
+  if (dnd.kind === "account") {
+    const targetPinned = target.dataset.pinned === "1";
+    if (Boolean(dnd.sourcePinned) !== targetPinned) {
+      before = Boolean(dnd.sourcePinned) ? false : true;
+    }
+  }
+  dnd.overId = target.dataset.recordId || target.dataset.id || target.dataset.folderId || "";
+  dnd.before = before;
+  showLineAt(target, before);
+};
+
+const detachMouseDnd = () => {
+  document.removeEventListener("mousemove", onMouseDndMove, true);
+  document.removeEventListener("mouseup", onMouseDndUp, true);
+};
+
+const resetMouseDnd = () => {
+  detachMouseDnd();
+  removeFloatEl();
+  hideLineEl();
+  clearSourceMarks();
+  document.body.classList.remove("is-reordering");
+  dnd.kind = "";
+  dnd.sourceId = "";
+  dnd.sourcePinned = null;
+  dnd.overId = "";
+  dnd.before = true;
+  dnd.active = false;
+  dnd.moved = false;
+  dnd.startX = 0;
+  dnd.startY = 0;
+  dnd.sourceEl = null;
+};
+
+const onMouseDndMove = (e) => {
+  if (!dnd.active) return;
+  const x = e.clientX;
+  const y = e.clientY;
+  const dx = x - dnd.startX;
+  const dy = y - dnd.startY;
+  if (!dnd.moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
+    dnd.moved = true;
+    document.body.classList.add("is-reordering");
+    ensureFloatEl(x, y);
+  }
+  if (!dnd.moved) return;
+  if (e.cancelable) e.preventDefault();
+  moveFloatEl(x, y);
+  updateHoverTarget(x, y);
+};
+
+const onMouseDndUp = async (e) => {
+  if (!dnd.active) return;
+  const moved = dnd.moved;
+  const kind = dnd.kind;
+  const sourceId = dnd.sourceId;
+  const overId = dnd.overId;
+  const before = dnd.before;
+  detachMouseDnd();
+  removeFloatEl();
+  hideLineEl();
+  clearSourceMarks();
+  document.body.classList.remove("is-reordering");
+  dnd.active = false;
+  dnd.moved = false;
+  dnd.kind = "";
+  dnd.sourceId = "";
+  dnd.sourcePinned = null;
+  dnd.overId = "";
+  dnd.sourceEl = null;
+  if (!moved) return;
+  if (e?.cancelable) e.preventDefault();
+  e?.stopPropagation?.();
+  if (typeof e?.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+  armClickSuppression();
+  if (!sourceId || !overId || sameId(sourceId, overId)) {
+    toastWarn("请拖到其他账号行上松手");
+    return;
+  }
+  if (dnd.committing) return;
+  dnd.committing = true;
+  try {
+    if (kind === "folder") await reorderFolderRelative(sourceId, overId, before);
+    else if (kind === "account") await reorderAccountRelative(sourceId, overId, before);
+  } finally {
+    dnd.committing = false;
+  }
+};
+
+const beginMouseReorder = (e, { kind, sourceId, sourcePinned = null, sourceEl = null }) => {
+  if (e.button != null && e.button !== 0) return;
+  // Only block real form controls / links.
+  if (e.target?.closest?.("input, textarea, select, a")) return;
+  // Modifier clicks are for multi-select / range-select — do not start drag.
+  if (e.shiftKey || isMultiSelectModifier(e)) return;
+  // Cancel any previous gesture.
+  if (dnd.active) resetMouseDnd();
+  dnd.kind = kind;
+  dnd.sourceId = sourceId;
+  dnd.sourcePinned = sourcePinned;
+  dnd.overId = "";
+  dnd.before = true;
+  dnd.active = true;
+  dnd.moved = false;
+  dnd.startX = e.clientX;
+  dnd.startY = e.clientY;
+  dnd.sourceEl = sourceEl || e.currentTarget || null;
+  document.addEventListener("mousemove", onMouseDndMove, true);
+  document.addEventListener("mouseup", onMouseDndUp, true);
+};
+
+// Compatibility no-ops for older call sites if any remain.
+const bindAccountListDnd = () => {};
+const bindFolderListDnd = () => {};
+
 const renderFolders = () => {
   if (!els.folderList) return;
   const folders = (state.folders || []).filter((f) => !f.isDeleted && !f.isPermanentlyDeleted);
@@ -897,19 +1343,47 @@ const renderFolders = () => {
     const count = (state.activeAccounts || []).filter((a) =>
       folderIdsOf(a).some((id) => id.toLowerCase() === String(folder.id).toLowerCase())
     ).length;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "side-item";
-    btn.dataset.filter = `folder:${folder.id}`;
-    // Keep text on the button itself so clicks always hit the button element.
-    btn.textContent = `${folder.name || "未命名"} (${count})`;
-    btn.addEventListener("click", (e) => {
+    const folderId = String(folder.id);
+    const item = document.createElement("div");
+    item.className = "side-item reorderable";
+    item.dataset.filter = `folder:${folder.id}`;
+    item.dataset.folderId = folderId;
+    item.setAttribute("role", "button");
+    item.tabIndex = 0;
+    item.textContent = `${folder.name || "未命名"} (${count})`;
+    item.addEventListener("click", (e) => {
+      if (shouldIgnoreClick(e)) return;
       e.preventDefault();
       e.stopPropagation();
-      setFilter({ type: "folder", id: String(folder.id) });
+      setFilter({ type: "folder", id: folderId });
     });
-    els.folderList.appendChild(btn);
+    item.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        setFilter({ type: "folder", id: folderId });
+      }
+    });
+    item.addEventListener("mousedown", (e) => {
+      beginMouseReorder(e, { kind: "folder", sourceId: folderId, sourceEl: item });
+    });
+    els.folderList.appendChild(item);
   });
+};
+
+const togglePinAccount = async (account) => {
+  if (!account || account.isDeleted) {
+    toastWarn("回收站账号不支持置顶");
+    return;
+  }
+  try {
+    const id = accountRecordId(account) || accountKey(account);
+    const wasPinned = isPinnedAccount(account);
+    await invoke("toggle_account_pin", { id });
+    await refreshState();
+    toastSuccess(wasPinned ? "已取消置顶" : "已置顶");
+  } catch (err) {
+    toastError(`置顶失败：${err}`);
+  }
 };
 
 const render = () => {
@@ -918,6 +1392,7 @@ const render = () => {
   updateSidebarLabels();
   renderFolders();
   applySidebarActive();
+  bindAccountListDnd();
 
   const accounts = filteredAccounts();
   if (els.listEmpty) els.listEmpty.hidden = accounts.length > 0;
@@ -926,9 +1401,24 @@ const render = () => {
 
   accounts.forEach((a) => {
     const key = accountKey(a);
+    const recId = accountRecordId(a) || key;
+    const pinned = isPinnedAccount(a);
     const row = document.createElement("div");
-    row.className = "account-row" + (selectedAccountIds.has(key) ? " selected" : "");
+    row.className =
+      "account-row" +
+      (selectedAccountIds.has(key) ? " selected" : "") +
+      (pinned ? " pinned" : "");
     row.dataset.id = key;
+    row.dataset.recordId = recId;
+    row.dataset.pinned = pinned ? "1" : "0";
+    // Drag-to-reorder only in manual sort mode and outside recycle bin.
+    const canDrag =
+      filter.type !== "recycle" &&
+      (els.sortMode?.value || "default") === "default" &&
+      !a.isDeleted;
+    if (canDrag) {
+      row.classList.add("reorderable");
+    }
 
     const title = a.accountId || a.username || (a.sites || [])[0] || "账号";
     const sites = (a.sites || []).join("  ");
@@ -941,18 +1431,54 @@ const render = () => {
     const deleted = a.isDeleted
       ? `<span class="deleted-tag">已删除</span>`
       : "";
+    const pinBadge = pinned && !a.isDeleted
+      ? `<span class="pinned-tag" title="置顶">置顶</span>`
+      : "";
 
     row.innerHTML = `
-      <div class="row-title">${escapeHtml(title)}${deleted}</div>
+      <div class="row-title">${escapeHtml(title)}${pinBadge}${deleted}</div>
       <div class="row-line row-username">用户名: ${escapeHtml(a.username || "—")}</div>
       <div class="row-sub row-sites">站点别名: ${escapeHtml(sites || "—")}</div>
       ${pkLine ? `<div class="row-sub">${escapeHtml(pkLine)}</div>` : ""}
       <div class="row-otp" data-totp="${escapeHtml((a.totpSecret || "").trim())}" hidden></div>
     `;
 
+    const copyOtpFromRow = (e) => {
+      if (shouldIgnoreClick(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+      const otp = e.currentTarget instanceof Element ? e.currentTarget : e.target?.closest?.(".row-otp");
+      const code = otp?.getAttribute?.("data-code") || "";
+      if (code) copyText(code, "验证码已复制");
+      else toastWarn("验证码尚未生成");
+    };
+
+    // Bind on the OTP row itself so any text (label / digits / remain) copies.
+    row.querySelector(".row-otp")?.addEventListener("click", copyOtpFromRow);
+
     // click title area opens edit; username/sites/otp copy on click
     row.addEventListener("click", (e) => {
+      if (shouldIgnoreClick(e)) return;
       const t = e.target;
+      // OTP handled by its own listener (must not open edit).
+      if (t.closest(".row-otp")) return;
+      // Selection modifiers take priority over copy/edit.
+      const orderedKeys = accounts.map(accountKey);
+      if (e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        selectAccountRange(key, orderedKeys);
+        applyAccountSelectionStyles();
+        return;
+      }
+      if (isMultiSelectModifier(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleAccountSelection(key);
+        applyAccountSelectionStyles();
+        return;
+      }
       if (t.closest(".row-username")) {
         e.stopPropagation();
         copyText(a.username || "", "用户名已复制");
@@ -963,27 +1489,24 @@ const render = () => {
         copyText((a.sites || []).join("\n"), "站点别名已复制");
         return;
       }
-      if (t.closest(".row-otp")) {
-        e.stopPropagation();
-        const code = t.closest(".row-otp")?.getAttribute("data-code") || "";
-        if (code) copyText(code, "验证码已复制");
-        return;
-      }
-      const orderedKeys = accounts.map(accountKey);
-      if (e.shiftKey) {
-        selectAccountRange(key, orderedKeys);
-        render();
-        return;
-      }
-      if (e.metaKey || e.ctrlKey) {
-        toggleAccountSelection(key);
-        render();
-        return;
-      }
       selectOnlyAccount(key);
       openEdit(a);
       render();
     });
+
+    if (canDrag) {
+      // Whole account card is draggable (title / username / OTP / sites).
+      // Short click without movement still copies or opens edit via click handlers.
+      // ⌘ / Shift clicks skip drag (handled in beginMouseReorder).
+      row.addEventListener("mousedown", (e) => {
+        beginMouseReorder(e, {
+          kind: "account",
+          sourceId: recId,
+          sourcePinned: pinned,
+          sourceEl: row,
+        });
+      });
+    }
 
     els.accountRows.appendChild(row);
   });
@@ -1010,8 +1533,10 @@ async function refreshTotpRows() {
       node.hidden = false;
       node.setAttribute("data-code", res.code);
       const shown = formatOtpDisplay(res.code);
-      // Whole .row-otp is clickable (handled by account-row click); button keeps digit emphasis.
-      node.innerHTML = `验证码: <button type="button">${shown}</button> (剩余 ${res.remain}s)`;
+      node.innerHTML = `验证码: <span class="otp-digits">${shown}</span> <span class="otp-remain">(剩余 ${res.remain}s)</span>`;
+      node.title = "点击复制验证码";
+      node.setAttribute("role", "button");
+      node.tabIndex = 0;
     } catch {
       node.removeAttribute("data-code");
       node.hidden = true;
@@ -1238,20 +1763,58 @@ const refreshState = async () => {
 
 const applyLockUi = () => {
   const locked = Boolean(lockState.enabled && lockState.locked);
+  const canBiometric = Boolean(biometricAvailable && lockState.biometricReady);
   if (els.lockOverlay) els.lockOverlay.hidden = !locked;
   if (els.appMain) els.appMain.style.visibility = locked ? "hidden" : "visible";
+  if (els.btnUnlockBiometric) {
+    els.btnUnlockBiometric.hidden = !canBiometric;
+    // Prefer fingerprint as primary action when available.
+    els.btnUnlockBiometric.classList.toggle("primary", canBiometric);
+  }
+  if (els.btnUnlock) {
+    els.btnUnlock.classList.toggle("primary", !canBiometric);
+  }
   if (els.lockStatus) {
+    const bioHint = canBiometric
+      ? "；可用指纹"
+      : biometricAvailable
+        ? "；指纹待主密码初始化"
+        : "";
     els.lockStatus.textContent = lockState.enabled
-      ? `状态：已启用；${lockState.locked ? "已锁定" : "已解锁"}；空闲 ${lockState.idleLockMinutes || 5} 分钟`
+      ? `状态：已启用；${lockState.locked ? "已锁定" : "已解锁"}；空闲 ${lockState.idleLockMinutes || 5} 分钟${bioHint}`
       : "状态：未启用";
   }
   if (els.idleMinutes && lockState.idleLockMinutes) {
     els.idleMinutes.value = String(lockState.idleLockMinutes);
   }
+  if (locked && canBiometric && !biometricAutoTried) {
+    biometricAutoTried = true;
+    // Prefer Touch ID / fingerprint when the OS supports it and session is ready.
+    queueMicrotask(() => {
+      if (lockState.enabled && lockState.locked && biometricAvailable && lockState.biometricReady) {
+        els.btnUnlockBiometric?.click();
+      }
+    });
+  }
+  if (!locked) {
+    biometricAutoTried = false;
+  }
 };
 
-const refreshLock = async () => {
+const refreshBiometricAvailability = async () => {
+  try {
+    biometricAvailable = Boolean(await invoke("lock_biometric_available"));
+  } catch (_) {
+    biometricAvailable = false;
+  }
+  return biometricAvailable;
+};
+
+const refreshLock = async ({ probeBiometric = false } = {}) => {
   lockState = await invoke("get_lock_state");
+  if (probeBiometric || biometricAvailable === null) {
+    await refreshBiometricAvailability();
+  }
   applyLockUi();
   return lockState;
 };
@@ -1348,6 +1911,34 @@ document.addEventListener("contextmenu", (e) => {
     return;
   }
 
+  const accountRow = e.target instanceof Element
+    ? e.target.closest(".account-row")
+    : null;
+  if (accountRow) {
+    const key = accountRow.dataset.id || "";
+    const account =
+      (state.activeAccounts || []).find((item) => accountKey(item) === key) ||
+      (state.deletedAccounts || []).find((item) => accountKey(item) === key);
+    if (!account) return;
+    const items = [];
+    if (!account.isDeleted) {
+      items.push({
+        label: isPinnedAccount(account) ? "取消置顶" : "置顶",
+        action: () => togglePinAccount(account),
+      });
+    }
+    items.push({
+      label: "编辑账号",
+      action: () => {
+        selectOnlyAccount(key);
+        openEdit(account);
+        render();
+      },
+    });
+    showContextMenu(e, items);
+    return;
+  }
+
   const sideButton = e.target instanceof Element
     ? e.target.closest("#sidebar .side-item[data-filter]")
     : null;
@@ -1358,32 +1949,28 @@ document.addEventListener("contextmenu", (e) => {
 
   const folderHead = e.target instanceof Element ? e.target.closest("#folderHead") : null;
   if (folderHead) {
-    showContextMenu(e, [{ label: "新建账号", action: () => openEdit(null) }]);
+    showContextMenu(e, [{ label: "新建文件夹", action: () => openNewFolderDialog() }]);
   }
 });
+
+const openNewFolderDialog = () => {
+  try {
+    if (els.newFolderName) els.newFolderName.value = "";
+    if (els.folderModal) {
+      els.folderModal.hidden = false;
+      els.folderModal.removeAttribute("hidden");
+    }
+    toastWarn("请输入文件夹名称");
+    setTimeout(() => els.newFolderName?.focus(), 50);
+  } catch (err) {
+    toastError(`打开新建文件夹失败: ${err}`);
+  }
+};
 
 // Robust sidebar + folder actions via document-level delegation.
 document.addEventListener("click", (e) => {
   const t = e.target;
   if (!(t instanceof Element)) return;
-
-  // New folder button
-  if (t.closest("#btn-new-folder")) {
-    e.preventDefault();
-    e.stopPropagation();
-    try {
-      if (els.newFolderName) els.newFolderName.value = "";
-      if (els.folderModal) {
-        els.folderModal.hidden = false;
-        els.folderModal.removeAttribute("hidden");
-      }
-      toastWarn("请输入文件夹名称");
-      setTimeout(() => els.newFolderName?.focus(), 50);
-    } catch (err) {
-      toastError(`打开新建文件夹失败: ${err}`);
-    }
-    return;
-  }
 
   // Create folder confirm
   if (t.closest("#btn-create-folder")) {
@@ -1428,6 +2015,7 @@ document.addEventListener("click", (e) => {
 });
 
 els.searchInput?.addEventListener("input", () => render());
+els.searchField?.addEventListener("change", () => render());
 els.sortMode?.addEventListener("change", () => render());
 els.btnNew?.addEventListener("click", () => openEdit(null));
 els.btnOpenSettings?.addEventListener("click", () => openSettings("general"));
@@ -1557,11 +2145,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
     toastWarn("服务器地址必须是 HTTPS URL");
     return;
   }
-  if (!accessToken) {
-    setProvisionStatus("请填写访问令牌", true);
-    toastWarn("请填写访问令牌");
-    return;
-  }
+  // accessToken / syncEncryptionKey may be empty (open server / plaintext sync).
   if (!credential.secret.trim()) {
     setProvisionStatus("请填写 SSH 密码或私钥", true);
     toastWarn("请填写 SSH 密码或私钥");
@@ -1694,7 +2278,9 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
   btn.addEventListener("click", () => openSettings(btn.dataset.settingsTab || "general"));
 });
 window.addEventListener("keydown", (e) => {
-  const meta = e.metaKey || e.ctrlKey;
+  // On macOS, Ctrl is reserved for context-menu style interactions;
+  // app shortcuts use ⌘ (meta). Elsewhere Ctrl/Meta both work.
+  const meta = isMultiSelectModifier(e);
   const target = e.target instanceof Element ? e.target : null;
   const isTextInput = target?.closest("input, textarea, select, [contenteditable]");
   const hasOpenModal = Boolean(document.querySelector(".modal:not([hidden])"));
@@ -1705,8 +2291,9 @@ window.addEventListener("keydown", (e) => {
     const visibleIds = filteredAccounts().map(accountKey).filter(Boolean);
     selectedAccountIds = new Set(visibleIds);
     selectedId = visibleIds[0] || "";
-    selectionAnchorId = selectedId;
-    render();
+    // Keep first item as range anchor for subsequent Shift+click.
+    selectionAnchorId = visibleIds[0] || "";
+    applyAccountSelectionStyles();
     if (visibleIds.length) toastSuccess(`已选择 ${visibleIds.length} 个账号`);
     return;
   }
@@ -2242,6 +2829,7 @@ els.btnMergePreview?.addEventListener("click", async () => {
 });
 
 els.btnUnlock?.addEventListener("click", async () => {
+  if (els.btnUnlock) els.btnUnlock.disabled = true;
   try {
     lockState = await invoke("lock_unlock", { password: els.unlockPassword?.value || "" });
     if (els.unlockPassword) els.unlockPassword.value = "";
@@ -2253,9 +2841,12 @@ els.btnUnlock?.addEventListener("click", async () => {
     toastSuccess("已解锁");
   } catch (err) {
     if (els.lockError) els.lockError.textContent = String(err);
+  } finally {
+    if (els.btnUnlock) els.btnUnlock.disabled = false;
   }
 });
 els.btnUnlockBiometric?.addEventListener("click", async () => {
+  if (els.btnUnlockBiometric) els.btnUnlockBiometric.disabled = true;
   try {
     lockState = await invoke("lock_unlock_biometric");
     if (els.lockError) els.lockError.textContent = "";
@@ -2263,16 +2854,30 @@ els.btnUnlockBiometric?.addEventListener("click", async () => {
     await refreshState();
     await loadSyncSettings();
     await loadUiPrefs();
-    toastSuccess("已通过 Touch ID 解锁");
+    toastSuccess("已通过指纹解锁");
   } catch (err) {
     if (els.lockError) els.lockError.textContent = String(err);
+    // Fall back to password field after biometric cancel/fail.
+    els.unlockPassword?.focus();
+  } finally {
+    if (els.btnUnlockBiometric) els.btnUnlockBiometric.disabled = false;
   }
 });
 els.btnLockEnable?.addEventListener("click", async () => {
   try {
+    const password = (els.lockPassword?.value || "").trim();
+    const confirm = (els.lockPassword2?.value || "").trim();
+    if (!password) {
+      toastError("请输入主密码");
+      return;
+    }
+    if (password !== confirm) {
+      toastError("两次输入的主密码不一致");
+      return;
+    }
     lockState = await invoke("lock_enable", {
-      password: els.lockPassword?.value || "",
-      confirm: els.lockPassword2?.value || "",
+      password,
+      confirm,
       idleLockMinutes: Number(els.idleMinutes?.value || 5),
     });
     try {
@@ -2280,19 +2885,32 @@ els.btnLockEnable?.addEventListener("click", async () => {
     } catch (_) {}
     if (els.lockPassword) els.lockPassword.value = "";
     if (els.lockPassword2) els.lockPassword2.value = "";
+    await refreshBiometricAvailability();
     applyLockUi();
-    toastSuccess("应用锁已启用");
+    toastSuccess(
+      biometricAvailable && lockState.biometricReady
+        ? "应用锁已启用，可用指纹解锁"
+        : biometricAvailable
+          ? "应用锁已启用；锁定后可用指纹（已写入指纹会话）"
+          : "应用锁已启用"
+    );
   } catch (err) {
     toastError(`启用失败：${err}`);
   }
 });
 els.btnLockDisable?.addEventListener("click", async () => {
+  if (els.btnLockDisable) els.btnLockDisable.disabled = true;
   try {
     lockState = await invoke("lock_disable", { password: els.lockPassword?.value || "" });
+    if (els.lockPassword) els.lockPassword.value = "";
+    if (els.lockPassword2) els.lockPassword2.value = "";
+    await refreshBiometricAvailability();
     applyLockUi();
     toastSuccess("应用锁已关闭");
   } catch (err) {
     toastError(`关闭失败：${err}`);
+  } finally {
+    if (els.btnLockDisable) els.btnLockDisable.disabled = false;
   }
 });
 els.btnLockIdle?.addEventListener("click", async () => {
