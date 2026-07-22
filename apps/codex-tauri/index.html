@@ -182,9 +182,8 @@
           <button type="button" class="icon-btn" data-close-account-folder>×</button>
         </header>
         <div class="modal-body">
-          <label>选择文件夹
-            <select id="accountFolderSelect" required></select>
-          </label>
+          <div class="account-folder-label">选择要添加的文件夹（已归属的文件夹已勾选）</div>
+          <div id="accountFolderOptions" class="account-folder-options" role="group" aria-label="选择要添加的文件夹"></div>
           <div class="form-actions">
             <button type="button" class="primary" id="btn-confirm-account-folder">添加</button>
             <button type="button" data-close-account-folder>取消</button>

@@ -52,7 +52,7 @@ const els = {
   folderAutoAdd: $("#folderAutoAdd"),
   accountFolderModal: $("#accountFolderModal"),
   accountFolderTitle: $("#accountFolderTitle"),
-  accountFolderSelect: $("#accountFolderSelect"),
+  accountFolderOptions: $("#accountFolderOptions"),
   btnConfirmAccountFolder: $("#btn-confirm-account-folder"),
   folderDedupModal: $("#folderDedupModal"),
   folderDedupTitle: $("#folderDedupTitle"),
@@ -927,8 +927,8 @@ const openAccountFolderPicker = (account) => {
     return;
   }
   const existingIds = new Set(folderIdsOf(account).map((id) => id.toLowerCase()));
-  const available = folders.filter((folder) => !existingIds.has(String(folder.id).toLowerCase()));
-  if (!available.length) {
+  const addable = folders.filter((folder) => !existingIds.has(String(folder.id).toLowerCase()));
+  if (!addable.length) {
     toastWarn("此账号已添加到全部文件夹");
     return;
   }
@@ -939,24 +939,38 @@ const openAccountFolderPicker = (account) => {
   if (els.accountFolderTitle) {
     els.accountFolderTitle.textContent = `添加「${accountFolderTarget.name}」到文件夹`;
   }
-  if (els.accountFolderSelect) {
-    els.accountFolderSelect.innerHTML = "";
-    available.forEach((folder) => {
-      const option = document.createElement("option");
-      option.value = folder.id;
-      option.textContent = folder.name || folder.id;
-      els.accountFolderSelect.appendChild(option);
+  if (els.accountFolderOptions) {
+    els.accountFolderOptions.innerHTML = "";
+    folders.forEach((folder) => {
+      const label = document.createElement("label");
+      label.className = "account-folder-option";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.value = folder.id;
+      const alreadyAdded = existingIds.has(String(folder.id).toLowerCase());
+      checkbox.checked = alreadyAdded;
+      checkbox.disabled = alreadyAdded;
+      checkbox.setAttribute("aria-label", folder.name || folder.id);
+      const name = document.createElement("span");
+      name.textContent = folder.name || folder.id;
+      label.append(checkbox, name);
+      els.accountFolderOptions.appendChild(label);
     });
-    els.accountFolderSelect.selectedIndex = 0;
   }
   if (els.accountFolderModal) els.accountFolderModal.hidden = false;
-  setTimeout(() => els.accountFolderSelect?.focus(), 50);
+  setTimeout(() => els.accountFolderOptions?.querySelector("input")?.focus(), 50);
 };
 
 const confirmAccountFolder = async () => {
   const target = accountFolderTarget;
-  const folderId = els.accountFolderSelect?.value || "";
-  if (!target || !folderId) return;
+  const folderIds = [...(els.accountFolderOptions?.querySelectorAll("input[type=checkbox]:checked") || [])]
+    .map((input) => input.value)
+    .filter(Boolean);
+  if (!target) return;
+  if (!folderIds.length) {
+    toastWarn("请至少选择一个文件夹");
+    return;
+  }
   const account = [...(state.activeAccounts || []), ...(state.deletedAccounts || [])].find(
     (item) => accountRecordId(item) === target.id
   );
@@ -969,15 +983,18 @@ const confirmAccountFolder = async () => {
     (folder) => !folder.isDeleted && !folder.isPermanentlyDeleted
   );
   const canonicalByLowerId = new Map(folders.map((folder) => [String(folder.id).toLowerCase(), folder.id]));
-  const folderIds = folderIdsOf(account)
+  const currentFolderIds = folderIdsOf(account)
     .map((id) => canonicalByLowerId.get(id.toLowerCase()))
     .filter(Boolean);
-  if (!folderIds.some((id) => id.toLowerCase() === folderId.toLowerCase())) {
-    folderIds.push(folderId);
-  }
+  const mergedFolderIds = [...currentFolderIds];
+  folderIds.forEach((folderId) => {
+    if (!mergedFolderIds.some((id) => id.toLowerCase() === folderId.toLowerCase())) {
+      mergedFolderIds.push(folderId);
+    }
+  });
   const restoreButton = setButtonBusy(els.btnConfirmAccountFolder, "正在添加…");
   try {
-    await invoke("set_account_folders", { id: target.id, folderIds });
+    await invoke("set_account_folders", { id: target.id, folderIds: mergedFolderIds });
     closeAccountFolderPicker();
     await refreshState();
     toastSuccess(`账号「${target.name}」已添加到文件夹`);

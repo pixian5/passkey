@@ -631,6 +631,54 @@ input, textarea, select, label, .hint, .form-label, .mini-log {
 .modal-card.folder-sites-card { width: min(500px, 94vw); }
 .modal-card.account-folder-card { width: min(420px, 94vw); }
 .modal-card.folder-dedup-card { width: min(820px, 94vw); }
+.account-folder-label { font-weight: 600; }
+.account-folder-options {
+  display: grid;
+  gap: 6px;
+  max-height: min(48vh, 360px);
+  overflow: auto;
+}
+.account-folder-option {
+  display: flex !important;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.055);
+  cursor: pointer;
+  user-select: none;
+  font-size: calc(1.0714 * var(--ui-text-size));
+}
+.account-folder-option:hover { background: rgba(0, 0, 0, 0.09); }
+.account-folder-option input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: grid;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  place-content: center;
+  border: 2px solid #626262;
+  border-radius: 5px;
+  background: transparent;
+}
+.account-folder-option input[type="checkbox"]::after {
+  content: "✓";
+  color: #fff;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  transform: scale(0);
+}
+.account-folder-option input[type="checkbox"]:checked {
+  border-color: #1677ef;
+  background: #1677ef;
+}
+.account-folder-option input[type="checkbox"]:checked::after { transform: scale(1); }
 .modal-head {
   display: flex;
   align-items: center;
