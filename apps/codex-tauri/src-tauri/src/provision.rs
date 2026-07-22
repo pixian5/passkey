@@ -445,6 +445,28 @@ fn ssh_file_exists(
     }
 }
 
+/// 判断输入是否为 PEM 内容（而非远端路径）。
+/// PEM 内容必定包含 "-----BEGIN"；路径则不会。
+fn is_pem_content(s: &str) -> bool {
+    s.contains("-----BEGIN")
+}
+
+/// 通过 SSH `cp` 将远端文件复制到另一个远端路径。
+fn ssh_cp_remote(
+    cred: &SshCredential,
+    endpoint: &Endpoint,
+    temp: &TempSsh,
+    src: &str,
+    dst: &str,
+    mode: &str,
+) -> Result<(), String> {
+    let cmd = format!(
+        "cp -- '{}' '{}' && chmod {mode} '{dst}'",
+        src, dst, mode = mode, dst = dst
+    );
+    ssh_run(cred, endpoint, temp, &cmd).map(|_| ())
+}
+
 fn service_text(endpoint: &Endpoint) -> String {
     let mut lines = vec![
         "[Unit]".into(),
@@ -864,25 +886,41 @@ pub fn provision_server(
     if credential.port == 0 {
         return Err("SSH 端口必须是 1 到 65535 之间的数字".into());
     }
+
+    let server_py = resource_path("pass_sync_server.py")?;
+    let backup_sh = resource_path("backup_sync_db.sh")?;
+    let temp = make_temp_ssh(data_dir, &credential)?;
+
     if endpoint.uses_tls {
         if tls_certificate.is_empty() != tls_private_key.is_empty() {
             return Err("SSL 证书和 SSL 私钥必须同时填写，或同时留空".into());
         }
         if custom_tls {
-            if !tls_certificate.contains("BEGIN CERTIFICATE") {
+            // 支持两种输入：PEM 内容（含 -----BEGIN）或服务器绝对路径。
+            if !is_pem_content(tls_certificate) {
+                if !tls_certificate.starts_with('/') {
+                    return Err("SSL 证书需为 PEM 内容或服务器绝对路径（以 / 开头）".into());
+                }
+                if !ssh_file_exists(&credential, &endpoint, &temp, tls_certificate)? {
+                    return Err(format!("SSL 证书路径不存在：{}", tls_certificate));
+                }
+            } else if !tls_certificate.contains("BEGIN CERTIFICATE") {
                 return Err("SSL 证书内容无效，请粘贴 fullchain.cer 的 PEM 内容".into());
             }
-            if !tls_private_key.contains("PRIVATE KEY") {
+            if !is_pem_content(tls_private_key) {
+                if !tls_private_key.starts_with('/') {
+                    return Err("SSL 私钥需为 PEM 内容或服务器绝对路径（以 / 开头）".into());
+                }
+                if !ssh_file_exists(&credential, &endpoint, &temp, tls_private_key)? {
+                    return Err(format!("SSL 私钥路径不存在：{}", tls_private_key));
+                }
+            } else if !tls_private_key.contains("PRIVATE KEY") {
                 return Err("SSL 私钥内容无效，请粘贴 sbbz.tech.key 的 PEM 内容".into());
             }
         }
     } else if custom_tls {
         return Err("只有 HTTPS 显式端口服务才需要填写 SSL 证书".into());
     }
-
-    let server_py = resource_path("pass_sync_server.py")?;
-    let backup_sh = resource_path("backup_sync_db.sh")?;
-    let temp = make_temp_ssh(data_dir, &credential)?;
 
     if endpoint.uses_tls && !custom_tls {
         // Probe preferred certificate locations (acme.sh first, then legacy).
@@ -1050,23 +1088,48 @@ pub fn provision_server(
         return Err(e);
     }
     if custom_tls {
-        if let Err(e) = ssh_write(
+        // 路径用 SSH cp 远端复制；PEM 内容直接写入 stage。
+        if is_pem_content(tls_certificate) {
+            if let Err(e) = ssh_write(
+                &credential,
+                &endpoint,
+                &temp,
+                &format!("{stage}/fullchain.cer"),
+                tls_certificate.as_bytes(),
+                "0644",
+            ) {
+                cleanup();
+                return Err(e);
+            }
+        } else if let Err(e) = ssh_cp_remote(
             &credential,
             &endpoint,
             &temp,
+            tls_certificate,
             &format!("{stage}/fullchain.cer"),
-            tls_certificate.as_bytes(),
             "0644",
         ) {
             cleanup();
             return Err(e);
         }
-        if let Err(e) = ssh_write(
+        if is_pem_content(tls_private_key) {
+            if let Err(e) = ssh_write(
+                &credential,
+                &endpoint,
+                &temp,
+                &format!("{stage}/sbbz.tech.key"),
+                tls_private_key.as_bytes(),
+                "0600",
+            ) {
+                cleanup();
+                return Err(e);
+            }
+        } else if let Err(e) = ssh_cp_remote(
             &credential,
             &endpoint,
             &temp,
+            tls_private_key,
             &format!("{stage}/sbbz.tech.key"),
-            tls_private_key.as_bytes(),
             "0600",
         ) {
             cleanup();

@@ -574,13 +574,13 @@
           </div>
           <div class="provision-tls-fields">
             <label class="account-field">SSL 证书（fullchain.cer）
-              <textarea id="provisionTlsCertificate" rows="4" placeholder="-----BEGIN CERTIFICATE-----" class="mono" spellcheck="false"></textarea>
+              <textarea id="provisionTlsCertificate" rows="4" placeholder="可粘贴 PEM 内容（-----BEGIN CERTIFICATE-----），或服务器绝对路径，如 /root/.acme.sh/sbbz.tech_ecc/fullchain.cer" class="mono" spellcheck="false"></textarea>
             </label>
             <label class="account-field">SSL 私钥（sbbz.tech.key）
-              <textarea id="provisionTlsPrivateKey" rows="4" placeholder="-----BEGIN PRIVATE KEY-----" class="mono" spellcheck="false"></textarea>
+              <textarea id="provisionTlsPrivateKey" rows="4" placeholder="可粘贴 PEM 内容（-----BEGIN PRIVATE KEY-----），或服务器绝对路径，如 /root/.acme.sh/sbbz.tech_ecc/sbbz.tech.key" class="mono" spellcheck="false"></textarea>
             </label>
           </div>
-          <p class="hint">HTTPS 使用显式端口时可直接粘贴以上证书内容；两个文本框同时留空则从服务器的 acme.sh 或 <code>/etc/bz/certs/</code> 路径查找。</p>
+          <p class="hint">HTTPS 使用显式端口时可填写服务器上证书的<b>绝对路径</b>（如 <code>/root/.acme.sh/sbbz.tech_ecc/fullchain.cer</code>），或直接粘贴 PEM 内容；两个文本框同时留空则从服务器的 acme.sh 或 <code>/etc/bz/certs/</code> 路径查找。</p>
           <div class="form-row">
             <span class="form-label">访问令牌</span>
             <span class="secret-field grow">
