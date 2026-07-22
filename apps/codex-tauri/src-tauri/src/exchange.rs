@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 use crate::sync::crypto::{decrypt_wire_body, encrypt_bundle_document, PLAINTEXT_SCHEMA};
-use crate::sync::http::{get_sync_state, put_sync_state};
+use crate::sync::http::{get_sync_state, put_sync_state, validate_base_url};
 use crate::sync::pipeline::{local_payload_from_vault, SyncMode};
 use crate::sync::settings::SyncSettings;
 
@@ -369,10 +369,7 @@ pub fn build_csv_string(headers: &[&str], rows: &[Vec<String>]) -> String {
 // --- Sync versions ---
 
 pub fn list_sync_versions(settings: &SyncSettings) -> Result<Vec<SyncVersionSummary>, String> {
-    if settings.base_url.trim().is_empty() {
-        return Err("请先配置同步服务器 URL（访问令牌可留空）".into());
-    }
-    let base = settings.base_url.trim().trim_end_matches('/');
+    let base = validate_base_url(&settings.base_url)?;
     let url = format!("{base}/v2/sync/versions");
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -437,10 +434,7 @@ pub fn restore_sync_version(
     settings: &SyncSettings,
     version_id: &str,
 ) -> Result<(SyncPayload, Option<String>), String> {
-    if settings.base_url.trim().is_empty() {
-        return Err("请先配置同步服务器 URL（访问令牌可留空）".into());
-    }
-    let base = settings.base_url.trim().trim_end_matches('/');
+    let base = validate_base_url(&settings.base_url)?;
     let id = version_id.trim();
     // Prefer restore endpoint; fallback to GET version body.
     let client = reqwest::blocking::Client::builder()

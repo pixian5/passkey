@@ -18,16 +18,19 @@ fn build_client() -> Result<Client, String> {
         .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))
 }
 
-fn validate_base_url(base: &str) -> Result<String, String> {
+pub fn validate_base_url(base: &str) -> Result<String, String> {
     let base = base.trim().trim_end_matches('/').to_string();
     if base.is_empty() {
         return Err("同步服务器 URL 不能为空".into());
     }
-    let lower = base.to_ascii_lowercase();
-    let is_local = lower.contains("://localhost")
-        || lower.contains("://127.0.0.1")
-        || lower.contains("://[::1]");
-    if !(lower.starts_with("https://") || (is_local && lower.starts_with("http://"))) {
+    let parsed = url::Url::parse(&base).map_err(|_| "同步服务器 URL 无效".to_string())?;
+    let is_local = match parsed.host() {
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(host)) => host.is_loopback(),
+        Some(url::Host::Ipv6(host)) => host.is_loopback(),
+        None => false,
+    };
+    if !(parsed.scheme() == "https" || (is_local && parsed.scheme() == "http")) {
         return Err("同步端点必须使用 HTTPS（本机 localhost 可用 HTTP）".into());
     }
     Ok(base)
@@ -151,4 +154,18 @@ pub fn put_sync_state(
         .unwrap_or("")
         .to_string();
     Ok(etag)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_base_url;
+
+    #[test]
+    fn only_loopback_may_use_http() {
+        assert!(validate_base_url("https://sync.example.test").is_ok());
+        assert!(validate_base_url("http://localhost:53333").is_ok());
+        assert!(validate_base_url("http://127.0.0.1:53333").is_ok());
+        assert!(validate_base_url("http://localhost.evil.test").is_err());
+        assert!(validate_base_url("http://sync.example.test").is_err());
+    }
 }

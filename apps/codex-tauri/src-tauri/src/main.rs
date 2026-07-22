@@ -557,6 +557,9 @@ fn set_sync_settings(
     if !is_valid_sync_key(&settings.encryption_key) {
         return Err("同步加密密钥无效，必须是 256 位密钥或留空".into());
     }
+    if settings.enabled || !settings.base_url.trim().is_empty() {
+        sync::http::validate_base_url(&settings.base_url)?;
+    }
     let mut to_store = settings.clone();
     // When lock enabled, keep secrets out of plaintext settings file.
     let lock = state.public_state(&dir);
@@ -607,7 +610,7 @@ fn sync_now(app: AppHandle, state: tauri::State<AppLockState>) -> Result<String,
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
 
-    let conn = open_db(&app)?;
+    let mut conn = open_db(&app)?;
     let dir = app_data_dir(&app)?;
     let mut settings = load_sync_settings(&dir);
     if let Ok((token, key)) = state.open_sync_secrets(&dir) {
@@ -626,9 +629,7 @@ fn sync_now(app: AppHandle, state: tauri::State<AppLockState>) -> Result<String,
     let (report, applied) = run_sync(&settings, local.clone(), &device, current_platform())?;
     if report.applied {
         local_snapshots::create(&dir, &local, "同步写入本地前自动备份")?;
-        save_accounts(&conn, &applied.accounts)?;
-        save_folders(&conn, &applied.folders)?;
-        save_passkeys(&conn, &applied.passkeys)?;
+        save_payload_atomic(&mut conn, &applied)?;
     }
     serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
 }
@@ -658,7 +659,7 @@ fn sync_now_mode(
     state: tauri::State<AppLockState>,
     mode: String,
 ) -> Result<String, String> {
-    let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
+    let (dir, settings, mut conn) = load_settings_unlocked(&app, &state)?;
     let _ = dir;
     let device = load_device_name(&conn)?;
     let accounts = load_accounts(&conn)?;
@@ -670,16 +671,18 @@ fn sync_now_mode(
         run_sync_with_mode(&settings, local.clone(), &device, current_platform(), mode)?;
     if report.applied {
         local_snapshots::create(&dir, &local, "同步写入本地前自动备份")?;
-        save_accounts(&conn, &applied.accounts)?;
-        save_folders(&conn, &applied.folders)?;
-        save_passkeys(&conn, &applied.passkeys)?;
+        save_payload_atomic(&mut conn, &applied)?;
     }
     serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn get_ui_prefs(app: AppHandle) -> Result<UiPrefs, String> {
+fn get_ui_prefs(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<UiPrefs, String> {
     let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
     Ok(load_ui_prefs(&dir))
 }
 
@@ -751,7 +754,7 @@ fn import_sync_bundle(
     path: String,
     apply: bool,
 ) -> Result<String, String> {
-    let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
+    let (dir, settings, mut conn) = load_settings_unlocked(&app, &state)?;
     let prefs = load_ui_prefs(&dir);
     let content = fs::read(&path).map_err(|e| format!("读取同步包失败: {e}"))?;
     let device = load_device_name(&conn)?;
@@ -767,9 +770,7 @@ fn import_sync_bundle(
     )?;
     if apply && result.safe {
         local_snapshots::create(&dir, &local, "导入同步包前自动备份")?;
-        save_accounts(&conn, &result.payload.accounts)?;
-        save_folders(&conn, &result.payload.folders)?;
-        save_passkeys(&conn, &result.payload.passkeys)?;
+        save_payload_atomic(&mut conn, &result.payload)?;
     }
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
@@ -781,7 +782,7 @@ fn import_sync_bundle_text(
     content: String,
     apply: bool,
 ) -> Result<String, String> {
-    let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
+    let (dir, settings, mut conn) = load_settings_unlocked(&app, &state)?;
     let prefs = load_ui_prefs(&dir);
     let device = load_device_name(&conn)?;
     let accounts = load_accounts(&conn)?;
@@ -796,9 +797,7 @@ fn import_sync_bundle_text(
     )?;
     if apply && result.safe {
         local_snapshots::create(&dir, &local, "导入同步包前自动备份")?;
-        save_accounts(&conn, &result.payload.accounts)?;
-        save_folders(&conn, &result.payload.folders)?;
-        save_passkeys(&conn, &result.payload.passkeys)?;
+        save_payload_atomic(&mut conn, &result.payload)?;
     }
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
@@ -956,7 +955,7 @@ fn restore_server_version(
     state: tauri::State<AppLockState>,
     version_id: String,
 ) -> Result<String, String> {
-    let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
+    let (dir, settings, mut conn) = load_settings_unlocked(&app, &state)?;
     let device = load_device_name(&conn)?;
     let local = local_payload_from_vault(
         &load_accounts(&conn)?,
@@ -966,9 +965,7 @@ fn restore_server_version(
     );
     let (payload, _) = restore_sync_version(&settings, &version_id)?;
     local_snapshots::create(&dir, &local, "恢复服务器快照前自动备份")?;
-    save_accounts(&conn, &payload.accounts)?;
-    save_folders(&conn, &payload.folders)?;
-    save_passkeys(&conn, &payload.passkeys)?;
+    save_payload_atomic(&mut conn, &payload)?;
     Ok(format!(
         "已恢复快照 {}：账号 {}，文件夹 {}，通行密钥 {}",
         version_id,
@@ -1009,7 +1006,7 @@ fn restore_local_snapshot(
     state: tauri::State<AppLockState>,
     snapshot_id: String,
 ) -> Result<String, String> {
-    let (dir, _settings, conn) = load_settings_unlocked(&app, &state)?;
+    let (dir, _settings, mut conn) = load_settings_unlocked(&app, &state)?;
     let device = load_device_name(&conn)?;
     let current = local_payload_from_vault(
         &load_accounts(&conn)?,
@@ -1019,9 +1016,7 @@ fn restore_local_snapshot(
     );
     let payload = local_snapshots::get(&dir, &snapshot_id)?;
     local_snapshots::create(&dir, &current, "恢复本地安全快照前自动备份")?;
-    save_accounts(&conn, &payload.accounts)?;
-    save_folders(&conn, &payload.folders)?;
-    save_passkeys(&conn, &payload.passkeys)?;
+    save_payload_atomic(&mut conn, &payload)?;
     Ok(format!(
         "已恢复本地安全快照：账号 {}，文件夹 {}，通行密钥 {}",
         payload.accounts.len(),
@@ -1616,6 +1611,19 @@ fn save_passkeys(conn: &Connection, passkeys: &[Passkey]) -> Result<(), String> 
     write_kv(conn, KEY_PASSKEYS, &raw)
 }
 
+/// Replaces all sync collections as one SQLite transaction so a failed write
+/// never leaves accounts, folders, and passkeys from different payloads.
+fn save_payload_atomic(conn: &mut Connection, payload: &SyncPayload) -> Result<(), String> {
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("开始数据写入事务失败: {e}"))?;
+    save_accounts(&tx, &payload.accounts)?;
+    save_folders(&tx, &payload.folders)?;
+    save_passkeys(&tx, &payload.passkeys)?;
+    tx.commit()
+        .map_err(|e| format!("提交数据写入事务失败: {e}"))
+}
+
 fn read_kv(conn: &Connection, key: &str) -> Result<Option<String>, String> {
     let mut stmt = conn
         .prepare("SELECT value FROM kv WHERE key = ?1 LIMIT 1")
@@ -2087,6 +2095,30 @@ fn delete_folder(
     Ok(())
 }
 
+fn canonical_active_folder_ids(
+    folders: &[Folder],
+    folder_ids: &[String],
+) -> Result<Vec<String>, String> {
+    let active_folders: BTreeMap<String, String> = folders
+        .iter()
+        .filter(|folder| !folder.is_deleted && !folder.is_permanently_deleted)
+        .map(|folder| (folder.id.to_ascii_lowercase(), folder.id.clone()))
+        .collect();
+    let mut seen = BTreeSet::new();
+    let mut normalized = Vec::new();
+    for raw_id in folder_ids {
+        let id = raw_id.trim().to_ascii_lowercase();
+        if id.is_empty() || !seen.insert(id.clone()) {
+            continue;
+        }
+        let canonical = active_folders
+            .get(&id)
+            .ok_or_else(|| "包含不存在或已删除的文件夹".to_string())?;
+        normalized.push(canonical.clone());
+    }
+    Ok(normalized)
+}
+
 #[tauri::command]
 fn set_account_folders(
     app: AppHandle,
@@ -2104,14 +2136,11 @@ fn set_account_folders(
     {
         return Err("未找到账号".into());
     }
+    let folders = load_folders(&conn)?;
+    let normalized = canonical_active_folder_ids(&folders, &folder_ids)?;
     snapshot_current_vault(&conn, &dir, "调整账号文件夹前自动备份")?;
     let device = load_device_name(&conn)?;
     let now = now_ms();
-    let normalized: Vec<String> = folder_ids
-        .into_iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
     let mut found = false;
     for a in &mut accounts {
         if account_matches_id(a, &id) {
@@ -2558,5 +2587,27 @@ mod tests {
             accounts[0].folder_id.as_deref(),
             Some(pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID)
         );
+    }
+
+    #[test]
+    fn account_folder_ids_must_reference_active_folders() {
+        let folders = vec![
+            Folder {
+                id: "active-folder".into(),
+                ..Default::default()
+            },
+            Folder {
+                id: "deleted-folder".into(),
+                is_deleted: true,
+                ..Default::default()
+            },
+        ];
+        let ids = vec![" ACTIVE-FOLDER ".into(), "active-folder".into()];
+        assert_eq!(
+            canonical_active_folder_ids(&folders, &ids).unwrap(),
+            vec!["active-folder"]
+        );
+        assert!(canonical_active_folder_ids(&folders, &["deleted-folder".into()]).is_err());
+        assert!(canonical_active_folder_ids(&folders, &["missing-folder".into()]).is_err());
     }
 }
