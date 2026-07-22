@@ -2146,6 +2146,40 @@ const previewAccountLabel = (account) => {
   return `${site}${username}`;
 };
 
+// 同步包导入确认弹窗只展示会实际写入本地的账号差异，绝不展示密码或密钥内容。
+const summarizeSyncAccountDiff = (localPayload, mergedPayload, limit = 100) => {
+  const localAccounts = localPayload?.accounts || [];
+  const mergedAccounts = mergedPayload?.accounts || [];
+  const localMap = new Map(localAccounts.map((item) => [previewRecordKey(item, "account"), item]));
+  const mergedMap = new Map(mergedAccounts.map((item) => [previewRecordKey(item, "account"), item]));
+  const changes = [];
+  for (const [key, account] of mergedMap) {
+    if (!localMap.has(key)) {
+      changes.push({ kind: "新增", account, fields: [] });
+    }
+  }
+  for (const [key, account] of localMap) {
+    if (!mergedMap.has(key)) {
+      changes.push({ kind: "移除", account, fields: [] });
+    }
+  }
+  for (const [key, localAccount] of localMap) {
+    const mergedAccount = mergedMap.get(key);
+    if (!mergedAccount) continue;
+    const fields = [...new Set(previewAccountFields
+      .filter(([name]) => previewValue(localAccount[name]) !== previewValue(mergedAccount[name]))
+      .map(([, label]) => label))];
+    if (fields.length) changes.push({ kind: "修改", account: mergedAccount, fields });
+  }
+  return {
+    total: changes.length,
+    lines: changes.slice(0, limit).map((item) =>
+      `${item.kind}：${previewAccountLabel(item.account)}${item.fields.length ? `（${item.fields.join("、")}）` : ""}`
+    ),
+    omitted: Math.max(0, changes.length - limit),
+  };
+};
+
 const renderSyncPreviewDiff = (localPayload, mergedPayload) => {
   if (!els.syncPreviewDiff) return;
   const localAccounts = localPayload?.accounts || [];
@@ -2542,22 +2576,28 @@ const closeBundleImportConfirm = (confirmed = false) => {
   resolve?.(confirmed);
 };
 
-const requestBundleImportConfirmation = (result) => new Promise((resolve) => {
+const requestBundleImportConfirmation = (result, diff = null) => new Promise((resolve) => {
   bundleImportConfirmResolve = resolve;
   if (els.bundleImportConfirmSummary) {
     els.bundleImportConfirmSummary.textContent = result?.message || "可以合并同步包。";
   }
   if (els.bundleImportConfirmDetails) {
-    els.bundleImportConfirmDetails.textContent = [
+    const details = [
       `本地账号：${result?.localAccounts ?? "-"}`,
       `同步包账号：${result?.remoteAccounts ?? "-"}`,
       `合并后账号：${result?.mergedAccounts ?? "-"}`,
       result?.reasons?.length
         ? `安全检查提示：${result.reasons.join("；")}`
         : "安全检查：通过",
-      "",
-      "确认后才会写入本地 vault。",
-    ].join("\n");
+    ];
+    if (diff?.total) {
+      details.push("", `具体账号差异（${diff.total} 条）：`, ...diff.lines);
+      if (diff.omitted) details.push(`其余 ${diff.omitted} 条差异已省略。`);
+    } else {
+      details.push("", "具体账号差异：无（不会改变本地账号）。");
+    }
+    details.push("", "确认后才会写入本地 vault。");
+    els.bundleImportConfirmDetails.textContent = details.join("\n");
   }
   if (els.bundleImportConfirmModal) els.bundleImportConfirmModal.hidden = false;
   els.btnBundleImportConfirm?.focus();
@@ -3265,7 +3305,8 @@ els.fileSyncBundle?.addEventListener("change", async () => {
       openSettings("sync");
       return;
     }
-    const ok = await requestBundleImportConfirmation(result);
+    const diff = summarizeSyncAccountDiff(buildLocalSyncPayload(), result.payload);
+    const ok = await requestBundleImportConfirmation(result, diff);
     if (!ok) {
       toastWarn("已取消导入");
       return;
