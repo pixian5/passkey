@@ -1903,9 +1903,7 @@ const refreshUndoStatus = async () => {
     const operationName = String(status?.title || "最近一次本地操作")
       .replace(/前自动备份$/, "")
       .trim();
-    const undoTooltip = status
-      ? `最近一次操作：${operationName}\n点击后恢复到该操作之前的数据`
-      : "当前没有可撤销的本地操作";
+    const undoTooltip = status ? operationName : "当前没有可撤销的本地操作";
     if (els.btnUndo) {
       els.btnUndo.disabled = !status;
       els.btnUndo.dataset.tooltip = undoTooltip;
@@ -1936,9 +1934,7 @@ const refreshRedoStatus = async () => {
     const operationName = String(status?.title || "待重做的本地操作")
       .replace(/前自动备份$/, "")
       .trim();
-    const redoTooltip = status
-      ? `待重做操作：${operationName}\n点击后再次应用该操作`
-      : "当前没有可重做的本地操作";
+    const redoTooltip = status ? operationName : "当前没有可重做的本地操作";
     if (els.btnRedo) {
       els.btnRedo.disabled = !status;
       els.btnRedo.dataset.tooltip = redoTooltip;
