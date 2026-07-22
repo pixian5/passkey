@@ -82,6 +82,39 @@ button.primary {
   color: #fff;
   font-weight: 600;
 }
+
+/* Larger in-app tooltip for operation details; avoids the tiny native title bubble. */
+[data-tooltip] { position: relative; }
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 200;
+  top: calc(100% + 10px);
+  left: 50%;
+  width: max-content;
+  max-width: min(380px, 72vw);
+  padding: 10px 14px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 10px;
+  background: rgba(34, 34, 38, 0.96);
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  font-size: calc(0.9286 * var(--ui-text-size));
+  font-weight: 450;
+  line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+[data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
 .sync-action {
   border-color: transparent;
   font-weight: 600;

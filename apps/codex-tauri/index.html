@@ -31,8 +31,8 @@
         </div>
         <div class="titlebar-right">
           <button type="button" id="btn-new" class="primary">新建账号</button>
-          <button type="button" id="btn-undo" disabled title="没有可撤销的本地操作">撤销</button>
-          <button type="button" id="btn-redo" disabled title="没有可重做的操作">重做</button>
+          <button type="button" id="btn-undo" disabled data-tooltip="没有可撤销的本地操作">撤销</button>
+          <button type="button" id="btn-redo" disabled data-tooltip="没有可重做的操作">重做</button>
           <button type="button" id="btn-history">历史</button>
           <button type="button" id="btn-restore-all" hidden>全部恢复</button>
           <button type="button" id="btn-purge-recycle" class="danger" hidden>清空回收站</button>
@@ -225,8 +225,8 @@
         </header>
         <div class="modal-body">
           <div class="history-toolbar">
-            <button type="button" id="historyUndoLatest" class="primary" title="撤销最近一次操作">撤销</button>
-            <button type="button" id="historyRedoLatest" title="重做最近一次操作">重做</button>
+            <button type="button" id="historyUndoLatest" class="primary" data-tooltip="撤销最近一次操作">撤销</button>
+            <button type="button" id="historyRedoLatest" data-tooltip="重做最近一次操作">重做</button>
           </div>
           <div id="historyList" class="history-list"></div>
         </div>
