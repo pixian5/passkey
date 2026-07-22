@@ -755,6 +755,16 @@ textarea { min-height: 84px; resize: vertical; }
 .account-field textarea { min-height: 94px; }
 .account-folders-field { font-weight: 400; }
 .account-actions { padding-top: 2px; }
+.account-editor-card .account-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 0 -18px -18px;
+  padding: 12px 18px 18px;
+  border-top: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(10px);
+}
 .delete-message { margin: 0; line-height: 1.5; }
 
 .context-menu {

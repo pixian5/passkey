@@ -38,7 +38,6 @@ const els = {
   editFolders: $("#editFolders"),
   editModal: $("#editModal"),
   editTitle: $("#editTitle"),
-  btnCreateStay: $("#btn-create-stay"),
   btnSaveAccount: $("#btn-save-account"),
   btnPasteTotpRaw: $("#btn-paste-totp-raw"),
   btnPasteTotpUri: $("#btn-paste-totp-uri"),
@@ -1761,7 +1760,6 @@ const openEdit = (account = null) => {
     els.note.value = account.note || "";
     if (els.editTitle) els.editTitle.textContent = "编辑账号";
     if (els.btnSaveAccount) els.btnSaveAccount.textContent = "保存";
-    if (els.btnCreateStay) els.btnCreateStay.hidden = true;
     populateFolderSelect(folderIdsOf(account));
     if (els.btnDelete) {
       els.btnDelete.hidden = false;
@@ -1774,7 +1772,6 @@ const openEdit = (account = null) => {
     els.accountForm?.reset();
     if (els.editTitle) els.editTitle.textContent = "新建账号";
     if (els.btnSaveAccount) els.btnSaveAccount.textContent = "创建并关闭";
-    if (els.btnCreateStay) els.btnCreateStay.hidden = false;
     populateFolderSelect(
       filter.type === "folder" && filter.id ? [filter.id] : []
     );
@@ -3232,13 +3229,13 @@ const accountPayload = () => ({
 
 const selectedFolderIds = () => [...(els.editFolders?.selectedOptions || [])].map((option) => option.value);
 
-const saveAccount = async (closeAfter) => {
+const saveAccount = async () => {
   if (!els.accountForm?.reportValidity()) return;
   const payload = accountPayload();
   const folderIds = selectedFolderIds();
   const id = els.accountId.value;
   const restoreButton = setButtonBusy(
-    id ? els.btnSaveAccount : closeAfter ? els.btnSaveAccount : els.btnCreateStay,
+    els.btnSaveAccount,
     id ? "正在保存…" : "正在创建…"
   );
   if (!id) toastWarn("正在创建账号，请稍候…");
@@ -3255,14 +3252,7 @@ const saveAccount = async (closeAfter) => {
       toastSuccess("账号已创建");
     }
     await refreshState();
-    if (id || closeAfter) {
-      closeEdit();
-    } else {
-      els.accountForm.reset();
-      els.accountId.value = "";
-      populateFolderSelect(folderIds);
-      els.sites.focus();
-    }
+    closeEdit();
   } catch (err) {
     toastError(`保存失败：${err}`);
   } finally {
@@ -3272,10 +3262,9 @@ const saveAccount = async (closeAfter) => {
 
 els.accountForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
-  await saveAccount(true);
+  await saveAccount();
 });
 
-els.btnCreateStay?.addEventListener("click", () => saveAccount(false));
 els.btnConfirmFolderDelete?.addEventListener("click", confirmFolderDelete);
 els.btnPasteTotpRaw?.addEventListener("click", pasteTotpRaw);
 els.btnPasteTotpUri?.addEventListener("click", () => pasteTotpUri());
