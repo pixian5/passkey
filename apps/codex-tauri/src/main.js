@@ -2270,9 +2270,18 @@ els.btnOpenSettings?.addEventListener("click", () => openSettings("general"));
 window.addEventListener("pass-open-settings", () => openSettings("general"));
 document.querySelectorAll("[data-close-settings]").forEach((el) => el.addEventListener("click", closeSettings));
 
+let provisionProgressActive = false;
+let provisionStageText = "";
+
 const setProvisionStatus = (text, isError = false) => {
   if (!els.provisionStatus) return;
   const value = String(text || "").trim();
+  if (provisionProgressActive && !isError) {
+    if (value) provisionStageText = value;
+    els.provisionStatus.textContent = "";
+    els.provisionStatus.hidden = true;
+    return;
+  }
   els.provisionStatus.hidden = !value;
   els.provisionStatus.textContent = value;
   els.provisionStatus.style.color = isError ? "var(--danger)" : "var(--muted)";
@@ -2286,13 +2295,21 @@ const setProvisionStatus = (text, isError = false) => {
 let provisionProgressTimer = null;
 let provisionProgressStart = 0;
 const showProvisionProgress = (text) => {
-  if (els.provisionProgress) els.provisionProgress.hidden = false;
-  if (els.provisionProgressText) els.provisionProgressText.textContent = text || "正在处理…";
+  provisionProgressActive = true;
+  provisionStageText = text || "正在处理…";
+  // Progress is rendered in the action button itself; keep the legacy
+  // standalone boxes hidden so the dialog has one unambiguous status target.
+  if (els.provisionProgress) els.provisionProgress.hidden = true;
+  if (els.provisionStatus) {
+    els.provisionStatus.textContent = "";
+    els.provisionStatus.hidden = true;
+  }
   provisionProgressStart = Date.now();
   const updateElapsed = () => {
-    if (!els.provisionProgressElapsed) return;
     const sec = Math.floor((Date.now() - provisionProgressStart) / 1000);
-    els.provisionProgressElapsed.textContent = sec > 0 ? `已耗时 ${sec}s` : "";
+    if (els.btnRunProvision) {
+      els.btnRunProvision.textContent = `${provisionStageText}${sec > 0 ? ` 已耗时 ${sec}s` : ""}`;
+    }
   };
   updateElapsed();
   if (provisionProgressTimer) clearInterval(provisionProgressTimer);
@@ -2303,6 +2320,7 @@ const hideProvisionProgress = () => {
     clearInterval(provisionProgressTimer);
     provisionProgressTimer = null;
   }
+  provisionProgressActive = false;
   if (els.provisionProgress) els.provisionProgress.hidden = true;
   if (els.provisionProgressElapsed) els.provisionProgressElapsed.textContent = "";
 };
