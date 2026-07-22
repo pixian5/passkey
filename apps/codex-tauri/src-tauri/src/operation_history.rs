@@ -22,20 +22,32 @@ pub struct HistoryEntry {
     pub payload: SyncPayload,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct HistoryFile {
+    undo: Vec<HistoryEntry>,
+    redo: Vec<HistoryEntry>,
+}
+
 fn path(data_dir: &PathBuf) -> PathBuf {
     data_dir.join(HISTORY_FILE)
 }
 
-fn load(data_dir: &PathBuf) -> Vec<HistoryEntry> {
-    local_vault::read_text(data_dir, &path(data_dir), HISTORY_SCOPE)
+fn load(data_dir: &PathBuf) -> HistoryFile {
+    let raw = local_vault::read_text(data_dir, &path(data_dir), HISTORY_SCOPE)
         .ok()
         .flatten()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if raw.trim_start().starts_with('[') {
+        return HistoryFile {
+            undo: serde_json::from_str(&raw).unwrap_or_default(),
+            redo: Vec::new(),
+        };
+    }
+    serde_json::from_str(&raw).unwrap_or_default()
 }
 
-fn save(data_dir: &PathBuf, entries: &[HistoryEntry]) -> Result<(), String> {
-    let raw = serde_json::to_string(entries).map_err(|e| format!("序列化操作历史失败: {e}"))?;
+fn save(data_dir: &PathBuf, file: &HistoryFile) -> Result<(), String> {
+    let raw = serde_json::to_string(file).map_err(|e| format!("序列化操作历史失败: {e}"))?;
     local_vault::write_text(data_dir, &path(data_dir), HISTORY_SCOPE, &raw)
 }
 
@@ -44,28 +56,69 @@ pub fn push(
     title: impl Into<String>,
     payload: SyncPayload,
 ) -> Result<(), String> {
-    let mut entries = load(data_dir);
-    entries.push(HistoryEntry {
+    let mut file = load(data_dir);
+    file.undo.push(HistoryEntry {
         id: Uuid::new_v4().to_string(),
         created_at_ms: Utc::now().timestamp_millis(),
         title: title.into(),
         payload,
     });
-    if entries.len() > MAX_ENTRIES {
-        entries.drain(..entries.len() - MAX_ENTRIES);
+    file.redo.clear();
+    if file.undo.len() > MAX_ENTRIES {
+        file.undo.drain(..file.undo.len() - MAX_ENTRIES);
     }
-    save(data_dir, &entries)
+    save(data_dir, &file)
 }
 
-pub fn latest(data_dir: &PathBuf) -> Option<HistoryEntry> {
-    load(data_dir).pop()
+pub fn undo_entries(data_dir: &PathBuf) -> Vec<HistoryEntry> {
+    load(data_dir).undo
 }
 
-pub fn remove_latest(data_dir: &PathBuf, id: &str) -> Result<(), String> {
-    let mut entries = load(data_dir);
-    if entries.last().map(|entry| entry.id.as_str()) == Some(id) {
-        entries.pop();
-        save(data_dir, &entries)?;
+pub fn redo_entries(data_dir: &PathBuf) -> Vec<HistoryEntry> {
+    load(data_dir).redo
+}
+
+pub fn latest_undo(data_dir: &PathBuf) -> Option<HistoryEntry> {
+    load(data_dir).undo.last().cloned()
+}
+
+pub fn latest_redo(data_dir: &PathBuf) -> Option<HistoryEntry> {
+    load(data_dir).redo.last().cloned()
+}
+
+pub fn move_undo_to_redo(
+    data_dir: &PathBuf,
+    id: &str,
+    current_payload: SyncPayload,
+) -> Result<(), String> {
+    let mut file = load(data_dir);
+    if file.undo.last().map(|entry| entry.id.as_str()) == Some(id) {
+        let entry = file.undo.pop().expect("history entry exists");
+        file.redo.push(HistoryEntry {
+            payload: current_payload,
+            ..entry
+        });
+        save(data_dir, &file)?;
+    }
+    Ok(())
+}
+
+pub fn move_redo_to_undo(
+    data_dir: &PathBuf,
+    id: &str,
+    current_payload: SyncPayload,
+) -> Result<(), String> {
+    let mut file = load(data_dir);
+    if file.redo.last().map(|entry| entry.id.as_str()) == Some(id) {
+        let entry = file.redo.pop().expect("history entry exists");
+        file.undo.push(HistoryEntry {
+            payload: current_payload,
+            ..entry
+        });
+        if file.undo.len() > MAX_ENTRIES {
+            file.undo.drain(..file.undo.len() - MAX_ENTRIES);
+        }
+        save(data_dir, &file)?;
     }
     Ok(())
 }

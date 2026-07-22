@@ -32,6 +32,8 @@
         <div class="titlebar-right">
           <button type="button" id="btn-new" class="primary">新建账号</button>
           <button type="button" id="btn-undo" disabled title="没有可撤销的本地操作">撤销</button>
+          <button type="button" id="btn-redo" disabled title="没有可重做的操作">重做</button>
+          <button type="button" id="btn-history">历史</button>
           <button type="button" id="btn-restore-all" hidden>全部恢复</button>
           <button type="button" id="btn-purge-recycle" class="danger" hidden>清空回收站</button>
           <button type="button" id="btn-sync-now">同步</button>
@@ -210,6 +212,26 @@
     </div>
 
     <div id="contextMenu" class="context-menu" hidden></div>
+
+    <div id="historyModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close-history></div>
+      <div class="modal-card wide history-card" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
+        <header class="modal-head">
+          <div>
+            <h2 id="historyTitle">操作历史</h2>
+            <p class="hint">按整次操作保存本地 vault 前置快照；新操作会清空重做记录。</p>
+          </div>
+          <button type="button" class="icon-btn" data-close-history title="关闭">×</button>
+        </header>
+        <div class="modal-body">
+          <div class="history-toolbar">
+            <button type="button" id="historyUndoLatest" class="primary">撤销最近一次</button>
+            <button type="button" id="historyRedoLatest">重做最近一次</button>
+          </div>
+          <div id="historyList" class="history-list"></div>
+        </div>
+      </div>
+    </div>
 
     <div id="settingsModal" class="modal" hidden>
       <div class="modal-backdrop" data-close-settings></div>
@@ -392,6 +414,7 @@
                 <button type="button" id="btn-sync-now-settings">立即同步（默认模式）</button>
               </div>
               <p class="hint">合并：保留双方变更。云端覆盖本地：用远端替换本机。本地覆盖云端：把本机推到远端。危险操作会二次确认。</p>
+              <div id="syncDecisionSummary" class="sync-decision-summary" hidden></div>
               <pre id="syncPreviewOut" class="mini-log" hidden></pre>
             </div>
 

@@ -63,6 +63,12 @@ const els = {
   btnCreateFolder: $("#btn-create-folder"),
   btnNew: $("#btn-new"),
   btnUndo: $("#btn-undo"),
+  btnRedo: $("#btn-redo"),
+  btnHistory: $("#btn-history"),
+  historyModal: $("#historyModal"),
+  historyList: $("#historyList"),
+  historyUndoLatest: $("#historyUndoLatest"),
+  historyRedoLatest: $("#historyRedoLatest"),
   btnRestoreAll: $("#btn-restore-all"),
   btnPurgeRecycle: $("#btn-purge-recycle"),
   btnDelete: $("#btn-delete"),
@@ -132,6 +138,7 @@ const els = {
   btnLoadLocalSnapshots: $("#btn-load-local-snapshots"),
   localSnapshotsStatus: $("#localSnapshotsStatus"),
   localSnapshotsList: $("#localSnapshotsList"),
+  syncDecisionSummary: $("#syncDecisionSummary"),
   syncPreviewOut: $("#syncPreviewOut"),
   lockOverlay: $("#lockOverlay"),
   unlockPassword: $("#unlockPassword"),
@@ -1860,6 +1867,7 @@ const refreshState = async () => {
   }
   render();
   await refreshUndoStatus();
+  await refreshRedoStatus();
 };
 
 const refreshUndoStatus = async () => {
@@ -1870,9 +1878,63 @@ const refreshUndoStatus = async () => {
       els.btnUndo.title = status ? `撤销：${status.title}` : "没有可撤销的本地操作";
       els.btnUndo.textContent = status ? `撤销：${status.title}` : "撤销";
     }
+    if (els.historyUndoLatest) els.historyUndoLatest.disabled = !status;
   } catch (_) {
     if (els.btnUndo) els.btnUndo.disabled = true;
+    if (els.historyUndoLatest) els.historyUndoLatest.disabled = true;
   }
+};
+
+const refreshRedoStatus = async () => {
+  try {
+    const status = await invoke("get_redo_status");
+    if (els.btnRedo) {
+      els.btnRedo.disabled = !status;
+      els.btnRedo.title = status ? `重做：${status.title}` : "没有可重做的操作";
+      els.btnRedo.textContent = status ? `重做：${status.title}` : "重做";
+    }
+    if (els.historyRedoLatest) els.historyRedoLatest.disabled = !status;
+  } catch (_) {
+    if (els.btnRedo) els.btnRedo.disabled = true;
+    if (els.historyRedoLatest) els.historyRedoLatest.disabled = true;
+  }
+};
+
+const renderOperationHistory = (entries = []) => {
+  if (!els.historyList) return;
+  els.historyList.innerHTML = "";
+  if (!entries.length) {
+    els.historyList.innerHTML = '<div class="history-empty">暂无本地操作记录</div>';
+    return;
+  }
+  [...entries].reverse().forEach((entry) => {
+    const row = document.createElement("div");
+    row.className = "history-row";
+    const stateLabel = entry.stack === "redo" ? "可重做" : "可撤销";
+    row.innerHTML = `<div class="history-row-head"><span class="history-row-title">${escapeHtml(entry.title || "本地操作")}</span><span class="history-row-meta">${stateLabel}</span></div><div class="history-row-meta">${escapeHtml(formatTime(entry.createdAtMs))}</div>`;
+    els.historyList.appendChild(row);
+  });
+};
+
+const refreshOperationHistory = async () => {
+  try {
+    const entries = await invoke("get_operation_history");
+    renderOperationHistory(entries || []);
+  } catch (err) {
+    if (els.historyList) els.historyList.innerHTML = `<div class="history-empty">读取历史失败：${escapeHtml(err)}</div>`;
+  }
+};
+
+const openHistory = async () => {
+  if (!els.historyModal) return;
+  els.historyModal.hidden = false;
+  await refreshOperationHistory();
+  await refreshUndoStatus();
+  await refreshRedoStatus();
+};
+
+const closeHistory = () => {
+  if (els.historyModal) els.historyModal.hidden = true;
 };
 
 const applyLockUi = () => {
@@ -2004,6 +2066,33 @@ const runSyncNow = async ({ quiet = false } = {}) => {
   return runSyncMode(els.syncMode?.value || "merge", { quiet });
 };
 
+const renderSyncDecisionSummary = (reports) => {
+  if (!els.syncDecisionSummary) return;
+  const list = Array.isArray(reports) ? reports : [reports];
+  const valid = list.filter(Boolean);
+  if (!valid.length) {
+    els.syncDecisionSummary.hidden = true;
+    return;
+  }
+  const modeNames = {
+    merge: "按字段合并",
+    remoteOverwriteLocal: "云端覆盖本地",
+    localOverwriteRemote: "本地覆盖云端",
+  };
+  const lines = [
+    "裁决摘要：账号优先按 recordId/accountId 匹配；字段按字段更新时间较新者胜，时间相同非空胜空，再按账号更新时间、设备名和字典序稳定裁决。",
+    "删除规则：删除时间不早于最新内容更新时间时删除胜出；永久删除标记不会被普通内容恢复。",
+    ...valid.map((report) => {
+      const source = report.source ? `${report.source}：` : "";
+      const mode = modeNames[report.mode] || report.mode || "未知模式";
+      const safety = report.safe === false ? `安全检查未通过${report.reasons?.length ? `（${report.reasons.join("、")}）` : ""}` : "安全检查通过";
+      return `${source}${mode} · 本地 ${report.localAccounts ?? "-"} → 合并 ${report.mergedAccounts ?? "-"} · ${safety}`;
+    }),
+  ];
+  els.syncDecisionSummary.hidden = false;
+  els.syncDecisionSummary.textContent = lines.join("\n");
+};
+
 const runSyncMode = async (mode, { quiet = false } = {}) => {
   await saveAllSyncRelated();
   const reports = [];
@@ -2042,6 +2131,7 @@ const runSyncMode = async (mode, { quiet = false } = {}) => {
     els.syncPreviewOut.hidden = false;
     els.syncPreviewOut.textContent = JSON.stringify(reports, null, 2);
   }
+  renderSyncDecisionSummary(reports);
   return report;
 };
 
@@ -2834,8 +2924,31 @@ els.btnUndo?.addEventListener("click", async () => {
   } finally {
     restore();
     await refreshUndoStatus();
+    await refreshRedoStatus();
+    if (!els.historyModal?.hidden) await refreshOperationHistory();
   }
 });
+
+els.btnRedo?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnRedo, "正在重做…");
+  try {
+    const message = await invoke("redo_last_operation");
+    await refreshState();
+    toastSuccess(message || "已重做最近一次操作");
+  } catch (err) {
+    toastError(`重做失败：${err}`);
+  } finally {
+    restore();
+    await refreshUndoStatus();
+    await refreshRedoStatus();
+    if (!els.historyModal?.hidden) await refreshOperationHistory();
+  }
+});
+
+els.btnHistory?.addEventListener("click", () => openHistory().catch((err) => toastError(`打开历史失败：${err}`)));
+els.historyUndoLatest?.addEventListener("click", () => els.btnUndo?.click());
+els.historyRedoLatest?.addEventListener("click", () => els.btnRedo?.click());
+document.querySelectorAll("[data-close-history]").forEach((el) => el.addEventListener("click", closeHistory));
 
 els.btnSaveDevice?.addEventListener("click", async () => {
   const restore = setButtonBusy(els.btnSaveDevice, "正在保存…");
@@ -3041,6 +3154,7 @@ els.btnSyncPreview?.addEventListener("click", async () => {
       els.syncPreviewOut.hidden = false;
       els.syncPreviewOut.textContent = JSON.stringify(result.report || result, null, 2);
     }
+    renderSyncDecisionSummary(result.report || result);
     toastSuccess(result.report?.message || "预览完成");
   } catch (err) {
     toastError(`预览失败：${err}`);

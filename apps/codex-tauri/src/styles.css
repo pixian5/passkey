@@ -530,6 +530,15 @@ body.is-reordering {
   font-size: calc(0.8571 * var(--ui-text-size));
 }
 .version-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-card { width: min(700px, 94vw); }
+.history-toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+.history-list { display: grid; gap: 7px; max-height: min(52vh, 420px); overflow: auto; }
+.history-row { display: grid; gap: 3px; padding: 10px 12px; border-radius: 9px; background: #f5f5f7; }
+.history-row-head { display: flex; align-items: baseline; gap: 8px; }
+.history-row-title { font-weight: 650; }
+.history-row-meta { color: var(--muted); font-size: calc(0.8571 * var(--ui-text-size)); }
+.history-empty { color: var(--muted); padding: 24px 4px; text-align: center; }
+.sync-decision-summary { white-space: pre-wrap; line-height: 1.45; padding: 9px 11px; border-radius: 8px; background: #f5f5f7; color: var(--text); font-size: calc(0.8571 * var(--ui-text-size)); }
 .shortcut-hint {
   position: fixed;
   bottom: 16px;

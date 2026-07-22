@@ -96,6 +96,15 @@ struct UndoStatus {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct HistorySummary {
+    id: String,
+    title: String,
+    created_at_ms: i64,
+    stack: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct FolderRuleResult {
     folder: Folder,
     matched_count: usize,
@@ -148,10 +157,57 @@ fn get_undo_status(
 ) -> Result<Option<UndoStatus>, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
-    Ok(operation_history::latest(&dir).map(|entry| UndoStatus {
-        title: entry.title,
-        created_at_ms: entry.created_at_ms,
-    }))
+    Ok(
+        operation_history::latest_undo(&dir).map(|entry| UndoStatus {
+            title: entry.title,
+            created_at_ms: entry.created_at_ms,
+        }),
+    )
+}
+
+#[tauri::command]
+fn get_redo_status(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<Option<UndoStatus>, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    Ok(
+        operation_history::latest_redo(&dir).map(|entry| UndoStatus {
+            title: entry.title,
+            created_at_ms: entry.created_at_ms,
+        }),
+    )
+}
+
+#[tauri::command]
+fn get_operation_history(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<Vec<HistorySummary>, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let mut entries = operation_history::undo_entries(&dir)
+        .into_iter()
+        .map(|entry| HistorySummary {
+            id: entry.id,
+            title: entry.title,
+            created_at_ms: entry.created_at_ms,
+            stack: "undo".into(),
+        })
+        .collect::<Vec<_>>();
+    entries.extend(
+        operation_history::redo_entries(&dir)
+            .into_iter()
+            .map(|entry| HistorySummary {
+                id: entry.id,
+                title: entry.title,
+                created_at_ms: entry.created_at_ms,
+                stack: "redo".into(),
+            }),
+    );
+    entries.sort_by_key(|entry| entry.created_at_ms);
+    Ok(entries)
 }
 
 #[tauri::command]
@@ -162,7 +218,7 @@ fn undo_last_operation(
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
     let entry: HistoryEntry =
-        operation_history::latest(&dir).ok_or_else(|| "没有可撤销的本地操作".to_string())?;
+        operation_history::latest_undo(&dir).ok_or_else(|| "没有可撤销的本地操作".to_string())?;
     let mut conn = open_db(&app)?;
     let current_device = load_device_name(&conn)?;
     let current = local_payload_from_vault(
@@ -173,8 +229,31 @@ fn undo_last_operation(
     );
     local_snapshots::create(&dir, &current, "撤销本地操作前自动备份")?;
     save_payload_atomic(&mut conn, &entry.payload)?;
-    operation_history::remove_latest(&dir, &entry.id)?;
+    operation_history::move_undo_to_redo(&dir, &entry.id, current)?;
     Ok(format!("已撤销：{}", entry.title))
+}
+
+#[tauri::command]
+fn redo_last_operation(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<String, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let entry: HistoryEntry =
+        operation_history::latest_redo(&dir).ok_or_else(|| "没有可重做的本地操作".to_string())?;
+    let mut conn = open_db(&app)?;
+    let current_device = load_device_name(&conn)?;
+    let current = local_payload_from_vault(
+        &load_accounts(&conn)?,
+        &load_folders(&conn)?,
+        &load_passkeys(&conn)?,
+        &current_device,
+    );
+    local_snapshots::create(&dir, &current, "重做本地操作前自动备份")?;
+    save_payload_atomic(&mut conn, &entry.payload)?;
+    operation_history::move_redo_to_undo(&dir, &entry.id, current)?;
+    Ok(format!("已重做：{}", entry.title))
 }
 
 #[tauri::command]
@@ -2789,7 +2868,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             health_check,
             get_undo_status,
+            get_redo_status,
+            get_operation_history,
             undo_last_operation,
+            redo_last_operation,
             get_app_state,
             set_device_name,
             create_account,
