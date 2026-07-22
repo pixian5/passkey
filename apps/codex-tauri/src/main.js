@@ -3194,7 +3194,12 @@ els.btnExportBundle?.addEventListener("click", async () => {
   const restore = setButtonBusy(els.btnExportBundle, "正在导出…");
   try {
     await saveAllSyncRelated().catch(() => {});
-    const r = await invoke("export_sync_bundle", { path: null });
+    const directory = await invoke("choose_export_directory");
+    if (!directory) {
+      toastWarn("已取消选择导出文件夹");
+      return;
+    }
+    const r = await invoke("export_sync_bundle", { path: directory });
     toastSuccess(r.message || r.path);
   } catch (err) {
     toastError(`导出同步包失败：${err}`);
@@ -3220,9 +3225,16 @@ els.fileSyncBundle?.addEventListener("change", async () => {
       openSettings("sync");
       return;
     }
-    const ok = window.confirm(
-      `${result.message || "可以合并"}\n\n确定写入本地 vault 吗？`
-    );
+    const preview = [
+      result.message || "可以合并",
+      `本地账号：${result.localAccounts ?? "-"}`,
+      `同步包账号：${result.remoteAccounts ?? "-"}`,
+      `合并后账号：${result.mergedAccounts ?? "-"}`,
+      result.reasons?.length ? `安全检查提示：${result.reasons.join("；")}` : "安全检查：通过",
+      "",
+      "确认后才会写入本地 vault。",
+    ].join("\n");
+    const ok = window.confirm(preview);
     if (!ok) {
       toastWarn("已取消导入");
       return;

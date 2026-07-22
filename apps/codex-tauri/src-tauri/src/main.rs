@@ -1011,11 +1011,18 @@ fn export_sync_bundle(
         current_platform(),
         &settings.encryption_key,
     )?;
-    let out = if let Some(p) = path.filter(|s| !s.trim().is_empty()) {
-        PathBuf::from(p)
-    } else {
-        let ts = Local::now().format("%Y%m%d-%H%M%S");
-        dir.join(format!("pass-sync-bundle-{ts}.json"))
+    let ts = Local::now().format("%Y%m%d-%H%M%S");
+    let default_name = format!("pass-sync-bundle-{ts}.json");
+    let out = match path.filter(|s| !s.trim().is_empty()) {
+        Some(p) => {
+            let selected = PathBuf::from(p);
+            if selected.is_dir() {
+                selected.join(&default_name)
+            } else {
+                selected
+            }
+        }
+        None => dir.join(default_name),
     };
     if let Some(parent) = out.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
@@ -1023,8 +1030,26 @@ fn export_sync_bundle(
     fs::write(&out, bytes).map_err(|e| format!("写入同步包失败: {e}"))?;
     Ok(PathResult {
         path: out.to_string_lossy().to_string(),
-        message: format!("已导出同步包：{}", out.display()),
+        message: format!(
+            "已导出同步包：{}（账号 {}，文件夹 {}，通行密钥 {}）",
+            out.display(),
+            local.accounts.len(),
+            local.folders.len(),
+            local.passkeys.len()
+        ),
     })
+}
+
+#[tauri::command]
+async fn choose_export_directory() -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        Ok(rfd::FileDialog::new()
+            .set_title("选择同步包导出文件夹")
+            .pick_folder()
+            .map(|path| path.to_string_lossy().to_string()))
+    })
+    .await
+    .map_err(|e| format!("选择导出文件夹任务异常: {e}"))?
 }
 
 #[tauri::command]
@@ -2979,6 +3004,7 @@ fn main() {
             get_ui_prefs,
             set_ui_prefs,
             export_sync_bundle,
+            choose_export_directory,
             import_sync_bundle,
             import_sync_bundle_text,
             export_browser_csv_cmd,
