@@ -485,10 +485,13 @@ body.is-reordering {
 .bundle-import-confirm-modal { z-index: 60; }
 .bundle-import-confirm-card {
   width: min(1200px, 96vw);
-  min-height: min(700px, 82vh);
   max-height: min(90vh, 900px);
 }
 .bundle-import-confirm-card .modal-body { gap: 12px; }
+.bundle-import-confirm-card .form-actions {
+  align-self: start;
+  align-items: flex-start;
+}
 .bundle-import-confirm-card .confirm-findings { max-height: min(500px, 55vh); }
 .confirm-summary { margin: 0; line-height: 1.5; font-weight: 600; }
 .confirm-findings { max-height: min(180px, 24vh); margin: 0; white-space: pre-wrap; overflow: auto; }
