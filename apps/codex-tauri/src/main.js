@@ -131,6 +131,7 @@ const els = {
   unlockPassword: $("#unlockPassword"),
   lockError: $("#lockError"),
   btnUnlock: $("#btn-unlock"),
+  btnUnlockBiometric: $("#btn-unlock-biometric"),
   lockStatus: $("#lockStatus"),
   lockPassword: $("#lockPassword"),
   lockPassword2: $("#lockPassword2"),
@@ -164,6 +165,10 @@ const els = {
   btnRunProvision: $("#btn-run-provision"),
   debugOut: $("#debugOut"),
 };
+
+if (els.btnUnlockBiometric) {
+  els.btnUnlockBiometric.hidden = !/Mac/i.test(navigator.platform || navigator.userAgent);
+}
 
 let state = {
   activeAccounts: [],
@@ -945,7 +950,7 @@ const render = () => {
       <div class="row-otp" data-totp="${escapeHtml((a.totpSecret || "").trim())}" hidden></div>
     `;
 
-    // click title area opens edit; username/sites copy on click
+    // click title area opens edit; username/sites/otp copy on click
     row.addEventListener("click", (e) => {
       const t = e.target;
       if (t.closest(".row-username")) {
@@ -958,7 +963,12 @@ const render = () => {
         copyText((a.sites || []).join("\n"), "站点别名已复制");
         return;
       }
-      if (t.closest(".row-otp button")) return;
+      if (t.closest(".row-otp")) {
+        e.stopPropagation();
+        const code = t.closest(".row-otp")?.getAttribute("data-code") || "";
+        if (code) copyText(code, "验证码已复制");
+        return;
+      }
       const orderedKeys = accounts.map(accountKey);
       if (e.shiftKey) {
         selectAccountRange(key, orderedKeys);
@@ -986,23 +996,24 @@ async function refreshTotpRows() {
   for (const node of nodes) {
     const secret = node.getAttribute("data-totp") || "";
     if (!secret) {
+      node.removeAttribute("data-code");
       node.hidden = true;
       continue;
     }
     try {
       const res = await totpCode(secret);
       if (!res) {
+        node.removeAttribute("data-code");
         node.hidden = true;
         continue;
       }
       node.hidden = false;
+      node.setAttribute("data-code", res.code);
       const shown = formatOtpDisplay(res.code);
-      node.innerHTML = `验证码: <button type="button" data-code="${res.code}">${shown}</button> (剩余 ${res.remain}s)`;
-      node.querySelector("button")?.addEventListener("click", (e) => {
-        e.stopPropagation();
-        copyText(res.code, "验证码已复制");
-      });
+      // Whole .row-otp is clickable (handled by account-row click); button keeps digit emphasis.
+      node.innerHTML = `验证码: <button type="button">${shown}</button> (剩余 ${res.remain}s)`;
     } catch {
+      node.removeAttribute("data-code");
       node.hidden = true;
     }
   }
@@ -2240,6 +2251,19 @@ els.btnUnlock?.addEventListener("click", async () => {
     await loadSyncSettings();
     await loadUiPrefs();
     toastSuccess("已解锁");
+  } catch (err) {
+    if (els.lockError) els.lockError.textContent = String(err);
+  }
+});
+els.btnUnlockBiometric?.addEventListener("click", async () => {
+  try {
+    lockState = await invoke("lock_unlock_biometric");
+    if (els.lockError) els.lockError.textContent = "";
+    applyLockUi();
+    await refreshState();
+    await loadSyncSettings();
+    await loadUiPrefs();
+    toastSuccess("已通过 Touch ID 解锁");
   } catch (err) {
     if (els.lockError) els.lockError.textContent = String(err);
   }

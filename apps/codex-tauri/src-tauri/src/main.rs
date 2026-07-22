@@ -1,7 +1,7 @@
 mod app_lock;
 mod exchange;
-mod local_vault;
 mod local_snapshots;
+mod local_vault;
 mod provision;
 mod sync;
 mod ui_prefs;
@@ -24,15 +24,15 @@ use exchange::{
     restore_sync_version, run_sync_with_mode, ImportResult, PathResult, SyncVersionSummary,
 };
 use local_snapshots::LocalSnapshotSummary;
-use sync::crypto::key_id;
-use sync::pipeline::{local_payload_from_vault, preview_sync, run_sync, SyncMode};
-use sync::settings::{load_sync_settings, save_sync_settings, SyncSettings};
-use sync::{generate_sync_key, is_valid_sync_key};
 use provision::{
     detect_existing_service, host_from_server_url, load_ssh_credential, provision_server,
     save_ssh_credential, verify_public_endpoint, ExistingServiceReport, ProvisionResult,
     SshCredential,
 };
+use sync::crypto::key_id;
+use sync::pipeline::{local_payload_from_vault, preview_sync, run_sync, SyncMode};
+use sync::settings::{load_sync_settings, save_sync_settings, SyncSettings};
+use sync::{generate_sync_key, is_valid_sync_key};
 use ui_prefs::{load_ui_prefs, save_ui_prefs, UiPrefs};
 
 const KEY_ACCOUNTS: &str = "accounts.v2";
@@ -898,8 +898,7 @@ fn export_csv_to_path(
     let out = if let Some(p) = path.filter(|s| !s.trim().is_empty()) {
         PathBuf::from(p)
     } else if !prefs.export_directory.trim().is_empty() {
-        PathBuf::from(prefs.export_directory.trim())
-            .join(format!("pass-export-{timestamp}.csv"))
+        PathBuf::from(prefs.export_directory.trim()).join(format!("pass-export-{timestamp}.csv"))
     } else {
         dir.join(format!("pass-export-{timestamp}.csv"))
     };
@@ -1647,7 +1646,9 @@ fn lock_enable(
     idle_lock_minutes: u32,
 ) -> Result<AppLockPublicState, String> {
     let dir = data_dir(&app)?;
-    state.enable(&dir, &password, &confirm, idle_lock_minutes)
+    let result = state.enable(&dir, &password, &confirm, idle_lock_minutes)?;
+    let _ = state.store_biometric_key(&app);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1657,7 +1658,9 @@ fn lock_disable(
     password: String,
 ) -> Result<AppLockPublicState, String> {
     let dir = data_dir(&app)?;
-    state.disable(&dir, &password)
+    let result = state.disable(&dir, &password)?;
+    let _ = state.clear_biometric_key(&app);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1667,7 +1670,18 @@ fn lock_unlock(
     password: String,
 ) -> Result<AppLockPublicState, String> {
     let dir = data_dir(&app)?;
-    state.unlock(&dir, &password)
+    let result = state.unlock(&dir, &password)?;
+    let _ = state.store_biometric_key(&app);
+    Ok(result)
+}
+
+#[tauri::command]
+fn lock_unlock_biometric(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<AppLockPublicState, String> {
+    let dir = data_dir(&app)?;
+    state.unlock_biometric(&app, &dir)
 }
 
 #[tauri::command]
@@ -1755,7 +1769,10 @@ fn delete_folder(
         .iter()
         .find(|folder| folder.id.eq_ignore_ascii_case(&id))
         .ok_or_else(|| "未找到文件夹".to_string())?;
-    if folder.id.eq_ignore_ascii_case(pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID) {
+    if folder
+        .id
+        .eq_ignore_ascii_case(pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID)
+    {
         return Err("固定文件夹不可删除".into());
     }
     if folder.is_deleted || folder.is_permanently_deleted {
@@ -1803,7 +1820,10 @@ fn set_account_folders(
     state.require_unlocked(&dir)?;
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
-    if !accounts.iter().any(|account| account_matches_id(account, &id)) {
+    if !accounts
+        .iter()
+        .any(|account| account_matches_id(account, &id))
+    {
         return Err("未找到账号".into());
     }
     snapshot_current_vault(&conn, &dir, "调整账号文件夹前自动备份")?;
@@ -2048,7 +2068,11 @@ fn main() {
                 use tauri::menu::{MenuBuilder, PredefinedMenuItem, SubmenuBuilder};
                 // Native app menu with Settings (⌘,) for macOS parity with PassMac.
                 let app_submenu = SubmenuBuilder::new(app, "Pass Desktop")
-                    .item(&PredefinedMenuItem::about(app, Some("关于 Pass Desktop"), None)?)
+                    .item(&PredefinedMenuItem::about(
+                        app,
+                        Some("关于 Pass Desktop"),
+                        None,
+                    )?)
                     .separator()
                     .item(&PredefinedMenuItem::hide(app, Some("隐藏 Pass Desktop"))?)
                     .item(&PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?)
@@ -2057,7 +2081,7 @@ fn main() {
                     .item(&PredefinedMenuItem::quit(app, Some("退出 Pass Desktop"))?)
                     .build()?;
                 // Custom Settings item with accelerator
-                use tauri::menu::{MenuItemBuilder};
+                use tauri::menu::MenuItemBuilder;
                 let settings_item = MenuItemBuilder::with_id("open_settings", "设置...")
                     .accelerator("CmdOrCtrl+,")
                     .build(app)?;
@@ -2147,6 +2171,7 @@ fn main() {
             lock_enable,
             lock_disable,
             lock_unlock,
+            lock_unlock_biometric,
             lock_now,
             lock_set_idle,
             lock_touch,

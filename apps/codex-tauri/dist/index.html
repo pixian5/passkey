@@ -14,6 +14,7 @@
         <label>主密码<input id="unlockPassword" type="password" autocomplete="current-password" /></label>
         <div class="form-actions">
           <button type="button" id="btn-unlock" class="primary">解锁</button>
+          <button type="button" id="btn-unlock-biometric">使用指纹解锁</button>
         </div>
         <p id="lockError" class="error"></p>
       </div>
@@ -444,7 +445,7 @@
             <div class="settings-group">
               <h3>应用解锁</h3>
               <div id="lockStatus">状态：未启用</div>
-              <p class="hint">启用后锁定时隐藏 vault 与同步密钥；空闲超时自动锁定。</p>
+              <p class="hint">启用后锁定时隐藏 vault 与同步密钥；空闲超时自动锁定。macOS 可使用 Touch ID 解锁。</p>
               <div class="form-row">
                 <span class="form-label">主密码</span>
                 <span class="secret-field grow">

@@ -1,5 +1,6 @@
 # Build outputs
 target/
+apps/codex-tauri/src-tauri/resources/pass-biometric-helper
 apps/extension_shared/node_modules/
 apps/extension_shared/dist/
 apps/extension_firefox/build/

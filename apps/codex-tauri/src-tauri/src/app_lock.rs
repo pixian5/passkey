@@ -12,11 +12,19 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(target_os = "macos")]
+use tauri::{AppHandle, Manager};
+
+use crate::local_vault;
 
 const LOCK_FILE: &str = "app_lock.json";
 const SECRETS_FILE: &str = "sync_secrets.enc";
+const BIOMETRIC_SESSION_FILE: &str = "biometric_session.enc";
+const BIOMETRIC_SESSION_SCOPE: &str = "pass.tauri.biometric_session.v1";
 const PBKDF2_ITERS: u32 = 310_000;
 const SALT_LEN: usize = 16;
 const KEY_LEN: usize = 32;
@@ -202,7 +210,11 @@ impl AppLockState {
         Ok(self.public_state(data_dir))
     }
 
-    pub fn disable(&self, data_dir: &PathBuf, password: &str) -> Result<AppLockPublicState, String> {
+    pub fn disable(
+        &self,
+        data_dir: &PathBuf,
+        password: &str,
+    ) -> Result<AppLockPublicState, String> {
         self.unlock(data_dir, password)?;
         if let Some(mut record) = load_record(data_dir) {
             record.enabled = false;
@@ -237,6 +249,83 @@ impl AppLockState {
         guard.session_key = Some(key);
         guard.last_activity_ms = now_ms();
         Ok(self.public_state(data_dir))
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn store_biometric_key(&self, app: &AppHandle) -> Result<(), String> {
+        let key = self.session_key()?;
+        let dir = app
+            .path()
+            .app_local_data_dir()
+            .map_err(|e| format!("解析应用数据目录失败: {e}"))?;
+        local_vault::write_text(
+            &dir,
+            &dir.join(BIOMETRIC_SESSION_FILE),
+            BIOMETRIC_SESSION_SCOPE,
+            &STANDARD.encode(key),
+        )
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn store_biometric_key(&self, _app: &tauri::AppHandle) -> Result<(), String> {
+        Err("当前平台不支持指纹解锁".into())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn unlock_biometric(
+        &self,
+        app: &AppHandle,
+        data_dir: &PathBuf,
+    ) -> Result<AppLockPublicState, String> {
+        let raw = local_vault::read_text(
+            data_dir,
+            &data_dir.join(BIOMETRIC_SESSION_FILE),
+            BIOMETRIC_SESSION_SCOPE,
+        )?
+        .ok_or_else(|| "尚未使用主密码初始化指纹解锁".to_string())?;
+        run_biometric_helper(app)?;
+        let bytes = STANDARD
+            .decode(raw.trim())
+            .map_err(|_| "指纹解锁返回的会话密钥无效".to_string())?;
+        if bytes.len() != KEY_LEN {
+            return Err("指纹解锁返回的会话密钥长度无效".into());
+        }
+        let record = load_record(data_dir).ok_or_else(|| "尚未设置主密码".to_string())?;
+        if !record.enabled {
+            return Ok(self.public_state(data_dir));
+        }
+        let mut key = [0u8; KEY_LEN];
+        key.copy_from_slice(&bytes);
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        guard.unlocked = true;
+        guard.session_key = Some(key);
+        guard.last_activity_ms = now_ms();
+        drop(guard);
+        Ok(self.public_state(data_dir))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn unlock_biometric(
+        &self,
+        _app: &tauri::AppHandle,
+        _data_dir: &PathBuf,
+    ) -> Result<AppLockPublicState, String> {
+        Err("当前平台不支持指纹解锁".into())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn clear_biometric_key(&self, app: &AppHandle) -> Result<(), String> {
+        let dir = app
+            .path()
+            .app_local_data_dir()
+            .map_err(|e| format!("解析应用数据目录失败: {e}"))?;
+        let _ = std::fs::remove_file(dir.join(BIOMETRIC_SESSION_FILE));
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn clear_biometric_key(&self, _app: &tauri::AppHandle) -> Result<(), String> {
+        Ok(())
     }
 
     pub fn lock_now(&self) -> AppLockPublicState {
@@ -373,4 +462,44 @@ impl AppLockState {
                 .to_string(),
         ))
     }
+}
+
+#[cfg(target_os = "macos")]
+fn biometric_helper_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let resource_path = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("解析应用资源目录失败: {e}"))?
+        .join("resources/pass-biometric-helper");
+    let source_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/pass-biometric-helper");
+    [resource_path, source_path]
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| "指纹解锁组件未安装，请重新打包应用".into())
+}
+
+#[cfg(target_os = "macos")]
+fn run_biometric_helper(app: &AppHandle) -> Result<(), String> {
+    let helper = biometric_helper_path(app)?;
+    let mut command = Command::new(helper);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = command
+        .spawn()
+        .map_err(|e| format!("启动指纹解锁组件失败: {e}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("等待指纹解锁结果失败: {e}"))?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if message.is_empty() {
+            "指纹解锁失败".into()
+        } else {
+            message
+        });
+    }
+    Ok(())
 }
