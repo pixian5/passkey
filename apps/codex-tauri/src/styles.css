@@ -484,7 +484,7 @@ body.is-reordering {
 .provision-confirm-card .modal-body { gap: 12px; }
 .bundle-import-confirm-modal { z-index: 60; }
 .bundle-import-confirm-card {
-  width: min(680px, 92vw);
+  width: min(1000px, 92vw);
   max-height: min(80vh, 680px);
 }
 .bundle-import-confirm-card .modal-body { gap: 12px; }
