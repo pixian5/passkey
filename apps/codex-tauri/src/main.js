@@ -2134,7 +2134,7 @@ const previewAccountFields = [
 
 const previewValue = (value) => JSON.stringify(value ?? null);
 const previewRecordKey = (record, fallbackPrefix) =>
-  String(record?.recordId || record?.id || record?.accountId || `${fallbackPrefix}:${record?.canonicalSite || ""}:${record?.username || ""}`);
+  String(record?.accountId?.trim() || record?.recordId?.trim() || record?.id?.trim() || `${fallbackPrefix}:${record?.canonicalSite || ""}:${record?.username || ""}`);
 const previewAccountLabel = (account) => {
   const site = account?.canonicalSite || account?.sites?.[0] || "未命名站点";
   const username = account?.username ? ` · ${account.username}` : "";
