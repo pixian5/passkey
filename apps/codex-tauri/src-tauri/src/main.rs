@@ -1407,21 +1407,25 @@ fn save_provision_draft(
 }
 
 #[tauri::command]
-fn detect_existing_sync_service(
+async fn detect_existing_sync_service(
     app: AppHandle,
-    state: tauri::State<AppLockState>,
+    state: tauri::State<'_, AppLockState>,
     server_url: String,
     credential: SshCredential,
 ) -> Result<ExistingServiceReport, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
-    detect_existing_service(&dir, &server_url, &credential)
+    tauri::async_runtime::spawn_blocking(move || {
+        detect_existing_service(&dir, &server_url, &credential)
+    })
+    .await
+    .map_err(|e| format!("检测服务任务异常: {e}"))?
 }
 
 #[tauri::command]
-fn provision_self_hosted_server(
+async fn provision_self_hosted_server(
     app: AppHandle,
-    state: tauri::State<AppLockState>,
+    state: tauri::State<'_, AppLockState>,
     server_url: String,
     credential: SshCredential,
     access_token: String,
@@ -1432,16 +1436,26 @@ fn provision_self_hosted_server(
 ) -> Result<ProvisionResult, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
-    let result = provision_server(
-        &dir,
-        &server_url,
-        credential,
-        &access_token,
-        &sync_encryption_key,
-        &tls_certificate,
-        &tls_private_key,
-        remove_existing.unwrap_or(false),
-    )?;
+    let worker_dir = dir.clone();
+    let worker_server_url = server_url.clone();
+    let worker_access_token = access_token.clone();
+    let worker_sync_encryption_key = sync_encryption_key.clone();
+    let worker_tls_certificate = tls_certificate.clone();
+    let worker_tls_private_key = tls_private_key.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        provision_server(
+            &worker_dir,
+            &worker_server_url,
+            credential,
+            &worker_access_token,
+            &worker_sync_encryption_key,
+            &worker_tls_certificate,
+            &worker_tls_private_key,
+            remove_existing.unwrap_or(false),
+        )
+    })
+    .await
+    .map_err(|e| format!("创建服务任务异常: {e}"))??;
     // Persist sync settings used for this endpoint.
     let mut settings = load_sync_settings(&dir);
     settings.enabled = true;
@@ -1462,8 +1476,10 @@ fn provision_self_hosted_server(
 }
 
 #[tauri::command]
-fn verify_sync_endpoint(endpoint: String) -> bool {
-    verify_public_endpoint(&endpoint)
+async fn verify_sync_endpoint(endpoint: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || verify_public_endpoint(&endpoint))
+        .await
+        .unwrap_or(false)
 }
 
 fn account_matches_id(account: &PasswordAccount, id: &str) -> bool {
