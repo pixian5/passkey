@@ -123,7 +123,6 @@ const els = {
   webdavRemotePath: $("#webdavRemotePath"),
   webdavUsername: $("#webdavUsername"),
   webdavPassword: $("#webdavPassword"),
-  btnSaveSync: $("#btn-save-sync"),
   btnGenSyncKey: $("#btn-gen-sync-key"),
   btnCopySyncKey: $("#btn-copy-sync-key"),
   btnSyncPreview: $("#btn-sync-preview"),
@@ -2048,6 +2047,35 @@ const saveAllSyncRelated = async () => {
   await refreshSyncKeyHints();
 };
 
+let syncSettingsSaveTimer = null;
+const scheduleSyncSettingsSave = () => {
+  clearTimeout(syncSettingsSaveTimer);
+  syncSettingsSaveTimer = setTimeout(async () => {
+    try {
+      await saveAllSyncRelated();
+    } catch (err) {
+      console.warn("auto-save sync settings", err);
+    }
+  }, 450);
+};
+
+[
+  els.syncEnabled,
+  els.syncBaseUrl,
+  els.syncToken,
+  els.syncEncKey,
+  els.autoSyncInterval,
+  els.syncPrimarySource,
+  els.webdavEnabled,
+  els.webdavBaseUrl,
+  els.webdavRemotePath,
+  els.webdavUsername,
+  els.webdavPassword,
+].filter(Boolean).forEach((element) => {
+  element.addEventListener("input", scheduleSyncSettingsSave);
+  element.addEventListener("change", scheduleSyncSettingsSave);
+});
+
 const buildLocalSyncPayload = () => ({
   accounts: [...(state.activeAccounts || []), ...(state.deletedAccounts || [])],
   folders: state.folders || [],
@@ -3155,22 +3183,12 @@ els.btnHealth?.addEventListener("click", async () => {
   }
 });
 
-els.btnSaveSync?.addEventListener("click", async () => {
-  const restore = setButtonBusy(els.btnSaveSync, "正在保存…");
-  try {
-    await saveAllSyncRelated();
-    toastSuccess("同步设置已保存");
-  } catch (err) {
-    toastError(`保存失败：${err}`);
-  } finally {
-    restore();
-  }
-});
 els.btnGenSyncKey?.addEventListener("click", async () => {
   const restore = setButtonBusy(els.btnGenSyncKey, "正在生成…");
   try {
     const key = await invoke("generate_sync_encryption_key");
     if (els.syncEncKey) els.syncEncKey.value = key;
+    scheduleSyncSettingsSave();
     await refreshSyncKeyHints();
     toastSuccess("已生成同步密钥");
   } finally {
