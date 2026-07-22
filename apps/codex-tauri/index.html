@@ -254,12 +254,9 @@
               <h3>设备</h3>
               <div class="form-row">
                 <span class="form-label">设备名称</span>
-                <div class="inline-actions grow">
-                  <input id="deviceName" placeholder="例如 PassDevice" />
-                  <button type="button" id="btn-save-device">保存</button>
-                </div>
+                <input id="deviceName" class="grow" placeholder="例如 PassDevice" />
               </div>
-              <p class="hint">设备名称会写入账号的最后操作设备字段，便于多端合并裁决。</p>
+              <p class="hint">设备名称会在输入后自动保存，并写入账号的最后操作设备字段，便于多端合并裁决。</p>
             </div>
 
             <div class="settings-group">
@@ -300,9 +297,7 @@
               </label>
               <p class="hint">关闭后密码框默认隐藏；字段旁的眼睛按钮仍可临时切换单个字段。</p>
             </div>
-            <div class="form-actions">
-              <button type="button" class="primary" id="btn-save-ui">保存界面设置</button>
-            </div>
+            <p class="hint">界面偏好会在调整后自动保存。</p>
           </section>
 
           <!-- 同步 -->

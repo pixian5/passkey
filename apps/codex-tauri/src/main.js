@@ -87,8 +87,6 @@ const els = {
   fileGoogleAuthenticator: $("#fileGoogleAuthenticator"),
   fileSyncBundle: $("#fileSyncBundle"),
   exportDirectory: $("#exportDirectory"),
-  btnSaveDevice: $("#btn-save-device"),
-  btnSaveUi: $("#btn-save-ui"),
   uiFontFamily: $("#uiFontFamily"),
   uiTextSize: $("#uiTextSize"),
   uiTextSizeVal: $("#uiTextSizeVal"),
@@ -354,6 +352,25 @@ const applyUiPrefs = () => {
     button.textContent = visible ? "◉" : "◎";
     button.title = visible ? "隐藏" : "显示";
   });
+};
+
+let deviceNameSaveTimer = null;
+const saveDeviceName = async ({ quiet = true } = {}) => {
+  const deviceName = (els.deviceName?.value || "").trim();
+  if (!deviceName) return;
+  try {
+    await invoke("set_device_name", { deviceName });
+    state.deviceName = deviceName;
+    if (!quiet) toastSuccess("设备名已保存");
+  } catch (err) {
+    console.warn("auto-save device name", err);
+    if (!quiet) toastError(`保存设备名失败：${err}`);
+  }
+};
+
+const scheduleSaveDeviceName = () => {
+  clearTimeout(deviceNameSaveTimer);
+  deviceNameSaveTimer = setTimeout(() => saveDeviceName(), 450);
 };
 
 let uiPrefsSaveTimer = null;
@@ -1855,6 +1872,8 @@ const openSettings = async (tab = "general") => {
   }
 };
 const closeSettings = () => {
+  // Flush the debounced device-name edit when the settings sheet is closed.
+  void saveDeviceName?.();
   if (els.settingsModal) els.settingsModal.hidden = true;
 };
 
@@ -2502,6 +2521,14 @@ const persistProvisionDraft = async () => {
   }
 };
 
+let provisionDraftSaveTimer = null;
+const scheduleProvisionDraftSave = () => {
+  clearTimeout(provisionDraftSaveTimer);
+  provisionDraftSaveTimer = setTimeout(() => {
+    persistProvisionDraft();
+  }, 450);
+};
+
 const openProvisionModal = async () => {
   if (!els.provisionModal) return;
   let draft = {};
@@ -2539,6 +2566,7 @@ const openProvisionModal = async () => {
 };
 
 const closeProvisionModal = () => {
+  if (provisionProgressActive) return;
   persistProvisionDraft();
   if (els.provisionModal) els.provisionModal.hidden = true;
 };
@@ -2700,6 +2728,16 @@ document.querySelectorAll("[data-close-provision]").forEach((el) => {
   el.addEventListener("click", closeProvisionModal);
 });
 els.provisionAuthMode?.addEventListener("change", updateProvisionAuthUi);
+[
+  els.provisionServerUrl,
+  els.provisionTlsCertificate,
+  els.provisionTlsPrivateKey,
+  els.provisionToken,
+  els.provisionEncKey,
+].filter(Boolean).forEach((element) => {
+  element.addEventListener("input", scheduleProvisionDraftSave);
+  element.addEventListener("change", scheduleProvisionDraftSave);
+});
 els.btnLoadSshCred?.addEventListener("click", async () => {
   const restore = setButtonBusy(els.btnLoadSshCred, "正在读取…");
   try {
@@ -2723,6 +2761,7 @@ els.btnGenProvisionToken?.addEventListener("click", () => {
       els.provisionToken.value = token;
       delete els.provisionToken.dataset.forceVisible;
     }
+    scheduleProvisionDraftSave();
     applyUiPrefs();
     toastSuccess("已生成访问令牌");
   } finally {
@@ -2914,10 +2953,21 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "Escape") {
+    if (!els.actionConfirmModal?.hidden) {
+      closeActionConfirm(false);
+      return;
+    }
+    if (!els.bundleImportConfirmModal?.hidden) {
+      closeBundleImportConfirm(false);
+      return;
+    }
+    if (!els.provisionConfirmModal?.hidden) {
+      closeProvisionConfirm(false);
+      return;
+    }
     closeSettings();
     closeEdit();
     closeProvisionModal();
-    closeProvisionConfirm(false);
     if (els.folderModal) els.folderModal.hidden = true;
     closeFolderSites();
     closeFolderDedup();
@@ -2947,17 +2997,6 @@ els.uiFontFamily?.addEventListener("change", () => {
   scheduleSaveUiPrefs();
 });
 
-els.btnSaveUi?.addEventListener("click", async () => {
-  const restore = setButtonBusy(els.btnSaveUi, "正在保存…");
-  try {
-    await saveUiPrefs();
-    toastSuccess("界面设置已保存");
-  } catch (err) {
-    toastError(`保存界面设置失败：${err}`);
-  } finally {
-    restore();
-  }
-});
 els.showPasswordsGlobally?.addEventListener("change", async () => {
   applyUiPrefsFromFormLive();
   try {
@@ -3228,18 +3267,9 @@ els.historyUndoLatest?.addEventListener("click", () => els.btnUndo?.click());
 els.historyRedoLatest?.addEventListener("click", () => els.btnRedo?.click());
 document.querySelectorAll("[data-close-history]").forEach((el) => el.addEventListener("click", closeHistory));
 
-els.btnSaveDevice?.addEventListener("click", async () => {
-  const restore = setButtonBusy(els.btnSaveDevice, "正在保存…");
-  try {
-    await invoke("set_device_name", { deviceName: els.deviceName.value });
-    await refreshState();
-    toastSuccess("设备名已保存");
-  } catch (err) {
-    toastError(`保存失败：${err}`);
-  } finally {
-    restore();
-  }
-});
+els.deviceName?.addEventListener("input", scheduleSaveDeviceName);
+els.deviceName?.addEventListener("change", scheduleSaveDeviceName);
+els.deviceName?.addEventListener("blur", () => saveDeviceName());
 els.btnExport?.addEventListener("click", async () => {
   const restore = setButtonBusy(els.btnExport, "正在导出…");
   try {
@@ -3279,6 +3309,7 @@ els.btnImportBrowser?.addEventListener("click", () => els.fileBrowserCsv?.click(
 els.fileBrowserCsv?.addEventListener("change", async () => {
   const file = els.fileBrowserCsv.files?.[0];
   if (!file) return;
+  const restore = setButtonBusy(els.btnImportBrowser, "正在导入…");
   toastWarn("正在导入，请稍候…");
   try {
     const text = await readFileAsText(file);
@@ -3289,6 +3320,7 @@ els.fileBrowserCsv?.addEventListener("change", async () => {
     toastError(`导入失败：${err}`);
   } finally {
     els.fileBrowserCsv.value = "";
+    restore();
   }
 });
 
@@ -3296,6 +3328,7 @@ els.btnImportGoogleAuthenticator?.addEventListener("click", () => els.fileGoogle
 els.fileGoogleAuthenticator?.addEventListener("change", async () => {
   const files = [...(els.fileGoogleAuthenticator?.files || [])];
   if (!files.length) return;
+  const restore = setButtonBusy(els.btnImportGoogleAuthenticator, "正在导入…");
   try {
     const entries = [];
     for (const file of files) {
@@ -3310,6 +3343,7 @@ els.fileGoogleAuthenticator?.addEventListener("change", async () => {
     toastError(`验证器导入失败：${err}`);
   } finally {
     if (els.fileGoogleAuthenticator) els.fileGoogleAuthenticator.value = "";
+    restore();
   }
 });
 
@@ -3334,6 +3368,7 @@ els.btnImportBundle?.addEventListener("click", () => els.fileSyncBundle?.click()
 els.fileSyncBundle?.addEventListener("change", async () => {
   const file = els.fileSyncBundle.files?.[0];
   if (!file) return;
+  const restore = setButtonBusy(els.btnImportBundle, "正在预览…");
   toastWarn("正在导入，请稍候…");
   try {
     const text = await readFileAsText(file);
@@ -3362,6 +3397,7 @@ els.fileSyncBundle?.addEventListener("change", async () => {
     toastError(`导入同步包失败：${err}`);
   } finally {
     els.fileSyncBundle.value = "";
+    restore();
   }
 });
 
