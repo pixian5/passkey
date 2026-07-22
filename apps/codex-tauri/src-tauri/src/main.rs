@@ -55,6 +55,22 @@ struct AccountInput {
     note: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TotpImportInput {
+    site: String,
+    username: String,
+    secret: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TotpImportResult {
+    created: usize,
+    updated: usize,
+    skipped: usize,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppState {
@@ -1027,6 +1043,97 @@ fn import_browser_csv_text(
             before,
             merged.len()
         ),
+    })
+}
+
+#[tauri::command]
+fn import_google_authenticator_totp(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    entries: Vec<TotpImportInput>,
+) -> Result<TotpImportResult, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let conn = open_db(&app)?;
+    let mut accounts = load_accounts(&conn)?;
+    let folders = load_folders(&conn)?;
+    let values: Vec<_> = entries
+        .into_iter()
+        .filter_map(|entry| {
+            let sites = normalize_sites(vec![entry.site]);
+            let secret = entry.secret.trim().to_ascii_uppercase().replace(' ', "");
+            (!sites.is_empty() && !secret.is_empty()).then_some((
+                sites[0].clone(),
+                entry.username.trim().to_string(),
+                secret,
+            ))
+        })
+        .collect();
+    if values.is_empty() {
+        return Ok(TotpImportResult {
+            created: 0,
+            updated: 0,
+            skipped: 0,
+        });
+    }
+    snapshot_current_vault(&conn, &dir, "导入谷歌验证器二维码前自动备份")?;
+    let device = load_device_name(&conn)?;
+    let start = now_ms();
+    let mut created = 0;
+    let mut updated = 0;
+    let mut skipped = 0;
+    for (offset, (site, username, secret)) in values.into_iter().enumerate() {
+        let now = start + offset as i64;
+        if let Some(account) = accounts.iter_mut().find(|account| {
+            !account.is_deleted
+                && account
+                    .sites
+                    .iter()
+                    .any(|value| value.eq_ignore_ascii_case(&site))
+                && account.username == username
+        }) {
+            if account.totp_secret == secret {
+                skipped += 1;
+            } else {
+                account.totp_secret = secret;
+                account.totp_updated_at_ms = now;
+                account.totp_updated_device_name = device.clone();
+                account.updated_at_ms = now;
+                account.last_operated_device_name = device.clone();
+                updated += 1;
+            }
+            continue;
+        }
+        let id = Uuid::new_v4().to_string();
+        let mut account = PasswordAccount {
+            record_id: Some(id.clone()),
+            id: Some(id),
+            account_id: format!("{site}-{now}-{username}"),
+            canonical_site: site.clone(),
+            username_at_create: username.clone(),
+            sites: vec![site],
+            username,
+            password: String::new(),
+            totp_secret: secret,
+            totp_updated_at_ms: now,
+            totp_updated_device_name: device.clone(),
+            created_at_ms: now,
+            updated_at_ms: now,
+            created_device_name: device.clone(),
+            last_operated_device_name: device.clone(),
+            ..Default::default()
+        };
+        add_account_to_folder(&mut account, pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID);
+        apply_automatic_folder_rules(&mut account, &folders);
+        accounts.push(account);
+        created += 1;
+    }
+    sync_alias_sites(&mut accounts);
+    save_accounts(&conn, &accounts)?;
+    Ok(TotpImportResult {
+        created,
+        updated,
+        skipped,
     })
 }
 
@@ -2718,6 +2825,7 @@ fn main() {
             export_browser_csv_cmd,
             import_browser_csv,
             import_browser_csv_text,
+            import_google_authenticator_totp,
             list_server_versions,
             restore_server_version,
             list_local_snapshots,

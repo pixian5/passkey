@@ -74,9 +74,11 @@ const els = {
   btnExportFirefox: $("#btn-export-firefox"),
   btnExportSafari: $("#btn-export-safari"),
   btnImportBrowser: $("#btn-import-browser"),
+  btnImportGoogleAuthenticator: $("#btn-import-google-authenticator"),
   btnExportBundle: $("#btn-export-bundle"),
   btnImportBundle: $("#btn-import-bundle"),
   fileBrowserCsv: $("#fileBrowserCsv"),
+  fileGoogleAuthenticator: $("#fileGoogleAuthenticator"),
   fileSyncBundle: $("#fileSyncBundle"),
   exportDirectory: $("#exportDirectory"),
   btnSaveDevice: $("#btn-save-device"),
@@ -1690,6 +1692,69 @@ const parseOtpAuthUri = (value) => {
   return { secret, username, site };
 };
 
+const base32Encode = (bytes) => {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let buffer = 0, bits = 0, out = "";
+  for (const byte of bytes) {
+    buffer = (buffer << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += alphabet[(buffer >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  return bits ? out + alphabet[(buffer << (5 - bits)) & 31] : out;
+};
+
+const readProtoVarint = (bytes, start) => {
+  let value = 0, shift = 0, index = start;
+  while (index < bytes.length && shift < 35) {
+    const byte = bytes[index++];
+    value |= (byte & 127) << shift;
+    if (!(byte & 128)) return [value, index];
+    shift += 7;
+  }
+  throw new Error("二维码数据损坏");
+};
+
+const googleMigrationEntries = (raw) => {
+  const url = new URL(raw);
+  if (url.protocol !== "otpauth-migration:") return [];
+  const source = Uint8Array.from(atob(url.searchParams.get("data") || ""), (c) => c.charCodeAt(0));
+  const decoder = new TextDecoder();
+  const readFields = (bytes) => {
+    const fields = []; let index = 0;
+    while (index < bytes.length) {
+      const [tag, afterTag] = readProtoVarint(bytes, index); index = afterTag;
+      const wire = tag & 7, field = tag >>> 3;
+      if (wire === 2) { const [length, afterLength] = readProtoVarint(bytes, index); fields.push([field, bytes.slice(afterLength, afterLength + length)]); index = afterLength + length; }
+      else if (wire === 0) { const [value, afterValue] = readProtoVarint(bytes, index); fields.push([field, value]); index = afterValue; }
+      else throw new Error("不支持的二维码字段");
+    }
+    return fields;
+  };
+  return readFields(source).filter(([field]) => field === 1).flatMap(([, value]) => {
+    const fields = readFields(value); const find = (id) => fields.find(([field]) => field === id)?.[1];
+    const secretBytes = find(1), name = find(2), issuer = find(3), type = find(6);
+    if (!(secretBytes instanceof Uint8Array) || (type != null && type !== 2)) return [];
+    const username = name instanceof Uint8Array ? decoder.decode(name) : "";
+    const issuerText = issuer instanceof Uint8Array ? decoder.decode(issuer) : "";
+    const site = normalizeImportedSite(issuerText) || normalizeImportedSite(username.split("@").pop());
+    return site ? [{ site, username, secret: base32Encode(secretBytes) }] : [];
+  });
+};
+
+const decodeQrFile = async (file) => {
+  const bitmap = await createImageBitmap(file);
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width; canvas.height = bitmap.height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.drawImage(bitmap, 0, 0); bitmap.close?.();
+  const image = context.getImageData(0, 0, canvas.width, canvas.height);
+  const result = window.jsQR?.(image.data, image.width, image.height, { inversionAttempts: "attemptBoth" });
+  return result?.data || "";
+};
+
 const readClipboardText = async () => {
   if (!navigator.clipboard?.readText) throw new Error("当前系统不允许读取剪贴板文本");
   const text = (await navigator.clipboard.readText()).trim();
@@ -2833,6 +2898,27 @@ els.fileBrowserCsv?.addEventListener("change", async () => {
     toastError(`导入失败：${err}`);
   } finally {
     els.fileBrowserCsv.value = "";
+  }
+});
+
+els.btnImportGoogleAuthenticator?.addEventListener("click", () => els.fileGoogleAuthenticator?.click());
+els.fileGoogleAuthenticator?.addEventListener("change", async () => {
+  const files = [...(els.fileGoogleAuthenticator?.files || [])];
+  if (!files.length) return;
+  try {
+    const entries = [];
+    for (const file of files) {
+      const data = await decodeQrFile(file);
+      entries.push(...googleMigrationEntries(data));
+    }
+    if (!entries.length) throw new Error("没有识别到有效的 Google Authenticator 导出二维码");
+    const result = await invoke("import_google_authenticator_totp", { entries });
+    await refreshState();
+    toastSuccess(`验证器导入完成：新增 ${result.created}，更新 ${result.updated}，跳过 ${result.skipped}`);
+  } catch (err) {
+    toastError(`验证器导入失败：${err}`);
+  } finally {
+    if (els.fileGoogleAuthenticator) els.fileGoogleAuthenticator.value = "";
   }
 });
 

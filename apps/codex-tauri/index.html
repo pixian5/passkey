@@ -440,6 +440,15 @@
             </div>
 
             <div class="settings-group">
+              <h3>验证器导入</h3>
+              <div class="form-actions wrap">
+                <button type="button" id="btn-import-google-authenticator">导入谷歌验证器二维码图片</button>
+              </div>
+              <input type="file" id="fileGoogleAuthenticator" accept="image/*" multiple hidden />
+              <p class="hint">可一次选择多张 Google Authenticator 导出二维码；识别过程完全在本机进行。</p>
+            </div>
+
+            <div class="settings-group">
               <h3>同步包</h3>
               <div class="form-actions wrap">
                 <button type="button" id="btn-export-bundle">导出同步包</button>
@@ -681,6 +690,7 @@
       </div>
     </div>
 
+    <script src="/vendor/jsQR.js"></script>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
