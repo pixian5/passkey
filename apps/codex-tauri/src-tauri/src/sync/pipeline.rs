@@ -2,9 +2,7 @@ use super::crypto::{decrypt_wire_body, encrypt_bundle_document, PLAINTEXT_SCHEMA
 use super::http::{get_sync_state, put_sync_state};
 use super::settings::SyncSettings;
 use chrono::Utc;
-use pass_merge::v2::{
-    evaluate_sync_safety, merge_sync_payloads, sync_alias_groups, SyncPayload,
-};
+use pass_merge::v2::{evaluate_sync_safety, merge_sync_payloads, sync_alias_groups, SyncPayload};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -73,11 +71,7 @@ fn extract_payload(doc: &Value) -> Result<SyncPayload, String> {
     serde_json::from_value(doc.clone()).map_err(|e| format!("解析远端 SyncPayload 失败: {e}"))
 }
 
-fn build_bundle_document(
-    payload: &SyncPayload,
-    device_name: &str,
-    platform: &str,
-) -> Value {
+fn build_bundle_document(payload: &SyncPayload, device_name: &str, platform: &str) -> Value {
     let exported = now_ms();
     json!({
         "schema": PLAINTEXT_SCHEMA,
@@ -175,10 +169,7 @@ pub fn preview_sync(
             remote_count
         )
     } else {
-        format!(
-            "预览停止：安全检查未通过（{}）",
-            report.reasons.join(", ")
-        )
+        format!("预览停止：安全检查未通过（{}）", report.reasons.join(", "))
     };
     let _ = (device_name, platform);
     Ok((
@@ -240,10 +231,7 @@ pub fn run_sync(
                     ok: false,
                     dry_run: false,
                     mode: mode.as_str().into(),
-                    message: format!(
-                        "同步停止：安全检查未通过（{}）",
-                        report.reasons.join(", ")
-                    ),
+                    message: format!("同步停止：安全检查未通过（{}）", report.reasons.join(", ")),
                     safe: false,
                     reasons: report.reasons,
                     local_accounts: local.accounts.len(),

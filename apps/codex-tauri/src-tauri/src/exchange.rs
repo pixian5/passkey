@@ -57,8 +57,7 @@ fn now_ms() -> i64 {
 
 fn extract_payload(doc: &Value) -> Result<SyncPayload, String> {
     if let Some(p) = doc.get("payload") {
-        return serde_json::from_value(p.clone())
-            .map_err(|e| format!("解析 payload 失败: {e}"));
+        return serde_json::from_value(p.clone()).map_err(|e| format!("解析 payload 失败: {e}"));
     }
     serde_json::from_value(doc.clone()).map_err(|e| format!("解析 SyncPayload 失败: {e}"))
 }
@@ -183,7 +182,10 @@ fn host_from_url(raw: &str) -> Option<String> {
     if t.is_empty() {
         return None;
     }
-    if let Some(rest) = t.strip_prefix("https://").or_else(|| t.strip_prefix("http://")) {
+    if let Some(rest) = t
+        .strip_prefix("https://")
+        .or_else(|| t.strip_prefix("http://"))
+    {
         let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
         let host = host.trim().trim_start_matches('[').trim_end_matches(']');
         if host.is_empty() {
@@ -380,19 +382,14 @@ pub fn list_sync_versions(settings: &SyncSettings) -> Result<Vec<SyncVersionSumm
     if !token.is_empty() {
         req = req.header("Authorization", format!("Bearer {token}"));
     }
-    let resp = req
-        .send()
-        .map_err(|e| format!("读取快照失败: {e}"))?;
+    let resp = req.send().map_err(|e| format!("读取快照失败: {e}"))?;
     if !resp.status().is_success() {
         let code = resp.status().as_u16();
         let text = resp.text().unwrap_or_default();
         return Err(format!("读取快照失败 HTTP {code}: {text}"));
     }
-    let text = resp
-        .text()
-        .map_err(|e| format!("读取快照列表失败: {e}"))?;
-    let value: Value =
-        serde_json::from_str(&text).map_err(|e| format!("解析快照列表失败: {e}"))?;
+    let text = resp.text().map_err(|e| format!("读取快照列表失败: {e}"))?;
+    let value: Value = serde_json::from_str(&text).map_err(|e| format!("解析快照列表失败: {e}"))?;
     let arr = value
         .as_array()
         .or_else(|| value.get("versions").and_then(|v| v.as_array()))
@@ -415,10 +412,7 @@ pub fn list_sync_versions(settings: &SyncSettings) -> Result<Vec<SyncVersionSumm
                 .get("exportedAtMs")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0),
-            saved_at_ms: item
-                .get("savedAtMs")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0),
+            saved_at_ms: item.get("savedAtMs").and_then(|v| v.as_i64()).unwrap_or(0),
             payload_sha256: item
                 .get("payloadSha256")
                 .or_else(|| item.get("sha256"))
@@ -475,9 +469,7 @@ pub fn restore_sync_version(
     if !token.is_empty() {
         get_req = get_req.header("Authorization", format!("Bearer {token}"));
     }
-    let resp = get_req
-        .send()
-        .map_err(|e| format!("下载快照失败: {e}"))?;
+    let resp = get_req.send().map_err(|e| format!("下载快照失败: {e}"))?;
     if !resp.status().is_success() {
         let code = resp.status().as_u16();
         let text = resp.text().unwrap_or_default();

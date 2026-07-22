@@ -8,8 +8,8 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use uuid::Uuid;
 
-use crate::sync::crypto::is_valid_sync_key;
 use crate::local_vault;
+use crate::sync::crypto::is_valid_sync_key;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,19 +90,23 @@ pub fn load_ssh_credential(data_dir: &Path, host: &str) -> Option<SshCredential>
     file.values.get(&normalize_host(host)).cloned()
 }
 
-pub fn save_ssh_credential(data_dir: &Path, host: &str, cred: &SshCredential) -> Result<(), String> {
+pub fn save_ssh_credential(
+    data_dir: &Path,
+    host: &str,
+    cred: &SshCredential,
+) -> Result<(), String> {
     let path = data_dir.join(CRED_FILE);
-    let mut file: CredFile = local_vault::read_text(data_dir, &path, "pass.tauri.ssh_credentials.v1")
-        .ok()
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(CredFile {
-            version: 1,
-            values: Default::default(),
-        });
+    let mut file: CredFile =
+        local_vault::read_text(data_dir, &path, "pass.tauri.ssh_credentials.v1")
+            .ok()
+            .flatten()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(CredFile {
+                version: 1,
+                values: Default::default(),
+            });
     file.version = 1;
-    file.values
-        .insert(normalize_host(host), cred.clone());
+    file.values.insert(normalize_host(host), cred.clone());
     let raw = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
     local_vault::write_text(data_dir, &path, "pass.tauri.ssh_credentials.v1", &raw)
 }
@@ -330,9 +334,7 @@ fn run_process(
     stdin_data: Option<&[u8]>,
 ) -> Result<String, String> {
     let mut cmd = Command::new(exe);
-    cmd.args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     if stdin_data.is_some() {
         cmd.stdin(Stdio::piped());
     } else {
@@ -406,11 +408,7 @@ fn scp_file(
         args[i] = "-P".into();
     }
     args.push(local.display().to_string());
-    args.push(format!(
-        "{}:{}",
-        remote_target(cred, endpoint),
-        remote_path
-    ));
+    args.push(format!("{}:{}", remote_target(cred, endpoint), remote_path));
     let env = ssh_env(temp);
     run_process(scp_bin(), &args, &env, None)?;
     Ok(())
@@ -462,7 +460,10 @@ fn ssh_cp_remote(
 ) -> Result<(), String> {
     let cmd = format!(
         "cp -- '{}' '{}' && chmod {mode} '{dst}'",
-        src, dst, mode = mode, dst = dst
+        src,
+        dst,
+        mode = mode,
+        dst = dst
     );
     ssh_run(cred, endpoint, temp, &cmd).map(|_| ())
 }
@@ -532,7 +533,6 @@ RandomizedDelaySec=15m
 [Install]
 WantedBy=timers.target
 "#;
-
 
 fn environment_text(sync_encryption_key: &str) -> String {
     let configured = !sync_encryption_key.trim().is_empty();
@@ -694,7 +694,11 @@ fn resource_path(name: &str) -> Result<PathBuf, String> {
         }
     }
     // Dev: relative to CARGO_MANIFEST_DIR
-    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join(name));
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join(name),
+    );
     // Workspace sibling
     candidates.push(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -710,10 +714,7 @@ fn resource_path(name: &str) -> Result<PathBuf, String> {
 }
 
 pub fn verify_public_endpoint(endpoint: &str) -> bool {
-    let url = format!(
-        "{}/healthz",
-        endpoint.trim().trim_end_matches('/')
-    );
+    let url = format!("{}/healthz", endpoint.trim().trim_end_matches('/'));
     let client = match reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
         .danger_accept_invalid_certs(true)
@@ -934,12 +935,7 @@ pub fn provision_server(
                 "server.crt",
                 "cert.pem",
             ];
-            let key_names = [
-                "sbbz.tech.key",
-                "server.key",
-                "privkey.pem",
-                "private.key",
-            ];
+            let key_names = ["sbbz.tech.key", "server.key", "privkey.pem", "private.key"];
             let mut has_cert = false;
             let mut has_key = false;
             for name in cert_names {
@@ -998,12 +994,7 @@ pub fn provision_server(
     )?;
 
     let cleanup = || {
-        let _ = ssh_run(
-            &credential,
-            &endpoint,
-            &temp,
-            &format!("rm -rf '{stage}'"),
-        );
+        let _ = ssh_run(&credential, &endpoint, &temp, &format!("rm -rf '{stage}'"));
     };
 
     if let Err(e) = scp_file(

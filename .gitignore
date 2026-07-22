@@ -9,6 +9,9 @@ apps/app_macos/Vendor/pass_core_ffi/
 apps/app_macos/dist/
 apps/app_macos/build/
 
+# Gradle build cache
+.gradle/
+
 # OS noise
 .DS_Store
 

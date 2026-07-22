@@ -53,6 +53,7 @@ pub fn load_sync_settings(data_dir: &PathBuf) -> SyncSettings {
 
 pub fn save_sync_settings(data_dir: &PathBuf, settings: &SyncSettings) -> Result<(), String> {
     let path = settings_path(data_dir);
-    let raw = serde_json::to_string_pretty(settings).map_err(|e| format!("序列化同步设置失败: {e}"))?;
+    let raw =
+        serde_json::to_string_pretty(settings).map_err(|e| format!("序列化同步设置失败: {e}"))?;
     local_vault::write_text(data_dir, &path, "pass.tauri.sync_settings.v1", &raw)
 }

@@ -5,7 +5,10 @@ use aes_gcm::{
     aead::{Aead, KeyInit, Payload},
     Aes256Gcm, Nonce,
 };
-use base64::{engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD}, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine as _,
+};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -108,10 +111,7 @@ pub fn encrypt_bundle_document(document: &Value, key_string: &str) -> Result<Vec
 pub fn decrypt_wire_body(body: &[u8], key_string: &str) -> Result<Value, String> {
     let value: Value =
         serde_json::from_slice(body).map_err(|e| format!("同步响应不是 JSON: {e}"))?;
-    let schema = value
-        .get("schema")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let schema = value.get("schema").and_then(|v| v.as_str()).unwrap_or("");
     if schema == PLAINTEXT_SCHEMA {
         if !key_string.trim().is_empty() {
             return Err("同步密钥已配置，拒绝未加密同步包".into());

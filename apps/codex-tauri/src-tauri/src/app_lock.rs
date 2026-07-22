@@ -31,6 +31,39 @@ const KEY_LEN: usize = 32;
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Lock behaviours shared with the older Swift desktop client.
+///
+/// Values are camel-cased on disk and over Tauri IPC so the frontend does not
+/// need platform-specific translations.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AppLockPolicy {
+    /// Keep the current session unlocked until the application exits or the
+    /// user explicitly locks it.
+    OnceUntilQuit,
+    /// Lock after a configured period without user activity.
+    IdleTimeout,
+    /// Lock immediately when the main window is no longer focused.
+    OnBackground,
+}
+
+impl Default for AppLockPolicy {
+    fn default() -> Self {
+        Self::OnceUntilQuit
+    }
+}
+
+// Tauri builds before lock policies existed always used an idle timeout.
+// Preserve that behaviour for existing users rather than silently weakening
+// their current lock setting after the upgrade.
+fn legacy_lock_policy() -> AppLockPolicy {
+    AppLockPolicy::IdleTimeout
+}
+
+fn default_prefer_biometrics() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppLockPublicState {
@@ -38,6 +71,8 @@ pub struct AppLockPublicState {
     pub locked: bool,
     pub idle_lock_minutes: u32,
     pub has_password: bool,
+    pub lock_policy: AppLockPolicy,
+    pub prefer_biometrics: bool,
     /// Biometric unlock is ready (session key sealed after a successful password unlock).
     #[serde(default)]
     pub biometric_ready: bool,
@@ -51,6 +86,10 @@ struct AppLockRecord {
     verifier_b64: String,
     iterations: u32,
     idle_lock_minutes: u32,
+    #[serde(default = "legacy_lock_policy")]
+    lock_policy: AppLockPolicy,
+    #[serde(default = "default_prefer_biometrics")]
+    prefer_biometrics: bool,
 }
 
 #[derive(Debug, Default)]
@@ -143,13 +182,20 @@ impl AppLockState {
             .map(|r| r.idle_lock_minutes)
             .unwrap_or(5)
             .clamp(1, 60);
+        let policy = record.as_ref().map(|r| r.lock_policy).unwrap_or_default();
+        let prefer_biometrics = record
+            .as_ref()
+            .map(|r| r.prefer_biometrics)
+            .unwrap_or_else(default_prefer_biometrics);
         let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if enabled {
-            // Auto-lock on idle
-            let elapsed = now_ms().saturating_sub(guard.last_activity_ms);
-            if guard.unlocked && elapsed >= (idle as i64) * 60_000 {
-                guard.unlocked = false;
-                guard.session_key = None;
+            if policy == AppLockPolicy::IdleTimeout {
+                // Auto-lock on idle
+                let elapsed = now_ms().saturating_sub(guard.last_activity_ms);
+                if guard.unlocked && elapsed >= (idle as i64) * 60_000 {
+                    guard.unlocked = false;
+                    guard.session_key = None;
+                }
             }
         } else {
             // Lock disabled → treat as unlocked for vault access
@@ -160,6 +206,8 @@ impl AppLockState {
             locked: enabled && !guard.unlocked,
             idle_lock_minutes: idle,
             has_password,
+            lock_policy: policy,
+            prefer_biometrics,
             biometric_ready: data_dir.join(BIOMETRIC_SESSION_FILE).is_file(),
         }
     }
@@ -185,7 +233,12 @@ impl AppLockState {
         password: &str,
         confirm: &str,
         idle_lock_minutes: u32,
+        lock_policy: AppLockPolicy,
+        prefer_biometrics: bool,
     ) -> Result<AppLockPublicState, String> {
+        if load_record(data_dir).is_some_and(|record| record.enabled) {
+            return Err("应用锁已启用，请先关闭后再设置新的主密码".into());
+        }
         let password = password.trim();
         let confirm = confirm.trim();
         if password.is_empty() {
@@ -203,6 +256,8 @@ impl AppLockState {
             verifier_b64: verifier_from_key(&key),
             iterations: PBKDF2_ITERS,
             idle_lock_minutes: idle_lock_minutes.clamp(1, 60),
+            lock_policy,
+            prefer_biometrics,
         };
         save_record(data_dir, &record)?;
         let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
@@ -214,17 +269,13 @@ impl AppLockState {
         Ok(self.public_state(data_dir))
     }
 
-    pub fn disable(
-        &self,
-        data_dir: &PathBuf,
-        password: &str,
-    ) -> Result<AppLockPublicState, String> {
-        self.unlock(data_dir, password)?;
+    /// Disable after the caller has already verified the password and safely
+    /// migrated any session-key-encrypted data out of the lock domain.
+    pub fn disable_unlocked(&self, data_dir: &PathBuf) -> Result<AppLockPublicState, String> {
         if let Some(mut record) = load_record(data_dir) {
             record.enabled = false;
             save_record(data_dir, &record)?;
         }
-        // Keep verifier so re-enable can reuse or user can set again; for simplicity remove lock file secrets stay encrypted.
         let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         guard.unlocked = true;
         drop(guard);
@@ -335,24 +386,49 @@ impl AppLockState {
         Ok(())
     }
 
-    pub fn lock_now(&self) -> AppLockPublicState {
+    pub fn lock_now(&self, data_dir: &PathBuf) -> AppLockPublicState {
         let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         guard.unlocked = false;
         guard.session_key = None;
-        // Return approximate state without data_dir — caller should refresh.
-        AppLockPublicState {
-            enabled: true,
-            locked: true,
-            idle_lock_minutes: 5,
-            has_password: true,
-            biometric_ready: false,
+        drop(guard);
+        self.public_state(data_dir)
+    }
+
+    pub fn set_preferences(
+        &self,
+        data_dir: &PathBuf,
+        lock_policy: AppLockPolicy,
+        idle_lock_minutes: u32,
+        prefer_biometrics: bool,
+    ) -> Result<(), String> {
+        let mut record = load_record(data_dir).ok_or_else(|| "尚未设置主密码".to_string())?;
+        record.lock_policy = lock_policy;
+        record.idle_lock_minutes = idle_lock_minutes.clamp(1, 60);
+        record.prefer_biometrics = prefer_biometrics;
+        save_record(data_dir, &record)
+    }
+
+    /// Called from Tauri's cross-platform window lifecycle, rather than from a
+    /// platform-specific frontend bridge.
+    pub fn lock_on_background(&self, data_dir: &PathBuf) -> AppLockPublicState {
+        let policy = load_record(data_dir)
+            .map(|record| record.lock_policy)
+            .unwrap_or_default();
+        if policy == AppLockPolicy::OnBackground {
+            self.lock_now(data_dir)
+        } else {
+            self.public_state(data_dir)
         }
     }
 
-    pub fn set_idle_minutes(&self, data_dir: &PathBuf, minutes: u32) -> Result<(), String> {
-        let mut record = load_record(data_dir).ok_or_else(|| "尚未设置主密码".to_string())?;
-        record.idle_lock_minutes = minutes.clamp(1, 60);
-        save_record(data_dir, &record)
+    /// Delete secrets that were encrypted with the session key after their
+    /// plaintext replacement has been durably saved by the caller.
+    pub fn clear_sync_secrets(&self, data_dir: &PathBuf) -> Result<(), String> {
+        let path = secrets_path(data_dir);
+        if path.exists() {
+            std::fs::remove_file(path).map_err(|e| format!("删除旧同步密钥失败: {e}"))?;
+        }
+        Ok(())
     }
 
     fn session_key(&self) -> Result<[u8; KEY_LEN], String> {
@@ -527,4 +603,56 @@ pub fn biometric_available(app: &AppHandle) -> bool {
 #[cfg(not(target_os = "macos"))]
 pub fn biometric_available(_app: &tauri::AppHandle) -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_dir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("pass-tauri-app-lock-{name}-{}", now_ms()));
+        std::fs::create_dir_all(&path).expect("create temporary lock directory");
+        path
+    }
+
+    #[test]
+    fn legacy_lock_record_keeps_idle_timeout_policy() {
+        let dir = test_dir("legacy");
+        std::fs::write(
+            lock_path(&dir),
+            r#"{"enabled":true,"saltB64":"c2FsdA==","verifierB64":"dmVyaWZpZXI=","iterations":310000,"idleLockMinutes":7}"#,
+        )
+        .expect("write legacy record");
+
+        let state = AppLockState::default();
+        let public = state.public_state(&dir);
+        assert_eq!(public.lock_policy, AppLockPolicy::IdleTimeout);
+        assert!(public.prefer_biometrics);
+        assert_eq!(public.idle_lock_minutes, 7);
+        assert!(public.locked);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn background_policy_locks_but_once_until_quit_does_not() {
+        let dir = test_dir("policies");
+        let state = AppLockState::default();
+        state
+            .enable(
+                &dir,
+                "correct horse battery staple",
+                "correct horse battery staple",
+                5,
+                AppLockPolicy::OnceUntilQuit,
+                false,
+            )
+            .expect("enable once-until-quit");
+        assert!(!state.lock_on_background(&dir).locked);
+
+        state
+            .set_preferences(&dir, AppLockPolicy::OnBackground, 5, false)
+            .expect("set background policy");
+        assert!(state.lock_on_background(&dir).locked);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

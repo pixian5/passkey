@@ -135,7 +135,9 @@ const els = {
   lockStatus: $("#lockStatus"),
   lockPassword: $("#lockPassword"),
   lockPassword2: $("#lockPassword2"),
+  lockPolicy: $("#lockPolicy"),
   idleMinutes: $("#idleMinutes"),
+  preferBiometrics: $("#preferBiometrics"),
   btnLockEnable: $("#btn-lock-enable"),
   btnLockDisable: $("#btn-lock-disable"),
   btnLockIdle: $("#btn-lock-idle"),
@@ -192,6 +194,8 @@ let lockState = {
   locked: false,
   idleLockMinutes: 5,
   hasPassword: false,
+  lockPolicy: "onceUntilQuit",
+  preferBiometrics: true,
   biometricReady: false,
 };
 let activityTimer = null;
@@ -1773,7 +1777,9 @@ const refreshState = async () => {
 
 const applyLockUi = () => {
   const locked = Boolean(lockState.enabled && lockState.locked);
-  const canBiometric = Boolean(biometricAvailable && lockState.biometricReady);
+  const canBiometric = Boolean(
+    biometricAvailable && lockState.biometricReady && lockState.preferBiometrics
+  );
   if (els.lockOverlay) els.lockOverlay.hidden = !locked;
   if (els.appMain) els.appMain.style.visibility = locked ? "hidden" : "visible";
   if (els.btnUnlockBiometric) {
@@ -1785,17 +1791,28 @@ const applyLockUi = () => {
     els.btnUnlock.classList.toggle("primary", !canBiometric);
   }
   if (els.lockStatus) {
+    const policyTitle = {
+      onceUntilQuit: "退出前不锁定",
+      idleTimeout: `空闲 ${lockState.idleLockMinutes || 5} 分钟锁定`,
+      onBackground: "切到后台锁定",
+    }[lockState.lockPolicy] || "退出前不锁定";
     const bioHint = canBiometric
       ? "；可用指纹"
-      : biometricAvailable
+      : biometricAvailable && lockState.preferBiometrics
         ? "；指纹待主密码初始化"
         : "";
     els.lockStatus.textContent = lockState.enabled
-      ? `状态：已启用；${lockState.locked ? "已锁定" : "已解锁"}；空闲 ${lockState.idleLockMinutes || 5} 分钟${bioHint}`
+      ? `状态：已启用；${lockState.locked ? "已锁定" : "已解锁"}；${policyTitle}${bioHint}`
       : "状态：未启用";
+  }
+  if (els.lockPolicy) {
+    els.lockPolicy.value = lockState.lockPolicy || "onceUntilQuit";
   }
   if (els.idleMinutes && lockState.idleLockMinutes) {
     els.idleMinutes.value = String(lockState.idleLockMinutes);
+  }
+  if (els.preferBiometrics) {
+    els.preferBiometrics.checked = Boolean(lockState.preferBiometrics);
   }
   if (locked && canBiometric && !biometricAutoTried) {
     biometricAutoTried = true;
@@ -3087,6 +3104,8 @@ els.btnLockEnable?.addEventListener("click", async () => {
       password,
       confirm,
       idleLockMinutes: Number(els.idleMinutes?.value || 5),
+      lockPolicy: els.lockPolicy?.value || "onceUntilQuit",
+      preferBiometrics: Boolean(els.preferBiometrics?.checked),
     });
     try {
       await saveAllSyncRelated();
@@ -3126,9 +3145,13 @@ els.btnLockDisable?.addEventListener("click", async () => {
 els.btnLockIdle?.addEventListener("click", async () => {
   const restore = setButtonBusy(els.btnLockIdle, "正在保存…");
   try {
-    lockState = await invoke("lock_set_idle", { minutes: Number(els.idleMinutes?.value || 5) });
+    lockState = await invoke("lock_save_preferences", {
+      lockPolicy: els.lockPolicy?.value || "onceUntilQuit",
+      idleLockMinutes: Number(els.idleMinutes?.value || 5),
+      preferBiometrics: Boolean(els.preferBiometrics?.checked),
+    });
     applyLockUi();
-    toastSuccess("空闲时间已保存");
+    toastSuccess("锁定策略已保存");
   } catch (err) {
     toastError(String(err));
   } finally {

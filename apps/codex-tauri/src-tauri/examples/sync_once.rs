@@ -11,10 +11,10 @@
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
 
-#[path = "../src/sync/mod.rs"]
-mod sync;
 #[path = "../src/local_vault.rs"]
 mod local_vault;
+#[path = "../src/sync/mod.rs"]
+mod sync;
 
 use pass_merge::v2::{Folder, Passkey, PasswordAccount};
 use sync::pipeline::{local_payload_from_vault, run_sync};
@@ -40,12 +40,11 @@ fn open_db(dir: &PathBuf) -> Connection {
 }
 
 fn read_kv(conn: &Connection, data_dir: &PathBuf, key: &str) -> Option<String> {
-    let stored: String = conn.query_row(
-        "SELECT value FROM kv WHERE key = ?1",
-        params![key],
-        |row| row.get(0),
-    )
-    .ok()?;
+    let stored: String = conn
+        .query_row("SELECT value FROM kv WHERE key = ?1", params![key], |row| {
+            row.get(0)
+        })
+        .ok()?;
     match local_vault::decrypt_text(data_dir, "pass.tauri.sqlite.kv.v1", &stored).ok()? {
         Some(value) => Some(value),
         None => Some(stored),
@@ -53,8 +52,8 @@ fn read_kv(conn: &Connection, data_dir: &PathBuf, key: &str) -> Option<String> {
 }
 
 fn write_kv(conn: &Connection, data_dir: &PathBuf, key: &str, value: &str) {
-    let encrypted = local_vault::encrypt_text(data_dir, "pass.tauri.sqlite.kv.v1", value)
-        .expect("encrypt kv");
+    let encrypted =
+        local_vault::encrypt_text(data_dir, "pass.tauri.sqlite.kv.v1", value).expect("encrypt kv");
     conn.execute(
         "INSERT INTO kv(key, value) VALUES(?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -69,12 +68,11 @@ fn load_json_vec<T: serde::de::DeserializeOwned>(
     key: &str,
 ) -> Vec<T> {
     match read_kv(conn, data_dir, key) {
-        Some(raw) if !raw.trim().is_empty() && raw.trim() != "null" => {
-            serde_json::from_str(&raw).unwrap_or_else(|e| {
+        Some(raw) if !raw.trim().is_empty() && raw.trim() != "null" => serde_json::from_str(&raw)
+            .unwrap_or_else(|e| {
                 eprintln!("warn: parse {key}: {e}");
                 vec![]
-            })
-        }
+            }),
         _ => vec![],
     }
 }
@@ -100,7 +98,8 @@ fn main() {
     }
 
     let conn = open_db(&dir);
-    let device = read_kv(&conn, &dir, "settings.device_name").unwrap_or_else(|| "CodexDesktop".into());
+    let device =
+        read_kv(&conn, &dir, "settings.device_name").unwrap_or_else(|| "CodexDesktop".into());
     let accounts: Vec<PasswordAccount> = load_json_vec(&conn, &dir, "accounts.v2");
     let folders: Vec<Folder> = load_json_vec(&conn, &dir, "folders.v1");
     let passkeys: Vec<Passkey> = load_json_vec(&conn, &dir, "passkeys.v1");

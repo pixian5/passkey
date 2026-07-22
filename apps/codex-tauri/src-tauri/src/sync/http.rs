@@ -24,6 +24,15 @@ pub fn validate_base_url(base: &str) -> Result<String, String> {
         return Err("同步服务器 URL 不能为空".into());
     }
     let parsed = url::Url::parse(&base).map_err(|_| "同步服务器 URL 无效".to_string())?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("同步服务器 URL 不应包含账号或密码".into());
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err("同步服务器 URL 不应包含查询串或锚点".into());
+    }
+    if !matches!(parsed.path(), "" | "/") {
+        return Err("同步服务器 URL 不应包含路径".into());
+    }
     let is_local = match parsed.host() {
         Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
         Some(url::Host::Ipv4(host)) => host.is_loopback(),
@@ -122,8 +131,7 @@ pub fn put_sync_state(
         if !etag.trim().is_empty() {
             headers.insert(
                 IF_MATCH,
-                HeaderValue::from_str(etag.trim())
-                    .map_err(|_| "ETag 非法".to_string())?,
+                HeaderValue::from_str(etag.trim()).map_err(|_| "ETag 非法".to_string())?,
             );
         }
     }
@@ -167,5 +175,16 @@ mod tests {
         assert!(validate_base_url("http://127.0.0.1:53333").is_ok());
         assert!(validate_base_url("http://localhost.evil.test").is_err());
         assert!(validate_base_url("http://sync.example.test").is_err());
+    }
+
+    #[test]
+    fn rejects_credentials_query_fragment_and_paths() {
+        assert!(validate_base_url("https://user:pass@sync.example.test").is_err());
+        assert!(validate_base_url("https://user@sync.example.test").is_err());
+        assert!(validate_base_url("https://sync.example.test/?a=b").is_err());
+        assert!(validate_base_url("https://sync.example.test/#frag").is_err());
+        assert!(validate_base_url("https://sync.example.test/foo").is_err());
+        assert!(validate_base_url("ftp://sync.example.test").is_err());
+        assert!(validate_base_url("http://127.0.0.1.evil.test").is_err());
     }
 }

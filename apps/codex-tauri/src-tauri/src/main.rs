@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use pass_merge::v2::{sync_alias_groups, Folder, Passkey, PasswordAccount, SyncPayload};
 
-use app_lock::{AppLockPublicState, AppLockState};
+use app_lock::{AppLockPolicy, AppLockPublicState, AppLockState};
 use exchange::{
     browser_entries_from_csv, build_bundle_bytes, build_csv_string, export_browser_csv,
     import_bundle_content, list_sync_versions, local_from_parts, merge_imported_accounts,
@@ -677,10 +677,7 @@ fn sync_now_mode(
 }
 
 #[tauri::command]
-fn get_ui_prefs(
-    app: AppHandle,
-    state: tauri::State<AppLockState>,
-) -> Result<UiPrefs, String> {
+fn get_ui_prefs(app: AppHandle, state: tauri::State<AppLockState>) -> Result<UiPrefs, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
     Ok(load_ui_prefs(&dir))
@@ -1301,29 +1298,27 @@ fn normalize_sites(sites: Vec<String>) -> Vec<String> {
 }
 
 fn sort_accounts(accounts: &mut [PasswordAccount]) {
-    accounts.sort_by(|a, b| {
-        match (a.is_pinned, b.is_pinned) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            (true, true) => match (a.pinned_sort_order, b.pinned_sort_order) {
-                (Some(lo), Some(ro)) if lo != ro => lo.cmp(&ro),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                _ => b
-                    .updated_at_ms
-                    .cmp(&a.updated_at_ms)
-                    .then_with(|| a.account_id.cmp(&b.account_id)),
-            },
-            (false, false) => match (a.regular_sort_order, b.regular_sort_order) {
-                (Some(lo), Some(ro)) if lo != ro => lo.cmp(&ro),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                _ => b
-                    .updated_at_ms
-                    .cmp(&a.updated_at_ms)
-                    .then_with(|| a.account_id.cmp(&b.account_id)),
-            },
-        }
+    accounts.sort_by(|a, b| match (a.is_pinned, b.is_pinned) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        (true, true) => match (a.pinned_sort_order, b.pinned_sort_order) {
+            (Some(lo), Some(ro)) if lo != ro => lo.cmp(&ro),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            _ => b
+                .updated_at_ms
+                .cmp(&a.updated_at_ms)
+                .then_with(|| a.account_id.cmp(&b.account_id)),
+        },
+        (false, false) => match (a.regular_sort_order, b.regular_sort_order) {
+            (Some(lo), Some(ro)) if lo != ro => lo.cmp(&ro),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            _ => b
+                .updated_at_ms
+                .cmp(&a.updated_at_ms)
+                .then_with(|| a.account_id.cmp(&b.account_id)),
+        },
     });
 }
 
@@ -1337,10 +1332,20 @@ fn apply_folder_order(folders: &mut [Folder], order: &[String]) {
         .map(|(i, id)| (id.to_ascii_lowercase(), i))
         .collect();
     folders.sort_by(|a, b| {
-        let ra = rank.get(&a.id.to_ascii_lowercase()).copied().unwrap_or(usize::MAX);
-        let rb = rank.get(&b.id.to_ascii_lowercase()).copied().unwrap_or(usize::MAX);
+        let ra = rank
+            .get(&a.id.to_ascii_lowercase())
+            .copied()
+            .unwrap_or(usize::MAX);
+        let rb = rank
+            .get(&b.id.to_ascii_lowercase())
+            .copied()
+            .unwrap_or(usize::MAX);
         ra.cmp(&rb)
-            .then_with(|| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()))
+            .then_with(|| {
+                a.name
+                    .to_ascii_lowercase()
+                    .cmp(&b.name.to_ascii_lowercase())
+            })
             .then_with(|| a.id.to_ascii_lowercase().cmp(&b.id.to_ascii_lowercase()))
     });
 }
@@ -1699,10 +1704,33 @@ fn lock_enable(
     password: String,
     confirm: String,
     idle_lock_minutes: u32,
+    lock_policy: AppLockPolicy,
+    prefer_biometrics: bool,
 ) -> Result<AppLockPublicState, String> {
     let dir = data_dir(&app)?;
-    let _ = state.enable(&dir, &password, &confirm, idle_lock_minutes)?;
-    let _ = state.store_biometric_key(&app);
+    let _ = state.enable(
+        &dir,
+        &password,
+        &confirm,
+        idle_lock_minutes,
+        lock_policy,
+        prefer_biometrics,
+    )?;
+
+    // Move any existing sync credentials behind the newly-derived session key
+    // immediately. The frontend also saves its current form, but doing this in
+    // the command closes the gap if it is interrupted before that callback.
+    let mut settings = load_sync_settings(&dir);
+    state.seal_sync_secrets(&dir, &settings.auth_token, &settings.encryption_key)?;
+    settings.auth_token.clear();
+    settings.encryption_key.clear();
+    save_sync_settings(&dir, &settings)?;
+
+    if prefer_biometrics {
+        let _ = state.store_biometric_key(&app);
+    } else {
+        let _ = state.clear_biometric_key(&app);
+    }
     Ok(state.public_state(&dir))
 }
 
@@ -1713,7 +1741,22 @@ fn lock_disable(
     password: String,
 ) -> Result<AppLockPublicState, String> {
     let dir = data_dir(&app)?;
-    let _ = state.disable(&dir, &password)?;
+    // Validate before exposing the settings, then move secrets back into the
+    // standard encrypted settings vault. Without this conversion a disabled
+    // lock could leave secrets encrypted with a session key that is unavailable
+    // after restarting the app.
+    let _ = state.unlock(&dir, &password)?;
+    let (token, key) = state.open_sync_secrets(&dir)?;
+    let mut settings = load_sync_settings(&dir);
+    if !token.is_empty() {
+        settings.auth_token = token;
+    }
+    if !key.is_empty() {
+        settings.encryption_key = key;
+    }
+    save_sync_settings(&dir, &settings)?;
+    let _ = state.disable_unlocked(&dir)?;
+    let _ = state.clear_sync_secrets(&dir);
     let _ = state.clear_biometric_key(&app);
     Ok(state.public_state(&dir))
 }
@@ -1726,7 +1769,9 @@ fn lock_unlock(
 ) -> Result<AppLockPublicState, String> {
     let dir = data_dir(&app)?;
     let _ = state.unlock(&dir, &password)?;
-    let _ = state.store_biometric_key(&app);
+    if state.public_state(&dir).prefer_biometrics {
+        let _ = state.store_biometric_key(&app);
+    }
     Ok(state.public_state(&dir))
 }
 
@@ -1745,18 +1790,30 @@ fn lock_biometric_available(app: AppHandle) -> bool {
 }
 
 #[tauri::command]
-fn lock_now(state: tauri::State<AppLockState>) -> AppLockPublicState {
-    state.lock_now()
+fn lock_now(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<AppLockPublicState, String> {
+    let dir = data_dir(&app)?;
+    Ok(state.lock_now(&dir))
 }
 
 #[tauri::command]
-fn lock_set_idle(
+fn lock_save_preferences(
     app: AppHandle,
     state: tauri::State<AppLockState>,
-    minutes: u32,
+    lock_policy: AppLockPolicy,
+    idle_lock_minutes: u32,
+    prefer_biometrics: bool,
 ) -> Result<AppLockPublicState, String> {
     let dir = data_dir(&app)?;
-    state.set_idle_minutes(&dir, minutes)?;
+    state.require_unlocked(&dir)?;
+    state.set_preferences(&dir, lock_policy, idle_lock_minutes, prefer_biometrics)?;
+    if prefer_biometrics {
+        let _ = state.store_biometric_key(&app);
+    } else {
+        let _ = state.clear_biometric_key(&app);
+    }
     Ok(state.public_state(&dir))
 }
 
@@ -2099,11 +2156,16 @@ fn canonical_active_folder_ids(
     folders: &[Folder],
     folder_ids: &[String],
 ) -> Result<Vec<String>, String> {
-    let active_folders: BTreeMap<String, String> = folders
+    let mut active_folders: BTreeMap<String, String> = BTreeMap::new();
+    for folder in folders
         .iter()
         .filter(|folder| !folder.is_deleted && !folder.is_permanently_deleted)
-        .map(|folder| (folder.id.to_ascii_lowercase(), folder.id.clone()))
-        .collect();
+    {
+        let key = folder.id.to_ascii_lowercase();
+        if active_folders.insert(key, folder.id.clone()).is_some() {
+            return Err("文件夹 ID 存在大小写冲突，无法安全解析".into());
+        }
+    }
     let mut seen = BTreeSet::new();
     let mut normalized = Vec::new();
     for raw_id in folder_ids {
@@ -2368,6 +2430,12 @@ fn main() {
                             let _ = window_state::save(&state_window, &data_dir);
                         }
                     }
+                    if matches!(event, tauri::WindowEvent::Focused(false)) {
+                        let handle = state_window.app_handle();
+                        if let Ok(data_dir) = app_data_dir(&handle) {
+                            handle.state::<AppLockState>().lock_on_background(&data_dir);
+                        }
+                    }
                 });
             }
             #[cfg(target_os = "macos")]
@@ -2481,7 +2549,7 @@ fn main() {
             lock_unlock_biometric,
             lock_biometric_available,
             lock_now,
-            lock_set_idle,
+            lock_save_preferences,
             lock_touch,
             reorder_folders,
             toggle_account_pin,
@@ -2601,6 +2669,11 @@ mod tests {
                 is_deleted: true,
                 ..Default::default()
             },
+            Folder {
+                id: "perm-gone".into(),
+                is_permanently_deleted: true,
+                ..Default::default()
+            },
         ];
         let ids = vec![" ACTIVE-FOLDER ".into(), "active-folder".into()];
         assert_eq!(
@@ -2608,6 +2681,22 @@ mod tests {
             vec!["active-folder"]
         );
         assert!(canonical_active_folder_ids(&folders, &["deleted-folder".into()]).is_err());
+        assert!(canonical_active_folder_ids(&folders, &["perm-gone".into()]).is_err());
         assert!(canonical_active_folder_ids(&folders, &["missing-folder".into()]).is_err());
+    }
+
+    #[test]
+    fn account_folder_ids_reject_case_only_collisions() {
+        let folders = vec![
+            Folder {
+                id: "Work".into(),
+                ..Default::default()
+            },
+            Folder {
+                id: "work".into(),
+                ..Default::default()
+            },
+        ];
+        assert!(canonical_active_folder_ids(&folders, &["work".into()]).is_err());
     }
 }

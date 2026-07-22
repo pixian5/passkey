@@ -44,7 +44,8 @@ fn load(data_dir: &Path) -> Result<Vec<LocalSnapshot>, String> {
 }
 
 fn save(data_dir: &Path, snapshots: &[LocalSnapshot]) -> Result<(), String> {
-    let raw = serde_json::to_string(snapshots).map_err(|e| format!("序列化本地安全快照失败: {e}"))?;
+    let raw =
+        serde_json::to_string(snapshots).map_err(|e| format!("序列化本地安全快照失败: {e}"))?;
     local_vault::write_text(data_dir, &path(data_dir), SNAPSHOTS_CONTEXT, &raw)
 }
 
@@ -91,7 +92,8 @@ mod tests {
 
     #[test]
     fn keeps_newest_twenty_encrypted_snapshots() {
-        let root = std::env::temp_dir().join(format!("pass-tauri-snapshot-test-{}", Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("pass-tauri-snapshot-test-{}", Uuid::new_v4()));
         for index in 0..22 {
             create(&root, &SyncPayload::default(), &format!("snapshot-{index}")).unwrap();
         }

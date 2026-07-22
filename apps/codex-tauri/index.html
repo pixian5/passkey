@@ -452,7 +452,7 @@
             <div class="settings-group">
               <h3>应用解锁</h3>
               <div id="lockStatus">状态：未启用</div>
-              <p class="hint">启用后锁定时隐藏 vault 与同步密钥；空闲超时自动锁定。系统支持指纹时优先用指纹解锁（仍可用主密码）。</p>
+              <p class="hint">启用后锁定时隐藏 vault 与同步密钥。可选择退出前不锁定、空闲超时或切到后台锁定；指纹解锁始终可回退到主密码。</p>
               <div class="form-row">
                 <span class="form-label">主密码</span>
                 <span class="secret-field grow">
@@ -468,7 +468,15 @@
                 </span>
               </div>
               <div class="form-row">
-                <span class="form-label">空闲锁定</span>
+                <span class="form-label">锁定策略</span>
+                <select id="lockPolicy">
+                  <option value="onceUntilQuit" selected>退出前不锁定</option>
+                  <option value="idleTimeout">几分钟无操作后锁定</option>
+                  <option value="onBackground">切到后台锁定</option>
+                </select>
+              </div>
+              <div class="form-row">
+                <span class="form-label">空闲时长</span>
                 <select id="idleMinutes">
                   <option value="1">1 分钟</option>
                   <option value="3">3 分钟</option>
@@ -479,10 +487,15 @@
                   <option value="60">60 分钟</option>
                 </select>
               </div>
+              <label class="form-row checkbox-row">
+                <span class="form-label">指纹解锁</span>
+                <input id="preferBiometrics" type="checkbox" checked />
+                <span>优先使用指纹（仍可输入主密码）</span>
+              </label>
               <div class="form-actions wrap">
                 <button type="button" class="primary" id="btn-lock-enable">设置主密码并启用</button>
                 <button type="button" id="btn-lock-disable">关闭解锁</button>
-                <button type="button" id="btn-lock-idle">保存空闲时间</button>
+                <button type="button" id="btn-lock-idle">保存锁定策略</button>
                 <button type="button" id="btn-lock-now-settings">立即锁定</button>
               </div>
             </div>
