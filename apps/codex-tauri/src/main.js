@@ -137,6 +137,7 @@ const els = {
   lockPassword2: $("#lockPassword2"),
   lockPolicy: $("#lockPolicy"),
   idleMinutes: $("#idleMinutes"),
+  backgroundLockDelay: $("#backgroundLockDelay"),
   preferBiometrics: $("#preferBiometrics"),
   btnLockEnable: $("#btn-lock-enable"),
   btnLockDisable: $("#btn-lock-disable"),
@@ -1814,6 +1815,9 @@ const applyLockUi = () => {
   if (els.preferBiometrics) {
     els.preferBiometrics.checked = Boolean(lockState.preferBiometrics);
   }
+  if (els.backgroundLockDelay && lockState.backgroundLockDelaySeconds != null) {
+    els.backgroundLockDelay.value = String(lockState.backgroundLockDelaySeconds);
+  }
   if (locked && canBiometric && !biometricAutoTried) {
     biometricAutoTried = true;
     // Prefer Touch ID / fingerprint when the OS supports it and session is ready.
@@ -3106,6 +3110,7 @@ els.btnLockEnable?.addEventListener("click", async () => {
       idleLockMinutes: Number(els.idleMinutes?.value || 5),
       lockPolicy: els.lockPolicy?.value || "onceUntilQuit",
       preferBiometrics: Boolean(els.preferBiometrics?.checked),
+      backgroundLockDelaySeconds: Number(els.backgroundLockDelay?.value || 60),
     });
     try {
       await saveAllSyncRelated();
@@ -3149,6 +3154,7 @@ els.btnLockIdle?.addEventListener("click", async () => {
       lockPolicy: els.lockPolicy?.value || "onceUntilQuit",
       idleLockMinutes: Number(els.idleMinutes?.value || 5),
       preferBiometrics: Boolean(els.preferBiometrics?.checked),
+      backgroundLockDelaySeconds: Number(els.backgroundLockDelay?.value || 60),
     });
     applyLockUi();
     toastSuccess("锁定策略已保存");

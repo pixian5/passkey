@@ -64,6 +64,13 @@ fn default_prefer_biometrics() -> bool {
     true
 }
 
+// Default grace period between losing window focus and locking under the
+// OnBackground policy. Avoids locking on transient focus loss (Spotlight,
+// quick copy-paste) while still protecting an app left in the background.
+fn default_background_lock_delay_seconds() -> u32 {
+    60
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppLockPublicState {
@@ -73,6 +80,8 @@ pub struct AppLockPublicState {
     pub has_password: bool,
     pub lock_policy: AppLockPolicy,
     pub prefer_biometrics: bool,
+    #[serde(default = "default_background_lock_delay_seconds")]
+    pub background_lock_delay_seconds: u32,
     /// Biometric unlock is ready (session key sealed after a successful password unlock).
     #[serde(default)]
     pub biometric_ready: bool,
@@ -90,6 +99,8 @@ struct AppLockRecord {
     lock_policy: AppLockPolicy,
     #[serde(default = "default_prefer_biometrics")]
     prefer_biometrics: bool,
+    #[serde(default = "default_background_lock_delay_seconds")]
+    background_lock_delay_seconds: u32,
 }
 
 #[derive(Debug, Default)]
@@ -98,6 +109,9 @@ struct SessionInner {
     /// Session key used to decrypt sync secrets while unlocked (32 bytes).
     session_key: Option<[u8; KEY_LEN]>,
     last_activity_ms: i64,
+    /// When the main window last lost focus while OnBackground is active.
+    /// `None` means the window is currently focused (or focus is irrelevant).
+    blurred_since_ms: Option<i64>,
 }
 
 pub struct AppLockState {
@@ -111,6 +125,7 @@ impl Default for AppLockState {
                 unlocked: false,
                 session_key: None,
                 last_activity_ms: now_ms(),
+                blurred_since_ms: None,
             }),
         }
     }
@@ -187,15 +202,36 @@ impl AppLockState {
             .as_ref()
             .map(|r| r.prefer_biometrics)
             .unwrap_or_else(default_prefer_biometrics);
+        let background_delay = record
+            .as_ref()
+            .map(|r| r.background_lock_delay_seconds)
+            .unwrap_or_else(default_background_lock_delay_seconds)
+            .clamp(0, 3600);
         let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if enabled {
-            if policy == AppLockPolicy::IdleTimeout {
-                // Auto-lock on idle
-                let elapsed = now_ms().saturating_sub(guard.last_activity_ms);
-                if guard.unlocked && elapsed >= (idle as i64) * 60_000 {
-                    guard.unlocked = false;
-                    guard.session_key = None;
+            match policy {
+                AppLockPolicy::IdleTimeout => {
+                    // Auto-lock on idle
+                    let elapsed = now_ms().saturating_sub(guard.last_activity_ms);
+                    if guard.unlocked && elapsed >= (idle as i64) * 60_000 {
+                        guard.unlocked = false;
+                        guard.session_key = None;
+                    }
                 }
+                AppLockPolicy::OnBackground => {
+                    // Lock once the window has stayed unfocused past the grace
+                    // period, so transient focus loss (Spotlight, quick
+                    // copy-paste) does not force a re-unlock.
+                    if let Some(since) = guard.blurred_since_ms {
+                        let elapsed = now_ms().saturating_sub(since);
+                        if guard.unlocked && elapsed >= (background_delay as i64) * 1000 {
+                            guard.unlocked = false;
+                            guard.session_key = None;
+                            guard.blurred_since_ms = None;
+                        }
+                    }
+                }
+                AppLockPolicy::OnceUntilQuit => {}
             }
         } else {
             // Lock disabled → treat as unlocked for vault access
@@ -208,6 +244,7 @@ impl AppLockState {
             has_password,
             lock_policy: policy,
             prefer_biometrics,
+            background_lock_delay_seconds: background_delay,
             biometric_ready: data_dir.join(BIOMETRIC_SESSION_FILE).is_file(),
         }
     }
@@ -235,6 +272,7 @@ impl AppLockState {
         idle_lock_minutes: u32,
         lock_policy: AppLockPolicy,
         prefer_biometrics: bool,
+        background_lock_delay_seconds: u32,
     ) -> Result<AppLockPublicState, String> {
         if load_record(data_dir).is_some_and(|record| record.enabled) {
             return Err("应用锁已启用，请先关闭后再设置新的主密码".into());
@@ -258,12 +296,14 @@ impl AppLockState {
             idle_lock_minutes: idle_lock_minutes.clamp(1, 60),
             lock_policy,
             prefer_biometrics,
+            background_lock_delay_seconds: background_lock_delay_seconds.clamp(0, 3600),
         };
         save_record(data_dir, &record)?;
         let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         guard.unlocked = true;
         guard.session_key = Some(key);
         guard.last_activity_ms = now_ms();
+        guard.blurred_since_ms = None;
         drop(guard);
         // Re-seal any plaintext secrets with the new session key if present.
         Ok(self.public_state(data_dir))
@@ -400,25 +440,52 @@ impl AppLockState {
         lock_policy: AppLockPolicy,
         idle_lock_minutes: u32,
         prefer_biometrics: bool,
+        background_lock_delay_seconds: u32,
     ) -> Result<(), String> {
         let mut record = load_record(data_dir).ok_or_else(|| "尚未设置主密码".to_string())?;
         record.lock_policy = lock_policy;
         record.idle_lock_minutes = idle_lock_minutes.clamp(1, 60);
         record.prefer_biometrics = prefer_biometrics;
+        record.background_lock_delay_seconds = background_lock_delay_seconds.clamp(0, 3600);
         save_record(data_dir, &record)
     }
 
-    /// Called from Tauri's cross-platform window lifecycle, rather than from a
-    /// platform-specific frontend bridge.
-    pub fn lock_on_background(&self, data_dir: &PathBuf) -> AppLockPublicState {
-        let policy = load_record(data_dir)
-            .map(|record| record.lock_policy)
-            .unwrap_or_default();
-        if policy == AppLockPolicy::OnBackground {
-            self.lock_now(data_dir)
-        } else {
-            self.public_state(data_dir)
+    /// Called from Tauri's cross-platform window lifecycle when the main window
+    /// loses focus. Under OnBackground with a zero delay this locks at once;
+    /// otherwise it just records when focus was lost so `public_state` can lock
+    /// after the grace period elapses. Transient focus loss (Spotlight, quick
+    /// copy-paste) that regains focus before the delay never locks.
+    pub fn note_window_blurred(&self, data_dir: &PathBuf) -> AppLockPublicState {
+        let record = load_record(data_dir);
+        let policy = record.as_ref().map(|r| r.lock_policy).unwrap_or_default();
+        if policy != AppLockPolicy::OnBackground {
+            return self.public_state(data_dir);
         }
+        let delay = record
+            .as_ref()
+            .map(|r| r.background_lock_delay_seconds)
+            .unwrap_or_else(default_background_lock_delay_seconds)
+            .clamp(0, 3600);
+        if delay == 0 {
+            return self.lock_now(data_dir);
+        }
+        {
+            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            if guard.blurred_since_ms.is_none() {
+                guard.blurred_since_ms = Some(now_ms());
+            }
+        }
+        self.public_state(data_dir)
+    }
+
+    /// Called when the main window regains focus: cancels a pending background
+    /// lock so a brief switch away does not force a re-unlock.
+    pub fn note_window_focused(&self, data_dir: &PathBuf) -> AppLockPublicState {
+        {
+            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            guard.blurred_since_ms = None;
+        }
+        self.public_state(data_dir)
     }
 
     /// Delete secrets that were encrypted with the session key after their
@@ -634,8 +701,8 @@ mod tests {
     }
 
     #[test]
-    fn background_policy_locks_but_once_until_quit_does_not() {
-        let dir = test_dir("policies");
+    fn once_until_quit_never_locks_on_blur() {
+        let dir = test_dir("once");
         let state = AppLockState::default();
         state
             .enable(
@@ -645,14 +712,59 @@ mod tests {
                 5,
                 AppLockPolicy::OnceUntilQuit,
                 false,
+                60,
             )
             .expect("enable once-until-quit");
-        assert!(!state.lock_on_background(&dir).locked);
+        assert!(!state.note_window_blurred(&dir).locked);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
+    #[test]
+    fn background_zero_delay_locks_immediately_on_blur() {
+        let dir = test_dir("bg-zero");
+        let state = AppLockState::default();
         state
-            .set_preferences(&dir, AppLockPolicy::OnBackground, 5, false)
-            .expect("set background policy");
-        assert!(state.lock_on_background(&dir).locked);
+            .enable(
+                &dir,
+                "correct horse battery staple",
+                "correct horse battery staple",
+                5,
+                AppLockPolicy::OnBackground,
+                false,
+                0,
+            )
+            .expect("enable background zero-delay");
+        assert!(state.note_window_blurred(&dir).locked);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn background_delay_defers_and_regaining_focus_cancels_lock() {
+        let dir = test_dir("bg-delay");
+        let state = AppLockState::default();
+        state
+            .enable(
+                &dir,
+                "correct horse battery staple",
+                "correct horse battery staple",
+                5,
+                AppLockPolicy::OnBackground,
+                false,
+                60,
+            )
+            .expect("enable background delay");
+        // Blur starts the grace timer but does not lock within the delay.
+        assert!(!state.note_window_blurred(&dir).locked);
+        assert!(!state.public_state(&dir).locked);
+        // Regaining focus clears the pending timer.
+        assert!(!state.note_window_focused(&dir).locked);
+
+        // Simulate the grace period having already elapsed.
+        {
+            let mut guard = state.inner.lock().unwrap();
+            guard.blurred_since_ms = Some(now_ms() - 61_000);
+        }
+        assert!(state.public_state(&dir).locked);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -18,3 +18,5 @@ apps/app_macos/build/
 # Python test/runtime caches
 __pycache__/
 *.py[cod]
+
+apps/codex-tauri/dist/

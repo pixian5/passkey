@@ -1706,6 +1706,7 @@ fn lock_enable(
     idle_lock_minutes: u32,
     lock_policy: AppLockPolicy,
     prefer_biometrics: bool,
+    background_lock_delay_seconds: Option<u32>,
 ) -> Result<AppLockPublicState, String> {
     let dir = data_dir(&app)?;
     let _ = state.enable(
@@ -1715,6 +1716,7 @@ fn lock_enable(
         idle_lock_minutes,
         lock_policy,
         prefer_biometrics,
+        background_lock_delay_seconds.unwrap_or(60),
     )?;
 
     // Move any existing sync credentials behind the newly-derived session key
@@ -1805,10 +1807,17 @@ fn lock_save_preferences(
     lock_policy: AppLockPolicy,
     idle_lock_minutes: u32,
     prefer_biometrics: bool,
+    background_lock_delay_seconds: Option<u32>,
 ) -> Result<AppLockPublicState, String> {
     let dir = data_dir(&app)?;
     state.require_unlocked(&dir)?;
-    state.set_preferences(&dir, lock_policy, idle_lock_minutes, prefer_biometrics)?;
+    state.set_preferences(
+        &dir,
+        lock_policy,
+        idle_lock_minutes,
+        prefer_biometrics,
+        background_lock_delay_seconds.unwrap_or(60),
+    )?;
     if prefer_biometrics {
         let _ = state.store_biometric_key(&app);
     } else {
@@ -2430,10 +2439,15 @@ fn main() {
                             let _ = window_state::save(&state_window, &data_dir);
                         }
                     }
-                    if matches!(event, tauri::WindowEvent::Focused(false)) {
+                    if let tauri::WindowEvent::Focused(focused) = event {
                         let handle = state_window.app_handle();
                         if let Ok(data_dir) = app_data_dir(&handle) {
-                            handle.state::<AppLockState>().lock_on_background(&data_dir);
+                            let state = handle.state::<AppLockState>();
+                            if *focused {
+                                let _ = state.note_window_focused(&data_dir);
+                            } else {
+                                let _ = state.note_window_blurred(&data_dir);
+                            }
                         }
                     }
                 });
