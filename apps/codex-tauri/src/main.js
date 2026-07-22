@@ -2515,7 +2515,9 @@ els.btnRunProvision?.addEventListener("click", async () => {
     try {
       await invoke("save_ssh_credential_cmd", { serverUrl, credential });
     } catch (_) {}
-    showProvisionProgress("创建服务");
+    showProvisionProgress(
+      removeExisting ? "正在删除旧服务并创建新服务…" : "正在通过 SSH 在服务器上创建服务…"
+    );
     setProvisionStatus(
       removeExisting
         ? "正在删除旧服务并创建新服务，请稍候…"
@@ -2530,7 +2532,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
       tlsPrivateKey,
       removeExisting: Boolean(removeExisting),
     });
-    showProvisionProgress("创建服务");
+    showProvisionProgress("正在验证服务连通性…");
     if (els.syncEnabled) els.syncEnabled.checked = true;
     if (els.syncBaseUrl) els.syncBaseUrl.value = result.endpoint || serverUrl;
     if (els.syncToken) els.syncToken.value = accessToken;
@@ -2551,7 +2553,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
   };
 
   try {
-    showProvisionProgress("创建服务");
+    showProvisionProgress("正在检测服务器是否已有旧服务…");
     setProvisionStatus("正在检测服务器是否已有旧服务…");
     const report = await invoke("detect_existing_sync_service", {
       serverUrl,
