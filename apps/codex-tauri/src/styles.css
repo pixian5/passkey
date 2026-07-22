@@ -549,6 +549,9 @@ body.is-reordering {
 .history-row-meta { color: var(--muted); font-size: calc(0.8571 * var(--ui-text-size)); }
 .history-empty { color: var(--muted); padding: 24px 4px; text-align: center; }
 .sync-decision-summary { white-space: pre-wrap; line-height: 1.45; padding: 9px 11px; border-radius: 8px; background: #f5f5f7; color: var(--text); font-size: calc(0.8571 * var(--ui-text-size)); }
+.sync-preview-diff { display: grid; gap: 6px; max-height: min(260px, 32vh); overflow: auto; padding: 9px 11px; border-radius: 8px; background: #f7faf7; border: 1px solid #d7ead7; color: var(--text); font-size: calc(0.8571 * var(--ui-text-size)); line-height: 1.4; }
+.sync-preview-diff-meta { color: var(--muted); }
+.sync-preview-diff ul { margin: 0; padding-left: 20px; }
 .shortcut-hint {
   position: fixed;
   bottom: 16px;

@@ -137,6 +137,7 @@ const els = {
   localSnapshotsStatus: $("#localSnapshotsStatus"),
   localSnapshotsList: $("#localSnapshotsList"),
   syncDecisionSummary: $("#syncDecisionSummary"),
+  syncPreviewDiff: $("#syncPreviewDiff"),
   syncPreviewOut: $("#syncPreviewOut"),
   lockOverlay: $("#lockOverlay"),
   unlockPassword: $("#unlockPassword"),
@@ -2120,6 +2121,86 @@ const renderSyncDecisionSummary = (reports) => {
   els.syncDecisionSummary.textContent = lines.join("\n");
 };
 
+const previewAccountFields = [
+  ["sites", "站点"],
+  ["username", "用户名"],
+  ["password", "密码"],
+  ["totpSecret", "TOTP"],
+  ["recoveryCodes", "恢复码"],
+  ["note", "备注"],
+  ["folderIds", "文件夹"],
+  ["folderId", "文件夹"],
+  ["isDeleted", "删除状态"],
+  ["isPermanentlyDeleted", "永久删除状态"],
+];
+
+const previewValue = (value) => JSON.stringify(value ?? null);
+const previewRecordKey = (record, fallbackPrefix) =>
+  String(record?.recordId || record?.id || record?.accountId || `${fallbackPrefix}:${record?.canonicalSite || ""}:${record?.username || ""}`);
+const previewAccountLabel = (account) => {
+  const site = account?.canonicalSite || account?.sites?.[0] || "未命名站点";
+  const username = account?.username ? ` · ${account.username}` : "";
+  return `${site}${username}`;
+};
+
+const renderSyncPreviewDiff = (localPayload, mergedPayload) => {
+  if (!els.syncPreviewDiff) return;
+  const localAccounts = localPayload?.accounts || [];
+  const mergedAccounts = mergedPayload?.accounts || [];
+  const localMap = new Map(localAccounts.map((item) => [previewRecordKey(item, "account"), item]));
+  const mergedMap = new Map(mergedAccounts.map((item) => [previewRecordKey(item, "account"), item]));
+  const added = [];
+  const removed = [];
+  const changed = [];
+  for (const [key, account] of mergedMap) {
+    if (!localMap.has(key)) added.push(account);
+  }
+  for (const [key, account] of localMap) {
+    if (!mergedMap.has(key)) removed.push(account);
+  }
+  for (const [key, localAccount] of localMap) {
+    const mergedAccount = mergedMap.get(key);
+    if (!mergedAccount) continue;
+    const fields = previewAccountFields
+      .filter(([name]) => previewValue(localAccount[name]) !== previewValue(mergedAccount[name]))
+      .map(([, label]) => label);
+    const uniqueFields = [...new Set(fields)];
+    if (uniqueFields.length) changed.push({ account: mergedAccount, fields: uniqueFields });
+  }
+  const folderDelta = (mergedPayload?.folders || []).length - (localPayload?.folders || []).length;
+  const passkeyDelta = (mergedPayload?.passkeys || []).length - (localPayload?.passkeys || []).length;
+  const totalChanges = added.length + removed.length + changed.length + Math.abs(folderDelta) + Math.abs(passkeyDelta);
+  els.syncPreviewDiff.innerHTML = "";
+  els.syncPreviewDiff.hidden = false;
+  const title = document.createElement("strong");
+  title.textContent = totalChanges
+    ? `预计写入本地：新增 ${added.length}，移除 ${removed.length}，修改 ${changed.length}`
+    : "预计不会改变本地数据";
+  els.syncPreviewDiff.appendChild(title);
+  const meta = document.createElement("div");
+  meta.className = "sync-preview-diff-meta";
+  meta.textContent = `文件夹数量变化 ${folderDelta >= 0 ? "+" : ""}${folderDelta}；通行密钥数量变化 ${passkeyDelta >= 0 ? "+" : ""}${passkeyDelta}。仅显示字段名，不显示密码或密钥内容。`;
+  els.syncPreviewDiff.appendChild(meta);
+  const details = [...added.map((account) => ({ kind: "新增", account, fields: [] })),
+    ...removed.map((account) => ({ kind: "移除", account, fields: [] })),
+    ...changed.map((item) => ({ kind: "修改", ...item }))].slice(0, 50);
+  if (details.length) {
+    const list = document.createElement("ul");
+    for (const item of details) {
+      const row = document.createElement("li");
+      row.textContent = `${item.kind}：${previewAccountLabel(item.account)}${item.fields.length ? `（${item.fields.join("、")}）` : ""}`;
+      list.appendChild(row);
+    }
+    els.syncPreviewDiff.appendChild(list);
+    if (added.length + removed.length + changed.length > details.length) {
+      const more = document.createElement("div");
+      more.className = "sync-preview-diff-meta";
+      more.textContent = `其余 ${added.length + removed.length + changed.length - details.length} 条变化已省略。`;
+      els.syncPreviewDiff.appendChild(more);
+    }
+  }
+};
+
 const runSyncMode = async (mode, { quiet = false } = {}) => {
   await saveAllSyncRelated();
   const reports = [];
@@ -3219,6 +3300,7 @@ els.btnSyncPreview?.addEventListener("click", async () => {
       els.syncPreviewOut.textContent = JSON.stringify(result.report || result, null, 2);
     }
     renderSyncDecisionSummary(result.report || result);
+    renderSyncPreviewDiff(buildLocalSyncPayload(), result.payload);
     toastSuccess(result.report?.message || "预览完成");
   } catch (err) {
     toastError(`预览失败：${err}`);
