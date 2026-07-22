@@ -397,23 +397,14 @@
 
             <div class="settings-group">
               <h3>同步操作</h3>
-              <div class="form-row">
-                <span class="form-label">默认模式</span>
-                <select id="syncMode">
-                  <option value="merge">合并</option>
-                  <option value="remoteOverwriteLocal">云端覆盖本地</option>
-                  <option value="localOverwriteRemote">本地覆盖云端</option>
-                </select>
-              </div>
               <div class="form-actions wrap">
                 <button type="button" class="primary" id="btn-save-sync">保存同步设置</button>
                 <button type="button" id="btn-sync-preview">预览合并</button>
-                <button type="button" id="btn-sync-merge">合并同步</button>
-                <button type="button" id="btn-sync-remote-overwrite">云端覆盖本地</button>
-                <button type="button" id="btn-sync-local-overwrite">本地覆盖云端</button>
-                <button type="button" id="btn-sync-now-settings">立即同步（默认模式）</button>
+                <button type="button" class="sync-action sync-merge" id="btn-sync-merge">合并</button>
+                <button type="button" class="sync-action sync-remote-overwrite" id="btn-sync-remote-overwrite">云端覆盖本地</button>
+                <button type="button" class="sync-action sync-local-overwrite" id="btn-sync-local-overwrite">本地覆盖云端</button>
               </div>
-              <p class="hint">合并：保留双方变更。云端覆盖本地：用远端替换本机。本地覆盖云端：把本机推到远端。危险操作会二次确认。</p>
+              <p class="hint">合并同步保留双方变更。云端覆盖本地：用远端替换本机。本地覆盖云端：把本机推到远端。危险操作会二次确认。</p>
               <div id="syncDecisionSummary" class="sync-decision-summary" hidden></div>
               <pre id="syncPreviewOut" class="mini-log" hidden></pre>
             </div>

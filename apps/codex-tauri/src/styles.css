@@ -82,6 +82,16 @@ button.primary {
   color: #fff;
   font-weight: 600;
 }
+.sync-action {
+  border-color: transparent;
+  font-weight: 600;
+}
+.sync-merge { background: #34c759; color: #fff; }
+.sync-merge:hover { background: #2eaf4f; }
+.sync-remote-overwrite { background: #007aff; color: #fff; }
+.sync-remote-overwrite:hover { background: #006bd6; }
+.sync-local-overwrite { background: #ffcc00; color: #1d1d1f; }
+.sync-local-overwrite:hover { background: #e6b800; }
 button.danger {
   color: var(--danger);
   border-color: rgba(255, 59, 48, 0.28);

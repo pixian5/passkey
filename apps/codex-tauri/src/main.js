@@ -131,7 +131,6 @@ const els = {
   btnSyncRemoteOverwrite: $("#btn-sync-remote-overwrite"),
   btnSyncLocalOverwrite: $("#btn-sync-local-overwrite"),
   btnSyncNow: $("#btn-sync-now"),
-  btnSyncNowSettings: $("#btn-sync-now-settings"),
   btnLoadVersions: $("#btn-load-versions"),
   syncVersionsStatus: $("#syncVersionsStatus"),
   syncVersionsList: $("#syncVersionsList"),
@@ -3267,17 +3266,6 @@ els.btnSyncNow?.addEventListener("click", async () => {
     restore();
   }
 });
-els.btnSyncNowSettings?.addEventListener("click", async () => {
-  const restore = setButtonBusy(els.btnSyncNowSettings, "正在同步…");
-  try {
-    await runSyncNow();
-  } catch (err) {
-    toastError(`同步失败：${err}`);
-  } finally {
-    restore();
-  }
-});
-
 els.btnLoadVersions?.addEventListener("click", async () => {
   const restore = setButtonBusy(els.btnLoadVersions, "正在读取…");
   try {
