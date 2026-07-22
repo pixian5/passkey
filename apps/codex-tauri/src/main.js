@@ -2138,6 +2138,7 @@ const previewAccountFields = [
 ];
 
 const previewValue = (value) => JSON.stringify(value ?? null);
+const isVisibleSyncAccount = (account) => !account?.isPermanentlyDeleted;
 const previewRecordKey = (record, fallbackPrefix) =>
   String(record?.accountId?.trim() || record?.recordId?.trim() || record?.id?.trim() || `${fallbackPrefix}:${record?.canonicalSite || ""}:${record?.username || ""}`);
 const previewAccountLabel = (account) => {
@@ -2148,8 +2149,8 @@ const previewAccountLabel = (account) => {
 
 // 同步包导入确认弹窗只展示会实际写入本地的账号差异，绝不展示密码或密钥内容。
 const summarizeSyncAccountDiff = (localPayload, mergedPayload, limit = 100) => {
-  const localAccounts = localPayload?.accounts || [];
-  const mergedAccounts = mergedPayload?.accounts || [];
+  const localAccounts = (localPayload?.accounts || []).filter(isVisibleSyncAccount);
+  const mergedAccounts = (mergedPayload?.accounts || []).filter(isVisibleSyncAccount);
   const localMap = new Map(localAccounts.map((item) => [previewRecordKey(item, "account"), item]));
   const mergedMap = new Map(mergedAccounts.map((item) => [previewRecordKey(item, "account"), item]));
   const changes = [];
@@ -2182,8 +2183,8 @@ const summarizeSyncAccountDiff = (localPayload, mergedPayload, limit = 100) => {
 
 const renderSyncPreviewDiff = (localPayload, mergedPayload) => {
   if (!els.syncPreviewDiff) return;
-  const localAccounts = localPayload?.accounts || [];
-  const mergedAccounts = mergedPayload?.accounts || [];
+  const localAccounts = (localPayload?.accounts || []).filter(isVisibleSyncAccount);
+  const mergedAccounts = (mergedPayload?.accounts || []).filter(isVisibleSyncAccount);
   const localMap = new Map(localAccounts.map((item) => [previewRecordKey(item, "account"), item]));
   const mergedMap = new Map(mergedAccounts.map((item) => [previewRecordKey(item, "account"), item]));
   const added = [];

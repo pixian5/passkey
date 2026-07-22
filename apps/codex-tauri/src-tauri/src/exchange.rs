@@ -96,9 +96,24 @@ pub fn import_bundle_content(
         }
     })?;
     let remote = extract_payload(&doc)?;
-    let remote_count = remote.accounts.len();
-    let local_count = local.accounts.len();
+    // 永久删除记录仅作为同步墓碑保留，不应在用户可见的导入统计或差异中
+    // 被当作待导入账号。
+    let remote_count = remote
+        .accounts
+        .iter()
+        .filter(|account| !account.is_permanently_deleted)
+        .count();
+    let local_count = local
+        .accounts
+        .iter()
+        .filter(|account| !account.is_permanently_deleted)
+        .count();
     let merged = merge_sync_payloads(local.clone(), remote.clone());
+    let merged_count = merged
+        .accounts
+        .iter()
+        .filter(|account| !account.is_permanently_deleted)
+        .count();
     let report = evaluate_sync_safety(&local, Some(&remote), &merged, "merge");
     Ok(BundleImportResult {
         ok: report.safe,
@@ -106,7 +121,7 @@ pub fn import_bundle_content(
         reasons: report.reasons.clone(),
         local_accounts: local_count,
         remote_accounts: remote_count,
-        merged_accounts: merged.accounts.len(),
+        merged_accounts: merged_count,
         message: if report.safe {
             format!(
                 "同步包合并预览：本地 {} → 合并 {}（远端 {}）",
