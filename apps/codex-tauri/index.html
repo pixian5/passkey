@@ -597,6 +597,10 @@
             </span>
           </div>
           <p class="hint">访问令牌与同步加密密钥均可留空。令牌为空则服务端不启用 Bearer 校验；加密密钥为空则允许明文同步包（PASS_SYNC_ALLOW_PLAINTEXT=1）。HTTPS 创建时证书优先从 <code>/root/.acme.sh/sbbz.tech_ecc/</code> 复制（兼容 fullchain.cer / sbbz.tech.key），其次 acme.sh RSA 目录与 <code>/etc/bz/certs/</code>。创建前会备份服务器现有同步数据库。</p>
+          <div id="provisionProgress" class="provision-progress" hidden>
+            <span class="spinner"></span>
+            <span class="progress-text"><span id="provisionProgressText">正在处理…</span><br><span id="provisionProgressElapsed" class="progress-elapsed"></span></span>
+          </div>
           <pre id="provisionStatus" class="mini-log" hidden></pre>
           <div class="form-actions">
             <button type="button" class="primary" id="btn-run-provision">创建服务</button>

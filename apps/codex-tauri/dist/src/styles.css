@@ -726,6 +726,40 @@ textarea { min-height: 84px; resize: vertical; }
 }
 .mini-log[hidden] { display: none !important; }
 
+/* Provision progress overlay — shown while SSH provision is running. */
+.provision-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #eef4ff, #f0f7ff);
+  border: 1px solid #c5d9f8;
+  color: #1a4fa0;
+  font-size: calc(0.9286 * var(--ui-text-size));
+  flex: 0 0 auto;
+}
+.provision-progress[hidden] { display: none !important; }
+.provision-progress .spinner {
+  width: 18px;
+  height: 18px;
+  border: 2.5px solid #b8d0f5;
+  border-top-color: #2b6fd6;
+  border-radius: 50%;
+  animation: provision-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+.provision-progress .progress-text {
+  line-height: 1.4;
+}
+.provision-progress .progress-elapsed {
+  color: #5a8de0;
+  font-size: calc(0.8571 * var(--ui-text-size));
+}
+@keyframes provision-spin {
+  to { transform: rotate(360deg); }
+}
+
 .merge-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

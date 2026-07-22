@@ -153,6 +153,9 @@ const els = {
   provisionConfirmFindings: $("#provisionConfirmFindings"),
   btnProvisionConfirmReplace: $("#btn-provision-confirm-replace"),
   btnProvisionConfirmCancel: $("#btn-provision-confirm-cancel"),
+  provisionProgress: $("#provisionProgress"),
+  provisionProgressText: $("#provisionProgressText"),
+  provisionProgressElapsed: $("#provisionProgressElapsed"),
   provisionServerUrl: $("#provisionServerUrl"),
   provisionSshUser: $("#provisionSshUser"),
   provisionSshPort: $("#provisionSshPort"),
@@ -2046,6 +2049,30 @@ const setProvisionStatus = (text, isError = false) => {
   }
 };
 
+let provisionProgressTimer = null;
+let provisionProgressStart = 0;
+const showProvisionProgress = (text) => {
+  if (els.provisionProgress) els.provisionProgress.hidden = false;
+  if (els.provisionProgressText) els.provisionProgressText.textContent = text || "正在处理…";
+  provisionProgressStart = Date.now();
+  const updateElapsed = () => {
+    if (!els.provisionProgressElapsed) return;
+    const sec = Math.floor((Date.now() - provisionProgressStart) / 1000);
+    els.provisionProgressElapsed.textContent = sec > 0 ? `已耗时 ${sec}s` : "";
+  };
+  updateElapsed();
+  if (provisionProgressTimer) clearInterval(provisionProgressTimer);
+  provisionProgressTimer = setInterval(updateElapsed, 1000);
+};
+const hideProvisionProgress = () => {
+  if (provisionProgressTimer) {
+    clearInterval(provisionProgressTimer);
+    provisionProgressTimer = null;
+  }
+  if (els.provisionProgress) els.provisionProgress.hidden = true;
+  if (els.provisionProgressElapsed) els.provisionProgressElapsed.textContent = "";
+};
+
 const updateProvisionAuthUi = () => {
   const mode = els.provisionAuthMode?.value || "privateKey";
   if (els.provisionPasswordRow) els.provisionPasswordRow.hidden = mode !== "password";
@@ -2071,6 +2098,7 @@ const openProvisionModal = async () => {
     if (input) delete input.dataset.forceVisible;
   }
   setProvisionStatus("");
+  hideProvisionProgress();
   updateProvisionAuthUi();
   els.provisionModal.hidden = false;
   applyUiPrefs();
@@ -2110,7 +2138,14 @@ const requestProvisionReplacement = (report) => new Promise((resolve) => {
 document.querySelectorAll("[data-close-provision-confirm]").forEach((el) => {
   el.addEventListener("click", () => closeProvisionConfirm(false));
 });
-els.btnProvisionConfirmReplace?.addEventListener("click", () => closeProvisionConfirm(true));
+els.btnProvisionConfirmReplace?.addEventListener("click", () => {
+  const restore = setButtonBusy(els.btnProvisionConfirmReplace, "正在删除…");
+  // 给用户一瞬视觉反馈再关闭弹窗，避免感觉点击无响应。
+  setTimeout(() => {
+    restore();
+    closeProvisionConfirm(true);
+  }, 200);
+});
 els.btnProvisionConfirmCancel?.addEventListener("click", () => closeProvisionConfirm(false));
 
 const collectProvisionCredential = () => {
@@ -2212,9 +2247,14 @@ els.btnRunProvision?.addEventListener("click", async () => {
     return;
   }
   const restoreProvisionButton = setButtonBusy(els.btnRunProvision, "正在创建…");
-  toastWarn("正在创建同步服务，请稍候…");
+  // 禁用 provision modal 的关闭按钮，防止操作中途关闭。
+  const closeBtns = document.querySelectorAll("[data-close-provision]");
+  closeBtns.forEach((b) => { b.style.pointerEvents = "none"; b.style.opacity = "0.4"; });
 
   const runCreate = async (removeExisting) => {
+    showProvisionProgress(
+      removeExisting ? "正在删除旧服务并创建新服务…" : "正在通过 SSH 在服务器上创建服务…"
+    );
     setProvisionStatus(
       removeExisting
         ? "正在删除旧服务并创建新服务，请稍候…"
@@ -2229,6 +2269,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
       tlsPrivateKey,
       removeExisting: Boolean(removeExisting),
     });
+    showProvisionProgress("正在验证服务连通性…");
     if (els.syncEnabled) els.syncEnabled.checked = true;
     if (els.syncBaseUrl) els.syncBaseUrl.value = result.endpoint || serverUrl;
     if (els.syncToken) els.syncToken.value = accessToken;
@@ -2241,6 +2282,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
     const healthy = await invoke("verify_sync_endpoint", {
       endpoint: result.endpoint || serverUrl,
     });
+    hideProvisionProgress();
     if (healthy) {
       setTimeout(() => closeProvisionModal(), 800);
       openSettings("sync");
@@ -2248,6 +2290,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
   };
 
   try {
+    showProvisionProgress("正在检测服务器是否已有旧服务…");
     setProvisionStatus("正在检测服务器是否已有旧服务…");
     const report = await invoke("detect_existing_sync_service", {
       serverUrl,
@@ -2255,6 +2298,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
     });
     let removeExisting = false;
     if (report?.exists) {
+      hideProvisionProgress();
       const ok = await requestProvisionReplacement(report);
       if (!ok) {
         setProvisionStatus("已取消：未删除旧服务，也未创建新服务");
@@ -2277,6 +2321,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
         .filter(Boolean)
         .map((x) => `• ${x}`)
         .join("\n");
+      hideProvisionProgress();
       const ok = await requestProvisionReplacement({
         summary: `检测到服务器 ${host} 上已有 Pass 同步服务。`,
         findings: findings ? findings.split("\n").map((item) => item.replace(/^•\s*/, "")) : [],
@@ -2290,15 +2335,19 @@ els.btnRunProvision?.addEventListener("click", async () => {
         await runCreate(true);
         return;
       } catch (err2) {
+        hideProvisionProgress();
         setProvisionStatus(String(err2), true);
         toastError(`创建服务失败：${err2}`);
         return;
       }
     }
+    hideProvisionProgress();
     setProvisionStatus(raw, true);
     toastError(`创建服务失败：${raw}`);
   } finally {
+    hideProvisionProgress();
     restoreProvisionButton();
+    closeBtns.forEach((b) => { b.style.pointerEvents = ""; b.style.opacity = ""; });
   }
 });
 document.querySelectorAll("[data-close-edit]").forEach((el) => el.addEventListener("click", closeEdit));
