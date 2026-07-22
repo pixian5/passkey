@@ -348,12 +348,6 @@ fn create_account(
         return Err("至少填写一个站点".into());
     }
     let username = input.username.trim().to_string();
-    if username.is_empty() {
-        return Err("用户名不能为空".into());
-    }
-    if input.password.is_empty() {
-        return Err("密码不能为空".into());
-    }
     let canonical_site = sites[0].clone();
     let id = Uuid::new_v4().to_string();
     let created_id = id.clone();
