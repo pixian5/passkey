@@ -415,6 +415,73 @@ fn hard_delete_account(
 }
 
 #[tauri::command]
+fn restore_all_deleted_accounts(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<usize, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let conn = open_db(&app)?;
+    let mut accounts = load_accounts(&conn)?;
+    let count = accounts
+        .iter()
+        .filter(|account| account.is_deleted && !account.is_permanently_deleted)
+        .count();
+    if count == 0 {
+        return Ok(0);
+    }
+    snapshot_current_vault(&conn, &dir, "批量恢复回收站前自动备份")?;
+    let device_name = load_device_name(&conn)?;
+    let now = now_ms();
+    for account in &mut accounts {
+        if account.is_deleted && !account.is_permanently_deleted {
+            account.is_deleted = false;
+            account.deleted_at_ms = None;
+            account.deleted_device_name.clear();
+            account.updated_at_ms = now;
+            account.last_operated_device_name = device_name.clone();
+        }
+    }
+    sync_alias_sites(&mut accounts);
+    save_accounts(&conn, &accounts)?;
+    Ok(count)
+}
+
+#[tauri::command]
+fn hard_delete_all_deleted_accounts(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<usize, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let conn = open_db(&app)?;
+    let mut accounts = load_accounts(&conn)?;
+    let count = accounts
+        .iter()
+        .filter(|account| account.is_deleted && !account.is_permanently_deleted)
+        .count();
+    if count == 0 {
+        return Ok(0);
+    }
+    snapshot_current_vault(&conn, &dir, "批量彻底删除回收站前自动备份")?;
+    let device_name = load_device_name(&conn)?;
+    let now = now_ms();
+    for account in &mut accounts {
+        if account.is_deleted && !account.is_permanently_deleted {
+            account.is_permanently_deleted = true;
+            account.deleted_at_ms = Some(now);
+            account.deleted_device_name = device_name.clone();
+            account.updated_at_ms = now;
+            account.password.clear();
+            account.totp_secret.clear();
+            account.recovery_codes.clear();
+        }
+    }
+    save_accounts(&conn, &accounts)?;
+    Ok(count)
+}
+
+#[tauri::command]
 fn generate_demo_accounts(app: AppHandle, state: tauri::State<AppLockState>) -> Result<(), String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
@@ -1737,6 +1804,23 @@ fn lock_enable(
 }
 
 #[tauri::command]
+fn lock_change_password(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    old_password: String,
+    new_password: String,
+    confirm: String,
+) -> Result<AppLockPublicState, String> {
+    let dir = data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let updated = state.change_password(&dir, &old_password, &new_password, &confirm)?;
+    if updated.prefer_biometrics {
+        let _ = state.store_biometric_key(&app);
+    }
+    Ok(state.public_state(&dir))
+}
+
+#[tauri::command]
 fn lock_disable(
     app: AppHandle,
     state: tauri::State<AppLockState>,
@@ -2522,6 +2606,8 @@ fn main() {
             soft_delete_account,
             restore_account,
             hard_delete_account,
+            restore_all_deleted_accounts,
+            hard_delete_all_deleted_accounts,
             generate_demo_accounts,
             create_folder,
             delete_folder,
@@ -2558,6 +2644,7 @@ fn main() {
             verify_sync_endpoint,
             get_lock_state,
             lock_enable,
+            lock_change_password,
             lock_disable,
             lock_unlock,
             lock_unlock_biometric,

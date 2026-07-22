@@ -62,6 +62,8 @@ const els = {
   contextMenu: $("#contextMenu"),
   btnCreateFolder: $("#btn-create-folder"),
   btnNew: $("#btn-new"),
+  btnRestoreAll: $("#btn-restore-all"),
+  btnPurgeRecycle: $("#btn-purge-recycle"),
   btnDelete: $("#btn-delete"),
   btnRestore: $("#btn-restore"),
   btnHealth: $("#btn-health"),
@@ -135,11 +137,16 @@ const els = {
   lockStatus: $("#lockStatus"),
   lockPassword: $("#lockPassword"),
   lockPassword2: $("#lockPassword2"),
+  lockChangePassword: $("#lockChangePassword"),
+  lockCurrentPassword: $("#lockCurrentPassword"),
+  lockNewPassword: $("#lockNewPassword"),
+  lockNewPassword2: $("#lockNewPassword2"),
   lockPolicy: $("#lockPolicy"),
   idleMinutes: $("#idleMinutes"),
   backgroundLockDelay: $("#backgroundLockDelay"),
   preferBiometrics: $("#preferBiometrics"),
   btnLockEnable: $("#btn-lock-enable"),
+  btnLockChangePassword: $("#btn-lock-change-password"),
   btnLockDisable: $("#btn-lock-disable"),
   btnLockIdle: $("#btn-lock-idle"),
   btnLockNow: $("#btn-lock-now"),
@@ -1404,6 +1411,12 @@ const togglePinAccount = async (account) => {
 const render = () => {
   if (els.deviceName) els.deviceName.value = state.deviceName || "";
   if (els.deviceLabel) els.deviceLabel.textContent = state.deviceName ? `· ${state.deviceName}` : "";
+  const recycleActive = filter.type === "recycle";
+  const hasDeleted = (state.deletedAccounts || []).length > 0;
+  if (els.btnRestoreAll) els.btnRestoreAll.hidden = !recycleActive;
+  if (els.btnPurgeRecycle) els.btnPurgeRecycle.hidden = !recycleActive;
+  if (els.btnRestoreAll) els.btnRestoreAll.disabled = !hasDeleted;
+  if (els.btnPurgeRecycle) els.btnPurgeRecycle.disabled = !hasDeleted;
   updateSidebarLabels();
   renderFolders();
   applySidebarActive();
@@ -1814,6 +1827,9 @@ const applyLockUi = () => {
   }
   if (els.preferBiometrics) {
     els.preferBiometrics.checked = Boolean(lockState.preferBiometrics);
+  }
+  if (els.lockChangePassword) {
+    els.lockChangePassword.hidden = !lockState.enabled;
   }
   if (els.backgroundLockDelay && lockState.backgroundLockDelaySeconds != null) {
     els.backgroundLockDelay.value = String(lockState.backgroundLockDelaySeconds);
@@ -2667,6 +2683,38 @@ els.btnRestore?.addEventListener("click", async () => {
   }
 });
 
+els.btnRestoreAll?.addEventListener("click", async () => {
+  if (!(state.deletedAccounts || []).length) return;
+  const restore = setButtonBusy(els.btnRestoreAll, "正在恢复…");
+  try {
+    const count = await invoke("restore_all_deleted_accounts");
+    await refreshState();
+    toastSuccess(`已恢复 ${count} 个账号`);
+  } catch (err) {
+    toastError(`批量恢复失败：${err}`);
+  } finally {
+    restore();
+  }
+});
+
+els.btnPurgeRecycle?.addEventListener("click", async () => {
+  const count = (state.deletedAccounts || []).length;
+  if (!count) return;
+  if (!window.confirm(`将永久删除回收站中的 ${count} 个账号，且无法直接撤销。已自动创建本地安全快照。是否继续？`)) {
+    return;
+  }
+  const restore = setButtonBusy(els.btnPurgeRecycle, "正在清空…");
+  try {
+    const removed = await invoke("hard_delete_all_deleted_accounts");
+    await refreshState();
+    toastSuccess(`已永久删除 ${removed} 个账号`);
+  } catch (err) {
+    toastError(`清空回收站失败：${err}`);
+  } finally {
+    restore();
+  }
+});
+
 els.btnSaveDevice?.addEventListener("click", async () => {
   const restore = setButtonBusy(els.btnSaveDevice, "正在保存…");
   try {
@@ -3128,6 +3176,30 @@ els.btnLockEnable?.addEventListener("click", async () => {
     );
   } catch (err) {
     toastError(`启用失败：${err}`);
+  } finally {
+    restore();
+  }
+});
+els.btnLockChangePassword?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnLockChangePassword, "正在更换…");
+  try {
+    const oldPassword = els.lockCurrentPassword?.value || "";
+    const newPassword = els.lockNewPassword?.value || "";
+    const confirm = els.lockNewPassword2?.value || "";
+    if (!oldPassword || !newPassword) {
+      throw new Error("请输入当前主密码和新主密码");
+    }
+    if (newPassword !== confirm) {
+      throw new Error("两次输入的新主密码不一致");
+    }
+    lockState = await invoke("lock_change_password", { oldPassword, newPassword, confirm });
+    for (const input of [els.lockCurrentPassword, els.lockNewPassword, els.lockNewPassword2]) {
+      if (input) input.value = "";
+    }
+    applyLockUi();
+    toastSuccess("主密码已更换");
+  } catch (err) {
+    toastError(`更换主密码失败：${err}`);
   } finally {
     restore();
   }

@@ -31,6 +31,8 @@
         </div>
         <div class="titlebar-right">
           <button type="button" id="btn-new" class="primary">新建账号</button>
+          <button type="button" id="btn-restore-all" hidden>全部恢复</button>
+          <button type="button" id="btn-purge-recycle" class="danger" hidden>清空回收站</button>
           <button type="button" id="btn-sync-now">同步</button>
           <button type="button" id="btn-open-settings">设置</button>
           <button type="button" id="btn-lock-now">锁定</button>
@@ -497,16 +499,6 @@
                   <option value="300">5 分钟</option>
                 </select>
               </div>
-              <div class="form-row">
-                <span class="form-label">失焦锁定延迟</span>
-                <select id="backgroundLockDelay">
-                  <option value="0">立即</option>
-                  <option value="30">30 秒</option>
-                  <option value="60" selected>60 秒</option>
-                  <option value="120">2 分钟</option>
-                  <option value="300">5 分钟</option>
-                </select>
-              </div>
               <label class="form-row checkbox-row">
                 <span class="form-label">指纹解锁</span>
                 <input id="preferBiometrics" type="checkbox" checked />
@@ -517,6 +509,24 @@
                 <button type="button" id="btn-lock-disable">关闭解锁</button>
                 <button type="button" id="btn-lock-idle">保存锁定策略</button>
                 <button type="button" id="btn-lock-now-settings">立即锁定</button>
+              </div>
+              <div id="lockChangePassword" hidden>
+                <p class="hint">应用锁已启用时，可在不暴露同步凭据的情况下更换主密码。</p>
+                <div class="form-row">
+                  <span class="form-label">当前主密码</span>
+                  <input id="lockCurrentPassword" class="grow" type="password" autocomplete="current-password" />
+                </div>
+                <div class="form-row">
+                  <span class="form-label">新主密码</span>
+                  <input id="lockNewPassword" class="grow" type="password" autocomplete="new-password" />
+                </div>
+                <div class="form-row">
+                  <span class="form-label">确认新密码</span>
+                  <input id="lockNewPassword2" class="grow" type="password" autocomplete="new-password" />
+                </div>
+                <div class="form-actions">
+                  <button type="button" id="btn-lock-change-password">更换主密码</button>
+                </div>
               </div>
             </div>
           </section>

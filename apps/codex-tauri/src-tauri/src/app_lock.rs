@@ -146,6 +146,34 @@ fn secrets_path(data_dir: &PathBuf) -> PathBuf {
     data_dir.join(SECRETS_FILE)
 }
 
+/// Replace a private state file only after its complete new contents have been
+/// written. Both lock records and wrapped sync credentials use this helper so
+/// a crash cannot leave a truncated JSON document behind.
+fn write_private_file_atomic(path: &PathBuf, bytes: &[u8]) -> Result<(), String> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "内部文件名无效".to_string())?;
+    let mut random = [0u8; 8];
+    rand::thread_rng().fill_bytes(&mut random);
+    let temp = path.with_file_name(format!(
+        ".{file_name}.{:016x}.tmp",
+        u64::from_le_bytes(random)
+    ));
+    std::fs::write(&temp, bytes).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
+    if let Err(error) = std::fs::rename(&temp, path) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
 fn load_record(data_dir: &PathBuf) -> Option<AppLockRecord> {
     let raw = std::fs::read_to_string(lock_path(data_dir)).ok()?;
     serde_json::from_str(&raw).ok()
@@ -155,13 +183,7 @@ fn save_record(data_dir: &PathBuf, record: &AppLockRecord) -> Result<(), String>
     std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
     let path = lock_path(data_dir);
     let raw = serde_json::to_string_pretty(record).map_err(|e| e.to_string())?;
-    std::fs::write(&path, raw).map_err(|e| e.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
-    Ok(())
+    write_private_file_atomic(&path, raw.as_bytes())
 }
 
 fn derive_key(password: &str, salt: &[u8], iterations: u32) -> Result<[u8; KEY_LEN], String> {
@@ -488,6 +510,87 @@ impl AppLockState {
         self.public_state(data_dir)
     }
 
+    /// Change the master password in-place without ever writing sync secrets to
+    /// disk in plaintext. Verifies the old password, decrypts the sealed sync
+    /// secrets with the current session key, derives a new session key from the
+    /// new password, and re-seals the secrets under it. All within one unlocked
+    /// session, so there is no disable→enable round-trip and no plaintext window.
+    pub fn change_password(
+        &self,
+        data_dir: &PathBuf,
+        old_password: &str,
+        new_password: &str,
+        confirm: &str,
+    ) -> Result<AppLockPublicState, String> {
+        let mut record = load_record(data_dir).ok_or_else(|| "尚未设置主密码".to_string())?;
+        if !record.enabled {
+            return Err("应用锁未启用".into());
+        }
+        let new_password = new_password.trim();
+        let confirm = confirm.trim();
+        if new_password.is_empty() {
+            return Err("请输入新的主密码".into());
+        }
+        if new_password != confirm {
+            return Err("两次输入的新主密码不一致".into());
+        }
+        // Verify the old password against the stored verifier.
+        let old_salt = STANDARD
+            .decode(&record.salt_b64)
+            .map_err(|_| "锁配置损坏".to_string())?;
+        let old_key = derive_key(old_password.trim(), &old_salt, record.iterations)?;
+        let expected = STANDARD
+            .decode(&record.verifier_b64)
+            .map_err(|_| "锁配置损坏".to_string())?;
+        if !timing_eq(&Sha256::digest(old_key), &expected) {
+            return Err("原主密码错误".into());
+        }
+        // Load the currently sealed secrets under the OLD session key before we
+        // swap keys. Establish the old key as the session key so open works even
+        // if the app was unlocked via biometrics.
+        {
+            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            guard.unlocked = true;
+            guard.session_key = Some(old_key);
+        }
+        let has_sealed_secrets = secrets_path(data_dir).is_file();
+        let (token, encryption_key) = self.open_sync_secrets(data_dir)?;
+        // Prepare a dual-slot file first. Before the record switch the old
+        // verifier still opens slot 0; after it, the new verifier opens slot 1.
+        // Thus either side of the atomic record replacement remains recoverable.
+        let mut new_salt = [0u8; SALT_LEN];
+        rand::thread_rng().fill_bytes(&mut new_salt);
+        let new_key = derive_key(new_password, &new_salt, PBKDF2_ITERS)?;
+        if has_sealed_secrets {
+            let plain = sync_secret_plain(&token, &encryption_key)?;
+            let dual_file = serde_json::json!({
+                "v": 3,
+                "slots": [
+                    seal_sync_secret_slot(&old_key, &plain)?,
+                    seal_sync_secret_slot(&new_key, &plain)?,
+                ],
+            });
+            let bytes = serde_json::to_vec_pretty(&dual_file).map_err(|e| e.to_string())?;
+            write_private_file_atomic(&secrets_path(data_dir), &bytes)?;
+        }
+
+        // The lock record itself is atomically replaced only after the dual
+        // ciphertext has been written successfully.
+        record.salt_b64 = STANDARD.encode(new_salt);
+        record.verifier_b64 = verifier_from_key(&new_key);
+        record.iterations = PBKDF2_ITERS;
+        save_record(data_dir, &record)?;
+        // Install the new session key. The v3 file is intentionally retained;
+        // later normal saves compact it back to a single v2 slot.
+        {
+            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            guard.unlocked = true;
+            guard.session_key = Some(new_key);
+            guard.last_activity_ms = now_ms();
+        }
+        Ok(self.public_state(data_dir))
+    }
+
     /// Delete secrets that were encrypted with the session key after their
     /// plaintext replacement has been durably saved by the caller.
     pub fn clear_sync_secrets(&self, data_dir: &PathBuf) -> Result<(), String> {
@@ -515,39 +618,11 @@ impl AppLockState {
         let record = load_record(data_dir);
         if record.as_ref().map(|r| r.enabled).unwrap_or(false) {
             let key = self.session_key()?;
-            let payload = serde_json::json!({
-                "authToken": auth_token,
-                "encryptionKey": encryption_key,
-            });
-            let plain = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
-            let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
-            let mut nonce = [0u8; 12];
-            rand::thread_rng().fill_bytes(&mut nonce);
-            let ct = cipher
-                .encrypt(
-                    Nonce::from_slice(&nonce),
-                    Payload {
-                        msg: &plain,
-                        aad: b"pass.tauri.sync_secrets.v1",
-                    },
-                )
-                .map_err(|e| format!("加密同步密钥失败: {e}"))?;
-            let file = serde_json::json!({
-                "v": 1,
-                "nonceB64": STANDARD.encode(nonce),
-                "ctB64": STANDARD.encode(ct),
-            });
+            let plain = sync_secret_plain(auth_token, encryption_key)?;
+            let file = serde_json::json!({ "v": 1, "slot": seal_sync_secret_slot(&key, &plain)? });
             let path = secrets_path(data_dir);
-            std::fs::write(
-                &path,
-                serde_json::to_vec_pretty(&file).map_err(|e| e.to_string())?,
-            )
-            .map_err(|e| e.to_string())?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-            }
+            let bytes = serde_json::to_vec_pretty(&file).map_err(|e| e.to_string())?;
+            write_private_file_atomic(&path, &bytes)?;
         }
         Ok(())
     }
@@ -581,38 +656,90 @@ impl AppLockState {
         let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
         let file: serde_json::Value =
             serde_json::from_str(&raw).map_err(|e| format!("同步密钥文件损坏: {e}"))?;
-        let nonce = STANDARD
-            .decode(file.get("nonceB64").and_then(|x| x.as_str()).unwrap_or(""))
-            .map_err(|_| "nonce 无效".to_string())?;
-        let ct = STANDARD
-            .decode(file.get("ctB64").and_then(|x| x.as_str()).unwrap_or(""))
-            .map_err(|_| "密文无效".to_string())?;
-        if nonce.len() != 12 {
-            return Err("nonce 长度无效".into());
+        // v1 stored nonce/ct at the top level; v2 stores one slot and v3
+        // keeps old+new slots briefly during master-password rotation. Trying
+        // each authenticated slot is safe: AES-GCM rejects the wrong key.
+        let slots: Vec<&serde_json::Value> =
+            if let Some(values) = file.get("slots").and_then(|v| v.as_array()) {
+                values.iter().collect()
+            } else if let Some(slot) = file.get("slot") {
+                vec![slot]
+            } else {
+                vec![&file]
+            };
+        for slot in slots {
+            if let Ok(plain) = open_sync_secret_slot(&key, slot) {
+                return parse_sync_secret_plain(&plain);
+            }
         }
-        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
-        let plain = cipher
-            .decrypt(
-                Nonce::from_slice(&nonce),
-                Payload {
-                    msg: &ct,
-                    aad: b"pass.tauri.sync_secrets.v1",
-                },
-            )
-            .map_err(|_| "解密同步密钥失败，请解锁后重试".to_string())?;
-        let v: serde_json::Value =
-            serde_json::from_slice(&plain).map_err(|e| format!("密钥 JSON 无效: {e}"))?;
-        Ok((
-            v.get("authToken")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .to_string(),
-            v.get("encryptionKey")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .to_string(),
-        ))
+        Err("解密同步密钥失败，请解锁后重试".into())
     }
+}
+
+fn sync_secret_plain(auth_token: &str, encryption_key: &str) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(&serde_json::json!({
+        "authToken": auth_token,
+        "encryptionKey": encryption_key,
+    }))
+    .map_err(|e| e.to_string())
+}
+
+fn seal_sync_secret_slot(key: &[u8; KEY_LEN], plain: &[u8]) -> Result<serde_json::Value, String> {
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| e.to_string())?;
+    let mut nonce = [0u8; 12];
+    rand::thread_rng().fill_bytes(&mut nonce);
+    let ct = cipher
+        .encrypt(
+            Nonce::from_slice(&nonce),
+            Payload {
+                msg: plain,
+                aad: b"pass.tauri.sync_secrets.v1",
+            },
+        )
+        .map_err(|e| format!("加密同步密钥失败: {e}"))?;
+    Ok(serde_json::json!({
+        "nonceB64": STANDARD.encode(nonce),
+        "ctB64": STANDARD.encode(ct),
+    }))
+}
+
+fn open_sync_secret_slot(key: &[u8; KEY_LEN], slot: &serde_json::Value) -> Result<Vec<u8>, String> {
+    let nonce = STANDARD
+        .decode(slot.get("nonceB64").and_then(|x| x.as_str()).unwrap_or(""))
+        .map_err(|_| "nonce 无效".to_string())?;
+    let ct = STANDARD
+        .decode(slot.get("ctB64").and_then(|x| x.as_str()).unwrap_or(""))
+        .map_err(|_| "密文无效".to_string())?;
+    if nonce.len() != 12 {
+        return Err("nonce 长度无效".into());
+    }
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| e.to_string())?;
+    cipher
+        .decrypt(
+            Nonce::from_slice(&nonce),
+            Payload {
+                msg: &ct,
+                aad: b"pass.tauri.sync_secrets.v1",
+            },
+        )
+        .map_err(|_| "解密失败".to_string())
+}
+
+fn parse_sync_secret_plain(plain: &[u8]) -> Result<(String, String), String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(plain).map_err(|e| format!("密钥 JSON 无效: {e}"))?;
+    Ok((
+        value
+            .get("authToken")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        value
+            .get("encryptionKey")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -765,6 +892,45 @@ mod tests {
             guard.blurred_since_ms = Some(now_ms() - 61_000);
         }
         assert!(state.public_state(&dir).locked);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn password_rotation_preserves_sealed_sync_secrets() {
+        let dir = test_dir("password-rotation");
+        let state = AppLockState::default();
+        state
+            .enable(
+                &dir,
+                "old master password",
+                "old master password",
+                5,
+                AppLockPolicy::OnceUntilQuit,
+                false,
+                60,
+            )
+            .expect("enable lock");
+        state
+            .seal_sync_secrets(&dir, "sync-token", "sync-key")
+            .expect("seal secrets");
+        state
+            .change_password(
+                &dir,
+                "old master password",
+                "new master password",
+                "new master password",
+            )
+            .expect("rotate password");
+
+        state.lock_now(&dir);
+        assert!(state.unlock(&dir, "old master password").is_err());
+        state
+            .unlock(&dir, "new master password")
+            .expect("unlock using new password");
+        assert_eq!(
+            state.open_sync_secrets(&dir).expect("open secrets"),
+            ("sync-token".to_string(), "sync-key".to_string())
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 }
