@@ -891,6 +891,21 @@ textarea.mono, .mono {
   font-size: calc(0.8571 * var(--ui-text-size));
 }
 button:disabled { opacity: 0.55; cursor: not-allowed; }
+button.is-busy::after {
+  content: "";
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-left: 0.45em;
+  vertical-align: -0.08em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: button-busy-spin 0.7s linear infinite;
+}
+@keyframes button-busy-spin {
+  to { transform: rotate(360deg); }
+}
 
 /* Prevent status strip / short windows from crushing provision form */
 .provision-card .form-label {

@@ -787,7 +787,10 @@ fn generate_sync_encryption_key() -> String {
 }
 
 #[tauri::command]
-fn sync_preview(app: AppHandle, state: tauri::State<AppLockState>) -> Result<String, String> {
+async fn sync_preview(
+    app: AppHandle,
+    state: tauri::State<'_, AppLockState>,
+) -> Result<String, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
 
@@ -807,7 +810,13 @@ fn sync_preview(app: AppHandle, state: tauri::State<AppLockState>) -> Result<Str
     let folders = load_folders(&conn)?;
     let passkeys = load_passkeys(&conn)?;
     let local = local_payload_from_vault(&accounts, &folders, &passkeys, &device);
-    let (report, merged) = preview_sync(&settings, local.clone(), &device, current_platform())?;
+    let platform = current_platform().to_string();
+    let local_for_preview = local.clone();
+    let (report, merged) = tauri::async_runtime::spawn_blocking(move || {
+        preview_sync(&settings, local_for_preview, &device, &platform)
+    })
+    .await
+    .map_err(|e| format!("预览合并任务异常: {e}"))??;
     serde_json::to_string(&serde_json::json!({
         "report": report,
         "localPayload": local,
@@ -817,11 +826,11 @@ fn sync_preview(app: AppHandle, state: tauri::State<AppLockState>) -> Result<Str
 }
 
 #[tauri::command]
-fn sync_now(app: AppHandle, state: tauri::State<AppLockState>) -> Result<String, String> {
+async fn sync_now(app: AppHandle, state: tauri::State<'_, AppLockState>) -> Result<String, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
 
-    let mut conn = open_db(&app)?;
+    let conn = open_db(&app)?;
     let dir = app_data_dir(&app)?;
     let mut settings = load_sync_settings(&dir);
     if let Ok((token, key)) = state.open_sync_secrets(&dir) {
@@ -837,12 +846,21 @@ fn sync_now(app: AppHandle, state: tauri::State<AppLockState>) -> Result<String,
     let folders = load_folders(&conn)?;
     let passkeys = load_passkeys(&conn)?;
     let local = local_payload_from_vault(&accounts, &folders, &passkeys, &device);
-    let (report, applied) = run_sync(&settings, local.clone(), &device, current_platform())?;
-    if report.applied {
-        local_snapshots::create(&dir, &local, "同步写入本地前自动备份")?;
-        save_payload_atomic(&mut conn, &applied)?;
-    }
-    serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
+    let platform = current_platform().to_string();
+    let worker_app = app.clone();
+    let worker_dir = dir.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut conn = open_db(&worker_app)?;
+        let (report, applied) = run_sync(&settings, local.clone(), &device, &platform)?;
+        if report.applied {
+            local_snapshots::create(&worker_dir, &local, "同步写入本地前自动备份")?;
+            save_payload_atomic(&mut conn, &applied)?;
+        }
+        serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("同步任务异常: {e}"))??;
+    Ok(result)
 }
 
 fn load_settings_unlocked(
@@ -865,35 +883,43 @@ fn load_settings_unlocked(
 }
 
 #[tauri::command]
-fn sync_now_mode(
+async fn sync_now_mode(
     app: AppHandle,
-    state: tauri::State<AppLockState>,
+    state: tauri::State<'_, AppLockState>,
     mode: String,
 ) -> Result<String, String> {
-    let (dir, settings, mut conn) = load_settings_unlocked(&app, &state)?;
-    let _ = dir;
+    let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
     let device = load_device_name(&conn)?;
     let accounts = load_accounts(&conn)?;
     let folders = load_folders(&conn)?;
     let passkeys = load_passkeys(&conn)?;
     let local = local_payload_from_vault(&accounts, &folders, &passkeys, &device);
     let mode = SyncMode::parse(&mode);
-    let (report, applied) =
-        run_sync_with_mode(&settings, local.clone(), &device, current_platform(), mode)?;
-    if report.applied {
-        local_snapshots::create(&dir, &local, "同步写入本地前自动备份")?;
-        save_payload_atomic(&mut conn, &applied)?;
-    }
-    serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
+    let platform = current_platform().to_string();
+    let worker_app = app.clone();
+    let worker_dir = dir.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut conn = open_db(&worker_app)?;
+        let (report, applied) =
+            run_sync_with_mode(&settings, local.clone(), &device, &platform, mode)?;
+        if report.applied {
+            local_snapshots::create(&worker_dir, &local, "同步写入本地前自动备份")?;
+            save_payload_atomic(&mut conn, &applied)?;
+        }
+        serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("同步任务异常: {e}"))??;
+    Ok(result)
 }
 
 #[tauri::command]
-fn sync_webdav_now_mode(
+async fn sync_webdav_now_mode(
     app: AppHandle,
-    state: tauri::State<AppLockState>,
+    state: tauri::State<'_, AppLockState>,
     mode: String,
 ) -> Result<String, String> {
-    let (dir, settings, mut conn) = load_settings_unlocked(&app, &state)?;
+    let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
     let prefs = load_ui_prefs(&dir);
     let webdav_settings = WebDavSettings {
         enabled: prefs.webdav_enabled,
@@ -907,19 +933,30 @@ fn sync_webdav_now_mode(
     let folders = load_folders(&conn)?;
     let passkeys = load_passkeys(&conn)?;
     let local = local_payload_from_vault(&accounts, &folders, &passkeys, &device);
-    let (report, applied) = webdav::run_sync(
-        &webdav_settings,
-        SyncMode::parse(&mode),
-        local.clone(),
-        &device,
-        current_platform(),
-        &settings.encryption_key,
-    )?;
-    if report.applied {
-        local_snapshots::create(&dir, &local, "WebDAV 同步写入本地前自动备份")?;
-        save_payload_atomic(&mut conn, &applied)?;
-    }
-    serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
+    let parsed_mode = SyncMode::parse(&mode);
+    let platform = current_platform().to_string();
+    let encryption_key = settings.encryption_key.clone();
+    let worker_app = app.clone();
+    let worker_dir = dir.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut conn = open_db(&worker_app)?;
+        let (report, applied) = webdav::run_sync(
+            &webdav_settings,
+            parsed_mode,
+            local.clone(),
+            &device,
+            &platform,
+            &encryption_key,
+        )?;
+        if report.applied {
+            local_snapshots::create(&worker_dir, &local, "WebDAV 同步写入本地前自动备份")?;
+            save_payload_atomic(&mut conn, &applied)?;
+        }
+        serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("WebDAV 同步任务异常: {e}"))??;
+    Ok(result)
 }
 
 #[tauri::command]

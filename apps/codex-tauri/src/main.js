@@ -2548,9 +2548,11 @@ const setButtonBusy = (button, busyText) => {
   if (!button) return () => {};
   const originalText = button.textContent;
   button.disabled = true;
+  button.classList.add("is-busy");
   button.textContent = busyText;
   return () => {
     button.disabled = false;
+    button.classList.remove("is-busy");
     button.textContent = originalText;
   };
 };
