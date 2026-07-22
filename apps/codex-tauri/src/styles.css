@@ -399,6 +399,20 @@ body.is-reordering {
   line-height: 1.3;
   word-break: break-all;
 }
+.row-username,
+.row-sites {
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 2px 4px;
+  margin: 0 -4px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.row-username:hover,
+.row-sites:hover {
+  color: var(--accent);
+  background: rgba(0, 122, 255, 0.06);
+}
 .row-sub {
   font-size: calc(0.8571 * var(--ui-text-size));
   color: var(--muted);
