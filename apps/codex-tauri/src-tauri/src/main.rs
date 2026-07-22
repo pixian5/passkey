@@ -4,6 +4,7 @@ mod local_snapshots;
 mod local_vault;
 mod operation_history;
 mod provision;
+mod provision_settings;
 mod sync;
 mod ui_prefs;
 mod window_state;
@@ -31,6 +32,7 @@ use provision::{
     save_ssh_credential, verify_public_endpoint, ExistingServiceReport, ProvisionResult,
     SshCredential,
 };
+use provision_settings::ProvisionDraft;
 use sync::crypto::key_id;
 use sync::pipeline::{local_payload_from_vault, preview_sync, run_sync, SyncMode};
 use sync::settings::{load_sync_settings, save_sync_settings, SyncSettings};
@@ -1381,6 +1383,27 @@ fn save_ssh_credential_cmd(
     let host = host_from_server_url(&server_url)
         .ok_or_else(|| "服务器地址无效，无法保存 SSH 凭据".to_string())?;
     save_ssh_credential(&dir, &host, &credential)
+}
+
+#[tauri::command]
+fn get_provision_draft(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<ProvisionDraft, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    Ok(provision_settings::load(&dir))
+}
+
+#[tauri::command]
+fn save_provision_draft(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    draft: ProvisionDraft,
+) -> Result<(), String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    provision_settings::save(&dir, &draft)
 }
 
 #[tauri::command]
@@ -2914,6 +2937,8 @@ fn main() {
             restore_local_snapshot,
             get_ssh_credential,
             save_ssh_credential_cmd,
+            get_provision_draft,
+            save_provision_draft,
             detect_existing_sync_service,
             provision_self_hosted_server,
             verify_sync_endpoint,

@@ -2313,14 +2313,36 @@ const updateProvisionAuthUi = () => {
   if (els.provisionKeyRow) els.provisionKeyRow.hidden = mode !== "privateKey";
 };
 
+const collectProvisionDraft = () => ({
+  serverUrl: (els.provisionServerUrl?.value || "").trim(),
+  tlsCertificate: (els.provisionTlsCertificate?.value || "").trim(),
+  tlsPrivateKey: (els.provisionTlsPrivateKey?.value || "").trim(),
+  accessToken: (els.provisionToken?.value || "").trim(),
+  syncEncryptionKey: (els.provisionEncKey?.value || "").trim(),
+});
+
+const persistProvisionDraft = async () => {
+  try {
+    await invoke("save_provision_draft", { draft: collectProvisionDraft() });
+  } catch (err) {
+    console.warn("save provision draft", err);
+  }
+};
+
 const openProvisionModal = async () => {
   if (!els.provisionModal) return;
+  let draft = {};
+  try {
+    draft = (await invoke("get_provision_draft")) || {};
+  } catch (_) {}
   if (els.provisionServerUrl) {
     els.provisionServerUrl.value =
-      (els.syncBaseUrl?.value || "").trim() || "https://";
+      (els.syncBaseUrl?.value || "").trim() || draft.serverUrl || "https://";
   }
-  if (els.provisionToken) els.provisionToken.value = els.syncToken?.value || "";
-  if (els.provisionEncKey) els.provisionEncKey.value = els.syncEncKey?.value || "";
+  if (els.provisionTlsCertificate) els.provisionTlsCertificate.value = draft.tlsCertificate || "";
+  if (els.provisionTlsPrivateKey) els.provisionTlsPrivateKey.value = draft.tlsPrivateKey || "";
+  if (els.provisionToken) els.provisionToken.value = els.syncToken?.value || draft.accessToken || "";
+  if (els.provisionEncKey) els.provisionEncKey.value = els.syncEncKey?.value || draft.syncEncryptionKey || "";
   // Clear per-field forceVisible so global show-passwords can apply.
   for (const id of [
     "provisionSecretPassword",
@@ -2344,6 +2366,7 @@ const openProvisionModal = async () => {
 };
 
 const closeProvisionModal = () => {
+  persistProvisionDraft();
   if (els.provisionModal) els.provisionModal.hidden = true;
 };
 
@@ -2468,6 +2491,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
   const syncEncryptionKey = (els.provisionEncKey?.value || "").trim();
   const tlsCertificate = (els.provisionTlsCertificate?.value || "").trim();
   const tlsPrivateKey = (els.provisionTlsPrivateKey?.value || "").trim();
+  await persistProvisionDraft();
   const credential = collectProvisionCredential();
   if (!serverUrl.startsWith("https://")) {
     setProvisionStatus("服务器地址必须是 HTTPS URL", true);
@@ -2486,6 +2510,11 @@ els.btnRunProvision?.addEventListener("click", async () => {
   closeBtns.forEach((b) => { b.style.pointerEvents = "none"; b.style.opacity = "0.4"; });
 
   const runCreate = async (removeExisting) => {
+    // Keep the SSH form usable after a failed deployment as well as after a
+    // successful one; the credential is encrypted and keyed by host.
+    try {
+      await invoke("save_ssh_credential_cmd", { serverUrl, credential });
+    } catch (_) {}
     showProvisionProgress(
       removeExisting ? "正在删除旧服务并创建新服务…" : "正在通过 SSH 在服务器上创建服务…"
     );
