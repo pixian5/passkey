@@ -125,9 +125,7 @@ pub fn import_bundle_content(
         message: if report.safe {
             format!(
                 "同步包合并预览：本地 {} → 合并 {}（远端 {}）",
-                local_count,
-                merged.accounts.len(),
-                remote_count
+                local_count, merged_count, remote_count
             )
         } else {
             format!("同步包合并被安全检查拦截：{}", report.reasons.join(", "))
