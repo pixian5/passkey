@@ -130,7 +130,6 @@ const els = {
   btnLoadVersions: $("#btn-load-versions"),
   syncVersionsStatus: $("#syncVersionsStatus"),
   syncVersionsList: $("#syncVersionsList"),
-  btnLoadLocalSnapshots: $("#btn-load-local-snapshots"),
   localSnapshotsStatus: $("#localSnapshotsStatus"),
   localSnapshotsList: $("#localSnapshotsList"),
   syncDecisionSummary: $("#syncDecisionSummary"),
@@ -1867,6 +1866,7 @@ const openSettings = async (tab = "general") => {
     if (els.deviceName) els.deviceName.value = state.deviceName || els.deviceName.value || "";
     await refreshSyncKeyHints();
     await refreshLock();
+    if (tab === "sync") await loadLocalSnapshots();
   } catch (err) {
     toastError(`打开设置失败：${err}`);
   }
@@ -2744,7 +2744,8 @@ els.btnLoadSshCred?.addEventListener("click", async () => {
     await loadSavedSshCredential();
   } catch (err) {
     setProvisionStatus(String(err), true);
-  } finally {
+  }
+  finally {
     restore();
   }
 });
@@ -3578,33 +3579,31 @@ els.btnLoadVersions?.addEventListener("click", async () => {
   }
 });
 
-els.btnLoadLocalSnapshots?.addEventListener("click", async () => {
-  const restore = setButtonBusy(els.btnLoadLocalSnapshots, "正在读取…");
+const loadLocalSnapshots = async () => {
+  if (els.localSnapshotsStatus) els.localSnapshotsStatus.textContent = "正在读取本地安全快照…";
   try {
     const list = await invoke("list_local_snapshots");
     if (els.localSnapshotsStatus) {
       els.localSnapshotsStatus.textContent = list.length
-        ? `共 ${list.length} 个本地安全快照`
+        ? `共 ${list.length} 个本地安全快照；点击快照条目即可恢复`
         : "暂无本地安全快照";
     }
     if (els.localSnapshotsList) {
       els.localSnapshotsList.innerHTML = "";
       for (const snapshot of list) {
-        const row = document.createElement("div");
-        row.className = "version-row";
-        const span = document.createElement("span");
-        span.textContent = `${snapshot.reason} · ${formatTimeMs(snapshot.createdAtMs)} · 账号 ${snapshot.accounts} · 文件夹 ${snapshot.folders} · 通行密钥 ${snapshot.passkeys}`;
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.textContent = "恢复";
-        btn.addEventListener("click", async () => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "version-row local-snapshot-action";
+        const label = `${snapshot.reason} · ${formatTimeMs(snapshot.createdAtMs)} · 账号 ${snapshot.accounts} · 文件夹 ${snapshot.folders} · 通行密钥 ${snapshot.passkeys}`;
+        button.textContent = label;
+        button.addEventListener("click", async () => {
           if (!(await requestActionConfirmation({
             title: "恢复本地安全快照",
-            message: "恢复本地安全快照会替换当前 vault；当前数据会先自动备份。",
+            message: `${label}\n\n恢复后会替换当前 vault；当前数据会先自动备份。`,
             confirmText: "恢复快照",
             danger: true,
           }))) return;
-          const restoreBtn = setButtonBusy(btn, "正在恢复…");
+          const restoreButton = setButtonBusy(button, "正在恢复…");
           try {
             const msg = await invoke("restore_local_snapshot", { snapshotId: snapshot.id });
             await refreshState();
@@ -3612,20 +3611,17 @@ els.btnLoadLocalSnapshots?.addEventListener("click", async () => {
           } catch (err) {
             toastError(`恢复本地安全快照失败：${err}`);
           } finally {
-            restoreBtn();
+            restoreButton();
           }
         });
-        row.append(span, btn);
-        els.localSnapshotsList.appendChild(row);
+        els.localSnapshotsList.appendChild(button);
       }
     }
   } catch (err) {
     if (els.localSnapshotsStatus) els.localSnapshotsStatus.textContent = String(err);
     toastError(`读取本地安全快照失败：${err}`);
-  } finally {
-    restore();
   }
-});
+};
 
 els.btnLoadLocal?.addEventListener("click", async () => {
   await refreshState();
