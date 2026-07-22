@@ -469,6 +469,11 @@ body.is-reordering {
   grid-template-rows: auto auto 1fr;
 }
 .modal-card.sm { width: min(400px, 94vw); }
+.provision-confirm-modal { z-index: 60; }
+.provision-confirm-card { max-height: min(72vh, 560px); }
+.provision-confirm-card .modal-body { gap: 12px; }
+.confirm-summary { margin: 0; line-height: 1.5; font-weight: 600; }
+.confirm-findings { max-height: min(180px, 24vh); margin: 0; white-space: pre-wrap; overflow: auto; }
 .settings-body { gap: 0; padding: 0; }
 .settings-group {
   padding: 14px 16px;

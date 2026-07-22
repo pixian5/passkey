@@ -148,6 +148,11 @@ const els = {
   btnOpenMerge: $("#btn-open-merge"),
   btnOpenProvision: $("#btn-open-provision"),
   provisionModal: $("#provisionModal"),
+  provisionConfirmModal: $("#provisionConfirmModal"),
+  provisionConfirmSummary: $("#provisionConfirmSummary"),
+  provisionConfirmFindings: $("#provisionConfirmFindings"),
+  btnProvisionConfirmReplace: $("#btn-provision-confirm-replace"),
+  btnProvisionConfirmCancel: $("#btn-provision-confirm-cancel"),
   provisionServerUrl: $("#provisionServerUrl"),
   provisionSshUser: $("#provisionSshUser"),
   provisionSshPort: $("#provisionSshPort"),
@@ -2074,6 +2079,34 @@ const closeProvisionModal = () => {
   if (els.provisionModal) els.provisionModal.hidden = true;
 };
 
+let provisionConfirmResolve = null;
+const closeProvisionConfirm = (confirmed = false) => {
+  if (els.provisionConfirmModal) els.provisionConfirmModal.hidden = true;
+  const resolve = provisionConfirmResolve;
+  provisionConfirmResolve = null;
+  resolve?.(confirmed);
+};
+
+const requestProvisionReplacement = (report) => new Promise((resolve) => {
+  provisionConfirmResolve = resolve;
+  if (els.provisionConfirmSummary) {
+    els.provisionConfirmSummary.textContent = report?.summary || "服务器上已存在 Pass 同步服务。";
+  }
+  if (els.provisionConfirmFindings) {
+    const findings = (report?.findings || []).map((item) => `• ${item}`).join("\n");
+    els.provisionConfirmFindings.textContent = findings;
+    els.provisionConfirmFindings.hidden = !findings;
+  }
+  if (els.provisionConfirmModal) els.provisionConfirmModal.hidden = false;
+  els.btnProvisionConfirmReplace?.focus();
+});
+
+document.querySelectorAll("[data-close-provision-confirm]").forEach((el) => {
+  el.addEventListener("click", () => closeProvisionConfirm(false));
+});
+els.btnProvisionConfirmReplace?.addEventListener("click", () => closeProvisionConfirm(true));
+els.btnProvisionConfirmCancel?.addEventListener("click", () => closeProvisionConfirm(false));
+
 const collectProvisionCredential = () => {
   const mode = els.provisionAuthMode?.value || "privateKey";
   const secret =
@@ -2192,19 +2225,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
     });
     let removeExisting = false;
     if (report?.exists) {
-      const detail = (report.findings || []).map((x) => `• ${x}`).join("\n");
-      const ok = window.confirm(
-        [
-          report.summary || "检测到服务器上已有 Pass 同步服务",
-          "",
-          detail || "• 已安装相关文件或单元",
-          "",
-          "是否删除旧服务后再创建？",
-          "",
-          "选择「取消」将中止创建（不会改动服务器）。",
-          "选择「确定」将停止并移除旧服务单元与程序文件（数据库目录会保留，创建时仍会再备份）。",
-        ].join("\n")
-      );
+      const ok = await requestProvisionReplacement(report);
       if (!ok) {
         setProvisionStatus("已取消：未删除旧服务，也未创建新服务");
         toastWarn("已取消创建服务");
@@ -2226,16 +2247,10 @@ els.btnRunProvision?.addEventListener("click", async () => {
         .filter(Boolean)
         .map((x) => `• ${x}`)
         .join("\n");
-      const ok = window.confirm(
-        [
-          `检测到服务器 ${host} 上已有 Pass 同步服务。`,
-          "",
-          findings || "• 已安装相关文件或单元",
-          "",
-          "是否删除旧服务后再创建？",
-          "选择「取消」将中止。",
-        ].join("\n")
-      );
+      const ok = await requestProvisionReplacement({
+        summary: `检测到服务器 ${host} 上已有 Pass 同步服务。`,
+        findings: findings ? findings.split("\n").map((item) => item.replace(/^•\s*/, "")) : [],
+      });
       if (!ok) {
         setProvisionStatus("已取消：未删除旧服务，也未创建新服务");
         toastWarn("已取消创建服务");
@@ -2316,6 +2331,7 @@ window.addEventListener("keydown", (e) => {
     closeSettings();
     closeEdit();
     closeProvisionModal();
+    closeProvisionConfirm(false);
     if (els.folderModal) els.folderModal.hidden = true;
     closeFolderSites();
     closeFolderDedup();

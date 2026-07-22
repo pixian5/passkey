@@ -597,6 +597,26 @@
       </div>
     </div>
 
+    <!-- 覆盖旧同步服务前的明确确认，避免 Tauri 原生 confirm 不易发现。 -->
+    <div id="provisionConfirmModal" class="modal provision-confirm-modal" hidden>
+      <div class="modal-backdrop" data-close-provision-confirm></div>
+      <div class="modal-card sm provision-confirm-card" role="dialog" aria-modal="true" aria-labelledby="provisionConfirmTitle">
+        <header class="modal-head">
+          <h2 id="provisionConfirmTitle">检测到已有同步服务</h2>
+          <button type="button" class="icon-btn" data-close-provision-confirm aria-label="关闭">×</button>
+        </header>
+        <div class="modal-body">
+          <p id="provisionConfirmSummary" class="confirm-summary"></p>
+          <pre id="provisionConfirmFindings" class="mini-log confirm-findings" hidden></pre>
+          <p class="hint">继续创建会停止并移除旧服务单元与程序文件，但会保留服务器数据库目录，并在创建前自动备份。</p>
+          <div class="form-actions">
+            <button type="button" class="primary" id="btn-provision-confirm-replace">删除旧服务并创建</button>
+            <button type="button" id="btn-provision-confirm-cancel">取消创建</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
