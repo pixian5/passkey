@@ -2504,7 +2504,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
     toastWarn("请填写 SSH 密码或私钥");
     return;
   }
-  const restoreProvisionButton = setButtonBusy(els.btnRunProvision, "正在创建…");
+  const restoreProvisionButton = setButtonBusy(els.btnRunProvision, "创建服务");
   // 禁用 provision modal 的关闭按钮，防止操作中途关闭。
   const closeBtns = document.querySelectorAll("[data-close-provision]");
   closeBtns.forEach((b) => { b.style.pointerEvents = "none"; b.style.opacity = "0.4"; });
@@ -2515,9 +2515,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
     try {
       await invoke("save_ssh_credential_cmd", { serverUrl, credential });
     } catch (_) {}
-    showProvisionProgress(
-      removeExisting ? "正在删除旧服务并创建新服务…" : "正在通过 SSH 在服务器上创建服务…"
-    );
+    showProvisionProgress("创建服务");
     setProvisionStatus(
       removeExisting
         ? "正在删除旧服务并创建新服务，请稍候…"
@@ -2532,7 +2530,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
       tlsPrivateKey,
       removeExisting: Boolean(removeExisting),
     });
-    showProvisionProgress("正在验证服务连通性…");
+    showProvisionProgress("创建服务");
     if (els.syncEnabled) els.syncEnabled.checked = true;
     if (els.syncBaseUrl) els.syncBaseUrl.value = result.endpoint || serverUrl;
     if (els.syncToken) els.syncToken.value = accessToken;
@@ -2553,7 +2551,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
   };
 
   try {
-    showProvisionProgress("正在检测服务器是否已有旧服务…");
+    showProvisionProgress("创建服务");
     setProvisionStatus("正在检测服务器是否已有旧服务…");
     const report = await invoke("detect_existing_sync_service", {
       serverUrl,
