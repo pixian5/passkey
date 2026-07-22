@@ -308,6 +308,20 @@
           <!-- 同步 -->
           <section class="settings-pane" data-pane="sync">
             <div class="settings-group">
+              <h3>同步操作</h3>
+              <div class="form-actions wrap">
+                <button type="button" id="btn-sync-preview">预览合并</button>
+                <button type="button" class="sync-action sync-merge" id="btn-sync-merge">合并</button>
+                <button type="button" class="sync-action sync-remote-overwrite" id="btn-sync-remote-overwrite">云端覆盖本地</button>
+                <button type="button" class="sync-action sync-local-overwrite" id="btn-sync-local-overwrite">本地覆盖云端</button>
+              </div>
+              <p class="hint">预览合并只读取远端并展示裁决结果，不写入本地或服务器。合并保留双方变更；云端覆盖本地会替换本机；本地覆盖云端会覆盖远端。设置会在输入后自动保存。</p>
+              <div id="syncDecisionSummary" class="sync-decision-summary" hidden></div>
+              <div id="syncPreviewDiff" class="sync-preview-diff" hidden></div>
+              <pre id="syncPreviewOut" class="mini-log" hidden></pre>
+            </div>
+
+            <div class="settings-group">
               <h3>自建服务器</h3>
               <p class="hint">主接口 <code>GET/PUT /v2/sync/state</code>，与 macOS PassMac 互通；交换 <code>pass.sync.bundle.v2</code>（可选 AES 信封）。</p>
               <label class="row-check"><input type="checkbox" id="syncEnabled" /> 启用自建服务器同步</label>
@@ -393,20 +407,6 @@
                 </select>
               </div>
               <p class="hint" id="autoSyncStatus">自动同步：关闭</p>
-            </div>
-
-            <div class="settings-group">
-              <h3>同步操作</h3>
-              <div class="form-actions wrap">
-                <button type="button" id="btn-sync-preview">预览合并</button>
-                <button type="button" class="sync-action sync-merge" id="btn-sync-merge">合并</button>
-                <button type="button" class="sync-action sync-remote-overwrite" id="btn-sync-remote-overwrite">云端覆盖本地</button>
-                <button type="button" class="sync-action sync-local-overwrite" id="btn-sync-local-overwrite">本地覆盖云端</button>
-              </div>
-              <p class="hint">预览合并只读取远端并展示裁决结果，不写入本地或服务器。合并保留双方变更；云端覆盖本地会替换本机；本地覆盖云端会覆盖远端。设置会在输入后自动保存。</p>
-              <div id="syncDecisionSummary" class="sync-decision-summary" hidden></div>
-              <div id="syncPreviewDiff" class="sync-preview-diff" hidden></div>
-              <pre id="syncPreviewOut" class="mini-log" hidden></pre>
             </div>
 
             <div class="settings-group">

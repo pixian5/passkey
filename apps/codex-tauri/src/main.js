@@ -113,7 +113,6 @@ const els = {
   syncToken: $("#syncToken"),
   syncEncKey: $("#syncEncKey"),
   prevSyncEncKey: $("#prevSyncEncKey"),
-  syncMode: $("#syncMode"),
   autoSyncInterval: $("#autoSyncInterval"),
   autoSyncStatus: $("#autoSyncStatus"),
   syncKeyIdHint: $("#syncKeyIdHint"),
@@ -2026,7 +2025,6 @@ const loadSyncSettings = async () => {
     if (els.syncBaseUrl) els.syncBaseUrl.value = s.baseUrl || "";
     if (els.syncToken) els.syncToken.value = s.authToken || "";
     if (els.syncEncKey) els.syncEncKey.value = s.encryptionKey || "";
-    if (els.syncMode) els.syncMode.value = s.mode || "merge";
   } catch (err) {
     toastError(`读取同步设置失败：${err}`);
   }
@@ -2037,7 +2035,7 @@ const collectSyncSettings = () => ({
   baseUrl: (els.syncBaseUrl?.value || "").trim(),
   authToken: (els.syncToken?.value || "").trim(),
   encryptionKey: (els.syncEncKey?.value || "").trim(),
-  mode: els.syncMode?.value || "merge",
+  mode: "merge",
 });
 
 const saveAllSyncRelated = async () => {
@@ -2091,7 +2089,7 @@ const extractPayload = (text, label) => {
 };
 
 const runSyncNow = async ({ quiet = false } = {}) => {
-  return runSyncMode(els.syncMode?.value || "merge", { quiet });
+  return runSyncMode("merge", { quiet });
 };
 
 const renderSyncDecisionSummary = (reports) => {
@@ -3311,7 +3309,6 @@ els.btnSyncPreview?.addEventListener("click", async () => {
 els.btnSyncMerge?.addEventListener("click", async () => {
   const restore = setButtonBusy(els.btnSyncMerge, "正在同步…");
   try {
-    if (els.syncMode) els.syncMode.value = "merge";
     await runSyncMode("merge");
   } catch (err) {
     toastError(`同步失败：${err}`);
@@ -3329,7 +3326,6 @@ els.btnSyncRemoteOverwrite?.addEventListener("click", async () => {
   }
   const restore = setButtonBusy(els.btnSyncRemoteOverwrite, "正在同步…");
   try {
-    if (els.syncMode) els.syncMode.value = "remoteOverwriteLocal";
     await runSyncMode("remoteOverwriteLocal");
   } catch (err) {
     toastError(`同步失败：${err}`);
@@ -3347,7 +3343,6 @@ els.btnSyncLocalOverwrite?.addEventListener("click", async () => {
   }
   const restore = setButtonBusy(els.btnSyncLocalOverwrite, "正在同步…");
   try {
-    if (els.syncMode) els.syncMode.value = "localOverwriteRemote";
     await runSyncMode("localOverwriteRemote");
   } catch (err) {
     toastError(`同步失败：${err}`);
