@@ -807,9 +807,10 @@ fn sync_preview(app: AppHandle, state: tauri::State<AppLockState>) -> Result<Str
     let folders = load_folders(&conn)?;
     let passkeys = load_passkeys(&conn)?;
     let local = local_payload_from_vault(&accounts, &folders, &passkeys, &device);
-    let (report, merged) = preview_sync(&settings, local, &device, current_platform())?;
+    let (report, merged) = preview_sync(&settings, local.clone(), &device, current_platform())?;
     serde_json::to_string(&serde_json::json!({
         "report": report,
+        "localPayload": local,
         "payload": merged,
     }))
     .map_err(|e| e.to_string())

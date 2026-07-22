@@ -3298,7 +3298,7 @@ els.btnSyncPreview?.addEventListener("click", async () => {
       els.syncPreviewOut.textContent = JSON.stringify(result.report || result, null, 2);
     }
     renderSyncDecisionSummary(result.report || result);
-    renderSyncPreviewDiff(buildLocalSyncPayload(), result.payload);
+    renderSyncPreviewDiff(result.localPayload || buildLocalSyncPayload(), result.payload);
     toastSuccess(result.report?.message || "预览完成");
   } catch (err) {
     toastError(`预览失败：${err}`);
