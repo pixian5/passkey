@@ -2385,6 +2385,18 @@ document.addEventListener("contextmenu", (e) => {
         render();
       },
     });
+    if (!account.isDeleted) {
+      items.push({
+        label: "移入回收站",
+        danger: true,
+        action: async () => {
+          const id = accountRecordId(account) || accountKey(account);
+          await invoke("soft_delete_account", { id });
+          await refreshState();
+          toastSuccess("已移入回收站");
+        },
+      });
+    }
     showContextMenu(e, items);
     return;
   }
@@ -2393,6 +2405,13 @@ document.addEventListener("contextmenu", (e) => {
     ? e.target.closest("#sidebar .side-item[data-filter]")
     : null;
   if (sideButton) {
+    if (sideButton.dataset.filter === "recycle") {
+      showContextMenu(e, [
+        { label: "清空回收站", danger: true, action: () => els.btnPurgeRecycle?.click() },
+        { label: "全部恢复", action: () => els.btnRestoreAll?.click() },
+      ]);
+      return;
+    }
     showContextMenu(e, [{ label: "新建账号", action: () => openEdit(null) }]);
     return;
   }
