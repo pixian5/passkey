@@ -474,6 +474,8 @@ body.is-reordering {
 .provision-confirm-card .modal-body { gap: 12px; }
 .confirm-summary { margin: 0; line-height: 1.5; font-weight: 600; }
 .confirm-findings { max-height: min(180px, 24vh); margin: 0; white-space: pre-wrap; overflow: auto; }
+.provision-tls-fields { display: grid; gap: 10px; }
+.provision-tls-fields textarea { min-height: 84px; max-height: min(220px, 24vh); resize: vertical; }
 .settings-body { gap: 0; padding: 0; }
 .settings-group {
   padding: 14px 16px;

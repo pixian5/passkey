@@ -162,6 +162,8 @@ const els = {
   provisionSecretPassword: $("#provisionSecretPassword"),
   provisionSecretKey: $("#provisionSecretKey"),
   provisionKeyPassphrase: $("#provisionKeyPassphrase"),
+  provisionTlsCertificate: $("#provisionTlsCertificate"),
+  provisionTlsPrivateKey: $("#provisionTlsPrivateKey"),
   provisionToken: $("#provisionToken"),
   provisionEncKey: $("#provisionEncKey"),
   provisionStatus: $("#provisionStatus"),
@@ -1981,6 +1983,8 @@ document.addEventListener("click", (e) => {
   if (t.closest("#btn-create-folder")) {
     e.preventDefault();
     e.stopPropagation();
+    const restoreButton = setButtonBusy(els.btnCreateFolder, "正在创建…");
+    toastWarn("正在创建文件夹，请稍候…");
     (async () => {
       try {
         const name = (els.newFolderName?.value || "").trim();
@@ -1997,6 +2001,8 @@ document.addEventListener("click", (e) => {
         toastSuccess(`文件夹「${name}」已创建`);
       } catch (err) {
         toastError(`创建文件夹失败: ${err}`);
+      } finally {
+        restoreButton();
       }
     })();
     return;
@@ -2122,6 +2128,17 @@ const collectProvisionCredential = () => {
   };
 };
 
+const setButtonBusy = (button, busyText) => {
+  if (!button) return () => {};
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = busyText;
+  return () => {
+    button.disabled = false;
+    button.textContent = originalText;
+  };
+};
+
 const loadSavedSshCredential = async () => {
   const serverUrl = (els.provisionServerUrl?.value || els.syncBaseUrl?.value || "").trim();
   if (!serverUrl) return;
@@ -2148,30 +2165,40 @@ document.querySelectorAll("[data-close-provision]").forEach((el) => {
 });
 els.provisionAuthMode?.addEventListener("change", updateProvisionAuthUi);
 els.btnLoadSshCred?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnLoadSshCred, "正在读取…");
   try {
     await loadSavedSshCredential();
   } catch (err) {
     setProvisionStatus(String(err), true);
+  } finally {
+    restore();
   }
 });
 els.btnGenProvisionToken?.addEventListener("click", () => {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  const token = btoa(String.fromCharCode(...bytes))
-    .replace(/=+$/g, "")
-    .replace(/\+/g, "")
-    .replace(/\//g, "");
-  if (els.provisionToken) {
-    els.provisionToken.value = token;
-    delete els.provisionToken.dataset.forceVisible;
+  const restore = setButtonBusy(els.btnGenProvisionToken, "正在生成…");
+  try {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    const token = btoa(String.fromCharCode(...bytes))
+      .replace(/=+$/g, "")
+      .replace(/\+/g, "")
+      .replace(/\//g, "");
+    if (els.provisionToken) {
+      els.provisionToken.value = token;
+      delete els.provisionToken.dataset.forceVisible;
+    }
+    applyUiPrefs();
+    toastSuccess("已生成访问令牌");
+  } finally {
+    restore();
   }
-  applyUiPrefs();
-  toastSuccess("已生成访问令牌");
 });
 els.btnRunProvision?.addEventListener("click", async () => {
   const serverUrl = (els.provisionServerUrl?.value || "").trim();
   const accessToken = (els.provisionToken?.value || "").trim();
   const syncEncryptionKey = (els.provisionEncKey?.value || "").trim();
+  const tlsCertificate = (els.provisionTlsCertificate?.value || "").trim();
+  const tlsPrivateKey = (els.provisionTlsPrivateKey?.value || "").trim();
   const credential = collectProvisionCredential();
   if (!serverUrl.startsWith("https://")) {
     setProvisionStatus("服务器地址必须是 HTTPS URL", true);
@@ -2184,7 +2211,8 @@ els.btnRunProvision?.addEventListener("click", async () => {
     toastWarn("请填写 SSH 密码或私钥");
     return;
   }
-  if (els.btnRunProvision) els.btnRunProvision.disabled = true;
+  const restoreProvisionButton = setButtonBusy(els.btnRunProvision, "正在创建…");
+  toastWarn("正在创建同步服务，请稍候…");
 
   const runCreate = async (removeExisting) => {
     setProvisionStatus(
@@ -2197,6 +2225,8 @@ els.btnRunProvision?.addEventListener("click", async () => {
       credential,
       accessToken,
       syncEncryptionKey,
+      tlsCertificate,
+      tlsPrivateKey,
       removeExisting: Boolean(removeExisting),
     });
     if (els.syncEnabled) els.syncEnabled.checked = true;
@@ -2268,7 +2298,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
     setProvisionStatus(raw, true);
     toastError(`创建服务失败：${raw}`);
   } finally {
-    if (els.btnRunProvision) els.btnRunProvision.disabled = false;
+    restoreProvisionButton();
   }
 });
 document.querySelectorAll("[data-close-edit]").forEach((el) => el.addEventListener("click", closeEdit));
@@ -2362,11 +2392,14 @@ els.uiFontFamily?.addEventListener("change", () => {
 });
 
 els.btnSaveUi?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnSaveUi, "正在保存…");
   try {
     await saveUiPrefs();
     toastSuccess("界面设置已保存");
   } catch (err) {
     toastError(`保存界面设置失败：${err}`);
+  } finally {
+    restore();
   }
 });
 els.showPasswordsGlobally?.addEventListener("change", async () => {
@@ -2431,6 +2464,11 @@ const saveAccount = async (closeAfter) => {
   const payload = accountPayload();
   const folderIds = selectedFolderIds();
   const id = els.accountId.value;
+  const restoreButton = setButtonBusy(
+    id ? els.btnSaveAccount : closeAfter ? els.btnSaveAccount : els.btnCreateStay,
+    id ? "正在保存…" : "正在创建…"
+  );
+  if (!id) toastWarn("正在创建账号，请稍候…");
   try {
     if (id) {
       await invoke("update_account", { id, input: payload });
@@ -2454,6 +2492,8 @@ const saveAccount = async (closeAfter) => {
     }
   } catch (err) {
     toastError(`保存失败：${err}`);
+  } finally {
+    restoreButton();
   }
 };
 
@@ -2503,38 +2543,74 @@ els.folderSitesForm?.addEventListener("submit", async (e) => {
   }
 });
 
-els.btnKeepLatest?.addEventListener("click", () => deduplicateFolder("latest"));
-els.btnKeepEarliest?.addEventListener("click", () => deduplicateFolder("earliest"));
+els.btnKeepLatest?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnKeepLatest, "正在去重…");
+  try {
+    await deduplicateFolder("latest");
+  } finally {
+    restore();
+  }
+});
+els.btnKeepEarliest?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnKeepEarliest, "正在去重…");
+  try {
+    await deduplicateFolder("earliest");
+  } finally {
+    restore();
+  }
+});
 
 els.btnDelete?.addEventListener("click", async () => {
   const id = els.accountId.value;
   if (!id) return;
-  if (filter.type === "recycle") {
-    await invoke("hard_delete_account", { id });
-    toastSuccess("已永久删除");
-  } else {
-    await invoke("soft_delete_account", { id });
-    toastSuccess("已移入回收站");
+  const restore = setButtonBusy(els.btnDelete, "正在删除…");
+  try {
+    if (filter.type === "recycle") {
+      await invoke("hard_delete_account", { id });
+      toastSuccess("已永久删除");
+    } else {
+      await invoke("soft_delete_account", { id });
+      toastSuccess("已移入回收站");
+    }
+    closeEdit();
+    await refreshState();
+  } catch (err) {
+    toastError(`删除失败：${err}`);
+  } finally {
+    restore();
   }
-  closeEdit();
-  await refreshState();
 });
 
 els.btnRestore?.addEventListener("click", async () => {
   const id = els.accountId.value;
   if (!id) return;
-  await invoke("restore_account", { id });
-  closeEdit();
-  await refreshState();
-  toastSuccess("已恢复");
+  const restore = setButtonBusy(els.btnRestore, "正在恢复…");
+  try {
+    await invoke("restore_account", { id });
+    closeEdit();
+    await refreshState();
+    toastSuccess("已恢复");
+  } catch (err) {
+    toastError(`恢复失败：${err}`);
+  } finally {
+    restore();
+  }
 });
 
 els.btnSaveDevice?.addEventListener("click", async () => {
-  await invoke("set_device_name", { deviceName: els.deviceName.value });
-  await refreshState();
-  toastSuccess("设备名已保存");
+  const restore = setButtonBusy(els.btnSaveDevice, "正在保存…");
+  try {
+    await invoke("set_device_name", { deviceName: els.deviceName.value });
+    await refreshState();
+    toastSuccess("设备名已保存");
+  } catch (err) {
+    toastError(`保存失败：${err}`);
+  } finally {
+    restore();
+  }
 });
 els.btnExport?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnExport, "正在导出…");
   try {
     await saveUiPrefs().catch(() => {});
     const r = await invoke("export_csv_to_path", {
@@ -2548,25 +2624,31 @@ els.btnExport?.addEventListener("click", async () => {
     } catch (e2) {
       toastError(`导出失败：${err}`);
     }
+  } finally {
+    restore();
   }
 });
 
-const exportBrowser = async (format) => {
+const exportBrowser = async (format, btn) => {
+  const restore = setButtonBusy(btn, "正在导出…");
   try {
     const r = await invoke("export_browser_csv_cmd", { format, path: null });
     toastSuccess(r.message || r.path);
   } catch (err) {
     toastError(`导出失败：${err}`);
+  } finally {
+    restore();
   }
 };
-els.btnExportChrome?.addEventListener("click", () => exportBrowser("chrome"));
-els.btnExportFirefox?.addEventListener("click", () => exportBrowser("firefox"));
-els.btnExportSafari?.addEventListener("click", () => exportBrowser("safari"));
+els.btnExportChrome?.addEventListener("click", (e) => exportBrowser("chrome", e.currentTarget));
+els.btnExportFirefox?.addEventListener("click", (e) => exportBrowser("firefox", e.currentTarget));
+els.btnExportSafari?.addEventListener("click", (e) => exportBrowser("safari", e.currentTarget));
 
 els.btnImportBrowser?.addEventListener("click", () => els.fileBrowserCsv?.click());
 els.fileBrowserCsv?.addEventListener("change", async () => {
   const file = els.fileBrowserCsv.files?.[0];
   if (!file) return;
+  toastWarn("正在导入，请稍候…");
   try {
     const text = await readFileAsText(file);
     const r = await invoke("import_browser_csv_text", { content: text });
@@ -2580,18 +2662,22 @@ els.fileBrowserCsv?.addEventListener("change", async () => {
 });
 
 els.btnExportBundle?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnExportBundle, "正在导出…");
   try {
     await saveAllSyncRelated().catch(() => {});
     const r = await invoke("export_sync_bundle", { path: null });
     toastSuccess(r.message || r.path);
   } catch (err) {
     toastError(`导出同步包失败：${err}`);
+  } finally {
+    restore();
   }
 });
 els.btnImportBundle?.addEventListener("click", () => els.fileSyncBundle?.click());
 els.fileSyncBundle?.addEventListener("change", async () => {
   const file = els.fileSyncBundle.files?.[0];
   if (!file) return;
+  toastWarn("正在导入，请稍候…");
   try {
     const text = await readFileAsText(file);
     const raw = await invoke("import_sync_bundle_text", { content: text, apply: false });
@@ -2624,29 +2710,52 @@ els.fileSyncBundle?.addEventListener("change", async () => {
 });
 
 els.btnDemo?.addEventListener("click", async () => {
-  await invoke("generate_demo_accounts");
-  await refreshState();
-  toastSuccess("已生成演示数据");
+  const restore = setButtonBusy(els.btnDemo, "正在生成…");
+  toastWarn("正在生成演示数据，请稍候…");
+  try {
+    await invoke("generate_demo_accounts");
+    await refreshState();
+    toastSuccess("已生成演示数据");
+  } catch (err) {
+    toastError(`生成失败：${err}`);
+  } finally {
+    restore();
+  }
 });
 els.btnHealth?.addEventListener("click", async () => {
-  const h = await invoke("health_check");
-  if (els.debugOut) els.debugOut.textContent = JSON.stringify(h, null, 2);
-  openSettings("debug");
+  const restore = setButtonBusy(els.btnHealth, "正在检查…");
+  try {
+    const h = await invoke("health_check");
+    if (els.debugOut) els.debugOut.textContent = JSON.stringify(h, null, 2);
+    openSettings("debug");
+  } catch (err) {
+    toastError(`检查失败：${err}`);
+  } finally {
+    restore();
+  }
 });
 
 els.btnSaveSync?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnSaveSync, "正在保存…");
   try {
     await saveAllSyncRelated();
     toastSuccess("同步设置已保存");
   } catch (err) {
     toastError(`保存失败：${err}`);
+  } finally {
+    restore();
   }
 });
 els.btnGenSyncKey?.addEventListener("click", async () => {
-  const key = await invoke("generate_sync_encryption_key");
-  if (els.syncEncKey) els.syncEncKey.value = key;
-  await refreshSyncKeyHints();
-  toastSuccess("已生成同步密钥");
+  const restore = setButtonBusy(els.btnGenSyncKey, "正在生成…");
+  try {
+    const key = await invoke("generate_sync_encryption_key");
+    if (els.syncEncKey) els.syncEncKey.value = key;
+    await refreshSyncKeyHints();
+    toastSuccess("已生成同步密钥");
+  } finally {
+    restore();
+  }
 });
 els.btnCopySyncKey?.addEventListener("click", async () => {
   const key = els.syncEncKey?.value || "";
@@ -2662,6 +2771,7 @@ els.btnCopySyncKey?.addEventListener("click", async () => {
   }
 });
 els.btnSyncPreview?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnSyncPreview, "正在预览…");
   try {
     await saveAllSyncRelated();
     const raw = await invoke("sync_preview");
@@ -2673,14 +2783,19 @@ els.btnSyncPreview?.addEventListener("click", async () => {
     toastSuccess(result.report?.message || "预览完成");
   } catch (err) {
     toastError(`预览失败：${err}`);
+  } finally {
+    restore();
   }
 });
 els.btnSyncMerge?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnSyncMerge, "正在同步…");
   try {
     if (els.syncMode) els.syncMode.value = "merge";
     await runSyncMode("merge");
   } catch (err) {
     toastError(`同步失败：${err}`);
+  } finally {
+    restore();
   }
 });
 els.btnSyncRemoteOverwrite?.addEventListener("click", async () => {
@@ -2691,11 +2806,14 @@ els.btnSyncRemoteOverwrite?.addEventListener("click", async () => {
   ) {
     return;
   }
+  const restore = setButtonBusy(els.btnSyncRemoteOverwrite, "正在同步…");
   try {
     if (els.syncMode) els.syncMode.value = "remoteOverwriteLocal";
     await runSyncMode("remoteOverwriteLocal");
   } catch (err) {
     toastError(`同步失败：${err}`);
+  } finally {
+    restore();
   }
 });
 els.btnSyncLocalOverwrite?.addEventListener("click", async () => {
@@ -2706,30 +2824,40 @@ els.btnSyncLocalOverwrite?.addEventListener("click", async () => {
   ) {
     return;
   }
+  const restore = setButtonBusy(els.btnSyncLocalOverwrite, "正在同步…");
   try {
     if (els.syncMode) els.syncMode.value = "localOverwriteRemote";
     await runSyncMode("localOverwriteRemote");
   } catch (err) {
     toastError(`同步失败：${err}`);
+  } finally {
+    restore();
   }
 });
 els.btnSyncNow?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnSyncNow, "正在同步…");
   try {
     await runSyncNow();
   } catch (err) {
     toastError(`同步失败：${err}`);
     openSettings("sync");
+  } finally {
+    restore();
   }
 });
 els.btnSyncNowSettings?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnSyncNowSettings, "正在同步…");
   try {
     await runSyncNow();
   } catch (err) {
     toastError(`同步失败：${err}`);
+  } finally {
+    restore();
   }
 });
 
 els.btnLoadVersions?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnLoadVersions, "正在读取…");
   try {
     await saveAllSyncRelated().catch(() => {});
     const list = await invoke("list_server_versions");
@@ -2750,12 +2878,15 @@ els.btnLoadVersions?.addEventListener("click", async () => {
         btn.textContent = "恢复";
         btn.addEventListener("click", async () => {
           if (!window.confirm(`恢复服务器快照 ${v.id}？本机数据将被替换。`)) return;
+          const restoreBtn = setButtonBusy(btn, "正在恢复…");
           try {
             const msg = await invoke("restore_server_version", { versionId: v.id });
             await refreshState();
             toastSuccess(msg);
           } catch (err) {
             toastError(`恢复失败：${err}`);
+          } finally {
+            restoreBtn();
           }
         });
         row.append(span, btn);
@@ -2765,10 +2896,13 @@ els.btnLoadVersions?.addEventListener("click", async () => {
   } catch (err) {
     if (els.syncVersionsStatus) els.syncVersionsStatus.textContent = String(err);
     toastError(`读取快照失败：${err}`);
+  } finally {
+    restore();
   }
 });
 
 els.btnLoadLocalSnapshots?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnLoadLocalSnapshots, "正在读取…");
   try {
     const list = await invoke("list_local_snapshots");
     if (els.localSnapshotsStatus) {
@@ -2788,12 +2922,15 @@ els.btnLoadLocalSnapshots?.addEventListener("click", async () => {
         btn.textContent = "恢复";
         btn.addEventListener("click", async () => {
           if (!window.confirm("恢复本地安全快照会替换当前 vault；当前数据也会先自动备份。确定继续吗？")) return;
+          const restoreBtn = setButtonBusy(btn, "正在恢复…");
           try {
             const msg = await invoke("restore_local_snapshot", { snapshotId: snapshot.id });
             await refreshState();
             toastSuccess(msg);
           } catch (err) {
             toastError(`恢复本地安全快照失败：${err}`);
+          } finally {
+            restoreBtn();
           }
         });
         row.append(span, btn);
@@ -2803,6 +2940,8 @@ els.btnLoadLocalSnapshots?.addEventListener("click", async () => {
   } catch (err) {
     if (els.localSnapshotsStatus) els.localSnapshotsStatus.textContent = String(err);
     toastError(`读取本地安全快照失败：${err}`);
+  } finally {
+    restore();
   }
 });
 
@@ -2823,6 +2962,7 @@ els.btnOpenMerge?.addEventListener("click", () => {
   openSettings("debug");
 });
 els.btnMergePreview?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnMergePreview, "正在合并…");
   try {
     const localObj = (els.localPayload?.value || "").trim()
       ? extractPayload(els.localPayload.value, "本地")
@@ -2841,6 +2981,8 @@ els.btnMergePreview?.addEventListener("click", async () => {
     toastSuccess("JSON 合并预览完成");
   } catch (err) {
     toastError(`预览失败：${err}`);
+  } finally {
+    restore();
   }
 });
 
@@ -2880,6 +3022,7 @@ els.btnUnlockBiometric?.addEventListener("click", async () => {
   }
 });
 els.btnLockEnable?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnLockEnable, "正在启用…");
   try {
     const password = (els.lockPassword?.value || "").trim();
     const confirm = (els.lockPassword2?.value || "").trim();
@@ -2912,6 +3055,8 @@ els.btnLockEnable?.addEventListener("click", async () => {
     );
   } catch (err) {
     toastError(`启用失败：${err}`);
+  } finally {
+    restore();
   }
 });
 els.btnLockDisable?.addEventListener("click", async () => {
@@ -2930,12 +3075,15 @@ els.btnLockDisable?.addEventListener("click", async () => {
   }
 });
 els.btnLockIdle?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnLockIdle, "正在保存…");
   try {
     lockState = await invoke("lock_set_idle", { minutes: Number(els.idleMinutes?.value || 5) });
     applyLockUi();
     toastSuccess("空闲时间已保存");
   } catch (err) {
     toastError(String(err));
+  } finally {
+    restore();
   }
 });
 const doLockNow = async () => {

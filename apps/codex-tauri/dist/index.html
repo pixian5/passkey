@@ -572,6 +572,15 @@
               </span>
             </div>
           </div>
+          <div class="provision-tls-fields">
+            <label class="account-field">SSL 证书（fullchain.cer）
+              <textarea id="provisionTlsCertificate" rows="4" placeholder="-----BEGIN CERTIFICATE-----" class="mono" spellcheck="false"></textarea>
+            </label>
+            <label class="account-field">SSL 私钥（sbbz.tech.key）
+              <textarea id="provisionTlsPrivateKey" rows="4" placeholder="-----BEGIN PRIVATE KEY-----" class="mono" spellcheck="false"></textarea>
+            </label>
+          </div>
+          <p class="hint">HTTPS 使用显式端口时可直接粘贴以上证书内容；两个文本框同时留空则从服务器的 acme.sh 或 <code>/etc/bz/certs/</code> 路径查找。</p>
           <div class="form-row">
             <span class="form-label">访问令牌</span>
             <span class="secret-field grow">

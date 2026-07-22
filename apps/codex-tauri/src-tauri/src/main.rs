@@ -1076,6 +1076,8 @@ fn provision_self_hosted_server(
     credential: SshCredential,
     access_token: String,
     sync_encryption_key: String,
+    tls_certificate: String,
+    tls_private_key: String,
     remove_existing: Option<bool>,
 ) -> Result<ProvisionResult, String> {
     let dir = app_data_dir(&app)?;
@@ -1086,6 +1088,8 @@ fn provision_self_hosted_server(
         credential,
         &access_token,
         &sync_encryption_key,
+        &tls_certificate,
+        &tls_private_key,
         remove_existing.unwrap_or(false),
     )?;
     // Persist sync settings used for this endpoint.

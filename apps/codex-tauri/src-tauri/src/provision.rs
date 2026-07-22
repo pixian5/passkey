@@ -577,10 +577,17 @@ fi
 "#
 }
 
-fn install_command(stage: &str, endpoint: &Endpoint) -> String {
+fn install_command(stage: &str, endpoint: &Endpoint, custom_tls: bool) -> String {
     let tls = if endpoint.uses_tls { "1" } else { "0" };
     let port = endpoint.backend_port;
-    let tls_resolve = tls_resolve_shell();
+    let tls_resolve = if custom_tls {
+        format!(
+            "CERT_SRC='{stage}/fullchain.cer'\nKEY_SRC='{stage}/sbbz.tech.key'",
+            stage = stage
+        )
+    } else {
+        tls_resolve_shell().to_string()
+    };
     format!(
         r#"
 set -eu
@@ -834,10 +841,15 @@ pub fn provision_server(
     credential: SshCredential,
     access_token: &str,
     sync_encryption_key: &str,
+    tls_certificate: &str,
+    tls_private_key: &str,
     remove_existing: bool,
 ) -> Result<ProvisionResult, String> {
     let endpoint = parse_endpoint(server_url)?;
     let token = access_token.trim();
+    let tls_certificate = tls_certificate.trim();
+    let tls_private_key = tls_private_key.trim();
+    let custom_tls = !tls_certificate.is_empty() || !tls_private_key.is_empty();
     // Token is optional: empty means provision an open server (no bearer auth).
     if token.contains(',') || token.contains('\n') || token.contains('\r') {
         return Err("访问令牌不能包含逗号、换行或回车".into());
@@ -852,12 +864,27 @@ pub fn provision_server(
     if credential.port == 0 {
         return Err("SSH 端口必须是 1 到 65535 之间的数字".into());
     }
+    if endpoint.uses_tls {
+        if tls_certificate.is_empty() != tls_private_key.is_empty() {
+            return Err("SSL 证书和 SSL 私钥必须同时填写，或同时留空".into());
+        }
+        if custom_tls {
+            if !tls_certificate.contains("BEGIN CERTIFICATE") {
+                return Err("SSL 证书内容无效，请粘贴 fullchain.cer 的 PEM 内容".into());
+            }
+            if !tls_private_key.contains("PRIVATE KEY") {
+                return Err("SSL 私钥内容无效，请粘贴 sbbz.tech.key 的 PEM 内容".into());
+            }
+        }
+    } else if custom_tls {
+        return Err("只有 HTTPS 显式端口服务才需要填写 SSL 证书".into());
+    }
 
     let server_py = resource_path("pass_sync_server.py")?;
     let backup_sh = resource_path("backup_sync_db.sh")?;
     let temp = make_temp_ssh(data_dir, &credential)?;
 
-    if endpoint.uses_tls {
+    if endpoint.uses_tls && !custom_tls {
         // Probe preferred certificate locations (acme.sh first, then legacy).
         let mut found = false;
         let mut last_hint = String::new();
@@ -1022,8 +1049,32 @@ pub fn provision_server(
         cleanup();
         return Err(e);
     }
+    if custom_tls {
+        if let Err(e) = ssh_write(
+            &credential,
+            &endpoint,
+            &temp,
+            &format!("{stage}/fullchain.cer"),
+            tls_certificate.as_bytes(),
+            "0644",
+        ) {
+            cleanup();
+            return Err(e);
+        }
+        if let Err(e) = ssh_write(
+            &credential,
+            &endpoint,
+            &temp,
+            &format!("{stage}/sbbz.tech.key"),
+            tls_private_key.as_bytes(),
+            "0600",
+        ) {
+            cleanup();
+            return Err(e);
+        }
+    }
 
-    let install = install_command(&stage, &endpoint);
+    let install = install_command(&stage, &endpoint, custom_tls);
     if let Err(e) = ssh_run(&credential, &endpoint, &temp, &install) {
         cleanup();
         return Err(e);
