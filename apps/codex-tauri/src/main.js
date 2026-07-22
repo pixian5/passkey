@@ -3230,7 +3230,13 @@ const accountPayload = () => ({
 const selectedFolderIds = () => [...(els.editFolders?.selectedOptions || [])].map((option) => option.value);
 
 const saveAccount = async () => {
-  if (!els.accountForm?.reportValidity()) return;
+  if (!els.accountForm) return;
+  if (els.sites) {
+    els.sites.setCustomValidity(
+      els.sites.value.trim() ? "" : "请至少填写一个站点"
+    );
+  }
+  if (!els.accountForm.reportValidity()) return;
   const payload = accountPayload();
   const folderIds = selectedFolderIds();
   const id = els.accountId.value;
@@ -3259,6 +3265,11 @@ const saveAccount = async () => {
     restoreButton();
   }
 };
+
+els.sites?.addEventListener("input", () => {
+  // Clear the custom Chinese validation message as soon as the user edits.
+  els.sites.setCustomValidity("");
+});
 
 els.accountForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
