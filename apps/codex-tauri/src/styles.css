@@ -629,6 +629,7 @@ input, textarea, select, label, .hint, .form-label, .mini-log {
 }
 .account-editor-card { width: min(760px, 94vw); max-height: min(92vh, 900px); }
 .modal-card.folder-sites-card { width: min(500px, 94vw); }
+.modal-card.account-folder-card { width: min(420px, 94vw); }
 .modal-card.folder-dedup-card { width: min(820px, 94vw); }
 .modal-head {
   display: flex;

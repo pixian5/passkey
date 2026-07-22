@@ -50,6 +50,10 @@ const els = {
   folderSitesTitle: $("#folderSitesTitle"),
   folderSitesInput: $("#folderSitesInput"),
   folderAutoAdd: $("#folderAutoAdd"),
+  accountFolderModal: $("#accountFolderModal"),
+  accountFolderTitle: $("#accountFolderTitle"),
+  accountFolderSelect: $("#accountFolderSelect"),
+  btnConfirmAccountFolder: $("#btn-confirm-account-folder"),
   folderDedupModal: $("#folderDedupModal"),
   folderDedupTitle: $("#folderDedupTitle"),
   folderDedupSummary: $("#folderDedupSummary"),
@@ -230,6 +234,7 @@ let selectedId = "";
 let selectedAccountIds = new Set();
 let selectionAnchorId = "";
 let folderSitesTargetId = "";
+let accountFolderTarget = null;
 let folderDedupTarget = null;
 let folderDeleteTarget = null;
 let uiPrefs = {
@@ -906,6 +911,81 @@ const openFolderSites = (folder) => {
 const closeFolderSites = () => {
   if (els.folderSitesModal) els.folderSitesModal.hidden = true;
   folderSitesTargetId = "";
+};
+
+const closeAccountFolderPicker = () => {
+  if (els.accountFolderModal) els.accountFolderModal.hidden = true;
+  accountFolderTarget = null;
+};
+
+const openAccountFolderPicker = (account) => {
+  const folders = (state.folders || []).filter(
+    (folder) => !folder.isDeleted && !folder.isPermanentlyDeleted
+  );
+  if (!folders.length) {
+    toastWarn("暂无可添加的文件夹，请先新建文件夹");
+    return;
+  }
+  const existingIds = new Set(folderIdsOf(account).map((id) => id.toLowerCase()));
+  const available = folders.filter((folder) => !existingIds.has(String(folder.id).toLowerCase()));
+  if (!available.length) {
+    toastWarn("此账号已添加到全部文件夹");
+    return;
+  }
+  accountFolderTarget = {
+    id: accountRecordId(account) || accountKey(account),
+    name: account.username || account.accountId || "账号",
+  };
+  if (els.accountFolderTitle) {
+    els.accountFolderTitle.textContent = `添加「${accountFolderTarget.name}」到文件夹`;
+  }
+  if (els.accountFolderSelect) {
+    els.accountFolderSelect.innerHTML = "";
+    available.forEach((folder) => {
+      const option = document.createElement("option");
+      option.value = folder.id;
+      option.textContent = folder.name || folder.id;
+      els.accountFolderSelect.appendChild(option);
+    });
+    els.accountFolderSelect.selectedIndex = 0;
+  }
+  if (els.accountFolderModal) els.accountFolderModal.hidden = false;
+  setTimeout(() => els.accountFolderSelect?.focus(), 50);
+};
+
+const confirmAccountFolder = async () => {
+  const target = accountFolderTarget;
+  const folderId = els.accountFolderSelect?.value || "";
+  if (!target || !folderId) return;
+  const account = [...(state.activeAccounts || []), ...(state.deletedAccounts || [])].find(
+    (item) => accountRecordId(item) === target.id
+  );
+  if (!account) {
+    toastError("账号已不存在或状态已变化");
+    closeAccountFolderPicker();
+    return;
+  }
+  const folders = (state.folders || []).filter(
+    (folder) => !folder.isDeleted && !folder.isPermanentlyDeleted
+  );
+  const canonicalByLowerId = new Map(folders.map((folder) => [String(folder.id).toLowerCase(), folder.id]));
+  const folderIds = folderIdsOf(account)
+    .map((id) => canonicalByLowerId.get(id.toLowerCase()))
+    .filter(Boolean);
+  if (!folderIds.some((id) => id.toLowerCase() === folderId.toLowerCase())) {
+    folderIds.push(folderId);
+  }
+  const restoreButton = setButtonBusy(els.btnConfirmAccountFolder, "正在添加…");
+  try {
+    await invoke("set_account_folders", { id: target.id, folderIds });
+    closeAccountFolderPicker();
+    await refreshState();
+    toastSuccess(`账号「${target.name}」已添加到文件夹`);
+  } catch (err) {
+    toastError(`添加到文件夹失败：${err}`);
+  } finally {
+    restoreButton();
+  }
 };
 
 const formatTime = (ms) => {
@@ -2392,6 +2472,10 @@ document.addEventListener("contextmenu", (e) => {
       (state.deletedAccounts || []).find((item) => accountKey(item) === key);
     if (!account) return;
     const items = [];
+    items.push({
+      label: "添加到文件夹",
+      action: () => openAccountFolderPicker(account),
+    });
     if (!account.isDeleted) {
       items.push({
         label: isPinnedAccount(account) ? "取消置顶" : "置顶",
@@ -2978,6 +3062,9 @@ document.querySelectorAll("[data-close-folder]").forEach((el) =>
 document.querySelectorAll("[data-close-folder-sites]").forEach((el) =>
   el.addEventListener("click", closeFolderSites)
 );
+document.querySelectorAll("[data-close-account-folder]").forEach((el) =>
+  el.addEventListener("click", closeAccountFolderPicker)
+);
 document.querySelectorAll("[data-close-folder-dedup]").forEach((el) =>
   el.addEventListener("click", closeFolderDedup)
 );
@@ -3043,6 +3130,7 @@ window.addEventListener("keydown", (e) => {
     closeProvisionModal();
     if (els.folderModal) els.folderModal.hidden = true;
     closeFolderSites();
+    closeAccountFolderPicker();
     closeFolderDedup();
     closeFolderDelete();
     hideContextMenu();
@@ -3210,6 +3298,8 @@ els.folderSitesForm?.addEventListener("submit", async (e) => {
     toastError(`保存文件夹规则失败：${err}`);
   }
 });
+
+els.btnConfirmAccountFolder?.addEventListener("click", confirmAccountFolder);
 
 els.btnKeepLatest?.addEventListener("click", async () => {
   const restore = setButtonBusy(els.btnKeepLatest, "正在去重…");
