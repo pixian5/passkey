@@ -221,6 +221,7 @@
     document.addEventListener("focusin", onFillFieldFocusIn, true);
     document.addEventListener("pointerdown", onDocumentPointerDownForFillChooser, true);
     document.addEventListener("pointerdown", onFillChooserUserPointer, true);
+    document.addEventListener("click", onFillChooserUserClick, true);
     document.addEventListener("keydown", onFillChooserUserKeydown, true);
     window.addEventListener("scroll", () => hideFillChooser(), true);
     window.addEventListener("resize", () => hideFillChooser());
@@ -784,11 +785,15 @@
       if (!response?.ok) {
         if (response?.locked) fillChooserLocked = true;
         hideFillChooser();
+        if (response?.error && response?.error !== "\u6269\u5C55\u4E0A\u4E0B\u6587\u4E0D\u53EF\u7528") {
+          showPassPageToast(response.error, response?.locked ? "warning" : "error");
+        }
         return;
       }
       const accounts = Array.isArray(response.accounts) ? response.accounts : [];
       if (accounts.length === 0) {
         hideFillChooser();
+        if (userInitiated) showPassPageToast("\u5F53\u524D\u7F51\u7AD9\u6CA1\u6709\u5339\u914D\u7684 Pass \u8D26\u53F7", "info");
         return;
       }
       if (shouldSkipChooserForFilledInput(input, { userInitiated })) return;
@@ -863,6 +868,14 @@
     if (!input) return;
     fillChooserPointerActivation = { input, at: Date.now() };
     if (document.activeElement === input && !isFillChooserBlocked()) {
+      void showFillChooserForInput(input, { userInitiated: true });
+    }
+  }
+  function onFillChooserUserClick(event) {
+    if (event.isTrusted === false) return;
+    const input = resolveFillableInputFromEventTarget(event.target);
+    if (!input || isFillChooserBlocked()) return;
+    if (document.activeElement === input || event.target === input) {
       void showFillChooserForInput(input, { userInitiated: true });
     }
   }

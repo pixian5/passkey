@@ -101,6 +101,7 @@ function installPassContentBridge() {
   document.addEventListener("focusin", onFillFieldFocusIn, true);
   document.addEventListener("pointerdown", onDocumentPointerDownForFillChooser, true);
   document.addEventListener("pointerdown", onFillChooserUserPointer, true);
+  document.addEventListener("click", onFillChooserUserClick, true);
   document.addEventListener("keydown", onFillChooserUserKeydown, true);
   window.addEventListener("scroll", () => hideFillChooser(), true);
   window.addEventListener("resize", () => hideFillChooser());
@@ -769,11 +770,15 @@ async function showFillChooserForInput(input, { userInitiated = false } = {}) {
     if (!response?.ok) {
       if (response?.locked) fillChooserLocked = true;
       hideFillChooser();
+      if (response?.error && response?.error !== "扩展上下文不可用") {
+        showPassPageToast(response.error, response?.locked ? "warning" : "error");
+      }
       return;
     }
     const accounts = Array.isArray(response.accounts) ? response.accounts : [];
     if (accounts.length === 0) {
       hideFillChooser();
+      if (userInitiated) showPassPageToast("当前网站没有匹配的 Pass 账号", "info");
       return;
     }
     if (shouldSkipChooserForFilledInput(input, { userInitiated })) return;
@@ -862,6 +867,18 @@ function onFillChooserUserPointer(event) {
   fillChooserPointerActivation = { input, at: Date.now() };
   // Re-clicking an already-focused field does not re-fire focusin; open explicitly.
   if (document.activeElement === input && !isFillChooserBlocked()) {
+    void showFillChooserForInput(input, { userInitiated: true });
+  }
+}
+
+function onFillChooserUserClick(event) {
+  if (event.isTrusted === false) return;
+  const input = resolveFillableInputFromEventTarget(event.target);
+  if (!input || isFillChooserBlocked()) return;
+  // Some login pages suppress the native focus event while routing clicks
+  // through a custom form controller. A trusted click is still explicit user
+  // activation, so use it as a fallback to open the chooser.
+  if (document.activeElement === input || event.target === input) {
     void showFillChooserForInput(input, { userInitiated: true });
   }
 }
