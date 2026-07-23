@@ -258,6 +258,7 @@ let state = {
   deletedAccounts: [],
   folders: [],
   passkeys: [],
+  allRegularAccountIds: [],
   deviceName: "",
 };
 
@@ -725,6 +726,18 @@ const isPinnedAccount = (a) => Boolean(a?.isPinned);
 const accountRecordId = (a) =>
   String(a?.recordId || a?.id || a?.accountId || "").trim();
 
+const accountOrderScopeId = () =>
+  filter.type === "folder" && filter.id ? `folder:${filter.id}` : "all";
+
+const regularOrderIdsForScope = (scopeId = accountOrderScopeId()) => {
+  if (String(scopeId).toLowerCase().startsWith("folder:")) {
+    const folderId = String(scopeId).slice("folder:".length);
+    const folder = (state.folders || []).find((item) => sameId(item.id, folderId));
+    return folder?.regularAccountIds || [];
+  }
+  return state.allRegularAccountIds || [];
+};
+
 const compareOptionalOrder = (lo, ro) => {
   if (lo != null && ro != null && lo !== ro) return lo - ro;
   if (lo != null && ro == null) return -1;
@@ -732,10 +745,13 @@ const compareOptionalOrder = (lo, ro) => {
   return 0;
 };
 
-const sortAccounts = (list) => {
+const sortAccounts = (list, scopeId = accountOrderScopeId()) => {
   const mode = els.sortMode?.value || "default";
   const arr = [...list];
   const cmp = (x, y) => String(x || "").localeCompare(String(y || ""), "en");
+  const regularOrder = new Map(
+    regularOrderIdsForScope(scopeId).map((id, index) => [String(id).toLowerCase(), index])
+  );
   arr.sort((a, b) => {
     if (mode === "usernameAZ") return cmp(a.username, b.username);
     if (mode === "siteAZ") return cmp((a.sites || [])[0], (b.sites || [])[0]);
@@ -747,8 +763,10 @@ const sortAccounts = (list) => {
       const byPin = compareOptionalOrder(a.pinnedSortOrder, b.pinnedSortOrder);
       if (byPin) return byPin;
     } else {
-      const byReg = compareOptionalOrder(a.regularSortOrder, b.regularSortOrder);
-      if (byReg) return byReg;
+      const leftRank = regularOrder.get(accountRecordId(a).toLowerCase());
+      const rightRank = regularOrder.get(accountRecordId(b).toLowerCase());
+      const byRegularOrder = compareOptionalOrder(leftRank, rightRank);
+      if (byRegularOrder) return byRegularOrder;
     }
     const byUpdated = (b.updatedAtMs || 0) - (a.updatedAtMs || 0);
     if (byUpdated) return byUpdated;
@@ -1304,6 +1322,15 @@ const findAccountByAnyId = (id) =>
 const pinScopeAccounts = (pinned) =>
   sortAccounts((state.activeAccounts || []).filter((a) => isPinnedAccount(a) === pinned));
 
+const accountsForOrderScope = (scopeId = accountOrderScopeId()) => {
+  const active = state.activeAccounts || [];
+  if (!String(scopeId).toLowerCase().startsWith("folder:")) return active;
+  const folderId = String(scopeId).slice("folder:".length).toLowerCase();
+  return active.filter((account) =>
+    folderIdsOf(account).some((id) => String(id).toLowerCase() === folderId)
+  );
+};
+
 const reorderFolderRelative = async (sourceId, targetId, before) => {
   const folders = (state.folders || []).filter((f) => !f.isDeleted && !f.isPermanentlyDeleted);
   const ids = folders.map((f) => String(f.id));
@@ -1337,8 +1364,13 @@ const reorderAccountRelative = async (sourceId, targetId, before) => {
     return false;
   }
   const pinned = isPinnedAccount(source);
-  const visible = filteredAccounts().filter((a) => isPinnedAccount(a) === pinned && !a.isDeleted);
-  const group = visible.length ? visible : pinScopeAccounts(pinned);
+  const scopeId = accountOrderScopeId();
+  const group = pinned
+    ? pinScopeAccounts(true)
+    : sortAccounts(
+        accountsForOrderScope(scopeId).filter((a) => !isPinnedAccount(a) && !a.isDeleted),
+        scopeId
+      );
   const ids = group.map((a) => accountRecordId(a) || accountKey(a));
   const sourceRec = accountRecordId(source) || accountKey(source);
   const target = findAccountByAnyId(targetId);
@@ -1359,14 +1391,20 @@ const reorderAccountRelative = async (sourceId, targetId, before) => {
     return false;
   }
   try {
-    await invoke("reorder_accounts", { orderedIds: next, pinned });
+    await invoke("reorder_accounts", { orderedIds: next, pinned, scopeId });
     const orderRank = new Map(next.map((id, i) => [String(id).toLowerCase(), i]));
+    if (!pinned && scopeId === "all") {
+      state.allRegularAccountIds = next;
+    } else if (!pinned) {
+      const folderId = scopeId.slice("folder:".length);
+      const folder = (state.folders || []).find((item) => sameId(item.id, folderId));
+      if (folder) folder.regularAccountIds = next;
+    }
     for (const acc of state.activeAccounts || []) {
       if (isPinnedAccount(acc) !== pinned) continue;
       const rid = String(accountRecordId(acc) || accountKey(acc)).toLowerCase();
       if (!orderRank.has(rid)) continue;
       if (pinned) acc.pinnedSortOrder = orderRank.get(rid);
-      else acc.regularSortOrder = orderRank.get(rid);
     }
     render();
     toastSuccess(pinned ? "置顶顺序已更新" : "账号顺序已更新");
@@ -2044,6 +2082,7 @@ const refreshState = async () => {
     deletedAccounts: next.deletedAccounts || [],
     folders: next.folders || [],
     passkeys: next.passkeys || [],
+    allRegularAccountIds: next.allRegularAccountIds || [],
     deviceName: next.deviceName || "",
   };
   const validIds = new Set([...state.activeAccounts, ...state.deletedAccounts].map(accountKey));
@@ -4019,7 +4058,7 @@ els.btnLockIdle?.addEventListener("click", async () => {
 const doLockNow = async () => {
   await invoke("lock_now");
   await refreshLock();
-  state = { activeAccounts: [], deletedAccounts: [], folders: [], passkeys: [], deviceName: "" };
+  state = { activeAccounts: [], deletedAccounts: [], folders: [], passkeys: [], allRegularAccountIds: [], deviceName: "" };
   closeEdit();
   closeSettings();
   render();
@@ -4041,7 +4080,7 @@ const boot = async () => {
       const prev = lockState.locked;
       await refreshLock();
       if (!prev && lockState.locked) {
-        state = { activeAccounts: [], deletedAccounts: [], folders: [], passkeys: [], deviceName: "" };
+        state = { activeAccounts: [], deletedAccounts: [], folders: [], passkeys: [], allRegularAccountIds: [], deviceName: "" };
         closeEdit();
         closeSettings();
         render();

@@ -129,9 +129,26 @@ pub fn local_payload_from_vault(
         accounts: accounts.to_vec(),
         folders: folders.to_vec(),
         passkeys: passkeys.to_vec(),
+        ..Default::default()
     };
     ensure_field_clocks(&mut payload, device_name);
     let _ = sync_alias_groups(&mut payload.accounts, now_ms(), device_name);
+    payload
+}
+
+pub fn local_payload_from_vault_with_order(
+    accounts: &[pass_merge::v2::PasswordAccount],
+    folders: &[pass_merge::v2::Folder],
+    passkeys: &[pass_merge::v2::Passkey],
+    device_name: &str,
+    all_regular_account_ids: Vec<String>,
+    all_regular_order_updated_at_ms: i64,
+    all_regular_order_updated_device_name: String,
+) -> SyncPayload {
+    let mut payload = local_payload_from_vault(accounts, folders, passkeys, device_name);
+    payload.all_regular_account_ids = all_regular_account_ids;
+    payload.all_regular_order_updated_at_ms = all_regular_order_updated_at_ms;
+    payload.all_regular_order_updated_device_name = all_regular_order_updated_device_name;
     payload
 }
 

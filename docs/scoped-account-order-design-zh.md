@@ -1,4 +1,4 @@
-# 按全部账号和文件夹独立保存账号顺序的设计
+# 将账号顺序作为文件夹字段的设计
 
 ## 1. 目标
 
@@ -10,67 +10,71 @@
 个人文件夹：账号 C、账号 A
 ```
 
-本方案将普通账号排序改为“按列表作用域保存”。
+本方案将普通账号排序改为“保存在文件夹对象的字段中”。
 
 作用域包括：
 
 - `all`：全部活动账号；
 - `folder:<folder-id>`：某个文件夹中的活动账号。
 
-每个作用域保存一套独立顺序。同一个账号可以在不同作用域中拥有不同位置。
+每个文件夹保存一套独立顺序。同一个账号可以在不同文件夹中拥有不同位置。
+
+“全部账号”不是用户文件夹，因此不伪造一个可见的系统文件夹，而是在 Vault/SyncPayload 顶层保存一个等价的 `allRegularAccountIds` 字段。逻辑上它也是一个列表作用域，但物理归属不同。
 
 本方案只改变普通账号排序。置顶状态和置顶顺序在第一阶段继续沿用当前全局字段，不借此需求扩大为“每个文件夹独立置顶”。
 
 ## 2. 推荐模型
 
-### 2.1 不在账号中重复保存文件夹序号
+### 2.1 顺序是文件夹字段，不是账号字段
 
-推荐保存作用域到有序账号 ID 列表的映射：
+每个 `Folder` 增加普通账号顺序字段：
 
 ```json
 {
-  "all": {
-    "regularAccountIds": ["account-a", "account-b", "account-c"],
-    "updatedAtMs": 1777777777000,
-    "updatedDeviceName": "MacBook"
-  },
-  "folder:work": {
-    "regularAccountIds": ["account-b", "account-a"],
-    "updatedAtMs": 1777777777100,
-    "updatedDeviceName": "MacBook"
-  },
-  "folder:personal": {
-    "regularAccountIds": ["account-c", "account-a"],
-    "updatedAtMs": 1777777777200,
-    "updatedDeviceName": "Web"
-  }
+  "id": "folder-work",
+  "name": "工作",
+  "regularAccountIds": ["account-b", "account-a"],
+  "regularOrderUpdatedAtMs": 1777777777100,
+  "regularOrderUpdatedDeviceName": "MacBook"
 }
 ```
 
 数组索引就是普通排序值：第一个账号等价于 `regularSortOrder = 0`。不再使用 `-1、-2`，也不需要维护稀疏序号。
 
-账号实体仍然只保存一次，列表只保存稳定的 `recordId`。不能把完整账号对象复制到文件夹中，否则编辑密码、删除账号和同步时会产生多份事实来源。
+`SyncPayload` 顶层另有：
 
-### 2.2 推荐的同步类型
-
-在共享 Core 中增加独立的排序作用域类型：
-
-```rust
-pub struct AccountOrderScope {
-    pub scope_id: String,              // all 或 folder:<folder-id>
-    pub regular_account_ids: Vec<String>,
-    pub updated_at_ms: i64,
-    pub updated_device_name: String,
+```json
+{
+  "allRegularAccountIds": ["account-a", "account-b", "account-c"],
+  "allRegularOrderUpdatedAtMs": 1777777777000,
+  "allRegularOrderUpdatedDeviceName": "MacBook"
 }
 ```
 
-`SyncPayload` 增加：
+账号实体仍然只保存一次，文件夹字段只保存稳定的 `recordId`。不能把完整账号对象复制到文件夹中，否则编辑密码、删除账号和同步时会产生多份事实来源。
+
+### 2.2 推荐的数据类型
+
+在共享 Core 的 `Folder` 中增加字段：
 
 ```rust
-pub account_order_scopes: Vec<AccountOrderScope>
+pub struct Folder {
+    // 现有字段省略
+    pub regular_account_ids: Vec<String>,
+    pub regular_order_updated_at_ms: i64,
+    pub regular_order_updated_device_name: String,
+}
 ```
 
-同时保留现有 `regularSortOrder` 一段过渡期，作为旧客户端的 `all` 作用域兼容字段。新客户端显示排序优先使用 `accountOrderScopes`。
+`SyncPayload` 增加“全部账号”字段：
+
+```rust
+pub all_regular_account_ids: Vec<String>,
+pub all_regular_order_updated_at_ms: i64,
+pub all_regular_order_updated_device_name: String,
+```
+
+同时保留现有 `regularSortOrder` 一段过渡期，作为旧客户端的 `all` 作用域兼容字段。新客户端显示排序优先使用 `allRegularAccountIds` 和 `Folder.regularAccountIds`。
 
 ### 2.3 为什么不推荐“每个账号保存 folder -> order 映射”
 
@@ -89,24 +93,24 @@ pub account_order_scopes: Vec<AccountOrderScope>
 2. 同一个文件夹的排序信息分散在多个账号对象中，容易出现部分更新；
 3. 同步时要合并大量账号字段，无法明确表示“这是一次文件夹排序操作”。
 
-文件夹顺序本质上是列表属性，因此使用有序 ID 列表更符合领域模型。
+文件夹顺序本质上是列表属性，因此把有序 ID 列表作为 `Folder` 字段更符合领域模型。全部账号虽然不是实体文件夹，但仍使用同样的列表语义。
 
 ## 3. 排序语义
 
 ### 3.1 全部账号
 
-`all.regularAccountIds` 保存所有未删除、未永久删除、未置顶账号的顺序。
+`allRegularAccountIds` 保存所有未删除、未永久删除账号的普通位置。置顶账号的 ID 也保留在数组中，取消置顶后可回到原位置。
 
 显示时：
 
 1. 置顶账号仍先显示；
-2. 普通账号按 `all.regularAccountIds` 的顺序显示；
+2. 普通账号按 `allRegularAccountIds` 的顺序显示；
 3. 列表中不存在的合法普通账号追加到末尾；
 4. 已删除或永久删除账号不参与活动列表。
 
 ### 3.2 文件夹
 
-`folder:<id>.regularAccountIds` 只保存属于该文件夹的普通账号。
+`Folder.regularAccountIds` 只保存属于该文件夹的活动账号位置；置顶账号同样保留其位置，但显示时先进入置顶区。
 
 同一个账号属于多个文件夹时，在每个文件夹列表中分别保存一个位置。
 
@@ -128,7 +132,7 @@ pub account_order_scopes: Vec<AccountOrderScope>
 
 推荐规则：
 
-| 操作 | `all` 作用域 | 目标文件夹作用域 |
+| 操作 | `allRegularAccountIds` | `Folder.regularAccountIds` |
 |---|---|---|
 | 全部账号中新建 | 插入普通列表顶部 | 插入其自动归属文件夹顶部 |
 | 在文件夹内新建 | 插入 `all` 顶部 | 插入当前文件夹顶部 |
@@ -142,8 +146,8 @@ pub account_order_scopes: Vec<AccountOrderScope>
 
 ### 3.5 拖拽
 
-- 在“全部账号”中拖动，只更新 `all`；
-- 在文件夹中拖动，只更新对应 `folder:<id>`；
+- 在“全部账号”中拖动，只更新 `allRegularAccountIds`；
+- 在文件夹中拖动，只更新对应 `Folder.regularAccountIds`；
 - 跨置顶区拖动不改变置顶状态；
 - 每次成功拖动后立即规范化为连续列表；
 - 搜索、通行密钥和验证码筛选只影响显示，不应创建新的排序作用域；
@@ -166,17 +170,17 @@ pub account_order_scopes: Vec<AccountOrderScope>
 
 ### 5.1 同步粒度
 
-账号内容仍按现有字段级时间戳合并。排序不再借用账号的 `updatedAtMs`，而是按作用域作为独立元数据合并：
+账号内容仍按现有字段级时间戳合并。排序不再借用账号的 `updatedAtMs`，而是作为 `Folder` 或顶层“全部账号”字段的独立元数据合并：
 
 ```text
-(scopeId, regularAccountIds, updatedAtMs, updatedDeviceName)
+(`allRegularAccountIds` 或 `Folder.regularAccountIds`, 独立更新时间, 独立设备名)
 ```
 
 账号密码被修改，不应导致文件夹顺序变化；文件夹排序变化，也不应覆盖账号密码、备注或通行密钥。
 
 ### 5.2 同一作用域的并发修改
 
-两个设备同时重排同一个作用域时，第一阶段采用作用域级最后写入者胜出：
+两个设备同时重排同一个文件夹（或同时重排“全部账号”）时，第一阶段采用该列表级最后写入者胜出：
 
 1. 比较 `updatedAtMs`；
 2. 时间相同则比较规范化的设备 ID/设备名，保证确定性；
@@ -187,7 +191,7 @@ pub account_order_scopes: Vec<AccountOrderScope>
 
 ### 5.3 不同作用域的并发修改
 
-不同作用域独立合并：
+不同列表独立合并：
 
 - 设备 A 重排 `folder:work`；
 - 设备 B 重排 `folder:personal`；
@@ -202,58 +206,59 @@ pub account_order_scopes: Vec<AccountOrderScope>
 1. 合并账号集合及账号字段；
 2. 合并文件夹集合及文件夹墓碑；
 3. 合并账号文件夹成员关系；
-4. 合并排序作用域；
-5. 按最终成员关系清理和补全每个作用域；
+4. 合并 `allRegularAccountIds` 和每个 `Folder.regularAccountIds`；
+5. 按最终成员关系清理和补全每个列表；
 6. 输出规范化后的连续顺序。
 
-文件夹永久删除后，删除对应 `folder:<id>` 作用域。恢复文件夹时可以新建空作用域，再按当前成员关系追加账号；不恢复已经永久删除的旧顺序引用。
+文件夹永久删除后，随文件夹删除其 `regularAccountIds` 字段。恢复文件夹时可以新建空列表，再按当前成员关系追加账号；不恢复已经永久删除的旧顺序引用。
 
 ### 5.5 同步包版本
 
-推荐新增 `pass.sync.bundle.v3`：
+本次保持 `pass.sync.bundle.v2` 和 `formatVersion: 2`。三个排序字段作为 V2 的可选扩展，并已写入机器 Schema：
 
-- `pass.sync.bundle.v2` 导入时生成 `all` 作用域；
-- v3 同时携带 `accountOrderScopes` 和过渡期的顶层 `regularSortOrder`；
-- v3 导出保留全局旧字段，方便旧客户端至少同步“全部账号”顺序；
-- 旧客户端无法理解文件夹独立顺序，回写旧格式时只能保留全局顺序，应在导入/同步结果中提示“旧客户端不支持文件夹独立排序”。
+- 顶层 `allRegularAccountIds`、`allRegularOrderUpdatedAtMs`、`allRegularOrderUpdatedDeviceName`；
+- `Folder.regularAccountIds`、`regularOrderUpdatedAtMs`、`regularOrderUpdatedDeviceName`；
+- 缺少这些字段的旧 V2 包照常导入，首次规范化时从旧 `regularSortOrder` 生成全部账号的初始顺序。
 
-如果确认不再与旧 Swift 版同步，可以继续使用 v2 的可选字段，但仍应更新 JSON Schema、黄金向量和协议文档。不能无声地增加字段后继续声称 v2 完整兼容。
+旧客户端不会理解文件夹独立顺序，因此它们的后续写回不会携带该字段；新客户端会保留自己已知的文件夹顺序，且以列表独立时间戳裁决。若未来需要承诺“旧客户端也能编辑文件夹独立顺序”，再另行升级为 V3，而不是把不兼容语义伪装成 V2。
 
 ## 6. 本地存储
 
 ### 6.1 Tauri
 
-推荐增加独立 SQLite 表，而不是把 JSON 塞入每个账号：
+Tauri 的账号与文件夹都以加密 JSON 存在 SQLite `kv` 记录中，因此直接扩展 `Folder` JSON；全部账号排序保存在独立的加密键 `all_regular_order.v1`：
 
-```sql
-CREATE TABLE account_order_scopes (
-    scope_id TEXT PRIMARY KEY NOT NULL,
-    regular_account_ids_json TEXT NOT NULL,
-    updated_at_ms INTEGER NOT NULL,
-    updated_device_name TEXT NOT NULL DEFAULT ''
-);
+```text
+all_regular_order.v1 = {
+  accountIds: [...],
+  updatedAtMs: 0,
+  updatedDeviceName: ""
+}
 ```
 
 约束：
 
-- `scope_id = 'all'` 或 `scope_id = 'folder:' || folder_id`；
-- JSON 数组只能包含稳定账号 ID；
+- 文件夹 JSON 数组只能包含稳定账号 ID；
+- `all_regular_order.v1` 只代表全部账号列表；
 - 写入采用事务；
-- 账号、文件夹、排序作用域的更新必须在同一事务中完成。
+- 账号、文件夹成员关系和对应排序字段的更新必须在同一事务中完成。
 
 ### 6.2 Web/Docker
 
-在 `VaultData` 中增加：
+在 `Folder`/`VaultData` 中增加：
 
 ```rust
-account_order_scopes: Vec<AccountOrderScope>
+// Folder.regularAccountIds 由每个文件夹自身保存
+all_regular_account_ids: Vec<String>,
+all_regular_order_updated_at_ms: i64,
+all_regular_order_updated_device_name: String,
 ```
 
 由于整个 Web Vault 已经加密保存，排序作用域与账号数据一起写入，不新增明文文件。
 
 ### 6.3 内存状态
 
-`AppState` 需要返回排序作用域，前端不再从账号对象的顶层 `regularSortOrder` 推断文件夹排序。旧数据迁移完成后，顶层字段只作为兼容导出字段，不作为新 UI 的权威来源。
+`AppState` 需要返回全部账号排序字段和每个 Folder 自身的排序字段，前端不再从账号对象的顶层 `regularSortOrder` 推断文件夹排序。旧数据迁移完成后，顶层字段只作为兼容导出字段，不作为新 UI 的权威来源。
 
 ## 7. 迁移方案
 
@@ -274,24 +279,22 @@ account_order_scopes: Vec<AccountOrderScope>
 1. 置顶和普通分区保持当前语义；
 2. 普通区按 `regularSortOrder` 升序；
 3. 无序账号按当前更新时间和稳定 ID；
-4. 生成连续的 `all.regularAccountIds`。
+4. 生成连续的 `allRegularAccountIds`。
 
 ### 7.3 生成文件夹作用域
 
 对每个未删除文件夹：
 
-1. 从 `all.regularAccountIds` 中筛选属于该文件夹的普通账号；
+1. 从 `allRegularAccountIds` 中筛选属于该文件夹的普通账号；
 2. 保持筛选后的相对顺序；
 3. 追加遗漏的合法账号；
-4. 保存为 `folder:<id>` 作用域。
+4. 保存到该文件夹的 `regularAccountIds` 字段。
 
 这样迁移不会改变用户当前看到的顺序，只是把一套全局顺序拆成多套初始顺序。
 
 ### 7.4 过渡字段
 
-迁移后继续维护 `accounts[].regularSortOrder` 为 `all` 列表索引，供旧客户端读取。新客户端每次修改 `all` 后同步更新兼容字段；文件夹作用域变化不修改该兼容字段。
-
-当旧客户端兼容期结束，再删除顶层排序字段和相关兼容代码。
+迁移后新 UI 和同步的权威数据是排序数组。`accounts[].regularSortOrder` 仅用于导入没有新字段的旧 V2 数据时的初始顺序；新客户端不再将它作为文件夹排序来源，也不会让账号内容更新时间覆盖列表更新时间。
 
 ## 8. API 和 UI 改造
 

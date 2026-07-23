@@ -123,6 +123,14 @@ pub struct Folder {
     pub matched_sites: Vec<String>,
     #[serde(default, deserialize_with = "null_as_default")]
     pub auto_add_matching_sites: bool,
+    /// Stable account record IDs in this folder's manual order. The array
+    /// position is the regular sort order; account content remains elsewhere.
+    #[serde(default)]
+    pub regular_account_ids: Vec<String>,
+    #[serde(default)]
+    pub regular_order_updated_at_ms: i64,
+    #[serde(default)]
+    pub regular_order_updated_device_name: String,
     #[serde(default, deserialize_with = "null_as_default")]
     pub is_deleted: bool,
     #[serde(default, deserialize_with = "null_as_default")]
@@ -195,6 +203,14 @@ pub struct SyncPayload {
     pub folders: Vec<Folder>,
     #[serde(default)]
     pub passkeys: Vec<Passkey>,
+    /// Manual order for the virtual "all accounts" view. It is top-level
+    /// because that view is not a user-created Folder.
+    #[serde(default)]
+    pub all_regular_account_ids: Vec<String>,
+    #[serde(default)]
+    pub all_regular_order_updated_at_ms: i64,
+    #[serde(default)]
+    pub all_regular_order_updated_device_name: String,
 }
 
 impl PasswordAccount {

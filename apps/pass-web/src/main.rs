@@ -16,7 +16,9 @@ use base64::{
 };
 use pass_csvio::build_csv;
 use pass_merge::v2::{
-    evaluate_sync_safety, sync_alias_groups, Folder, Passkey, PasswordAccount, SyncPayload,
+    evaluate_sync_safety, normalize_all_regular_order, normalize_folder_regular_order,
+    normalize_folder_regular_orders, sync_alias_groups, Folder, Passkey, PasswordAccount,
+    SyncPayload,
 };
 use pbkdf2::pbkdf2_hmac;
 use rand::RngCore;
@@ -89,6 +91,12 @@ struct VaultData {
     accounts: Vec<PasswordAccount>,
     folders: Vec<Folder>,
     passkeys: Vec<Passkey>,
+    #[serde(default)]
+    all_regular_account_ids: Vec<String>,
+    #[serde(default)]
+    all_regular_order_updated_at_ms: i64,
+    #[serde(default)]
+    all_regular_order_updated_device_name: String,
     ui_prefs: Value,
     sync_settings: Value,
     undo: Vec<HistoryItem>,
@@ -176,6 +184,7 @@ struct AppStateOutput {
     deleted_accounts: Vec<PasswordAccount>,
     folders: Vec<Folder>,
     passkeys: Vec<Passkey>,
+    all_regular_account_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -302,6 +311,39 @@ fn ensure_fixed_folder(data: &mut VaultData) {
     }
 }
 
+fn normalize_order_state(data: &mut VaultData) {
+    data.all_regular_account_ids =
+        normalize_all_regular_order(&data.all_regular_account_ids, &data.accounts);
+    data.folders =
+        normalize_folder_regular_orders(std::mem::take(&mut data.folders), &data.accounts);
+}
+
+fn move_account_to_order_top(ids: &mut Vec<String>, account_id: &str) {
+    let key = account_id.trim().to_ascii_lowercase();
+    if key.is_empty() {
+        return;
+    }
+    ids.retain(|id| !id.eq_ignore_ascii_case(&key));
+    ids.insert(0, key);
+}
+
+fn move_account_to_folder_top(
+    folders: &mut [Folder],
+    folder_id: &str,
+    account_id: &str,
+    now: i64,
+    device: &str,
+) {
+    if let Some(folder) = folders
+        .iter_mut()
+        .find(|folder| folder.id.eq_ignore_ascii_case(folder_id))
+    {
+        move_account_to_order_top(&mut folder.regular_account_ids, account_id);
+        folder.regular_order_updated_at_ms = now;
+        folder.regular_order_updated_device_name = device.to_string();
+    }
+}
+
 impl Vault {
     fn open(dir: PathBuf) -> Result<Self, String> {
         private_dir_result(&dir)?;
@@ -323,6 +365,7 @@ impl Vault {
             last_activity_ms: now_ms(),
         };
         ensure_fixed_folder(&mut vault.data);
+        normalize_order_state(&mut vault.data);
         if !path.exists() {
             vault.save()?;
         }
@@ -336,13 +379,24 @@ impl Vault {
             accounts: self.data.accounts.clone(),
             folders: self.data.folders.clone(),
             passkeys: self.data.passkeys.clone(),
+            all_regular_account_ids: self.data.all_regular_account_ids.clone(),
+            all_regular_order_updated_at_ms: self.data.all_regular_order_updated_at_ms,
+            all_regular_order_updated_device_name: self
+                .data
+                .all_regular_order_updated_device_name
+                .clone(),
         }
     }
     fn apply_payload(&mut self, payload: SyncPayload) {
         self.data.accounts = payload.accounts;
         self.data.folders = payload.folders;
         self.data.passkeys = payload.passkeys;
+        self.data.all_regular_account_ids = payload.all_regular_account_ids;
+        self.data.all_regular_order_updated_at_ms = payload.all_regular_order_updated_at_ms;
+        self.data.all_regular_order_updated_device_name =
+            payload.all_regular_order_updated_device_name;
         ensure_fixed_folder(&mut self.data);
+        normalize_order_state(&mut self.data);
     }
     fn maybe_lock(&mut self) {
         if !self.data.lock.enabled || self.locked {
@@ -427,22 +481,6 @@ fn account_mut<'a>(
         .find(|a| account_key(a).eq_ignore_ascii_case(id) || a.account_id.eq_ignore_ascii_case(id))
 }
 
-/// New folder memberships enter the ordinary manual sequence at the top.
-/// This never changes pin state or pinned ordering.
-fn promote_regular_account_to_top(accounts: &mut [PasswordAccount], id: &str) {
-    let next = accounts
-        .iter()
-        .filter_map(|account| account.regular_sort_order)
-        .min()
-        .map(|order| order.saturating_sub(1))
-        .unwrap_or(0);
-    if let Some(account) = accounts.iter_mut().find(|account| {
-        account_key(account).eq_ignore_ascii_case(id) || account.account_id.eq_ignore_ascii_case(id)
-    }) {
-        account.regular_sort_order = Some(next);
-    }
-}
-
 fn app_state(v: &VaultData) -> AppStateOutput {
     AppStateOutput {
         device_name: v.device_name.clone(),
@@ -460,6 +498,7 @@ fn app_state(v: &VaultData) -> AppStateOutput {
             .collect(),
         folders: v.folders.clone(),
         passkeys: v.passkeys.clone(),
+        all_regular_account_ids: v.all_regular_account_ids.clone(),
     }
 }
 
@@ -2010,6 +2049,19 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             account.folder_ids.push(FIXED_FOLDER_ID.into());
             account.folder_id = Some(FIXED_FOLDER_ID.into());
             v.data.accounts.push(account.clone());
+            let account_id = account_key(&account);
+            let device = v.data.device_name.clone();
+            move_account_to_order_top(&mut v.data.all_regular_account_ids, &account_id);
+            v.data.all_regular_order_updated_at_ms = now;
+            v.data.all_regular_order_updated_device_name = device.clone();
+            move_account_to_folder_top(
+                &mut v.data.folders,
+                FIXED_FOLDER_ID,
+                &account_id,
+                now,
+                &device,
+            );
+            normalize_order_state(&mut v.data);
             v.save()?;
             Ok(serde_json::to_value(account).unwrap())
         }
@@ -2022,6 +2074,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 (vec!["example.com", "sub.example.com"], "demo-user"),
             ];
             v.begin("生成演示账号前自动备份");
+            let mut created_ids = Vec::new();
             for (offset, (sites, username)) in samples.into_iter().enumerate() {
                 let normalized = normalize_sites(sites.into_iter().map(str::to_string).collect());
                 let id = Uuid::new_v4().to_string();
@@ -2050,8 +2103,22 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 };
                 account.folder_ids.push(FIXED_FOLDER_ID.into());
                 account.folder_id = Some(FIXED_FOLDER_ID.into());
+                created_ids.push(account_key(&account));
                 v.data.accounts.push(account);
             }
+            for account_id in created_ids {
+                move_account_to_order_top(&mut v.data.all_regular_account_ids, &account_id);
+                move_account_to_folder_top(
+                    &mut v.data.folders,
+                    FIXED_FOLDER_ID,
+                    &account_id,
+                    now,
+                    &device,
+                );
+            }
+            v.data.all_regular_order_updated_at_ms = now;
+            v.data.all_regular_order_updated_device_name = device.clone();
+            normalize_order_state(&mut v.data);
             let _ = sync_alias_groups(&mut v.data.accounts, now, &device);
             v.save()?;
             Ok(json!(null))
@@ -2098,8 +2165,10 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             let id: String = arg(&args, "id")?;
             v.begin("恢复账号");
             let a = account_mut(&mut v.data.accounts, &id).ok_or("未找到账号")?;
+            if a.is_permanently_deleted {
+                return Err("已永久删除的账号不能恢复".into());
+            }
             a.is_deleted = false;
-            a.is_permanently_deleted = false;
             a.deleted_at_ms = None;
             v.save()?;
             Ok(json!(null))
@@ -2111,6 +2180,10 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             a.is_deleted = true;
             a.is_permanently_deleted = true;
             a.deleted_at_ms = Some(now_ms());
+            a.password.clear();
+            a.totp_secret.clear();
+            a.recovery_codes.clear();
+            normalize_order_state(&mut v.data);
             v.save()?;
             Ok(json!(null))
         }
@@ -2133,9 +2206,13 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             for a in &mut v.data.accounts {
                 if a.is_deleted && !a.is_permanently_deleted {
                     a.is_permanently_deleted = true;
+                    a.password.clear();
+                    a.totp_secret.clear();
+                    a.recovery_codes.clear();
                     count += 1;
                 }
             }
+            normalize_order_state(&mut v.data);
             v.save()?;
             Ok(json!(count))
         }
@@ -2211,9 +2288,18 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                     }
                 }
             }
+            let order_now = now_ms();
+            let order_device = v.data.device_name.clone();
             for account_id in added_account_ids {
-                promote_regular_account_to_top(&mut v.data.accounts, &account_id);
+                move_account_to_folder_top(
+                    &mut v.data.folders,
+                    &folder_id,
+                    &account_id,
+                    order_now,
+                    &order_device,
+                );
             }
+            normalize_order_state(&mut v.data);
             v.save()?;
             Ok(serde_json::to_value(FolderRuleResult {
                 folder: updated_folder,
@@ -2322,6 +2408,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                     a.folder_id = a.folder_ids.first().cloned();
                 }
             }
+            normalize_order_state(&mut v.data);
             v.save()?;
             Ok(json!(null))
         }
@@ -2342,21 +2429,29 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 return Err("包含不存在或已删除的文件夹".into());
             }
             v.begin("调整账号文件夹");
-            let added_to_folder;
+            let (added_folder_ids, removed_folder_ids, now, device);
             {
                 let a = account_mut(&mut v.data.accounts, &id).ok_or("未找到账号")?;
-                added_to_folder = ids.iter().any(|folder_id| {
+                let previous = a.folder_ids.clone();
+                added_folder_ids = ids.iter().filter(|folder_id| {
                     !a.folder_ids
                         .iter()
                         .any(|current| current.eq_ignore_ascii_case(folder_id))
-                });
+                }).cloned().collect::<Vec<_>>();
+                removed_folder_ids = previous.iter().filter(|folder_id| {
+                    !ids.iter().any(|current| current.eq_ignore_ascii_case(folder_id))
+                }).cloned().collect::<Vec<_>>();
                 a.folder_ids = ids.clone();
                 a.folder_id = ids.first().cloned();
-                a.updated_at_ms = now_ms();
+                now = now_ms();
+                a.updated_at_ms = now;
+                device = v.data.device_name.clone();
             }
-            if added_to_folder {
-                promote_regular_account_to_top(&mut v.data.accounts, &id);
+            for folder_id in added_folder_ids {
+                move_account_to_folder_top(&mut v.data.folders, &folder_id, &id, now, &device);
             }
+            let _ = removed_folder_ids;
+            normalize_order_state(&mut v.data);
             v.save()?;
             Ok(json!(null))
         }
@@ -2372,21 +2467,38 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
         "reorder_accounts" => {
             let order: Vec<String> = arg(&args, "orderedIds")?;
             let pinned: bool = arg(&args, "pinned").unwrap_or(false);
+            let scope_id: String = arg(&args, "scopeId").unwrap_or_else(|_| "all".into());
             v.begin("调整账号顺序");
-            let rank = order
-                .iter()
-                .enumerate()
-                .map(|(i, x)| (x.to_ascii_lowercase(), i as i64))
-                .collect::<std::collections::HashMap<_, _>>();
-            for a in &mut v.data.accounts {
-                if let Some(rank) = rank.get(&account_key(a).to_ascii_lowercase()) {
-                    if pinned {
-                        a.pinned_sort_order = Some(*rank)
-                    } else {
-                        a.regular_sort_order = Some(*rank)
+            if pinned {
+                let rank = order
+                    .iter()
+                    .enumerate()
+                    .map(|(i, x)| (x.to_ascii_lowercase(), i as i64))
+                    .collect::<std::collections::HashMap<_, _>>();
+                for a in &mut v.data.accounts {
+                    if let Some(rank) = rank.get(&account_key(a).to_ascii_lowercase()) {
+                        a.pinned_sort_order = Some(*rank);
                     }
                 }
+            } else if scope_id.eq_ignore_ascii_case("all") {
+                v.data.all_regular_account_ids =
+                    normalize_all_regular_order(&order, &v.data.accounts);
+                v.data.all_regular_order_updated_at_ms = now_ms();
+                v.data.all_regular_order_updated_device_name = v.data.device_name.clone();
+            } else {
+                let folder_id = scope_id.strip_prefix("folder:").unwrap_or(&scope_id);
+                let folder = v
+                    .data
+                    .folders
+                    .iter_mut()
+                    .find(|folder| folder.id.eq_ignore_ascii_case(folder_id))
+                    .ok_or("未找到文件夹")?;
+                folder.regular_account_ids =
+                    normalize_folder_regular_order(&order, &folder.id, &v.data.accounts);
+                folder.regular_order_updated_at_ms = now_ms();
+                folder.regular_order_updated_device_name = v.data.device_name.clone();
             }
+            normalize_order_state(&mut v.data);
             v.save()?;
             Ok(json!(null))
         }
@@ -2931,24 +3043,9 @@ mod tests {
     }
 
     #[test]
-    fn adding_folder_membership_promotes_regular_order_without_pinning() {
-        let mut existing = PasswordAccount {
-            record_id: Some("existing".into()),
-            regular_sort_order: Some(0),
-            ..Default::default()
-        };
-        let mut added = PasswordAccount {
-            record_id: Some("added".into()),
-            is_pinned: false,
-            regular_sort_order: None,
-            ..Default::default()
-        };
-        let mut accounts = vec![existing.clone(), added.clone()];
-        promote_regular_account_to_top(&mut accounts, "added");
-        existing = accounts.remove(0);
-        added = accounts.remove(0);
-        assert_eq!(added.regular_sort_order, Some(-1));
-        assert!(!added.is_pinned);
-        assert_eq!(existing.regular_sort_order, Some(0));
+    fn new_folder_member_is_inserted_at_the_front_of_its_own_order() {
+        let mut order = vec!["existing".to_string()];
+        move_account_to_order_top(&mut order, "added");
+        assert_eq!(order, vec!["added", "existing"]);
     }
 }

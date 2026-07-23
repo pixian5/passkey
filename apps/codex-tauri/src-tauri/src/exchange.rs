@@ -1,16 +1,14 @@
 //! Import / export helpers: sync bundle, browser password CSV.
 
 use pass_csvio::build_csv;
-use pass_merge::v2::{
-    evaluate_sync_safety, merge_sync_payloads, Folder, Passkey, PasswordAccount, SyncPayload,
-};
+use pass_merge::v2::{evaluate_sync_safety, merge_sync_payloads, PasswordAccount, SyncPayload};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 use crate::sync::crypto::{decrypt_wire_body, encrypt_bundle_document, PLAINTEXT_SCHEMA};
 use crate::sync::http::{get_sync_state, put_sync_state, validate_base_url};
-use crate::sync::pipeline::{local_payload_from_vault, visible_account_count, SyncMode};
+use crate::sync::pipeline::{visible_account_count, SyncMode};
 use crate::sync::settings::SyncSettings;
 
 #[derive(Debug, Serialize)]
@@ -293,11 +291,13 @@ pub fn merge_imported_accounts(
         accounts: existing,
         folders: vec![],
         passkeys: vec![],
+        ..Default::default()
     };
     let remote = SyncPayload {
         accounts: imported,
         folders: vec![],
         passkeys: vec![],
+        ..Default::default()
     };
     let mut merged = merge_sync_payloads(local, remote);
     for a in &mut merged.accounts {
@@ -505,13 +505,4 @@ pub fn run_sync_with_mode(
     let mut s = settings.clone();
     s.mode = mode.as_str().to_string();
     crate::sync::pipeline::run_sync(&s, local, device_name, platform)
-}
-
-pub fn local_from_parts(
-    accounts: &[PasswordAccount],
-    folders: &[Folder],
-    passkeys: &[Passkey],
-    device: &str,
-) -> SyncPayload {
-    local_payload_from_vault(accounts, folders, passkeys, device)
 }

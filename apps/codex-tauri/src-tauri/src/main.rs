@@ -17,13 +17,16 @@ use std::{fs, path::PathBuf};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
-use pass_merge::v2::{sync_alias_groups, Folder, Passkey, PasswordAccount, SyncPayload};
+use pass_merge::v2::{
+    normalize_all_regular_order, normalize_folder_regular_order, normalize_folder_regular_orders,
+    sync_alias_groups, Folder, Passkey, PasswordAccount, SyncPayload,
+};
 
 use app_lock::{AppLockPolicy, AppLockPublicState, AppLockState};
 use exchange::{
     browser_entries_from_csv, build_bundle_bytes, build_csv_string, export_browser_csv,
-    import_bundle_content, list_sync_versions, local_from_parts, merge_imported_accounts,
-    restore_sync_version, run_sync_with_mode, ImportResult, PathResult, SyncVersionSummary,
+    import_bundle_content, list_sync_versions, merge_imported_accounts, restore_sync_version,
+    run_sync_with_mode, ImportResult, PathResult, SyncVersionSummary,
 };
 use local_snapshots::LocalSnapshotSummary;
 use operation_history::HistoryEntry;
@@ -35,8 +38,8 @@ use provision::{
 use provision_settings::ProvisionDraft;
 use sync::crypto::key_id;
 use sync::pipeline::{
-    local_payload_from_vault, preview_sync, run_sync, visible_account_count, visible_folder_count,
-    visible_passkey_count, SyncMode,
+    local_payload_from_vault_with_order, preview_sync, run_sync, visible_account_count,
+    visible_folder_count, visible_passkey_count, SyncMode,
 };
 use sync::settings::{load_sync_settings, save_sync_settings, SyncSettings};
 use sync::webdav::{self, WebDavSettings};
@@ -47,6 +50,7 @@ const KEY_ACCOUNTS: &str = "accounts.v2";
 const KEY_ACCOUNTS_LEGACY: &str = "accounts.v1";
 const KEY_FOLDERS: &str = "folders.v1";
 const KEY_PASSKEYS: &str = "passkeys.v1";
+const KEY_ALL_REGULAR_ORDER: &str = "all_regular_order.v1";
 const KEY_DEVICE_NAME: &str = "settings.device_name";
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -84,6 +88,15 @@ struct AppState {
     deleted_accounts: Vec<PasswordAccount>,
     folders: Vec<Folder>,
     passkeys: Vec<Passkey>,
+    all_regular_account_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AllRegularOrder {
+    account_ids: Vec<String>,
+    updated_at_ms: i64,
+    updated_device_name: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -226,12 +239,7 @@ fn undo_last_operation(
         operation_history::latest_undo(&dir).ok_or_else(|| "没有可撤销的本地操作".to_string())?;
     let mut conn = open_db(&app)?;
     let current_device = load_device_name(&conn)?;
-    let current = local_payload_from_vault(
-        &load_accounts(&conn)?,
-        &load_folders(&conn)?,
-        &load_passkeys(&conn)?,
-        &current_device,
-    );
+    let current = local_payload_from_conn(&conn, &current_device)?;
     local_snapshots::create(&dir, &current, "撤销本地操作前自动备份")?;
     save_payload_atomic(&mut conn, &entry.payload)?;
     operation_history::move_undo_to_redo(&dir, &entry.id, current)?;
@@ -249,12 +257,7 @@ fn redo_last_operation(
         operation_history::latest_redo(&dir).ok_or_else(|| "没有可重做的本地操作".to_string())?;
     let mut conn = open_db(&app)?;
     let current_device = load_device_name(&conn)?;
-    let current = local_payload_from_vault(
-        &load_accounts(&conn)?,
-        &load_folders(&conn)?,
-        &load_passkeys(&conn)?,
-        &current_device,
-    );
+    let current = local_payload_from_conn(&conn, &current_device)?;
     local_snapshots::create(&dir, &current, "重做本地操作前自动备份")?;
     save_payload_atomic(&mut conn, &entry.payload)?;
     operation_history::move_redo_to_undo(&dir, &entry.id, current)?;
@@ -269,8 +272,8 @@ fn get_app_state(app: AppHandle, state: tauri::State<AppLockState>) -> Result<Ap
     let conn = open_db(&app)?;
     let device_name = load_device_name(&conn)?;
     let mut accounts = load_accounts(&conn)?;
-    sort_accounts(&mut accounts);
     let mut folders = load_folders(&conn)?;
+    let mut all_order = load_all_regular_order(&conn)?;
     let (folders_changed, legacy_folder_ids) = ensure_fixed_new_account_folder(&mut folders);
     let accounts_changed =
         migrate_legacy_new_account_folder_ids(&mut accounts, &folders, &legacy_folder_ids);
@@ -280,6 +283,11 @@ fn get_app_state(app: AppHandle, state: tauri::State<AppLockState>) -> Result<Ap
     if accounts_changed {
         save_accounts(&conn, &accounts)?;
     }
+    if normalize_order_state(&accounts, &mut folders, &mut all_order) {
+        save_folders(&conn, &folders)?;
+        save_all_regular_order(&conn, &all_order)?;
+    }
+    sort_accounts(&mut accounts);
     let prefs = load_ui_prefs(&dir);
     apply_folder_order(&mut folders, &prefs.folder_order);
     let passkeys = load_passkeys(&conn)?;
@@ -299,6 +307,7 @@ fn get_app_state(app: AppHandle, state: tauri::State<AppLockState>) -> Result<Ap
         deleted_accounts,
         folders,
         passkeys,
+        all_regular_account_ids: all_order.account_ids,
     })
 }
 
@@ -332,6 +341,7 @@ fn create_account(
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
     let mut folders = load_folders(&conn)?;
+    let mut all_order = load_all_regular_order(&conn)?;
     let (folders_changed, legacy_folder_ids) = ensure_fixed_new_account_folder(&mut folders);
     let accounts_changed =
         migrate_legacy_new_account_folder_ids(&mut accounts, &folders, &legacy_folder_ids);
@@ -376,7 +386,7 @@ fn create_account(
         created_at_ms: now,
         updated_at_ms: now,
         created_device_name: device_name.clone(),
-        last_operated_device_name: device_name,
+        last_operated_device_name: device_name.clone(),
         ..Default::default()
     };
     snapshot_current_vault(&conn, &dir, "新建账号前自动备份")?;
@@ -389,7 +399,17 @@ fn create_account(
         .find(|item| item.resolved_record_id() == created_id)
         .cloned()
         .ok_or_else(|| "创建账号后未找到记录".to_string())?;
+    let created_id = created.resolved_record_id();
+    move_account_to_order_top(&mut all_order.account_ids, &created_id);
+    all_order.updated_at_ms = now;
+    all_order.updated_device_name = device_name.clone();
+    for folder_id in &created.folder_ids {
+        move_account_to_folder_top(&mut folders, folder_id, &created_id, now, &device_name);
+    }
+    normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_accounts(&conn, &accounts)?;
+    save_folders(&conn, &folders)?;
+    save_all_regular_order(&conn, &all_order)?;
     Ok(created)
 }
 
@@ -405,7 +425,8 @@ fn update_account(
 
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
-    let folders = load_folders(&conn)?;
+    let mut folders = load_folders(&conn)?;
+    let mut all_order = load_all_regular_order(&conn)?;
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
     let sites = normalize_sites(input.sites);
@@ -417,6 +438,7 @@ fn update_account(
     }
     snapshot_current_vault(&conn, &dir, "编辑账号前自动备份")?;
     let mut found = false;
+    let mut added_folder_ids = Vec::new();
     for item in &mut accounts {
         if account_matches_id(item, &id) {
             if item.username != input.username.trim() {
@@ -446,7 +468,18 @@ fn update_account(
             }
             item.sites = sites.clone();
             item.canonical_site = sites[0].clone();
+            let previous_folder_ids = item.folder_ids.clone();
             apply_automatic_folder_rules(item, &folders);
+            added_folder_ids = item
+                .folder_ids
+                .iter()
+                .filter(|folder_id| {
+                    !previous_folder_ids
+                        .iter()
+                        .any(|previous| previous.eq_ignore_ascii_case(folder_id))
+                })
+                .cloned()
+                .collect();
             item.updated_at_ms = now;
             item.last_operated_device_name = device_name.clone();
             found = true;
@@ -457,7 +490,13 @@ fn update_account(
         return Err("未找到要更新的账号".into());
     }
     sync_alias_sites(&mut accounts);
+    for folder_id in added_folder_ids {
+        move_account_to_folder_top(&mut folders, &folder_id, &id, now, &device_name);
+    }
+    normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_accounts(&conn, &accounts)?;
+    save_folders(&conn, &folders)?;
+    save_all_regular_order(&conn, &all_order)?;
     Ok(())
 }
 
@@ -499,8 +538,15 @@ fn restore_account(
 
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
-    if !accounts.iter().any(|item| account_matches_id(item, &id)) {
-        return Err("未找到要恢复的账号".into());
+    let target = accounts
+        .iter()
+        .find(|item| account_matches_id(item, &id))
+        .ok_or_else(|| "未找到要恢复的账号".to_string())?;
+    if target.is_permanently_deleted {
+        return Err("已永久删除的账号不能恢复".into());
+    }
+    if !target.is_deleted {
+        return Ok(());
     }
     snapshot_current_vault(&conn, &dir, "恢复账号前自动备份")?;
     let device_name = load_device_name(&conn)?;
@@ -528,6 +574,8 @@ fn hard_delete_account(
 
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
+    let mut folders = load_folders(&conn)?;
+    let mut all_order = load_all_regular_order(&conn)?;
     if !accounts.iter().any(|item| account_matches_id(item, &id)) {
         return Err("未找到要彻底删除的账号".into());
     }
@@ -550,7 +598,10 @@ fn hard_delete_account(
         }
     }
     debug_assert!(found);
+    normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_accounts(&conn, &accounts)?;
+    save_folders(&conn, &folders)?;
+    save_all_regular_order(&conn, &all_order)?;
     Ok(())
 }
 
@@ -563,6 +614,8 @@ fn restore_all_deleted_accounts(
     state.require_unlocked(&dir)?;
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
+    let mut folders = load_folders(&conn)?;
+    let mut all_order = load_all_regular_order(&conn)?;
     let count = accounts
         .iter()
         .filter(|account| account.is_deleted && !account.is_permanently_deleted)
@@ -583,7 +636,10 @@ fn restore_all_deleted_accounts(
         }
     }
     sync_alias_sites(&mut accounts);
+    normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_accounts(&conn, &accounts)?;
+    save_folders(&conn, &folders)?;
+    save_all_regular_order(&conn, &all_order)?;
     Ok(count)
 }
 
@@ -596,6 +652,8 @@ fn hard_delete_all_deleted_accounts(
     state.require_unlocked(&dir)?;
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
+    let mut folders = load_folders(&conn)?;
+    let mut all_order = load_all_regular_order(&conn)?;
     let count = accounts
         .iter()
         .filter(|account| account.is_deleted && !account.is_permanently_deleted)
@@ -617,7 +675,10 @@ fn hard_delete_all_deleted_accounts(
             account.recovery_codes.clear();
         }
     }
+    normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_accounts(&conn, &accounts)?;
+    save_folders(&conn, &folders)?;
+    save_all_regular_order(&conn, &all_order)?;
     Ok(count)
 }
 
@@ -628,6 +689,8 @@ fn generate_demo_accounts(app: AppHandle, state: tauri::State<AppLockState>) -> 
 
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
+    let mut folders = load_folders(&conn)?;
+    let mut all_order = load_all_regular_order(&conn)?;
     snapshot_current_vault(&conn, &dir, "生成演示账号前自动备份")?;
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
@@ -636,10 +699,12 @@ fn generate_demo_accounts(app: AppHandle, state: tauri::State<AppLockState>) -> 
         (vec!["google.com", "mail.google.com"], "alice.g"),
         (vec!["example.com", "sub.example.com"], "demo-user"),
     ];
+    let mut created_ids = Vec::new();
     for (idx, (sites, username)) in samples.into_iter().enumerate() {
         let normalized_sites = normalize_sites(sites.into_iter().map(str::to_string).collect());
         let canonical_site = normalized_sites[0].clone();
         let id = Uuid::new_v4().to_string();
+        created_ids.push(id.clone());
         accounts.push(PasswordAccount {
             record_id: Some(id.clone()),
             id: Some(id),
@@ -662,7 +727,15 @@ fn generate_demo_accounts(app: AppHandle, state: tauri::State<AppLockState>) -> 
         });
     }
     sync_alias_sites(&mut accounts);
+    for id in created_ids.into_iter().rev() {
+        move_account_to_order_top(&mut all_order.account_ids, &id);
+    }
+    all_order.updated_at_ms = now;
+    all_order.updated_device_name = device_name;
+    normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_accounts(&conn, &accounts)?;
+    save_folders(&conn, &folders)?;
+    save_all_regular_order(&conn, &all_order)?;
     Ok(())
 }
 
@@ -803,10 +876,7 @@ async fn sync_preview(
         }
     }
     let device = load_device_name(&conn)?;
-    let accounts = load_accounts(&conn)?;
-    let folders = load_folders(&conn)?;
-    let passkeys = load_passkeys(&conn)?;
-    let local = local_payload_from_vault(&accounts, &folders, &passkeys, &device);
+    let local = local_payload_from_conn(&conn, &device)?;
     let platform = current_platform().to_string();
     let local_for_preview = local.clone();
     let (report, merged) = tauri::async_runtime::spawn_blocking(move || {
@@ -839,10 +909,7 @@ async fn sync_now(app: AppHandle, state: tauri::State<'_, AppLockState>) -> Resu
         }
     }
     let device = load_device_name(&conn)?;
-    let accounts = load_accounts(&conn)?;
-    let folders = load_folders(&conn)?;
-    let passkeys = load_passkeys(&conn)?;
-    let local = local_payload_from_vault(&accounts, &folders, &passkeys, &device);
+    let local = local_payload_from_conn(&conn, &device)?;
     let platform = current_platform().to_string();
     let worker_app = app.clone();
     let worker_dir = dir.clone();
@@ -887,10 +954,7 @@ async fn sync_now_mode(
 ) -> Result<String, String> {
     let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
     let device = load_device_name(&conn)?;
-    let accounts = load_accounts(&conn)?;
-    let folders = load_folders(&conn)?;
-    let passkeys = load_passkeys(&conn)?;
-    let local = local_payload_from_vault(&accounts, &folders, &passkeys, &device);
+    let local = local_payload_from_conn(&conn, &device)?;
     let mode = SyncMode::parse(&mode);
     let platform = current_platform().to_string();
     let worker_app = app.clone();
@@ -926,10 +990,7 @@ async fn sync_webdav_now_mode(
         password: prefs.webdav_password,
     };
     let device = load_device_name(&conn)?;
-    let accounts = load_accounts(&conn)?;
-    let folders = load_folders(&conn)?;
-    let passkeys = load_passkeys(&conn)?;
-    let local = local_payload_from_vault(&accounts, &folders, &passkeys, &device);
+    let local = local_payload_from_conn(&conn, &device)?;
     let parsed_mode = SyncMode::parse(&mode);
     let platform = current_platform().to_string();
     let encryption_key = settings.encryption_key.clone();
@@ -998,10 +1059,7 @@ fn export_sync_bundle(
 ) -> Result<PathResult, String> {
     let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
     let device = load_device_name(&conn)?;
-    let accounts = load_accounts(&conn)?;
-    let folders = load_folders(&conn)?;
-    let passkeys = load_passkeys(&conn)?;
-    let local = local_from_parts(&accounts, &folders, &passkeys, &device);
+    let local = local_payload_from_conn(&conn, &device)?;
     let bytes = build_bundle_bytes(
         &local,
         &device,
@@ -1060,10 +1118,7 @@ fn import_sync_bundle(
     let prefs = load_ui_prefs(&dir);
     let content = fs::read(&path).map_err(|e| format!("读取同步包失败: {e}"))?;
     let device = load_device_name(&conn)?;
-    let accounts = load_accounts(&conn)?;
-    let folders = load_folders(&conn)?;
-    let passkeys = load_passkeys(&conn)?;
-    let local = local_from_parts(&accounts, &folders, &passkeys, &device);
+    let local = local_payload_from_conn(&conn, &device)?;
     let result = import_bundle_content(
         local.clone(),
         &content,
@@ -1087,10 +1142,7 @@ fn import_sync_bundle_text(
     let (dir, settings, mut conn) = load_settings_unlocked(&app, &state)?;
     let prefs = load_ui_prefs(&dir);
     let device = load_device_name(&conn)?;
-    let accounts = load_accounts(&conn)?;
-    let folders = load_folders(&conn)?;
-    let passkeys = load_passkeys(&conn)?;
-    let local = local_from_parts(&accounts, &folders, &passkeys, &device);
+    let local = local_payload_from_conn(&conn, &device)?;
     let result = import_bundle_content(
         local.clone(),
         content.as_bytes(),
@@ -1350,12 +1402,7 @@ fn restore_server_version(
 ) -> Result<String, String> {
     let (dir, settings, mut conn) = load_settings_unlocked(&app, &state)?;
     let device = load_device_name(&conn)?;
-    let local = local_payload_from_vault(
-        &load_accounts(&conn)?,
-        &load_folders(&conn)?,
-        &load_passkeys(&conn)?,
-        &device,
-    );
+    let local = local_payload_from_conn(&conn, &device)?;
     let (payload, _) = restore_sync_version(&settings, &version_id)?;
     local_snapshots::create(&dir, &local, "恢复服务器快照前自动备份")?;
     save_payload_atomic(&mut conn, &payload)?;
@@ -1374,12 +1421,7 @@ fn snapshot_current_vault(
     reason: &str,
 ) -> Result<(), String> {
     let device = load_device_name(conn)?;
-    let payload = local_payload_from_vault(
-        &load_accounts(conn)?,
-        &load_folders(conn)?,
-        &load_passkeys(conn)?,
-        &device,
-    );
+    let payload = local_payload_from_conn(conn, &device)?;
     local_snapshots::create(data_dir, &payload, reason)?;
     operation_history::push(&data_dir.to_path_buf(), reason, payload)
 }
@@ -1402,12 +1444,7 @@ fn restore_local_snapshot(
 ) -> Result<String, String> {
     let (dir, _settings, mut conn) = load_settings_unlocked(&app, &state)?;
     let device = load_device_name(&conn)?;
-    let current = local_payload_from_vault(
-        &load_accounts(&conn)?,
-        &load_folders(&conn)?,
-        &load_passkeys(&conn)?,
-        &device,
-    );
+    let current = local_payload_from_conn(&conn, &device)?;
     let payload = local_snapshots::get(&dir, &snapshot_id)?;
     local_snapshots::create(&dir, &current, "恢复本地安全快照前自动备份")?;
     save_payload_atomic(&mut conn, &payload)?;
@@ -1610,23 +1647,6 @@ fn add_account_to_folder(account: &mut PasswordAccount, folder_id: &str) -> bool
         account.folder_id = Some(folder_id.to_string());
     }
     true
-}
-
-/// Put a newly joined account at the start of the ordinary manual sequence.
-/// This deliberately leaves is_pinned and pinned_sort_order untouched.
-fn promote_regular_account_to_top(accounts: &mut [PasswordAccount], id: &str) {
-    let next = accounts
-        .iter()
-        .filter_map(|account| account.regular_sort_order)
-        .min()
-        .map(|order| order.saturating_sub(1))
-        .unwrap_or(0);
-    if let Some(account) = accounts.iter_mut().find(|account| {
-        account.resolved_record_id().eq_ignore_ascii_case(id)
-            || account.account_id.eq_ignore_ascii_case(id)
-    }) {
-        account.regular_sort_order = Some(next);
-    }
 }
 
 fn apply_automatic_folder_rules(account: &mut PasswordAccount, folders: &[Folder]) {
@@ -1942,6 +1962,74 @@ fn save_folders(conn: &Connection, folders: &[Folder]) -> Result<(), String> {
     write_kv(conn, KEY_FOLDERS, &raw)
 }
 
+fn load_all_regular_order(conn: &Connection) -> Result<AllRegularOrder, String> {
+    match read_kv(conn, KEY_ALL_REGULAR_ORDER)? {
+        Some(raw) => serde_json::from_str(&raw).map_err(|e| format!("解析全部账号排序失败: {e}")),
+        None => Ok(AllRegularOrder::default()),
+    }
+}
+
+fn save_all_regular_order(conn: &Connection, order: &AllRegularOrder) -> Result<(), String> {
+    let raw = serde_json::to_string(order).map_err(|e| format!("序列化全部账号排序失败: {e}"))?;
+    write_kv(conn, KEY_ALL_REGULAR_ORDER, &raw)
+}
+
+fn normalize_order_state(
+    accounts: &[PasswordAccount],
+    folders: &mut Vec<Folder>,
+    all_order: &mut AllRegularOrder,
+) -> bool {
+    let next_all = normalize_all_regular_order(&all_order.account_ids, accounts);
+    let current_folders = std::mem::take(folders);
+    let next_folders = normalize_folder_regular_orders(current_folders.clone(), accounts);
+    let changed = next_all != all_order.account_ids || next_folders != current_folders;
+    all_order.account_ids = next_all;
+    *folders = next_folders;
+    changed
+}
+
+fn move_account_to_order_top(ids: &mut Vec<String>, account_id: &str) {
+    let id = account_id.trim().to_ascii_lowercase();
+    if id.is_empty() {
+        return;
+    }
+    ids.retain(|existing| !existing.eq_ignore_ascii_case(&id));
+    ids.insert(0, id);
+}
+
+fn move_account_to_folder_top(
+    folders: &mut [Folder],
+    folder_id: &str,
+    account_id: &str,
+    now: i64,
+    device: &str,
+) {
+    if let Some(folder) = folders
+        .iter_mut()
+        .find(|folder| folder.id.eq_ignore_ascii_case(folder_id))
+    {
+        move_account_to_order_top(&mut folder.regular_account_ids, account_id);
+        folder.regular_order_updated_at_ms = now;
+        folder.regular_order_updated_device_name = device.to_string();
+    }
+}
+
+fn local_payload_from_conn(conn: &Connection, device: &str) -> Result<SyncPayload, String> {
+    let accounts = load_accounts(conn)?;
+    let folders = load_folders(conn)?;
+    let passkeys = load_passkeys(conn)?;
+    let all_order = load_all_regular_order(conn)?;
+    Ok(local_payload_from_vault_with_order(
+        &accounts,
+        &folders,
+        &passkeys,
+        device,
+        all_order.account_ids,
+        all_order.updated_at_ms,
+        all_order.updated_device_name,
+    ))
+}
+
 fn ensure_fixed_new_account_folder(folders: &mut Vec<Folder>) -> (bool, BTreeSet<String>) {
     let fixed_id = pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID;
     let fixed_name = pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_NAME;
@@ -2076,6 +2164,14 @@ fn save_payload_atomic(conn: &mut Connection, payload: &SyncPayload) -> Result<(
     save_accounts(&tx, &payload.accounts)?;
     save_folders(&tx, &payload.folders)?;
     save_passkeys(&tx, &payload.passkeys)?;
+    save_all_regular_order(
+        &tx,
+        &AllRegularOrder {
+            account_ids: payload.all_regular_account_ids.clone(),
+            updated_at_ms: payload.all_regular_order_updated_at_ms,
+            updated_device_name: payload.all_regular_order_updated_device_name.clone(),
+        },
+    )?;
     tx.commit()
         .map_err(|e| format!("提交数据写入事务失败: {e}"))
 }
@@ -2381,9 +2477,6 @@ fn toggle_account_pin(
         if account_matches_id(item, &id) {
             item.is_pinned = next_pinned;
             item.pinned_sort_order = next_pinned_order;
-            if !next_pinned {
-                item.regular_sort_order = None;
-            }
             item.updated_at_ms = now;
             item.last_operated_device_name = device_name.clone();
             break;
@@ -2402,12 +2495,54 @@ fn reorder_accounts(
     state: tauri::State<AppLockState>,
     ordered_ids: Vec<String>,
     pinned: bool,
+    scope_id: String,
 ) -> Result<(), String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
     let device_name = load_device_name(&conn)?;
+
+    if !pinned {
+        let mut folders = load_folders(&conn)?;
+        let mut all_order = load_all_regular_order(&conn)?;
+        let requested: Vec<String> = ordered_ids
+            .iter()
+            .filter_map(|id| {
+                accounts
+                    .iter()
+                    .find(|account| account_matches_id(account, id))
+                    .map(PasswordAccount::resolved_record_id)
+            })
+            .collect();
+        if requested.is_empty() {
+            return Err("没有可排序的账号".into());
+        }
+        let now = now_ms();
+        if scope_id.eq_ignore_ascii_case("all") {
+            all_order.account_ids = normalize_all_regular_order(&requested, &accounts);
+            all_order.updated_at_ms = now;
+            all_order.updated_device_name = device_name;
+        } else {
+            let folder_id = scope_id.strip_prefix("folder:").unwrap_or(&scope_id);
+            let folder = folders
+                .iter_mut()
+                .find(|folder| {
+                    folder.id.eq_ignore_ascii_case(folder_id)
+                        && !folder.is_deleted
+                        && !folder.is_permanently_deleted
+                })
+                .ok_or_else(|| "未找到文件夹".to_string())?;
+            folder.regular_account_ids =
+                normalize_folder_regular_order(&requested, &folder.id, &accounts);
+            folder.regular_order_updated_at_ms = now;
+            folder.regular_order_updated_device_name = device_name;
+        }
+        normalize_order_state(&accounts, &mut folders, &mut all_order);
+        save_folders(&conn, &folders)?;
+        save_all_regular_order(&conn, &all_order)?;
+        return Ok(());
+    }
 
     let mut requested = Vec::new();
     let mut seen = BTreeSet::new();
@@ -2549,6 +2684,9 @@ fn create_folder(
         name: trimmed.to_string(),
         matched_sites: vec![],
         auto_add_matching_sites: false,
+        regular_account_ids: vec![],
+        regular_order_updated_at_ms: 0,
+        regular_order_updated_device_name: String::new(),
         is_deleted: false,
         is_permanently_deleted: false,
         deleted_at_ms: None,
@@ -2624,8 +2762,11 @@ fn delete_folder(
             a.last_operated_device_name = device.clone();
         }
     }
+    let mut all_order = load_all_regular_order(&conn)?;
+    normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_accounts(&conn, &accounts)?;
     save_folders(&conn, &folders)?;
+    save_all_regular_order(&conn, &all_order)?;
     Ok(())
 }
 
@@ -2675,18 +2816,21 @@ fn set_account_folders(
     {
         return Err("未找到账号".into());
     }
-    let folders = load_folders(&conn)?;
+    let mut folders = load_folders(&conn)?;
+    let mut all_order = load_all_regular_order(&conn)?;
     let normalized = canonical_active_folder_ids(&folders, &folder_ids)?;
     snapshot_current_vault(&conn, &dir, "调整账号文件夹前自动备份")?;
     let device = load_device_name(&conn)?;
     let now = now_ms();
     let mut found = false;
-    let mut added_to_folder = false;
+    let mut added_folder_ids = Vec::new();
     for a in &mut accounts {
         if account_matches_id(a, &id) {
-            added_to_folder = normalized
+            added_folder_ids = normalized
                 .iter()
-                .any(|folder_id| !account_in_folder(a, folder_id));
+                .filter(|folder_id| !account_in_folder(a, folder_id))
+                .cloned()
+                .collect();
             a.folder_ids = normalized.clone();
             a.folder_id = normalized.first().cloned();
             a.updated_at_ms = now;
@@ -2696,10 +2840,13 @@ fn set_account_folders(
         }
     }
     debug_assert!(found);
-    if added_to_folder {
-        promote_regular_account_to_top(&mut accounts, &id);
+    for folder_id in added_folder_ids {
+        move_account_to_folder_top(&mut folders, &folder_id, &id, now, &device);
     }
+    normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_accounts(&conn, &accounts)?;
+    save_folders(&conn, &folders)?;
+    save_all_regular_order(&conn, &all_order)?;
     Ok(())
 }
 
@@ -2736,6 +2883,7 @@ fn configure_folder_site_rules(
     let folder_snapshot = folder.clone();
 
     let mut accounts = load_accounts(&conn)?;
+    let mut all_order = load_all_regular_order(&conn)?;
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
     let mut matched_count = 0;
@@ -2756,10 +2904,12 @@ fn configure_folder_site_rules(
         }
     }
     for account_id in added_account_ids {
-        promote_regular_account_to_top(&mut accounts, &account_id);
+        move_account_to_folder_top(&mut folders, &normalized_id, &account_id, now, &device_name);
     }
+    normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_accounts(&conn, &accounts)?;
     save_folders(&conn, &folders)?;
+    save_all_regular_order(&conn, &all_order)?;
     Ok(FolderRuleResult {
         folder: folder_snapshot,
         matched_count,
@@ -3115,22 +3265,10 @@ mod tests {
     }
 
     #[test]
-    fn regular_folder_addition_goes_to_manual_top_without_pin() {
-        let existing = PasswordAccount {
-            record_id: Some("existing".into()),
-            regular_sort_order: Some(0),
-            ..Default::default()
-        };
-        let added = PasswordAccount {
-            record_id: Some("added".into()),
-            is_pinned: false,
-            regular_sort_order: None,
-            ..Default::default()
-        };
-        let mut accounts = vec![existing, added];
-        promote_regular_account_to_top(&mut accounts, "added");
-        assert_eq!(accounts[1].regular_sort_order, Some(-1));
-        assert!(!accounts[1].is_pinned);
+    fn new_folder_member_is_inserted_at_the_front_of_its_own_order() {
+        let mut order = vec!["existing".to_string()];
+        move_account_to_order_top(&mut order, "added");
+        assert_eq!(order, vec!["added", "existing"]);
     }
 
     #[test]

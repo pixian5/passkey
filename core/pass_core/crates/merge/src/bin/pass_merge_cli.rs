@@ -12,9 +12,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::process::ExitCode;
 
-use pass_merge::v2::{
-    evaluate_sync_safety, merge_sync_payloads, SyncPayload,
-};
+use pass_merge::v2::{evaluate_sync_safety, merge_sync_payloads, SyncPayload};
 use serde::Deserialize;
 use serde_json::json;
 

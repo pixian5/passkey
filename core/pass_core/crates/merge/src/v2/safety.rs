@@ -1,4 +1,6 @@
-use super::normalize::{normalize_account_shape, normalize_folder_id, normalize_folder_shape, normalize_passkey_shape};
+use super::normalize::{
+    normalize_account_shape, normalize_folder_id, normalize_folder_shape, normalize_passkey_shape,
+};
 use super::types::{Folder, Passkey, PasswordAccount, SyncPayload};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

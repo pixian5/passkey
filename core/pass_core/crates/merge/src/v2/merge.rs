@@ -2,14 +2,15 @@ use std::collections::BTreeMap;
 
 use super::normalize::{
     etld_plus_one, first_non_empty, normalize_account_shape, normalize_folder_id,
-    normalize_folder_id_list, normalize_folder_shape, normalize_passkey_credential_ids,
-    normalize_passkey_create_compat_method, normalize_passkey_shape, normalize_sites,
-    should_prefer_relation_state, sort_folders_for_display, stable_tie_value, stable_uuid_from_text,
+    normalize_folder_id_list, normalize_folder_shape, normalize_passkey_create_compat_method,
+    normalize_passkey_credential_ids, normalize_passkey_shape, normalize_sites,
+    should_prefer_relation_state, sort_folders_for_display, stable_tie_value,
+    stable_uuid_from_text,
 };
-use super::policy::{DEFAULT_DEVICE_NAME, FIXED_NEW_ACCOUNT_FOLDER_ID, FIXED_NEW_ACCOUNT_FOLDER_NAME};
-use super::types::{
-    AccountFolderMembershipState, Folder, Passkey, PasswordAccount, SyncPayload,
+use super::policy::{
+    DEFAULT_DEVICE_NAME, FIXED_NEW_ACCOUNT_FOLDER_ID, FIXED_NEW_ACCOUNT_FOLDER_NAME,
 };
+use super::types::{AccountFolderMembershipState, Folder, Passkey, PasswordAccount, SyncPayload};
 
 #[derive(Debug, Clone)]
 struct FieldWinner {
@@ -312,7 +313,10 @@ fn merge_same_account(lhs: PasswordAccount, rhs: PasswordAccount) -> PasswordAcc
     let passkey_updated_at_ms = left_passkey_at.max(right_passkey_at);
     let passkey_updated_device_name = if left_passkey_at >= right_passkey_at {
         first_non_empty(
-            &[&left.passkey_updated_device_name, &left.last_operated_device_name],
+            &[
+                &left.passkey_updated_device_name,
+                &left.last_operated_device_name,
+            ],
             DEFAULT_DEVICE_NAME,
         )
     } else {
@@ -354,7 +358,6 @@ fn merge_same_account(lhs: PasswordAccount, rhs: PasswordAccount) -> PasswordAcc
     } else {
         right.deleted_device_name.trim().to_string()
     };
-
     let (newer_account, older_account) = if left.updated_at_ms >= right.updated_at_ms {
         (&left, &right)
     } else {
@@ -459,7 +462,10 @@ fn merge_same_account(lhs: PasswordAccount, rhs: PasswordAccount) -> PasswordAcc
             None
         },
         deleted_device_name: if keep_permanently_deleted || keep_deleted {
-            first_non_empty(&[&deleted_device_name, &last_operated_device_name], DEFAULT_DEVICE_NAME)
+            first_non_empty(
+                &[&deleted_device_name, &last_operated_device_name],
+                DEFAULT_DEVICE_NAME,
+            )
         } else {
             String::new()
         },
@@ -543,8 +549,14 @@ fn merge_same_passkey(lhs: Passkey, rhs: Passkey) -> Passkey {
         },
         alg: if newer.alg != 0 { newer.alg } else { older.alg },
         sign_count: left.sign_count.max(right.sign_count),
-        private_jwk: newer.private_jwk.clone().or_else(|| older.private_jwk.clone()),
-        public_jwk: newer.public_jwk.clone().or_else(|| older.public_jwk.clone()),
+        private_jwk: newer
+            .private_jwk
+            .clone()
+            .or_else(|| older.private_jwk.clone()),
+        public_jwk: newer
+            .public_jwk
+            .clone()
+            .or_else(|| older.public_jwk.clone()),
         created_at_ms: left.created_at_ms.min(right.created_at_ms),
         updated_at_ms: left_updated.max(right_updated),
         last_used_at_ms: {
@@ -629,6 +641,24 @@ fn merge_same_folder(lhs: Folder, rhs: Folder) -> Folder {
     } else {
         right.deleted_device_name.trim().to_string()
     };
+    let use_right_order = right.regular_order_updated_at_ms > left.regular_order_updated_at_ms
+        || (right.regular_order_updated_at_ms == left.regular_order_updated_at_ms
+            && stable_tie_value(&right.regular_order_updated_device_name)
+                > stable_tie_value(&left.regular_order_updated_device_name));
+    let (regular_account_ids, regular_order_updated_at_ms, regular_order_updated_device_name) =
+        if use_right_order {
+            (
+                right.regular_account_ids.clone(),
+                right.regular_order_updated_at_ms,
+                right.regular_order_updated_device_name.clone(),
+            )
+        } else {
+            (
+                left.regular_account_ids.clone(),
+                left.regular_order_updated_at_ms,
+                left.regular_order_updated_device_name.clone(),
+            )
+        };
 
     if id == FIXED_NEW_ACCOUNT_FOLDER_ID {
         return Folder {
@@ -644,6 +674,9 @@ fn merge_same_folder(lhs: Folder, rhs: Folder) -> Folder {
             } else {
                 left.auto_add_matching_sites
             },
+            regular_account_ids,
+            regular_order_updated_at_ms,
+            regular_order_updated_device_name,
             is_deleted: false,
             is_permanently_deleted: false,
             deleted_at_ms: None,
@@ -681,6 +714,9 @@ fn merge_same_folder(lhs: Folder, rhs: Folder) -> Folder {
         } else {
             left.auto_add_matching_sites
         },
+        regular_account_ids,
+        regular_order_updated_at_ms,
+        regular_order_updated_device_name,
         is_deleted: keep_deleted,
         is_permanently_deleted: keep_permanently_deleted,
         deleted_at_ms: if keep_deleted {
@@ -786,6 +822,9 @@ pub fn merge_folder_collections(local: Vec<Folder>, remote: Vec<Folder>) -> Vec<
                 name: FIXED_NEW_ACCOUNT_FOLDER_NAME.to_string(),
                 matched_sites: existing.matched_sites,
                 auto_add_matching_sites: existing.auto_add_matching_sites,
+                regular_account_ids: existing.regular_account_ids,
+                regular_order_updated_at_ms: existing.regular_order_updated_at_ms,
+                regular_order_updated_device_name: existing.regular_order_updated_device_name,
                 is_deleted: existing.is_deleted,
                 is_permanently_deleted: existing.is_permanently_deleted,
                 deleted_at_ms: existing.deleted_at_ms,
@@ -907,14 +946,324 @@ pub fn reconcile_account_folders(
 }
 
 pub fn merge_sync_payloads(local: SyncPayload, remote: SyncPayload) -> SyncPayload {
+    let all_order_from_remote = prefer_remote_order(
+        local.all_regular_order_updated_at_ms,
+        &local.all_regular_order_updated_device_name,
+        remote.all_regular_order_updated_at_ms,
+        &remote.all_regular_order_updated_device_name,
+    );
+    let all_regular_account_ids = merge_order_ids(
+        &local.all_regular_account_ids,
+        local.all_regular_order_updated_at_ms,
+        &local.all_regular_order_updated_device_name,
+        &remote.all_regular_account_ids,
+        remote.all_regular_order_updated_at_ms,
+        &remote.all_regular_order_updated_device_name,
+    );
     let accounts = merge_account_collections(local.accounts, remote.accounts);
     let folders = merge_folder_collections(local.folders, remote.folders);
     let passkeys = merge_passkey_collections(local.passkeys, remote.passkeys);
     // Reconcile without wall-clock so pure merge stays deterministic for golden vectors.
     let accounts = reconcile_account_folders(accounts, &folders, 0);
+    let all_regular_account_ids = normalize_all_regular_order(&all_regular_account_ids, &accounts);
+    let folders = normalize_folder_regular_orders(folders, &accounts);
     SyncPayload {
         accounts,
         folders,
         passkeys,
+        all_regular_account_ids,
+        all_regular_order_updated_at_ms: if all_order_from_remote {
+            remote.all_regular_order_updated_at_ms
+        } else {
+            local.all_regular_order_updated_at_ms
+        },
+        all_regular_order_updated_device_name: if all_order_from_remote {
+            remote.all_regular_order_updated_device_name
+        } else {
+            local.all_regular_order_updated_device_name
+        },
+    }
+}
+
+fn prefer_remote_order(
+    local_updated_at_ms: i64,
+    local_device_name: &str,
+    remote_updated_at_ms: i64,
+    remote_device_name: &str,
+) -> bool {
+    remote_updated_at_ms > local_updated_at_ms
+        || (remote_updated_at_ms == local_updated_at_ms
+            && stable_tie_value(remote_device_name) > stable_tie_value(local_device_name))
+}
+
+fn merge_order_ids(
+    local: &[String],
+    local_updated_at_ms: i64,
+    local_device_name: &str,
+    remote: &[String],
+    remote_updated_at_ms: i64,
+    remote_device_name: &str,
+) -> Vec<String> {
+    let (winner, loser) = if prefer_remote_order(
+        local_updated_at_ms,
+        local_device_name,
+        remote_updated_at_ms,
+        remote_device_name,
+    ) {
+        (remote, local)
+    } else {
+        (local, remote)
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    winner
+        .iter()
+        .chain(loser.iter())
+        .map(|id| id.trim().to_ascii_lowercase())
+        .filter(|id| !id.is_empty() && seen.insert(id.clone()))
+        .collect()
+}
+
+/// Removes stale entries and appends active accounts absent from the saved list.
+/// Array position is the user-visible regular sort order.
+pub fn normalize_all_regular_order(
+    saved_ids: &[String],
+    accounts: &[PasswordAccount],
+) -> Vec<String> {
+    normalize_regular_order(saved_ids, accounts, None)
+}
+
+/// Normalizes one Folder's regular order against final membership state.
+pub fn normalize_folder_regular_order(
+    saved_ids: &[String],
+    folder_id: &str,
+    accounts: &[PasswordAccount],
+) -> Vec<String> {
+    normalize_regular_order(saved_ids, accounts, Some(folder_id))
+}
+
+pub fn normalize_folder_regular_orders(
+    folders: Vec<Folder>,
+    accounts: &[PasswordAccount],
+) -> Vec<Folder> {
+    folders
+        .into_iter()
+        .map(|mut folder| {
+            // A deleted folder is a tombstone, not a hidden account view. Keeping
+            // its list would preserve stale references indefinitely and could make
+            // a later malformed restore display an obsolete order.
+            folder.regular_account_ids = if folder.is_deleted || folder.is_permanently_deleted {
+                Vec::new()
+            } else {
+                normalize_folder_regular_order(&folder.regular_account_ids, &folder.id, accounts)
+            };
+            folder
+        })
+        .collect()
+}
+
+fn normalize_regular_order(
+    saved_ids: &[String],
+    accounts: &[PasswordAccount],
+    folder_id: Option<&str>,
+) -> Vec<String> {
+    let folder_id = folder_id.map(|id| id.trim().to_ascii_lowercase());
+    let eligible = |account: &PasswordAccount| {
+        if account.is_deleted || account.is_permanently_deleted {
+            return false;
+        }
+        match folder_id.as_deref() {
+            Some(folder_id) => {
+                account
+                    .folder_ids
+                    .iter()
+                    .any(|id| id.eq_ignore_ascii_case(folder_id))
+                    || account
+                        .folder_id
+                        .as_deref()
+                        .map(|id| id.eq_ignore_ascii_case(folder_id))
+                        .unwrap_or(false)
+            }
+            None => true,
+        }
+    };
+    let valid: std::collections::BTreeMap<String, &PasswordAccount> = accounts
+        .iter()
+        .filter(|account| eligible(account))
+        .map(|account| (account.resolved_record_id(), account))
+        .filter(|(id, _)| !id.is_empty())
+        .collect();
+    let mut result = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for raw in saved_ids {
+        let id = raw.trim().to_ascii_lowercase();
+        if valid.contains_key(&id) && seen.insert(id.clone()) {
+            result.push(id);
+        }
+    }
+    let mut missing: Vec<&PasswordAccount> = valid
+        .iter()
+        .filter_map(|(id, account)| (!seen.contains(id)).then_some(*account))
+        .collect();
+    missing.sort_by(|left, right| {
+        left.regular_sort_order
+            .cmp(&right.regular_sort_order)
+            .then_with(|| right.updated_at_ms.cmp(&left.updated_at_ms))
+            .then_with(|| left.resolved_record_id().cmp(&right.resolved_record_id()))
+    });
+    result.extend(missing.into_iter().map(PasswordAccount::resolved_record_id));
+    result
+}
+
+#[cfg(test)]
+mod order_tests {
+    use super::{
+        merge_sync_payloads, normalize_all_regular_order, normalize_folder_regular_order,
+        normalize_folder_regular_orders,
+    };
+    use crate::v2::{Folder, PasswordAccount, SyncPayload};
+
+    fn account(id: &str, folders: &[&str]) -> PasswordAccount {
+        PasswordAccount {
+            record_id: Some(id.into()),
+            id: Some(id.into()),
+            account_id: format!("account-{id}"),
+            folder_ids: folders.iter().map(|value| (*value).to_string()).collect(),
+            folder_id: folders.first().map(|value| (*value).to_string()),
+            updated_at_ms: 10,
+            ..Default::default()
+        }
+    }
+
+    fn folder(id: &str, order: &[&str], updated_at_ms: i64) -> Folder {
+        Folder {
+            id: id.into(),
+            name: id.into(),
+            regular_account_ids: order.iter().map(|value| (*value).to_string()).collect(),
+            regular_order_updated_at_ms: updated_at_ms,
+            regular_order_updated_device_name: "device-a".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn all_and_folder_orders_are_independent() {
+        let a = "00000000-0000-0000-0000-000000000001";
+        let b = "00000000-0000-0000-0000-000000000002";
+        let c = "00000000-0000-0000-0000-000000000003";
+        let accounts = vec![
+            account(a, &["work", "personal"]),
+            account(b, &["work"]),
+            account(c, &["personal"]),
+        ];
+
+        assert_eq!(
+            normalize_all_regular_order(&[c.into(), a.into()], &accounts),
+            vec![c, a, b]
+        );
+        assert_eq!(
+            normalize_folder_regular_order(&[b.into(), a.into()], "work", &accounts),
+            vec![b, a]
+        );
+        assert_eq!(
+            normalize_folder_regular_order(&[c.into(), a.into()], "personal", &accounts),
+            vec![c, a]
+        );
+    }
+
+    #[test]
+    fn newer_folder_order_does_not_overwrite_other_folder_or_account_content() {
+        let a = "00000000-0000-0000-0000-000000000001";
+        let b = "00000000-0000-0000-0000-000000000002";
+        let local = SyncPayload {
+            accounts: vec![
+                account(a, &["work", "personal"]),
+                account(b, &["work", "personal"]),
+            ],
+            folders: vec![folder("work", &[a, b], 10), folder("personal", &[a, b], 20)],
+            passkeys: vec![],
+            all_regular_account_ids: vec![a.into(), b.into()],
+            all_regular_order_updated_at_ms: 10,
+            all_regular_order_updated_device_name: "device-a".into(),
+        };
+        let remote = SyncPayload {
+            accounts: vec![
+                PasswordAccount {
+                    record_id: Some(a.into()),
+                    id: Some(a.into()),
+                    account_id: format!("account-{a}"),
+                    username: "remote-name".into(),
+                    username_updated_at_ms: 30,
+                    updated_at_ms: 30,
+                    folder_ids: vec!["work".into(), "personal".into()],
+                    folder_id: Some("work".into()),
+                    ..Default::default()
+                },
+                account(b, &["work", "personal"]),
+            ],
+            folders: vec![folder("work", &[b, a], 30), folder("personal", &[b, a], 5)],
+            passkeys: vec![],
+            all_regular_account_ids: vec![b.into(), a.into()],
+            all_regular_order_updated_at_ms: 30,
+            all_regular_order_updated_device_name: "device-b".into(),
+        };
+
+        let merged = merge_sync_payloads(local, remote);
+        let work = merged
+            .folders
+            .iter()
+            .find(|item| item.id == "work")
+            .unwrap();
+        let personal = merged
+            .folders
+            .iter()
+            .find(|item| item.id == "personal")
+            .unwrap();
+        assert_eq!(work.regular_account_ids, vec![b, a]);
+        assert_eq!(personal.regular_account_ids, vec![a, b]);
+        assert_eq!(merged.all_regular_account_ids, vec![b, a]);
+        assert_eq!(
+            merged
+                .accounts
+                .iter()
+                .find(|item| item.resolved_record_id() == a)
+                .unwrap()
+                .username,
+            "remote-name"
+        );
+    }
+
+    #[test]
+    fn tombstones_are_removed_from_orders_without_resurrecting_accounts() {
+        let active = "00000000-0000-0000-0000-000000000001";
+        let deleted = "00000000-0000-0000-0000-000000000002";
+        let mut deleted_account = account(deleted, &["work"]);
+        deleted_account.is_deleted = true;
+        deleted_account.is_permanently_deleted = true;
+        let folders = normalize_folder_regular_orders(
+            vec![
+                Folder {
+                    id: "work".into(),
+                    regular_account_ids: vec![deleted.into(), active.into()],
+                    ..Default::default()
+                },
+                Folder {
+                    id: "removed".into(),
+                    is_deleted: true,
+                    regular_account_ids: vec![active.into()],
+                    ..Default::default()
+                },
+            ],
+            &[account(active, &["work"]), deleted_account.clone()],
+        );
+
+        assert_eq!(
+            normalize_all_regular_order(
+                &[deleted.into(), active.into()],
+                &[account(active, &["work"]), deleted_account]
+            ),
+            vec![active]
+        );
+        assert_eq!(folders[0].regular_account_ids, vec![active]);
+        assert!(folders[1].regular_account_ids.is_empty());
     }
 }

@@ -80,6 +80,18 @@
           "items": {
             "$ref": "./pass-data-v2.schema.json#/$defs/passkey"
           }
+        },
+        "allRegularAccountIds": {
+          "type": "array",
+          "items": { "$ref": "./pass-data-v2.schema.json#/$defs/uuidLower" },
+          "uniqueItems": true
+        },
+        "allRegularOrderUpdatedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allRegularOrderUpdatedDeviceName": {
+          "type": "string"
         }
       }
     }

@@ -136,7 +136,10 @@ mod tests {
             TimeRange::new(100, 120).expect("valid range"),
             TimeRange::new(130, 150).expect("valid range"),
         ];
-        assert_eq!(resolve_delete(delete, &updates), DeleteDecision::KeepDeleted);
+        assert_eq!(
+            resolve_delete(delete, &updates),
+            DeleteDecision::KeepDeleted
+        );
 
         let delete = TimeRange::new(100, 110).expect("valid range");
         let updates = vec![
@@ -147,7 +150,10 @@ mod tests {
 
         let delete = TimeRange::new(100, 200).expect("valid range");
         let updates = vec![TimeRange::new(150, 220).expect("valid range")];
-        assert_eq!(resolve_delete(delete, &updates), DeleteDecision::NeedsReview);
+        assert_eq!(
+            resolve_delete(delete, &updates),
+            DeleteDecision::NeedsReview
+        );
     }
 }
 
@@ -163,8 +169,7 @@ mod v2_golden_tests {
 
     fn golden_path() -> PathBuf {
         // crates/merge -> repo root docs/
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../../docs/sync-golden-vectors.json")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../../docs/sync-golden-vectors.json")
     }
 
     fn load_golden() -> Value {
@@ -187,9 +192,12 @@ mod v2_golden_tests {
             .expect("case");
         let local = payload_from(&case["local"]);
         let remote = payload_from(&case["remote"]);
-        let merged_accounts = merge_account_collections(local.accounts.clone(), remote.accounts.clone());
-        let merged_folders = merge_folder_collections(local.folders.clone(), remote.folders.clone());
-        let merged_passkeys = merge_passkey_collections(local.passkeys.clone(), remote.passkeys.clone());
+        let merged_accounts =
+            merge_account_collections(local.accounts.clone(), remote.accounts.clone());
+        let merged_folders =
+            merge_folder_collections(local.folders.clone(), remote.folders.clone());
+        let merged_passkeys =
+            merge_passkey_collections(local.passkeys.clone(), remote.passkeys.clone());
 
         let accounts_by_account_id: std::collections::BTreeMap<_, _> = merged_accounts
             .iter()
@@ -197,11 +205,7 @@ mod v2_golden_tests {
             .collect();
         let accounts_by_record: std::collections::BTreeMap<_, _> = merged_accounts
             .iter()
-            .filter_map(|item| {
-                item.record_id
-                    .as_ref()
-                    .map(|id| (id.clone(), item.clone()))
-            })
+            .filter_map(|item| item.record_id.as_ref().map(|id| (id.clone(), item.clone())))
             .collect();
         for expected in case["expected"]["accounts"].as_array().unwrap() {
             let account_id = expected
@@ -217,13 +221,20 @@ mod v2_golden_tests {
             let actual = accounts_by_account_id
                 .get(account_id)
                 .or_else(|| accounts_by_record.get(record_id))
-                .unwrap_or_else(|| panic!("missing account accountId={account_id} recordId={record_id}"));
+                .unwrap_or_else(|| {
+                    panic!("missing account accountId={account_id} recordId={record_id}")
+                });
             let actual_value = serde_json::to_value(actual).unwrap();
             for (key, value) in expected.as_object().unwrap() {
-                if key == "recordId" && !super::v2::normalize::is_uuid_lower(value.as_str().unwrap_or("")) {
+                if key == "recordId"
+                    && !super::v2::normalize::is_uuid_lower(value.as_str().unwrap_or(""))
+                {
                     // Fixture stub ids are rewritten; ensure we still have some recordId.
                     assert!(
-                        actual_value["recordId"].as_str().map(|s| !s.is_empty()).unwrap_or(false),
+                        actual_value["recordId"]
+                            .as_str()
+                            .map(|s| !s.is_empty())
+                            .unwrap_or(false),
                         "account {account_id} missing rewritten recordId"
                     );
                     continue;
@@ -282,7 +293,10 @@ mod v2_golden_tests {
         let merged = merge_sync_payloads(local, remote);
         assert_eq!(merged.accounts.len(), 3);
         assert!(merged.folders.iter().any(|f| f.id == "folder-main"));
-        assert!(merged.passkeys.iter().any(|p| p.credential_id_b64u == "credential-local"));
+        assert!(merged
+            .passkeys
+            .iter()
+            .any(|p| p.credential_id_b64u == "credential-local"));
     }
 
     #[test]
@@ -296,7 +310,12 @@ mod v2_golden_tests {
             .expect("case");
         let local = payload_from(&case["local"]);
         let remote = payload_from(&case["remote"]);
-        let report = evaluate_sync_safety(&local, Some(&remote), &SyncPayload::default(), "remoteOverwriteLocal");
+        let report = evaluate_sync_safety(
+            &local,
+            Some(&remote),
+            &SyncPayload::default(),
+            "remoteOverwriteLocal",
+        );
         assert_eq!(report.safe, case["expectedSafe"].as_bool().unwrap());
         assert_eq!(report.reasons[0], case["reason"].as_str().unwrap());
     }

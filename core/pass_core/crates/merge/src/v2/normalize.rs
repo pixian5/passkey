@@ -1,9 +1,7 @@
 use super::policy::{
     DEFAULT_DEVICE_NAME, ETLD2_SUFFIXES, FIXED_NEW_ACCOUNT_FOLDER_ID, FIXED_NEW_ACCOUNT_FOLDER_NAME,
 };
-use super::types::{
-    AccountFolderMembershipState, Folder, Passkey, PasswordAccount,
-};
+use super::types::{AccountFolderMembershipState, Folder, Passkey, PasswordAccount};
 
 pub fn first_non_empty(candidates: &[&str], fallback: &str) -> String {
     for candidate in candidates {
@@ -183,9 +181,11 @@ pub fn stable_uuid_from_text(input: &str) -> String {
 pub fn normalize_passkey_create_compat_method(raw: &str, alg: i64) -> String {
     let normalized = raw.trim().to_ascii_lowercase();
     match normalized.as_str() {
-        "standard" | "user_name_fallback" | "rs256" | "user_name_fallback+rs256" | "unknown_linked" => {
-            normalized
-        }
+        "standard"
+        | "user_name_fallback"
+        | "rs256"
+        | "user_name_fallback+rs256"
+        | "unknown_linked" => normalized,
         _ if alg == -257 => "rs256".to_string(),
         _ => "standard".to_string(),
     }
@@ -228,10 +228,7 @@ pub fn normalize_account_shape(mut account: PasswordAccount) -> PasswordAccount 
         if is_uuid_lower(&direct) {
             Some(direct)
         } else {
-            let username_seed = first_non_empty(
-                &[&account.username_at_create, &username],
-                "",
-            );
+            let username_seed = first_non_empty(&[&account.username_at_create, &username], "");
             Some(stable_uuid_from_text(&format!(
                 "{account_id}|{created_at_ms}|{username_seed}"
             )))
@@ -239,7 +236,10 @@ pub fn normalize_account_shape(mut account: PasswordAccount) -> PasswordAccount 
     };
 
     let fallback_device = first_non_empty(
-        &[&account.last_operated_device_name, &account.created_device_name],
+        &[
+            &account.last_operated_device_name,
+            &account.created_device_name,
+        ],
         DEFAULT_DEVICE_NAME,
     );
 
@@ -247,10 +247,7 @@ pub fn normalize_account_shape(mut account: PasswordAccount) -> PasswordAccount 
     account.id = record_id;
     account.account_id = account_id;
     account.canonical_site = canonical_site;
-    account.username_at_create = first_non_empty(
-        &[&account.username_at_create, &username],
-        "",
-    );
+    account.username_at_create = first_non_empty(&[&account.username_at_create, &username], "");
     account.username = username;
     account.sites = sites;
     account.folder_ids = normalize_folder_id_list(&account.folder_ids);
@@ -306,8 +303,10 @@ pub fn normalize_account_shape(mut account: PasswordAccount) -> PasswordAccount 
         first_non_empty(&[&account.password_updated_device_name], &fallback_device);
     account.totp_updated_device_name =
         first_non_empty(&[&account.totp_updated_device_name], &fallback_device);
-    account.recovery_codes_updated_device_name =
-        first_non_empty(&[&account.recovery_codes_updated_device_name], &fallback_device);
+    account.recovery_codes_updated_device_name = first_non_empty(
+        &[&account.recovery_codes_updated_device_name],
+        &fallback_device,
+    );
     account.note_updated_device_name =
         first_non_empty(&[&account.note_updated_device_name], &fallback_device);
     account.passkey_updated_device_name =
@@ -317,8 +316,9 @@ pub fn normalize_account_shape(mut account: PasswordAccount) -> PasswordAccount 
         first_non_empty(&[&account.created_device_name], &fallback_device);
     account.deleted_device_name = account.deleted_device_name.trim().to_string();
     account.site_alias_states = rekey_states(&account.site_alias_states, |k| normalize_domain(k));
-    account.folder_membership_states =
-        rekey_states(&account.folder_membership_states, |k| normalize_folder_id(k));
+    account.folder_membership_states = rekey_states(&account.folder_membership_states, |k| {
+        normalize_folder_id(k)
+    });
     account.passkey_link_states =
         rekey_states(&account.passkey_link_states, |k| k.trim().to_string());
     account
@@ -382,6 +382,16 @@ pub fn normalize_folder_shape(mut folder: Folder) -> Folder {
     folder.id = id;
     folder.name = name;
     folder.matched_sites = normalize_sites(&folder.matched_sites);
+    let mut seen = std::collections::BTreeSet::new();
+    folder.regular_account_ids = folder
+        .regular_account_ids
+        .into_iter()
+        .map(|id| id.trim().to_ascii_lowercase())
+        .filter(|id| !id.is_empty() && seen.insert(id.clone()))
+        .collect();
+    folder.regular_order_updated_at_ms = folder.regular_order_updated_at_ms.max(0);
+    folder.regular_order_updated_device_name =
+        folder.regular_order_updated_device_name.trim().to_string();
     folder.created_at_ms = created_at_ms;
     folder.updated_at_ms = updated_at_ms;
     folder.deleted_device_name = folder.deleted_device_name.trim().to_string();
@@ -424,7 +434,10 @@ pub fn sort_folders_for_display(mut folders: Vec<Folder>) -> Vec<Folder> {
                 std::cmp::Ordering::Greater
             };
         }
-        let name = lhs.name.to_ascii_lowercase().cmp(&rhs.name.to_ascii_lowercase());
+        let name = lhs
+            .name
+            .to_ascii_lowercase()
+            .cmp(&rhs.name.to_ascii_lowercase());
         if name != std::cmp::Ordering::Equal {
             return name;
         }
@@ -496,7 +509,10 @@ mod tests {
             "login.example.com"
         );
         assert_eq!(normalize_domain("  APPLE.COM.  "), "apple.com");
-        assert_eq!(normalize_domain("http://user@host.example:8080/x"), "host.example");
+        assert_eq!(
+            normalize_domain("http://user@host.example:8080/x"),
+            "host.example"
+        );
     }
 
     #[test]

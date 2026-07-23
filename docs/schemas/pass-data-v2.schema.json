@@ -321,6 +321,18 @@
         "autoAddMatchingSites": {
           "type": "boolean"
         },
+        "regularAccountIds": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/uuidLower" },
+          "uniqueItems": true
+        },
+        "regularOrderUpdatedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "regularOrderUpdatedDeviceName": {
+          "type": "string"
+        },
         "isDeleted": {
           "type": "boolean"
         },

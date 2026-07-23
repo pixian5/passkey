@@ -10,20 +10,13 @@ use super::types::PasswordAccount;
 /// Connectivity: site-set overlap **or** any pair of sites with the same eTLD+1.
 /// Only components with 2+ accounts are rewritten; `updated_at_ms` / device name
 /// are touched when an account's site list changes.
-pub fn sync_alias_groups(
-    accounts: &mut [PasswordAccount],
-    now_ms: i64,
-    device_name: &str,
-) -> bool {
+pub fn sync_alias_groups(accounts: &mut [PasswordAccount], now_ms: i64, device_name: &str) -> bool {
     if accounts.len() < 2 {
         return false;
     }
 
     let n = accounts.len();
-    let site_sets: Vec<Vec<String>> = accounts
-        .iter()
-        .map(|a| normalize_sites(&a.sites))
-        .collect();
+    let site_sets: Vec<Vec<String>> = accounts.iter().map(|a| normalize_sites(&a.sites)).collect();
     let etld_sets: Vec<std::collections::BTreeSet<String>> = site_sets
         .iter()
         .map(|sites| {
@@ -65,9 +58,7 @@ pub fn sync_alias_groups(
             let si = &site_sets[i];
             let sj = &site_sets[j];
             let overlap = si.iter().any(|s| sj.binary_search(s).is_ok());
-            let same_etld = etld_sets[i]
-                .iter()
-                .any(|e| etld_sets[j].contains(e));
+            let same_etld = etld_sets[i].iter().any(|e| etld_sets[j].contains(e));
             if overlap || same_etld {
                 union(i, j, &mut parent);
             }
