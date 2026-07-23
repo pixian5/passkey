@@ -1759,7 +1759,7 @@ const render = () => {
       .map((p) => `通行密钥 RP ID: ${p.rpId || "—"} 用户名: ${p.userName || p.displayName || "—"}`)
       .join(" · ");
 
-    const deleted = a.isDeleted
+    const deleted = a.isDeleted && filter.type !== "recycle"
       ? `<span class="deleted-tag">已删除</span>`
       : "";
     const pinBadge = pinned && !a.isDeleted
@@ -2633,6 +2633,37 @@ document.addEventListener("contextmenu", (e) => {
       (state.activeAccounts || []).find((item) => accountKey(item) === key) ||
       (state.deletedAccounts || []).find((item) => accountKey(item) === key);
     if (!account) return;
+    if (account.isDeleted) {
+      selectOnlyAccount(key);
+      applyAccountSelectionStyles();
+      showContextMenu(e, [
+        {
+          label: "恢复",
+          action: async () => {
+            await invoke("restore_account", { id: accountRecordId(account) || accountKey(account) });
+            await refreshState();
+            toastSuccess("已恢复");
+          },
+        },
+        {
+          label: "删除",
+          danger: true,
+          action: async () => {
+            const confirmed = await requestActionConfirmation({
+              title: "删除回收站账号",
+              message: "删除后将无法恢复，确定继续吗？",
+              confirmText: "删除",
+              danger: true,
+            });
+            if (!confirmed) return;
+            await invoke("hard_delete_account", { id: accountRecordId(account) || accountKey(account) });
+            await refreshState();
+            toastSuccess("已删除");
+          },
+        },
+      ]);
+      return;
+    }
     if (!selectedAccountIds.has(key)) {
       selectOnlyAccount(key);
       applyAccountSelectionStyles();
