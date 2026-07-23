@@ -337,6 +337,7 @@ fn move_account_to_folder_top(
     if let Some(folder) = folders
         .iter_mut()
         .find(|folder| folder.id.eq_ignore_ascii_case(folder_id))
+        .filter(|folder| !folder.is_deleted && !folder.is_permanently_deleted)
     {
         move_account_to_order_top(&mut folder.regular_account_ids, account_id);
         folder.regular_order_updated_at_ms = now;
@@ -2164,12 +2165,33 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
         "restore_account" => {
             let id: String = arg(&args, "id")?;
             v.begin("恢复账号");
-            let a = account_mut(&mut v.data.accounts, &id).ok_or("未找到账号")?;
-            if a.is_permanently_deleted {
-                return Err("已永久删除的账号不能恢复".into());
+            let now = now_ms();
+            let device = v.data.device_name.clone();
+            let (restored_id, folder_ids) = {
+                let a = account_mut(&mut v.data.accounts, &id).ok_or("未找到账号")?;
+                if a.is_permanently_deleted {
+                    return Err("已永久删除的账号不能恢复".into());
+                }
+                a.is_deleted = false;
+                a.deleted_at_ms = None;
+                a.deleted_device_name.clear();
+                a.updated_at_ms = now;
+                a.last_operated_device_name = device.clone();
+                (account_key(a), a.folder_ids.clone())
+            };
+            move_account_to_order_top(&mut v.data.all_regular_account_ids, &restored_id);
+            v.data.all_regular_order_updated_at_ms = now;
+            v.data.all_regular_order_updated_device_name = device.clone();
+            for folder_id in folder_ids {
+                move_account_to_folder_top(
+                    &mut v.data.folders,
+                    &folder_id,
+                    &restored_id,
+                    now,
+                    &device,
+                );
             }
-            a.is_deleted = false;
-            a.deleted_at_ms = None;
+            normalize_order_state(&mut v.data);
             v.save()?;
             Ok(json!(null))
         }
@@ -2189,13 +2211,37 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
         }
         "restore_all_deleted_accounts" => {
             v.begin("全部恢复账号");
+            let now = now_ms();
+            let device = v.data.device_name.clone();
             let mut count = 0;
+            let mut restored = Vec::new();
             for a in &mut v.data.accounts {
                 if a.is_deleted && !a.is_permanently_deleted {
                     a.is_deleted = false;
                     a.deleted_at_ms = None;
+                    a.deleted_device_name.clear();
+                    a.updated_at_ms = now;
+                    a.last_operated_device_name = device.clone();
+                    restored.push((account_key(a), a.folder_ids.clone()));
                     count += 1;
                 }
+            }
+            for (restored_id, folder_ids) in restored.into_iter().rev() {
+                move_account_to_order_top(&mut v.data.all_regular_account_ids, &restored_id);
+                for folder_id in folder_ids {
+                    move_account_to_folder_top(
+                        &mut v.data.folders,
+                        &folder_id,
+                        &restored_id,
+                        now,
+                        &device,
+                    );
+                }
+            }
+            if count > 0 {
+                v.data.all_regular_order_updated_at_ms = now;
+                v.data.all_regular_order_updated_device_name = device;
+                normalize_order_state(&mut v.data);
             }
             v.save()?;
             Ok(json!(count))

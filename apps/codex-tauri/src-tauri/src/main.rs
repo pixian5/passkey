@@ -538,6 +538,8 @@ fn restore_account(
 
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
+    let mut folders = load_folders(&conn)?;
+    let mut all_order = load_all_regular_order(&conn)?;
     let target = accounts
         .iter()
         .find(|item| account_matches_id(item, &id))
@@ -551,15 +553,31 @@ fn restore_account(
     snapshot_current_vault(&conn, &dir, "恢复账号前自动备份")?;
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
+    let mut restored_folder_ids = Vec::new();
     if let Some(item) = accounts.iter_mut().find(|a| account_matches_id(a, &id)) {
         item.is_deleted = false;
         item.deleted_at_ms = None;
         item.deleted_device_name.clear();
         item.updated_at_ms = now;
-        item.last_operated_device_name = device_name;
+        item.last_operated_device_name = device_name.clone();
+        restored_folder_ids = item.folder_ids.clone();
     }
     sync_alias_sites(&mut accounts);
+    let restored_id = accounts
+        .iter()
+        .find(|item| account_matches_id(item, &id))
+        .map(PasswordAccount::resolved_record_id)
+        .ok_or_else(|| "恢复后未找到账号".to_string())?;
+    move_account_to_order_top(&mut all_order.account_ids, &restored_id);
+    all_order.updated_at_ms = now;
+    all_order.updated_device_name = device_name.clone();
+    for folder_id in restored_folder_ids {
+        move_account_to_folder_top(&mut folders, &folder_id, &restored_id, now, &device_name);
+    }
+    normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_accounts(&conn, &accounts)?;
+    save_folders(&conn, &folders)?;
+    save_all_regular_order(&conn, &all_order)?;
     Ok(())
 }
 
@@ -626,6 +644,7 @@ fn restore_all_deleted_accounts(
     snapshot_current_vault(&conn, &dir, "批量恢复回收站前自动备份")?;
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
+    let mut restored_ids = Vec::new();
     for account in &mut accounts {
         if account.is_deleted && !account.is_permanently_deleted {
             account.is_deleted = false;
@@ -633,9 +652,29 @@ fn restore_all_deleted_accounts(
             account.deleted_device_name.clear();
             account.updated_at_ms = now;
             account.last_operated_device_name = device_name.clone();
+            restored_ids.push(account.resolved_record_id());
         }
     }
     sync_alias_sites(&mut accounts);
+    for restored_id in restored_ids.into_iter().rev() {
+        move_account_to_order_top(&mut all_order.account_ids, &restored_id);
+        if let Some(account) = accounts
+            .iter()
+            .find(|item| item.resolved_record_id() == restored_id)
+        {
+            for folder_id in &account.folder_ids {
+                move_account_to_folder_top(
+                    &mut folders,
+                    folder_id,
+                    &restored_id,
+                    now,
+                    &device_name,
+                );
+            }
+        }
+    }
+    all_order.updated_at_ms = now;
+    all_order.updated_device_name = device_name.clone();
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_accounts(&conn, &accounts)?;
     save_folders(&conn, &folders)?;
@@ -2007,6 +2046,7 @@ fn move_account_to_folder_top(
     if let Some(folder) = folders
         .iter_mut()
         .find(|folder| folder.id.eq_ignore_ascii_case(folder_id))
+        .filter(|folder| !folder.is_deleted && !folder.is_permanently_deleted)
     {
         move_account_to_order_top(&mut folder.regular_account_ids, account_id);
         folder.regular_order_updated_at_ms = now;
