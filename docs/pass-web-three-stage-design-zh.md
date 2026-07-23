@@ -322,11 +322,12 @@ curl http://127.0.0.1:53335/healthz
 
 ## 12. 当前实施状态
 
-- 已完成：`apps/pass-web` Axum 服务骨架、加密 vault、静态页面、浏览器 `invoke` 适配、核心账号/文件夹/回收站/撤销重做 API。
-- 已完成：本地 Rust 单元测试和 API 端到端测试。
+- 已完成：`apps/pass-web` Axum 服务、加密 vault、主密码锁、静态页面、浏览器 `invoke` 适配、核心账号/文件夹/回收站/撤销重做 API。
+- 已完成：自建服务器和 WebDAV 同步、预览/覆盖模式、ETag 冲突重新拉取重算、同步包和 CSV 浏览器导入导出、Google Authenticator 导入、快照恢复。
+- 已完成：本地 Rust 单元测试和 API 端到端测试（明文/加密同步、空 Bearer、锁定访问控制）。
 - 已完成基础验证：Dockerfile、Docker Compose、`.dockerignore`、容器健康检查和 arm64 本机构建。
 - 已准备：Caddy、systemd、GitHub Actions 部署模板。
-- 待继续：同步服务完整接入、真正的浏览器下载/上传接口、Cookie 会话、SQLite 多用户模型和 WebAuthn。
+- 待继续：Cookie 会话、SQLite 多用户模型、WebAuthn、审计和管理员部署通道。
 - 远程 Ubuntu 部署和多架构镜像发布尚未执行，需要在对应服务器和 CI 环境继续验证。
 
 ## 13. 最终验收标准

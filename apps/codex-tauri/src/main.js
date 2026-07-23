@@ -31,7 +31,24 @@ const invoke = async (command, args = {}) => {
     if (!response.ok) {
       throw new Error(body?.error || `Web API 请求失败（HTTP ${response.status}）`);
     }
-    return body?.result;
+    const result = body?.result;
+    if (result?.downloadBase64 && typeof document !== "undefined") {
+      try {
+        const binary = atob(result.downloadBase64);
+        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+        const blob = new Blob([bytes], {
+          type: result.downloadMime || "application/octet-stream",
+        });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = result.downloadName || "pass-download";
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      } catch (error) {
+        console.warn("Web download response could not be materialized", error);
+      }
+    }
+    return result;
   };
   return invokeWeb(true);
 };
@@ -3553,8 +3570,10 @@ els.btnExportBundle?.addEventListener("click", async () => {
   const restore = setButtonBusy(els.btnExportBundle, "正在导出…");
   try {
     await saveAllSyncRelated().catch(() => {});
-    const directory = await invoke("choose_export_directory");
-    if (!directory) {
+    const runtime = window.__TAURI__?.core ?? window.__TAURI_INTERNALS__;
+    const hasNativeDirectoryPicker = typeof runtime?.invoke === "function";
+    const directory = hasNativeDirectoryPicker ? await invoke("choose_export_directory") : null;
+    if (hasNativeDirectoryPicker && !directory) {
       toastWarn("已取消选择导出文件夹");
       return;
     }

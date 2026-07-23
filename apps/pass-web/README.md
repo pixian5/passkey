@@ -47,32 +47,27 @@ docker compose up -d --build
 已可用：
 
 - 单用户账号、文件夹、回收站、批量恢复、撤销、重做和历史记录。
-- 加密 vault、同步设置保存、同步密钥生成和本地 payload 合并。
-- 同步包导出，以及同步包导入前预览、确认后合并写入。
-- 基础 CSV 导出、Docker 健康检查和浏览器 `fetch` RPC 适配。
-
-尚未完成但不是系统限制：
-
-- 自建服务器真实拉取/推送、同步预览、ETag/If-Match、失败重试和覆盖模式。
-- WebDAV 同步、服务器探测/创建/验证、服务器历史版本和本地快照恢复。
-- 浏览器下载式同步包导出、CSV 导入、Google Authenticator 导入。
-- 文件夹网站规则、文件夹去重、演示数据和部分 Tauri 锁定命令。
+- 加密 vault、主密码锁、同步设置与 WebDAV 偏好自动保存、同步密钥生成。
+- 自建服务器和 WebDAV 的预览、合并、云端覆盖、本地覆盖、ETag/If-Match、冲突后重新拉取并合并重试。
+- 同步包浏览器下载；导入前差异预览和确认；加密同步包解密、安全检查和字段级合并。
+- CSV 导入导出、Google Authenticator 导入、文件夹网站规则、文件夹去重、演示数据。
+- 本地安全快照、服务器版本读取和恢复、端点健康检测、SSH/创建服务草稿与凭据加密保存。
+- Docker 健康检查和浏览器 `fetch` RPC 适配。
 
 确实属于桌面专属或需要 Web 等价方案：
 
 - macOS Touch ID、系统托盘、窗口菜单和原生窗口状态。
 - 系统 AutoFill/Credential Provider 和 macOS 钥匙串直接集成。
 - 原生文件选择器；Web 版应使用浏览器上传、下载或 File System Access API。
-
-因此，当前 Web 页面中的同步按钮会调用尚未接入的远端命令，不能当作“服务器或 Docker 不支持”。
+- 直接通过网页执行 SSH 部署。该功能会让公开的 Web 服务具备远程命令执行能力，因此 Web 版只保存草稿、检测端点；实际部署请使用桌面版或服务器端 Docker/systemd。
 
 Ubuntu 可参考 `pass-web.service.example`，Caddy 可参考 `Caddyfile.example`。仓库中的
 `.github/workflows/deploy-pass-web.yml` 会在每次相关提交后运行验证；只有配置仓库变量
 `PASS_WEB_DEPLOY_ENABLED=true` 并提供 `PASS_WEB_SERVER_HOST`、`PASS_WEB_SERVER_USER`、
 `PASS_WEB_SERVER_SSH_KEY` secrets 后才会自动 SSH 到服务器执行 Docker 部署。
 
-## 当前限制与后续阶段
+## 后续阶段
 
-- 第二阶段：同步预览/合并、同步包上传下载、CSV 导入导出、生产 HTTPS、备份和回滚完善；Docker 基础健康检查已具备。
-- 第三阶段：多用户隔离、网页登录会话、WebAuthn、审计日志和权限管理。
+- 生产级多用户隔离、网页登录会话、WebAuthn、审计日志和权限管理。
+- 独立的管理员部署 API 需要额外的网络隔离、权限模型和审计，不能复用普通保险库网页接口。
 - macOS Touch ID、系统托盘、窗口尺寸和原生文件选择器属于桌面专属能力，网页端会改用浏览器会话、上传和下载。

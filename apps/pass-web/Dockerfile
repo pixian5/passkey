@@ -7,7 +7,7 @@ COPY apps/codex-tauri/src ./src
 COPY apps/codex-tauri/scripts ./scripts
 RUN npm run prepare:dist
 
-FROM rust:1.85-bookworm AS rust-build
+FROM rust:1.86-bookworm AS rust-build
 WORKDIR /src
 COPY core/pass_core /src/core/pass_core
 COPY apps/pass-web /src/apps/pass-web
