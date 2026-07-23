@@ -42,6 +42,30 @@ docker compose up -d --build
 
 生产环境建议用 Caddy/Nginx 反向代理 HTTPS，只开放 443，不要把 53335 直接暴露到公网；同时定期备份 `/data`。
 
+## Web 端当前功能边界
+
+已可用：
+
+- 单用户账号、文件夹、回收站、批量恢复、撤销、重做和历史记录。
+- 加密 vault、同步设置保存、同步密钥生成和本地 payload 合并。
+- 同步包导出，以及同步包导入前预览、确认后合并写入。
+- 基础 CSV 导出、Docker 健康检查和浏览器 `fetch` RPC 适配。
+
+尚未完成但不是系统限制：
+
+- 自建服务器真实拉取/推送、同步预览、ETag/If-Match、失败重试和覆盖模式。
+- WebDAV 同步、服务器探测/创建/验证、服务器历史版本和本地快照恢复。
+- 浏览器下载式同步包导出、CSV 导入、Google Authenticator 导入。
+- 文件夹网站规则、文件夹去重、演示数据和部分 Tauri 锁定命令。
+
+确实属于桌面专属或需要 Web 等价方案：
+
+- macOS Touch ID、系统托盘、窗口菜单和原生窗口状态。
+- 系统 AutoFill/Credential Provider 和 macOS 钥匙串直接集成。
+- 原生文件选择器；Web 版应使用浏览器上传、下载或 File System Access API。
+
+因此，当前 Web 页面中的同步按钮会调用尚未接入的远端命令，不能当作“服务器或 Docker 不支持”。
+
 Ubuntu 可参考 `pass-web.service.example`，Caddy 可参考 `Caddyfile.example`。仓库中的
 `.github/workflows/deploy-pass-web.yml` 会在每次相关提交后运行验证；只有配置仓库变量
 `PASS_WEB_DEPLOY_ENABLED=true` 并提供 `PASS_WEB_SERVER_HOST`、`PASS_WEB_SERVER_USER`、
