@@ -6,11 +6,17 @@ services:
     image: pass-web:latest
     restart: unless-stopped
     ports:
-      - "53335:53335"
+      - "${PASS_WEB_BIND_ADDRESS:-127.0.0.1}:${PASS_WEB_PORT:-53335}:53335"
     environment:
-      PASS_WEB_AUTH_TOKEN: ${PASS_WEB_AUTH_TOKEN:?set PASS_WEB_AUTH_TOKEN in .env}
+      PASS_WEB_AUTH_TOKEN: ${PASS_WEB_AUTH_TOKEN:-}
     volumes:
       - pass_web_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:53335/healthz"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
 
 volumes:
   pass_web_data:

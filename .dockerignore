@@ -1,0 +1,11 @@
+.git
+.github
+**/.DS_Store
+**/node_modules
+**/target
+**/.build
+**/dist
+**/data
+*.enc
+pass-web-vault-key-v1
+*.log

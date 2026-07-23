@@ -33,9 +33,10 @@ PASS_WEB_AUTH_TOKEN=（留空表示开放模式；生产环境必须设置）
 
 ```bash
 cd apps/pass-web
-printf 'PASS_WEB_AUTH_TOKEN=请替换为长随机令牌\n' > .env
 docker compose up -d --build
 ```
+
+默认只绑定宿主机 `127.0.0.1:53335`，空 `PASS_WEB_AUTH_TOKEN` 允许本机开发和可信内网测试；生产环境应在外部 `.env` 或 Docker secret 中配置已有的 Web 访问令牌，并通过 Caddy/Nginx 提供 HTTPS。程序不会自动生成新的 Bearer Token。
 
 容器数据在 Docker volume `pass_web_data` 中，必须同时保留 `pass-web-vault-v1.enc` 和 `pass-web-vault-key-v1`。丢失密钥文件将无法解密保险库。
 
@@ -48,6 +49,6 @@ Ubuntu 可参考 `pass-web.service.example`，Caddy 可参考 `Caddyfile.example
 
 ## 当前限制与后续阶段
 
-- 第二阶段：同步预览/合并、同步包上传下载、CSV 导入导出、Docker 健康检查和 HTTPS 部署模板。
+- 第二阶段：同步预览/合并、同步包上传下载、CSV 导入导出、生产 HTTPS、备份和回滚完善；Docker 基础健康检查已具备。
 - 第三阶段：多用户隔离、网页登录会话、WebAuthn、审计日志和权限管理。
 - macOS Touch ID、系统托盘、窗口尺寸和原生文件选择器属于桌面专属能力，网页端会改用浏览器会话、上传和下载。

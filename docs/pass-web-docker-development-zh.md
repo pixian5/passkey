@@ -22,9 +22,11 @@
 
 - `apps/pass-web/Dockerfile`：Node 生成前端资源，Rust 构建 Web 二进制，Debian slim 运行。
 - `apps/pass-web/docker-compose.yml`：单服务 Compose 和 named volume。
+- 根目录 `.dockerignore`：排除源码仓库中的构建缓存、依赖、现有 dist 和本地数据。
 - `apps/pass-web/Caddyfile.example`：反向代理模板。
 - `.github/workflows/deploy-pass-web.yml`：测试通过后可选 SSH 到服务器构建并重启。
 - `/healthz`：返回服务健康状态，不需要读取保险库内容。
+- Compose 默认只绑定宿主机回环地址，并通过 `curl` 健康检查 `/healthz`。
 - Web vault 使用 AES-256-GCM；密文文件和独立密钥文件位于同一数据目录。
 
 当前仍属于第一阶段骨架。完整同步预览/合并、同步包浏览器上传下载、CSV 双向导入导出、多用户、WebAuthn、审计和生产级自动回滚需要在后续阶段完成。本文的 Docker 设计必须兼容这些后续能力，但不假设它们已经实现。
@@ -180,7 +182,7 @@ apps/pass-web/
 - 代码修改后执行 `docker compose build pass-web`，再重启容器。
 - 不在开发 Compose 中挂载 Docker socket。
 
-开发模式不代表可以把开放模式直接暴露到公网。
+开发模式不代表可以把开放模式直接暴露到公网。基础 Compose 允许空 Token，但生产覆盖配置必须明确启用认证。
 
 ### 5.2 测试环境
 
@@ -214,11 +216,17 @@ apps/pass-web/
 | `PASS_WEB_PORT` | `53335` | HTTP 端口 |
 | `PASS_WEB_DATA_DIR` | `./data` | vault 和密钥目录 |
 | `PASS_WEB_STATIC_DIR` | `../codex-tauri/dist` | 静态资源目录 |
-| `PASS_WEB_AUTH_TOKEN` | 空 | Web 访问 Bearer Token |
+| `PASS_WEB_AUTH_TOKEN` | 空 | Web 访问 Bearer Token；空值表示开放模式 |
+
+Compose 额外变量：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `PASS_WEB_BIND_ADDRESS` | `127.0.0.1` | 仅控制宿主机端口绑定地址，不会传入服务进程 |
 
 `PASS_WEB_AUTH_TOKEN` 与同步服务使用的 Bearer Token 不是同一个概念。开发和可信内网可以为空；公网生产必须启用认证，并通过 HTTPS 传输。
 
-当前 Compose 使用 `${PASS_WEB_AUTH_TOKEN:?…}` 校验，空值会阻止启动。后续实现应改为允许空值但打印明显的安全警告，同时由生产配置检查阻止无认证公网部署。不能自动生成新的强随机 Token，也不能覆盖用户已经配置的空值。
+基础 Compose 允许 `PASS_WEB_AUTH_TOKEN` 为空，并默认只绑定宿主机回环地址；生产覆盖配置必须阻止无认证公网部署。不能自动生成新的强随机 Token，也不能覆盖用户已经配置的空值。
 
 后续新增变量必须同步更新：
 
@@ -303,8 +311,6 @@ Pass Web 的健康检查可以保持在内网 HTTP；对外只开放 443。若�
 
 ```bash
 cd /Users/x/code/pass/apps/pass-web
-# 当前 Compose 尚未允许空 Token；该固定值只用于本机开发，不得用于生产。
-printf 'PASS_WEB_AUTH_TOKEN=pass-web-dev-only\n' > .env
 docker compose build --pull pass-web
 docker compose up -d pass-web
 curl --fail http://127.0.0.1:53335/healthz
@@ -505,7 +511,7 @@ docker compose logs --tail=200 pass-web
 - 生产 Compose 只绑定回环端口。
 - 完善 Caddy/Nginx HTTPS。
 - 增加健康检查、资源限制和备份脚本。
-- 修复空 Token 配置策略并输出安全警告。
+- 增加生产 Compose 覆盖，要求显式配置认证 Token。
 
 ### D2：镜像发布
 
