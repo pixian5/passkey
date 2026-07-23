@@ -31,7 +31,26 @@ function etldPlusOne(domain) {
   return tail2;
 }
 
-const helpers = { normalizeDomain, etldPlusOne };
+const aliasGroups = new Map([
+  ["microsoft", [
+    "microsoft.com",
+    "microsoftonline.com",
+    "login.microsoftonline.com",
+    "live.com",
+    "outlook.com",
+    "office.com",
+  ]],
+]);
+
+function domainAliasGroupKey(domain) {
+  const normalized = normalizeDomain(domain);
+  for (const [id, domains] of aliasGroups) {
+    if (domains.some((alias) => normalized === alias || normalized.endsWith(`.${alias}`))) return id;
+  }
+  return "";
+}
+
+const helpers = { normalizeDomain, etldPlusOne, domainAliasGroupKey };
 
 test("alias groups union by site overlap", () => {
   const accounts = [
@@ -70,4 +89,18 @@ test("single account alias noop", () => {
   const accounts = [{ sites: ["only.com"] }];
   const { changed } = syncAliasGroups(accounts, helpers, { nowMs: 1, deviceName: "D" });
   assert.equal(changed, false);
+});
+
+test("alias groups union explicit Microsoft domains", () => {
+  const accounts = [
+    { sites: ["microsoft.com"], updatedAtMs: 1 },
+    { sites: ["login.microsoftonline.com"], updatedAtMs: 1 },
+  ];
+  const { accounts: next, changed } = syncAliasGroups(accounts, helpers, {
+    nowMs: 75,
+    deviceName: "X",
+  });
+  assert.equal(changed, true);
+  assert.deepEqual(next[0].sites, ["login.microsoftonline.com", "microsoft.com"]);
+  assert.deepEqual(next[1].sites, next[0].sites);
 });

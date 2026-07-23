@@ -1,6 +1,7 @@
 import {
   buildAccountId,
   compareAccountsForDisplay,
+  domainsMatch,
   etldPlusOne,
   formatYYMMDDHHmmss,
   normalizeDomain,
@@ -2551,7 +2552,12 @@ function findImportedBrowserAccountIndex(accounts, entry) {
   accounts.forEach((account, index) => {
     // Permanent-delete tombstones must not be revived by re-import.
     if (account?.isPermanentlyDeleted) return;
-    const accountSites = new Set(normalizeSites(account?.sites || []));
+    const accountSites = new Set(
+      normalizeSites([
+        ...(Array.isArray(account?.sites) ? account.sites : []),
+        account?.canonicalSite || "",
+      ])
+    );
     const accountCanonicalSites = new Set([...accountSites].map((site) => etldPlusOne(site)));
     accountCanonicalSites.add(String(account?.canonicalSite || ""));
     const usernameMatches = normalizedUsername
@@ -2560,12 +2566,17 @@ function findImportedBrowserAccountIndex(accounts, entry) {
       : !normalizeUsername(account?.username || "");
     const siteOverlaps = [...targetSites].some((site) => accountSites.has(site));
     const canonicalMatches = [...targetCanonicalSites].some((site) => accountCanonicalSites.has(site));
+    const aliasMatches = [...targetSites].some((targetSite) =>
+      [...accountSites].some((accountSite) => domainsMatch(targetSite, accountSite))
+    );
 
     let score = -1;
     if (usernameMatches && siteOverlaps) score = account?.isDeleted ? 35 : 40;
     else if (usernameMatches && canonicalMatches) score = account?.isDeleted ? 25 : 30;
+    else if (usernameMatches && aliasMatches) score = account?.isDeleted ? 15 : 20;
     else if (!normalizedUsername && siteOverlaps) score = account?.isDeleted ? 15 : 20;
     else if (!normalizedUsername && canonicalMatches) score = account?.isDeleted ? 5 : 10;
+    else if (!normalizedUsername && aliasMatches) score = account?.isDeleted ? 0 : 5;
 
     if (score > bestScore) {
       bestScore = score;
@@ -3874,9 +3885,8 @@ async function addAccountsMatchingSitesToFolderFromModal() {
     .map(normalizeAccountShape)
     .filter((account) => !account.isDeleted)
     .filter((account) => {
-      const aliases = new Set(account.sites.map(normalizeDomain).filter(Boolean));
-      const canonical = normalizeDomain(account.canonicalSite || "");
-      return sites.some((site) => aliases.has(site) || canonical === site);
+      const accountSites = normalizeSites([...(account.sites || []), account.canonicalSite || ""]);
+      return sites.some((site) => accountSites.some((accountSite) => domainsMatch(site, accountSite)));
     })
     .map((account) => account.accountId);
 
@@ -3957,14 +3967,17 @@ function openAccountFolderContextMenu(account, position) {
 
 function applyAutoFolderRulesToAccount(account, folders = foldersRaw) {
   if (!account || account.isDeleted) return account;
-  const accountSites = new Set(
-    normalizeSites([...(account.sites || []), account.canonicalSite || ""]).filter(Boolean)
-  );
-  if (accountSites.size === 0) return account;
+  const accountSites = normalizeSites([
+    ...(Array.isArray(account?.sites) ? account.sites : []),
+    account?.canonicalSite || "",
+  ]);
+  if (accountSites.length === 0) return account;
   const matchedFolderIds = (Array.isArray(folders) ? folders : [])
     .map(normalizeFolderShape)
     .filter((folder) => folder.autoAddMatchingSites)
-    .filter((folder) => folder.matchedSites.some((site) => accountSites.has(site)))
+    .filter((folder) => folder.matchedSites.some((folderSite) =>
+      accountSites.some((accountSite) => domainsMatch(accountSite, folderSite))
+    ))
     .map((folder) => normalizeFolderId(folder.id))
     .filter(Boolean);
   if (matchedFolderIds.length === 0) return account;

@@ -5496,7 +5496,8 @@ final class AccountStore: ObservableObject {
     }
 
     // 对所有账号做连通分量并集同步：
-    // 若账号 A/B 的 sites 有交集，则视为同一别名组，组内站点取并集并回填。
+    // 若账号 A/B 的 sites 有交集、同 eTLD+1 或属于明确的品牌别名组，
+    // 则视为同一别名组，组内站点取并集并回填。
     private func syncAliasGroups() {
         guard accounts.count >= 2 else { return }
 
@@ -5529,6 +5530,40 @@ final class AccountStore: ObservableObject {
     }
 
     /// Legacy in-process alias union (rollback / FFI unavailable).
+    private func domainAliasGroupKey(for site: String) -> String? {
+        let normalized = DomainUtils.normalize(site)
+        let groups: [(String, [String])] = [
+            ("apple", ["apple.com", "apple.com.cn", "icloud.com", "icloud.com.cn"]),
+            ("qq", ["qq.com", "wx.qq.com"]),
+            ("baidu", ["baidu.com", "passport.baidu.com", "pan.baidu.com"]),
+            ("sina", ["sina.com", "mail.sina.com", "weibo.com"]),
+            ("github", ["github.com", "gist.github.com"]),
+            ("gitlab", ["gitlab.com", "about.gitlab.com"]),
+            ("google", ["google.com", "accounts.google.com"]),
+            ("youtube", ["youtube.com", "studio.youtube.com"]),
+            ("x", ["x.com", "twitter.com"]),
+            ("facebook", ["facebook.com", "messenger.com"]),
+            ("amazon", ["amazon.com", "smile.amazon.com"]),
+            (
+                "microsoft",
+                [
+                    "microsoft.com", "microsoftonline.com", "login.microsoftonline.com",
+                    "login.microsoft.com", "account.microsoft.com", "live.com", "hotmail.com",
+                    "outlook.com", "account.live.com", "office.com", "outlook.office.com",
+                    "microsoft365.com", "office365.com", "azure.com", "msn.com"
+                ]
+            ),
+            ("paypal", ["paypal.com"]),
+            ("netflix", ["netflix.com", "help.netflix.com"]),
+            ("spotify", ["spotify.com", "open.spotify.com"]),
+            ("linkedin", ["linkedin.com"]),
+            ("dropbox", ["dropbox.com"]),
+        ]
+        return groups.first { _, aliases in
+            aliases.contains { alias in normalized == alias || normalized.hasSuffix("." + alias) }
+        }?.0
+    }
+
     private func syncAliasGroupsSwift() {
         var components: [[Int]] = []
         var visited = Set<Int>()
@@ -5554,7 +5589,11 @@ final class AccountStore: ObservableObject {
                             DomainUtils.etldPlusOne(for: currentSite) == DomainUtils.etldPlusOne(for: targetSite)
                         }
                     }
-                    if hasSiteOverlap || sameEtld1 {
+                    let sameAliasGroup = currentSites.contains { currentSite in
+                        guard let group = domainAliasGroupKey(for: currentSite) else { return false }
+                        return targetSites.contains { domainAliasGroupKey(for: $0) == group }
+                    }
+                    if hasSiteOverlap || sameEtld1 || sameAliasGroup {
                         visited.insert(j)
                         queue.append(j)
                     }

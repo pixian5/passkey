@@ -2,6 +2,7 @@ import { ensurePasskeyStorageShape, handlePasskeyBridgeOperation } from "./passk
 import { PASS_EXTENSION_VERSION } from "./extension_version.js";
 import {
   buildAccountId,
+  domainsMatch,
   etldPlusOne,
   normalizeDomain,
   normalizeSites,
@@ -2032,7 +2033,9 @@ function createAccount({ site, username, password, createdAtMs, deviceName }) {
 
 function accountMatchesDomain(account, domain) {
   const normalized = normalizeDomain(domain);
-  const etld1 = etldPlusOne(normalized);
-  const sites = normalizeSites(account.sites || []);
-  return sites.some((site) => site === normalized || etldPlusOne(site) === etld1);
+  const sites = normalizeSites([
+    ...(Array.isArray(account?.sites) ? account.sites : []),
+    account?.canonicalSite || "",
+  ]);
+  return Boolean(normalized) && sites.some((site) => domainsMatch(site, normalized));
 }

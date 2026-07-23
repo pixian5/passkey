@@ -2,7 +2,8 @@
  * Extension-side alias group helper aligned with Rust `sync_alias_groups`.
  * Prefer keeping logic in Core; this is for browser runtime until WASM lands.
  *
- * Connectivity: site-set overlap OR same eTLD+1 (via helpers.etldPlusOne).
+ * Connectivity: site-set overlap OR same eTLD+1 (via helpers.etldPlusOne)
+ * OR an explicit provider alias group (via helpers.domainAliasGroupKey).
  */
 export function syncAliasGroups(accounts, helpers, options = {}) {
   if (!Array.isArray(accounts) || accounts.length < 2) {
@@ -17,6 +18,8 @@ export function syncAliasGroups(accounts, helpers, options = {}) {
       if (parts.length < 2) return n;
       return parts.slice(-2).join(".");
     });
+  const domainAliasGroupKey =
+    typeof helpers?.domainAliasGroupKey === "function" ? helpers.domainAliasGroupKey : () => "";
   const nowMs = options.nowMs ?? Date.now();
   const deviceName = options.deviceName || "Browser";
 
@@ -30,6 +33,14 @@ export function syncAliasGroups(accounts, helpers, options = {}) {
     for (const s of set) {
       const e = etldPlusOne(s);
       if (e) out.add(e);
+    }
+    return out;
+  });
+  const aliasGroupSets = siteSets.map((set) => {
+    const out = new Set();
+    for (const site of set) {
+      const group = domainAliasGroupKey(site);
+      if (group) out.add(group);
     }
     return out;
   });
@@ -68,7 +79,8 @@ export function syncAliasGroups(accounts, helpers, options = {}) {
           break;
         }
       }
-      if (overlap || sameEtld) union(i, j);
+      const sameAliasGroup = [...aliasGroupSets[i]].some((group) => aliasGroupSets[j].has(group));
+      if (overlap || sameEtld || sameAliasGroup) union(i, j);
     }
   }
 

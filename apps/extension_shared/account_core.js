@@ -3,6 +3,95 @@ import { syncAliasGroups as syncAliasGroupsCore } from "../../core/pass_core/js/
 
 const ETLD2_SUFFIXES = new Set(ETLD2_SUFFIX_LIST);
 
+// Cross-domain login surfaces that belong to one provider. These are explicit
+// security rules: unrelated domains are never associated by name similarity.
+export const DOMAIN_ALIAS_GROUPS = Object.freeze([
+  Object.freeze({
+    id: "apple",
+    domains: Object.freeze(["apple.com", "apple.com.cn", "icloud.com", "icloud.com.cn"]),
+  }),
+  Object.freeze({
+    id: "qq",
+    domains: Object.freeze(["qq.com", "wx.qq.com"]),
+  }),
+  Object.freeze({
+    id: "baidu",
+    domains: Object.freeze(["baidu.com", "passport.baidu.com", "pan.baidu.com"]),
+  }),
+  Object.freeze({
+    id: "sina",
+    domains: Object.freeze(["sina.com", "mail.sina.com", "weibo.com"]),
+  }),
+  Object.freeze({
+    id: "github",
+    domains: Object.freeze(["github.com", "gist.github.com"]),
+  }),
+  Object.freeze({
+    id: "gitlab",
+    domains: Object.freeze(["gitlab.com", "about.gitlab.com"]),
+  }),
+  Object.freeze({
+    id: "google",
+    domains: Object.freeze(["google.com", "accounts.google.com"]),
+  }),
+  Object.freeze({
+    id: "youtube",
+    domains: Object.freeze(["youtube.com", "studio.youtube.com"]),
+  }),
+  Object.freeze({
+    id: "x",
+    domains: Object.freeze(["x.com", "twitter.com"]),
+  }),
+  Object.freeze({
+    id: "facebook",
+    domains: Object.freeze(["facebook.com", "messenger.com"]),
+  }),
+  Object.freeze({
+    id: "amazon",
+    domains: Object.freeze(["amazon.com", "smile.amazon.com"]),
+  }),
+  Object.freeze({
+    id: "microsoft",
+    domains: Object.freeze([
+      "microsoft.com",
+      "microsoftonline.com",
+      "login.microsoftonline.com",
+      "login.microsoft.com",
+      "account.microsoft.com",
+      "live.com",
+      "hotmail.com",
+      "outlook.com",
+      "account.live.com",
+      "office.com",
+      "outlook.office.com",
+      "microsoft365.com",
+      "office365.com",
+      "azure.com",
+      "msn.com",
+    ]),
+  }),
+  Object.freeze({
+    id: "paypal",
+    domains: Object.freeze(["paypal.com"]),
+  }),
+  Object.freeze({
+    id: "netflix",
+    domains: Object.freeze(["netflix.com", "help.netflix.com"]),
+  }),
+  Object.freeze({
+    id: "spotify",
+    domains: Object.freeze(["spotify.com", "open.spotify.com"]),
+  }),
+  Object.freeze({
+    id: "linkedin",
+    domains: Object.freeze(["linkedin.com"]),
+  }),
+  Object.freeze({
+    id: "dropbox",
+    domains: Object.freeze(["dropbox.com"]),
+  }),
+]);
+
 export function normalizeDomain(input) {
   if (!input) return "";
   let value = String(input).trim().toLowerCase();
@@ -49,6 +138,28 @@ export function etldPlusOne(domain) {
     return labels.slice(-3).join(".");
   }
   return tail2;
+}
+
+export function domainAliasGroupKey(domain) {
+  const normalized = normalizeDomain(domain);
+  if (!normalized) return "";
+  for (const group of DOMAIN_ALIAS_GROUPS) {
+    const matched = group.domains.some(
+      (alias) => normalized === alias || normalized.endsWith(`.${alias}`)
+    );
+    if (matched) return group.id;
+  }
+  return "";
+}
+
+export function domainsMatch(left, right) {
+  const normalizedLeft = normalizeDomain(left);
+  const normalizedRight = normalizeDomain(right);
+  if (!normalizedLeft || !normalizedRight) return false;
+  if (normalizedLeft === normalizedRight) return true;
+  if (etldPlusOne(normalizedLeft) === etldPlusOne(normalizedRight)) return true;
+  const leftGroup = domainAliasGroupKey(normalizedLeft);
+  return Boolean(leftGroup && leftGroup === domainAliasGroupKey(normalizedRight));
 }
 
 export function normalizeSites(sites) {
@@ -117,6 +228,7 @@ export function sortAccountsForDisplay(inputAccounts) {
 
 export function syncAliasGroups(inputAccounts, options = {}) {
   const helpers = {
+    domainAliasGroupKey,
     normalizeDomain,
     etldPlusOne,
   };
@@ -126,4 +238,3 @@ export function syncAliasGroups(inputAccounts, options = {}) {
   });
   return result.accounts;
 }
-

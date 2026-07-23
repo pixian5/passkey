@@ -1,6 +1,7 @@
 import {
   buildAccountId,
   compareAccountsForDisplay,
+  domainsMatch,
   etldPlusOne,
   formatYYMMDDHHmmss,
   normalizeDomain,
@@ -686,13 +687,16 @@ function normalizeFolderShape(folder) {
 
 function applyAutoFolderRulesToAccount(account) {
   if (!account || account.isDeleted) return account;
-  const accountSites = new Set(
-    normalizeSites([...(account.sites || []), account.canonicalSite || ""]).filter(Boolean)
-  );
-  if (accountSites.size === 0) return account;
+  const accountSites = normalizeSites([
+    ...(Array.isArray(account?.sites) ? account.sites : []),
+    account?.canonicalSite || "",
+  ]);
+  if (accountSites.length === 0) return account;
   const matchedFolderIds = folders
     .filter((folder) => folder.autoAddMatchingSites)
-    .filter((folder) => folder.matchedSites.some((site) => accountSites.has(site)))
+    .filter((folder) => folder.matchedSites.some((folderSite) =>
+      accountSites.some((accountSite) => domainsMatch(accountSite, folderSite))
+    ))
     .map((folder) => String(folder.id || ""))
     .filter(Boolean);
   if (matchedFolderIds.length === 0) return account;
@@ -2043,9 +2047,11 @@ function normalizePasskeyCredentialIds(input) {
 function isAccountMatchCurrentDomain(account, domain) {
   if (!domain) return false;
   const normalizedCurrent = normalizeDomain(domain);
-  const currentEtld1 = etldPlusOne(normalizedCurrent);
-  const sites = normalizeSites(account.sites || []);
-  return sites.some((site) => site === normalizedCurrent || etldPlusOne(site) === currentEtld1);
+  const sites = normalizeSites([
+    ...(Array.isArray(account?.sites) ? account.sites : []),
+    account?.canonicalSite || "",
+  ]);
+  return Boolean(normalizedCurrent) && sites.some((site) => domainsMatch(site, normalizedCurrent));
 }
 
 function matchRpIdWithDomain(rpId, domain) {
