@@ -1,0 +1,9 @@
+{
+  "name": "pass-extension-chrome-web-preview",
+  "version": "0.2.7",
+  "private": true,
+  "description": "Standalone Chrome preview extension for the Pass Web management UI.",
+  "scripts": {
+    "refresh-assets": "../../scripts/build-extension-chrome-web.sh"
+  }
+}
