@@ -2272,6 +2272,108 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             v.save()?;
             Ok(json!(null))
         }
+        "set_accounts_folders" => {
+            let account_ids: Vec<String> = arg(&args, "accountIds")?;
+            let folder_ids: Vec<String> = arg(&args, "folderIds")?;
+            let active_folders: BTreeMap<String, String> = v
+                .data
+                .folders
+                .iter()
+                .filter(|folder| !folder.is_deleted && !folder.is_permanently_deleted)
+                .map(|folder| (folder.id.to_ascii_lowercase(), folder.id.clone()))
+                .collect();
+            let mut normalized_folders = Vec::new();
+            let mut folder_seen = BTreeSet::new();
+            for raw_id in folder_ids {
+                let key = raw_id.trim().to_ascii_lowercase();
+                if key.is_empty() || !folder_seen.insert(key.clone()) {
+                    continue;
+                }
+                normalized_folders.push(
+                    active_folders
+                        .get(&key)
+                        .ok_or_else(|| "包含不存在或已删除的文件夹".to_string())?
+                        .clone(),
+                );
+            }
+            let mut selected = Vec::new();
+            let mut seen = BTreeSet::new();
+            for raw_id in account_ids {
+                let account = v
+                    .data
+                    .accounts
+                    .iter()
+                    .find(|item| account_key(item).eq_ignore_ascii_case(&raw_id) || item.account_id.eq_ignore_ascii_case(&raw_id))
+                    .ok_or_else(|| "包含不存在的账号".to_string())?;
+                if account.is_deleted || account.is_permanently_deleted {
+                    return Err("回收站账号不能编辑文件夹归属".into());
+                }
+                let id = account_key(account);
+                if !id.is_empty() && seen.insert(id.to_ascii_lowercase()) {
+                    selected.push(id);
+                }
+            }
+            if selected.is_empty() {
+                return Err("没有可编辑的账号".into());
+            }
+            v.begin("批量设置账号文件夹");
+            let device = v.data.device_name.clone();
+            let now = now_ms();
+            let mut added_by_folder = vec![Vec::<String>::new(); normalized_folders.len()];
+            for account_id in &selected {
+                let account = v
+                    .data
+                    .accounts
+                    .iter_mut()
+                    .find(|item| account_key(item).eq_ignore_ascii_case(account_id))
+                    .ok_or_else(|| "账号已不存在".to_string())?;
+                let same_membership = account.folder_ids.len() == normalized_folders.len()
+                    && account.folder_ids.iter().all(|existing| {
+                        normalized_folders
+                            .iter()
+                            .any(|folder_id| folder_id.eq_ignore_ascii_case(existing))
+                    });
+                let newly_added = normalized_folders
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, folder_id)| {
+                        !account
+                            .folder_ids
+                            .iter()
+                            .any(|id| id.eq_ignore_ascii_case(folder_id))
+                            && !account
+                                .folder_id
+                                .as_deref()
+                                .is_some_and(|id| id.eq_ignore_ascii_case(folder_id))
+                    })
+                    .map(|(index, _)| index)
+                    .collect::<Vec<_>>();
+                let is_pinned = account.is_pinned;
+                if !same_membership {
+                    account.folder_ids = normalized_folders.clone();
+                    account.folder_id = normalized_folders.first().cloned();
+                    account.updated_at_ms = now;
+                    account.last_operated_device_name = device.clone();
+                }
+                if !is_pinned {
+                    for index in newly_added {
+                        added_by_folder[index].push(account_id.clone());
+                    }
+                }
+            }
+            for (index, folder_id) in normalized_folders.iter().enumerate() {
+                move_accounts_to_folder_top(
+                    &mut v.data.folders,
+                    folder_id,
+                    &added_by_folder[index],
+                    now,
+                    &device,
+                );
+            }
+            normalize_order_state(&mut v.data);
+            v.save()?;
+            Ok(json!(null))
+        }
         "set_accounts_pinned" => {
             let account_ids: Vec<String> = arg(&args, "accountIds")?;
             let pinned: bool = arg(&args, "pinned")?;

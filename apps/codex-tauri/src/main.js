@@ -96,6 +96,7 @@ const els = {
   folderAutoAdd: $("#folderAutoAdd"),
   accountFolderModal: $("#accountFolderModal"),
   accountFolderTitle: $("#accountFolderTitle"),
+  accountFolderLabel: $(".account-folder-label"),
   accountFolderOptions: $("#accountFolderOptions"),
   btnConfirmAccountFolder: $("#btn-confirm-account-folder"),
   folderDedupModal: $("#folderDedupModal"),
@@ -993,6 +994,7 @@ const orderedSelectedActiveAccounts = () => {
 const openAccountFolderPicker = (accountsOrAccount) => {
   const accounts = Array.isArray(accountsOrAccount) ? accountsOrAccount : [accountsOrAccount];
   const activeAccounts = accounts.filter((account) => account && !account.isDeleted);
+  const replaceMembership = true;
   if (!activeAccounts.length) {
     toastWarn("回收站账号不能添加到文件夹");
     return;
@@ -1010,24 +1012,15 @@ const openAccountFolderPicker = (accountsOrAccount) => {
       new Set(folderIdsOf(account).map((id) => id.toLowerCase())),
     ])
   );
-  const addable = folders.filter((folder) =>
-    activeAccounts.some((account) =>
-      !existingByFolder.get(accountKey(account).toLowerCase())?.has(String(folder.id).toLowerCase())
-    )
-  );
-  if (!addable.length) {
-    toastWarn(activeAccounts.length > 1 ? "这些账号已添加到全部文件夹" : "此账号已添加到全部文件夹");
-    return;
-  }
   accountFolderTarget = {
     ids: activeAccounts.map((account) => accountRecordId(account) || accountKey(account)),
     names: activeAccounts.map((account) => account.username || account.accountId || "账号"),
+    replaceMembership,
   };
   if (els.accountFolderTitle) {
-    els.accountFolderTitle.textContent = activeAccounts.length > 1
-      ? `添加 ${activeAccounts.length} 个账号到文件夹`
-      : `添加「${accountFolderTarget.names[0]}」到文件夹`;
+    els.accountFolderTitle.textContent = `设置 ${activeAccounts.length} 个账号的文件夹`;
   }
+  const currentFolderId = filter.type === "folder" ? String(filter.id || "").toLowerCase() : "";
   if (els.accountFolderOptions) {
     els.accountFolderOptions.innerHTML = "";
     folders.forEach((folder) => {
@@ -1037,17 +1030,24 @@ const openAccountFolderPicker = (accountsOrAccount) => {
       checkbox.type = "checkbox";
       checkbox.value = folder.id;
       const folderKey = String(folder.id).toLowerCase();
-      const allAlreadyAdded = activeAccounts.every((account) =>
+      const anyAlreadyAdded = activeAccounts.some((account) =>
         existingByFolder.get(accountKey(account).toLowerCase())?.has(folderKey)
       );
-      checkbox.checked = allAlreadyAdded;
-      checkbox.disabled = allAlreadyAdded;
+      checkbox.checked = currentFolderId ? folderKey === currentFolderId : anyAlreadyAdded;
+      checkbox.disabled = false;
       checkbox.setAttribute("aria-label", folder.name || folder.id);
       const name = document.createElement("span");
       name.textContent = folder.name || folder.id;
       label.append(checkbox, name);
       els.accountFolderOptions.appendChild(label);
     });
+  }
+  if (els.accountFolderLabel) {
+    els.accountFolderLabel.textContent =
+      "勾选的文件夹将作为这些账号的最终归属，未勾选的文件夹会移除；已有归属不会重新排序";
+  }
+  if (els.btnConfirmAccountFolder) {
+    els.btnConfirmAccountFolder.textContent = "确定";
   }
   if (els.accountFolderModal) els.accountFolderModal.hidden = false;
   setTimeout(() => els.accountFolderOptions?.querySelector("input")?.focus(), 50);
@@ -1059,10 +1059,6 @@ const confirmAccountFolder = async () => {
     .map((input) => input.value)
     .filter(Boolean);
   if (!target) return;
-  if (!folderIds.length) {
-    toastWarn("请至少选择一个文件夹");
-    return;
-  }
   const targetIds = target.ids || [];
   const targetAccounts = targetIds
     .map((id) => (state.activeAccounts || []).find((item) =>
@@ -1074,19 +1070,20 @@ const confirmAccountFolder = async () => {
     closeAccountFolderPicker();
     return;
   }
-  const folders = (state.folders || []).filter(
-    (folder) => !folder.isDeleted && !folder.isPermanentlyDeleted
+  const restoreButton = setButtonBusy(
+    els.btnConfirmAccountFolder,
+    "正在保存…"
   );
-  const restoreButton = setButtonBusy(els.btnConfirmAccountFolder, "正在添加…");
   try {
-    await invoke("add_accounts_to_folders", { accountIds: targetIds, folderIds });
+    await invoke("set_accounts_folders", {
+      accountIds: targetIds,
+      folderIds,
+    });
     closeAccountFolderPicker();
     await refreshState();
-    toastSuccess(targetIds.length > 1
-      ? `已将 ${targetIds.length} 个账号添加到文件夹`
-      : `账号「${target.names?.[0] || "账号"}」已添加到文件夹`);
+    toastSuccess(`已设置 ${targetIds.length} 个账号的文件夹归属`);
   } catch (err) {
-    toastError(`添加到文件夹失败：${err}`);
+    toastError(`设置文件夹失败：${err}`);
   } finally {
     restoreButton();
   }

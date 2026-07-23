@@ -604,6 +604,90 @@ fn add_accounts_to_folders(
 }
 
 #[tauri::command(rename_all = "camelCase")]
+fn set_accounts_folders(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    account_ids: Vec<String>,
+    folder_ids: Vec<String>,
+) -> Result<(), String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let conn = open_db(&app)?;
+    let mut accounts = load_accounts(&conn)?;
+    let mut folders = load_folders(&conn)?;
+    let mut all_order = load_all_regular_order(&conn)?;
+    let normalized_folders = canonical_active_folder_ids(&folders, &folder_ids)?;
+
+    let mut selected = Vec::new();
+    let mut seen = BTreeSet::new();
+    for raw_id in account_ids {
+        let account = accounts
+            .iter()
+            .find(|item| account_matches_id(item, &raw_id))
+            .ok_or_else(|| "包含不存在的账号".to_string())?;
+        if account.is_deleted || account.is_permanently_deleted {
+            return Err("回收站账号不能编辑文件夹归属".into());
+        }
+        let id = account.resolved_record_id();
+        if !id.is_empty() && seen.insert(id.to_ascii_lowercase()) {
+            selected.push(id);
+        }
+    }
+    if selected.is_empty() {
+        return Err("没有可编辑的账号".into());
+    }
+
+    snapshot_current_vault(&conn, &dir, "批量设置账号文件夹前自动备份")?;
+    let device = load_device_name(&conn)?;
+    let now = now_ms();
+    let mut added_by_folder = vec![Vec::<String>::new(); normalized_folders.len()];
+    for account_id in &selected {
+        let account = accounts
+            .iter_mut()
+            .find(|item| item.resolved_record_id().eq_ignore_ascii_case(account_id))
+            .ok_or_else(|| "账号已不存在".to_string())?;
+        let same_membership = account.folder_ids.len() == normalized_folders.len()
+            && account.folder_ids.iter().all(|existing| {
+                normalized_folders
+                    .iter()
+                    .any(|folder_id| folder_id.eq_ignore_ascii_case(existing))
+            });
+        let newly_added = normalized_folders
+            .iter()
+            .enumerate()
+            .filter(|(_, folder_id)| !account_in_folder(account, folder_id))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let is_pinned = account.is_pinned;
+        if !same_membership {
+            account.folder_ids = normalized_folders.clone();
+            account.folder_id = normalized_folders.first().cloned();
+            account.updated_at_ms = now;
+            account.last_operated_device_name = device.clone();
+        }
+        if !is_pinned {
+            for index in newly_added {
+                added_by_folder[index].push(account_id.clone());
+            }
+        }
+    }
+    for (index, folder_id) in normalized_folders.iter().enumerate() {
+        move_accounts_to_folder_top(
+            &mut folders,
+            folder_id,
+            &added_by_folder[index],
+            now,
+            &device,
+        );
+    }
+    normalize_order_state(&accounts, &mut folders, &mut all_order);
+    save_accounts(&conn, &accounts)?;
+    save_folders(&conn, &folders)?;
+    save_all_regular_order(&conn, &all_order)?;
+    Ok(())
+}
+
+#[tauri::command(rename_all = "camelCase")]
 fn set_accounts_pinned(
     app: AppHandle,
     state: tauri::State<AppLockState>,
@@ -3399,6 +3483,7 @@ fn main() {
             update_account,
             soft_delete_account,
             add_accounts_to_folders,
+            set_accounts_folders,
             set_accounts_pinned,
             soft_delete_accounts,
             restore_account,
