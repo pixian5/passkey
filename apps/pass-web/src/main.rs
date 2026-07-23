@@ -345,6 +345,19 @@ fn move_account_to_folder_top(
     }
 }
 
+fn move_accounts_to_folder_top(
+    folders: &mut [Folder],
+    folder_id: &str,
+    account_ids: &[String],
+    now: i64,
+    device: &str,
+) {
+    // The primitive inserts one ID at the top, so apply IDs in reverse order.
+    for account_id in account_ids.iter().rev() {
+        move_account_to_folder_top(folders, folder_id, account_id, now, device);
+    }
+}
+
 impl Vault {
     fn open(dir: PathBuf) -> Result<Self, String> {
         private_dir_result(&dir)?;
@@ -2159,6 +2172,205 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             a.deleted_at_ms = Some(now_ms());
             a.deleted_device_name = v.data.device_name.clone();
             a.updated_at_ms = now_ms();
+            v.save()?;
+            Ok(json!(null))
+        }
+        "add_accounts_to_folders" => {
+            let account_ids: Vec<String> = arg(&args, "accountIds")?;
+            let folder_ids: Vec<String> = arg(&args, "folderIds")?;
+            let active_folders: BTreeMap<String, String> = v
+                .data
+                .folders
+                .iter()
+                .filter(|folder| !folder.is_deleted && !folder.is_permanently_deleted)
+                .map(|folder| (folder.id.to_ascii_lowercase(), folder.id.clone()))
+                .collect();
+            let mut normalized_folders = Vec::new();
+            let mut folder_seen = BTreeSet::new();
+            for raw_id in folder_ids {
+                let key = raw_id.trim().to_ascii_lowercase();
+                if key.is_empty() || !folder_seen.insert(key.clone()) {
+                    continue;
+                }
+                normalized_folders.push(
+                    active_folders
+                        .get(&key)
+                        .ok_or_else(|| "包含不存在或已删除的文件夹".to_string())?
+                        .clone(),
+                );
+            }
+            if normalized_folders.is_empty() {
+                return Err("请至少选择一个文件夹".into());
+            }
+            let mut selected = Vec::new();
+            let mut seen = BTreeSet::new();
+            for raw_id in account_ids {
+                let account = v
+                    .data
+                    .accounts
+                    .iter()
+                    .find(|item| account_key(item).eq_ignore_ascii_case(&raw_id) || item.account_id.eq_ignore_ascii_case(&raw_id))
+                    .ok_or_else(|| "包含不存在的账号".to_string())?;
+                if account.is_deleted || account.is_permanently_deleted {
+                    return Err("回收站账号不能添加到文件夹".into());
+                }
+                let id = account_key(account);
+                if !id.is_empty() && seen.insert(id.to_ascii_lowercase()) {
+                    selected.push(id);
+                }
+            }
+            if selected.is_empty() {
+                return Err("没有可添加的账号".into());
+            }
+            v.begin("批量添加账号到文件夹");
+            let device = v.data.device_name.clone();
+            let now = now_ms();
+            let mut added_by_folder = vec![Vec::<String>::new(); normalized_folders.len()];
+            for account_id in &selected {
+                let account = v
+                    .data
+                    .accounts
+                    .iter_mut()
+                    .find(|item| account_key(item).eq_ignore_ascii_case(account_id))
+                    .ok_or_else(|| "账号已不存在".to_string())?;
+                let mut changed = false;
+                for (index, folder_id) in normalized_folders.iter().enumerate() {
+                    let already = account
+                        .folder_ids
+                        .iter()
+                        .any(|id| id.eq_ignore_ascii_case(folder_id))
+                        || account
+                            .folder_id
+                            .as_deref()
+                            .is_some_and(|id| id.eq_ignore_ascii_case(folder_id));
+                    if !already {
+                        account.folder_ids.push(folder_id.clone());
+                        if account.folder_id.is_none() {
+                            account.folder_id = Some(folder_id.clone());
+                        }
+                        if !account.is_pinned {
+                            added_by_folder[index].push(account_id.clone());
+                        }
+                        changed = true;
+                    }
+                }
+                if changed {
+                    account.updated_at_ms = now;
+                    account.last_operated_device_name = device.clone();
+                }
+            }
+            for (index, folder_id) in normalized_folders.iter().enumerate() {
+                move_accounts_to_folder_top(
+                    &mut v.data.folders,
+                    folder_id,
+                    &added_by_folder[index],
+                    now,
+                    &device,
+                );
+            }
+            normalize_order_state(&mut v.data);
+            v.save()?;
+            Ok(json!(null))
+        }
+        "set_accounts_pinned" => {
+            let account_ids: Vec<String> = arg(&args, "accountIds")?;
+            let pinned: bool = arg(&args, "pinned")?;
+            let mut selected = Vec::new();
+            let mut seen = BTreeSet::new();
+            for raw_id in account_ids {
+                let account = v
+                    .data
+                    .accounts
+                    .iter()
+                    .find(|item| account_key(item).eq_ignore_ascii_case(&raw_id) || item.account_id.eq_ignore_ascii_case(&raw_id))
+                    .ok_or_else(|| "包含不存在的账号".to_string())?;
+                if account.is_deleted || account.is_permanently_deleted {
+                    return Err("回收站账号不支持置顶".into());
+                }
+                let id = account_key(account);
+                if !id.is_empty() && seen.insert(id.to_ascii_lowercase()) {
+                    selected.push(id);
+                }
+            }
+            if selected.is_empty() {
+                return Err("没有可置顶的账号".into());
+            }
+            v.begin("批量置顶状态变更");
+            let device = v.data.device_name.clone();
+            let now = now_ms();
+            let mut next_pin_order = v
+                .data
+                .accounts
+                .iter()
+                .filter(|item| !item.is_deleted && !item.is_permanently_deleted && item.is_pinned)
+                .filter_map(|item| item.pinned_sort_order)
+                .max()
+                .unwrap_or(-1)
+                + 1;
+            for account_id in selected {
+                if let Some(account) = v
+                    .data
+                    .accounts
+                    .iter_mut()
+                    .find(|item| account_key(item).eq_ignore_ascii_case(&account_id))
+                {
+                    if pinned {
+                        if !account.is_pinned {
+                            account.pinned_sort_order = Some(next_pin_order);
+                            next_pin_order += 1;
+                        }
+                        account.is_pinned = true;
+                    } else {
+                        account.is_pinned = false;
+                        account.pinned_sort_order = None;
+                    }
+                    account.updated_at_ms = now;
+                    account.last_operated_device_name = device.clone();
+                }
+            }
+            v.save()?;
+            Ok(json!(null))
+        }
+        "soft_delete_accounts" => {
+            let account_ids: Vec<String> = arg(&args, "accountIds")?;
+            let mut selected = Vec::new();
+            let mut seen = BTreeSet::new();
+            for raw_id in account_ids {
+                let account = v
+                    .data
+                    .accounts
+                    .iter()
+                    .find(|item| account_key(item).eq_ignore_ascii_case(&raw_id) || item.account_id.eq_ignore_ascii_case(&raw_id))
+                    .ok_or_else(|| "包含不存在的账号".to_string())?;
+                if account.is_deleted || account.is_permanently_deleted {
+                    return Err("包含已在回收站的账号".into());
+                }
+                let id = account_key(account);
+                if !id.is_empty() && seen.insert(id.to_ascii_lowercase()) {
+                    selected.push(id);
+                }
+            }
+            if selected.is_empty() {
+                return Err("没有可移入回收站的账号".into());
+            }
+            v.begin("批量移入回收站");
+            let device = v.data.device_name.clone();
+            let now = now_ms();
+            for account_id in selected {
+                if let Some(account) = v
+                    .data
+                    .accounts
+                    .iter_mut()
+                    .find(|item| account_key(item).eq_ignore_ascii_case(&account_id))
+                {
+                    account.is_deleted = true;
+                    account.deleted_at_ms = Some(now);
+                    account.deleted_device_name = device.clone();
+                    account.last_operated_device_name = device.clone();
+                    account.updated_at_ms = now;
+                }
+            }
+            normalize_order_state(&mut v.data);
             v.save()?;
             Ok(json!(null))
         }

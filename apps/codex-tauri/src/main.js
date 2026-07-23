@@ -980,7 +980,23 @@ const closeAccountFolderPicker = () => {
   accountFolderTarget = null;
 };
 
-const openAccountFolderPicker = (account) => {
+const orderedSelectedActiveAccounts = () => {
+  const scopeId = accountOrderScopeId();
+  const selected = new Set([...selectedAccountIds].map((id) => String(id).toLowerCase()));
+  const visible = new Set(filteredAccounts().map((account) => accountKey(account).toLowerCase()));
+  return sortAccounts(accountsForOrderScope(scopeId), scopeId).filter((account) => {
+    const key = accountKey(account).toLowerCase();
+    return selected.has(key) && visible.has(key) && !account.isDeleted;
+  });
+};
+
+const openAccountFolderPicker = (accountsOrAccount) => {
+  const accounts = Array.isArray(accountsOrAccount) ? accountsOrAccount : [accountsOrAccount];
+  const activeAccounts = accounts.filter((account) => account && !account.isDeleted);
+  if (!activeAccounts.length) {
+    toastWarn("回收站账号不能添加到文件夹");
+    return;
+  }
   const folders = (state.folders || []).filter(
     (folder) => !folder.isDeleted && !folder.isPermanentlyDeleted
   );
@@ -988,18 +1004,29 @@ const openAccountFolderPicker = (account) => {
     toastWarn("暂无可添加的文件夹，请先新建文件夹");
     return;
   }
-  const existingIds = new Set(folderIdsOf(account).map((id) => id.toLowerCase()));
-  const addable = folders.filter((folder) => !existingIds.has(String(folder.id).toLowerCase()));
+  const existingByFolder = new Map(
+    activeAccounts.map((account) => [
+      accountKey(account).toLowerCase(),
+      new Set(folderIdsOf(account).map((id) => id.toLowerCase())),
+    ])
+  );
+  const addable = folders.filter((folder) =>
+    activeAccounts.some((account) =>
+      !existingByFolder.get(accountKey(account).toLowerCase())?.has(String(folder.id).toLowerCase())
+    )
+  );
   if (!addable.length) {
-    toastWarn("此账号已添加到全部文件夹");
+    toastWarn(activeAccounts.length > 1 ? "这些账号已添加到全部文件夹" : "此账号已添加到全部文件夹");
     return;
   }
   accountFolderTarget = {
-    id: accountRecordId(account) || accountKey(account),
-    name: account.username || account.accountId || "账号",
+    ids: activeAccounts.map((account) => accountRecordId(account) || accountKey(account)),
+    names: activeAccounts.map((account) => account.username || account.accountId || "账号"),
   };
   if (els.accountFolderTitle) {
-    els.accountFolderTitle.textContent = `添加「${accountFolderTarget.name}」到文件夹`;
+    els.accountFolderTitle.textContent = activeAccounts.length > 1
+      ? `添加 ${activeAccounts.length} 个账号到文件夹`
+      : `添加「${accountFolderTarget.names[0]}」到文件夹`;
   }
   if (els.accountFolderOptions) {
     els.accountFolderOptions.innerHTML = "";
@@ -1009,9 +1036,12 @@ const openAccountFolderPicker = (account) => {
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.value = folder.id;
-      const alreadyAdded = existingIds.has(String(folder.id).toLowerCase());
-      checkbox.checked = alreadyAdded;
-      checkbox.disabled = alreadyAdded;
+      const folderKey = String(folder.id).toLowerCase();
+      const allAlreadyAdded = activeAccounts.every((account) =>
+        existingByFolder.get(accountKey(account).toLowerCase())?.has(folderKey)
+      );
+      checkbox.checked = allAlreadyAdded;
+      checkbox.disabled = allAlreadyAdded;
       checkbox.setAttribute("aria-label", folder.name || folder.id);
       const name = document.createElement("span");
       name.textContent = folder.name || folder.id;
@@ -1033,10 +1063,13 @@ const confirmAccountFolder = async () => {
     toastWarn("请至少选择一个文件夹");
     return;
   }
-  const account = [...(state.activeAccounts || []), ...(state.deletedAccounts || [])].find(
-    (item) => accountRecordId(item) === target.id
-  );
-  if (!account) {
+  const targetIds = target.ids || [];
+  const targetAccounts = targetIds
+    .map((id) => (state.activeAccounts || []).find((item) =>
+      accountRecordId(item) === id || accountKey(item) === id
+    ))
+    .filter(Boolean);
+  if (!targetAccounts.length) {
     toastError("账号已不存在或状态已变化");
     closeAccountFolderPicker();
     return;
@@ -1044,22 +1077,14 @@ const confirmAccountFolder = async () => {
   const folders = (state.folders || []).filter(
     (folder) => !folder.isDeleted && !folder.isPermanentlyDeleted
   );
-  const canonicalByLowerId = new Map(folders.map((folder) => [String(folder.id).toLowerCase(), folder.id]));
-  const currentFolderIds = folderIdsOf(account)
-    .map((id) => canonicalByLowerId.get(id.toLowerCase()))
-    .filter(Boolean);
-  const mergedFolderIds = [...currentFolderIds];
-  folderIds.forEach((folderId) => {
-    if (!mergedFolderIds.some((id) => id.toLowerCase() === folderId.toLowerCase())) {
-      mergedFolderIds.push(folderId);
-    }
-  });
   const restoreButton = setButtonBusy(els.btnConfirmAccountFolder, "正在添加…");
   try {
-    await invoke("set_account_folders", { id: target.id, folderIds: mergedFolderIds });
+    await invoke("add_accounts_to_folders", { accountIds: targetIds, folderIds });
     closeAccountFolderPicker();
     await refreshState();
-    toastSuccess(`账号「${target.name}」已添加到文件夹`);
+    toastSuccess(targetIds.length > 1
+      ? `已将 ${targetIds.length} 个账号添加到文件夹`
+      : `账号「${target.names?.[0] || "账号"}」已添加到文件夹`);
   } catch (err) {
     toastError(`添加到文件夹失败：${err}`);
   } finally {
@@ -1645,6 +1670,36 @@ const togglePinAccount = async (account) => {
     toastSuccess(wasPinned ? "已取消置顶" : "已置顶");
   } catch (err) {
     toastError(`置顶失败：${err}`);
+  }
+};
+
+const setAccountsPinned = async (accounts, pinned) => {
+  const ids = accounts.map((account) => accountRecordId(account) || accountKey(account));
+  if (!ids.length) return;
+  try {
+    await invoke("set_accounts_pinned", { accountIds: ids, pinned });
+    await refreshState();
+    toastSuccess(pinned ? `已置顶 ${ids.length} 个账号` : `已取消置顶 ${ids.length} 个账号`);
+  } catch (err) {
+    toastError(`批量置顶失败：${err}`);
+  }
+};
+
+const softDeleteAccounts = async (accounts) => {
+  const ids = accounts
+    .filter((account) => !account.isDeleted)
+    .map((account) => accountRecordId(account) || accountKey(account));
+  if (!ids.length) {
+    toastWarn("回收站账号不能再次移入回收站");
+    return;
+  }
+  try {
+    await invoke("soft_delete_accounts", { accountIds: ids });
+    clearAccountSelection();
+    await refreshState();
+    toastSuccess(`已将 ${ids.length} 个账号移入回收站`);
+  } catch (err) {
+    toastError(`批量移入回收站失败：${err}`);
   }
 };
 
@@ -2569,6 +2624,30 @@ document.addEventListener("contextmenu", (e) => {
       (state.activeAccounts || []).find((item) => accountKey(item) === key) ||
       (state.deletedAccounts || []).find((item) => accountKey(item) === key);
     if (!account) return;
+    if (!selectedAccountIds.has(key)) {
+      selectOnlyAccount(key);
+      applyAccountSelectionStyles();
+    }
+    const selectedAccounts = orderedSelectedActiveAccounts();
+    if (selectedAccounts.length > 1 && selectedAccounts.some((item) => !item.isDeleted)) {
+      const allPinned = selectedAccounts.every((item) => isPinnedAccount(item));
+      showContextMenu(e, [
+        {
+          label: "添加到文件夹",
+          action: () => openAccountFolderPicker(selectedAccounts),
+        },
+        {
+          label: allPinned ? "取消置顶" : "置顶",
+          action: () => setAccountsPinned(selectedAccounts, !allPinned),
+        },
+        {
+          label: "移入回收站",
+          danger: true,
+          action: () => softDeleteAccounts(selectedAccounts),
+        },
+      ]);
+      return;
+    }
     const items = [];
     items.push({
       label: "添加到文件夹",

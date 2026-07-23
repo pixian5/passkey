@@ -527,6 +527,196 @@ fn soft_delete_account(
     Ok(())
 }
 
+#[tauri::command(rename_all = "camelCase")]
+fn add_accounts_to_folders(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    account_ids: Vec<String>,
+    folder_ids: Vec<String>,
+) -> Result<(), String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let conn = open_db(&app)?;
+    let mut accounts = load_accounts(&conn)?;
+    let mut folders = load_folders(&conn)?;
+    let mut all_order = load_all_regular_order(&conn)?;
+    let normalized_folders = canonical_active_folder_ids(&folders, &folder_ids)?;
+    if normalized_folders.is_empty() {
+        return Err("请至少选择一个文件夹".into());
+    }
+
+    let mut selected = Vec::new();
+    let mut seen = BTreeSet::new();
+    for raw_id in account_ids {
+        let account = accounts
+            .iter()
+            .find(|item| account_matches_id(item, &raw_id))
+            .ok_or_else(|| "包含不存在的账号".to_string())?;
+        if account.is_deleted || account.is_permanently_deleted {
+            return Err("回收站账号不能添加到文件夹".into());
+        }
+        let id = account.resolved_record_id();
+        if !id.is_empty() && seen.insert(id.to_ascii_lowercase()) {
+            selected.push(id);
+        }
+    }
+    if selected.is_empty() {
+        return Err("没有可添加的账号".into());
+    }
+
+    snapshot_current_vault(&conn, &dir, "批量添加账号到文件夹前自动备份")?;
+    let device = load_device_name(&conn)?;
+    let now = now_ms();
+    let mut added_by_folder = vec![Vec::<String>::new(); normalized_folders.len()];
+    for account_id in &selected {
+        let account = accounts
+            .iter_mut()
+            .find(|item| item.resolved_record_id().eq_ignore_ascii_case(account_id))
+            .ok_or_else(|| "账号已不存在".to_string())?;
+        let mut changed = false;
+        for (index, folder_id) in normalized_folders.iter().enumerate() {
+            if add_account_to_folder(account, folder_id) {
+                if !account.is_pinned {
+                    added_by_folder[index].push(account_id.clone());
+                }
+                changed = true;
+            }
+        }
+        if changed {
+            account.updated_at_ms = now;
+            account.last_operated_device_name = device.clone();
+        }
+    }
+    for (index, folder_id) in normalized_folders.iter().enumerate() {
+        move_accounts_to_folder_top(
+            &mut folders,
+            folder_id,
+            &added_by_folder[index],
+            now,
+            &device,
+        );
+    }
+    normalize_order_state(&accounts, &mut folders, &mut all_order);
+    save_accounts(&conn, &accounts)?;
+    save_folders(&conn, &folders)?;
+    save_all_regular_order(&conn, &all_order)?;
+    Ok(())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn set_accounts_pinned(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    account_ids: Vec<String>,
+    pinned: bool,
+) -> Result<(), String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let conn = open_db(&app)?;
+    let mut accounts = load_accounts(&conn)?;
+    let mut selected = Vec::new();
+    let mut seen = BTreeSet::new();
+    for raw_id in account_ids {
+        let account = accounts
+            .iter()
+            .find(|item| account_matches_id(item, &raw_id))
+            .ok_or_else(|| "包含不存在的账号".to_string())?;
+        if account.is_deleted || account.is_permanently_deleted {
+            return Err("回收站账号不支持置顶".into());
+        }
+        let id = account.resolved_record_id();
+        if !id.is_empty() && seen.insert(id.to_ascii_lowercase()) {
+            selected.push(id);
+        }
+    }
+    if selected.is_empty() {
+        return Err("没有可置顶的账号".into());
+    }
+    snapshot_current_vault(&conn, &dir, "批量置顶状态变更前自动备份")?;
+    let device = load_device_name(&conn)?;
+    let now = now_ms();
+    let mut next_pin_order = accounts
+        .iter()
+        .filter(|item| !item.is_deleted && !item.is_permanently_deleted && item.is_pinned)
+        .filter_map(|item| item.pinned_sort_order)
+        .max()
+        .unwrap_or(-1)
+        + 1;
+    for account_id in &selected {
+        if let Some(account) = accounts
+            .iter_mut()
+            .find(|item| item.resolved_record_id().eq_ignore_ascii_case(account_id))
+        {
+            if pinned {
+                if !account.is_pinned {
+                    account.pinned_sort_order = Some(next_pin_order);
+                    next_pin_order += 1;
+                }
+                account.is_pinned = true;
+            } else {
+                account.is_pinned = false;
+                account.pinned_sort_order = None;
+            }
+            account.updated_at_ms = now;
+            account.last_operated_device_name = device.clone();
+        }
+    }
+    save_accounts(&conn, &accounts)?;
+    Ok(())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn soft_delete_accounts(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    account_ids: Vec<String>,
+) -> Result<(), String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let conn = open_db(&app)?;
+    let mut accounts = load_accounts(&conn)?;
+    let mut selected = Vec::new();
+    let mut seen = BTreeSet::new();
+    for raw_id in account_ids {
+        let account = accounts
+            .iter()
+            .find(|item| account_matches_id(item, &raw_id))
+            .ok_or_else(|| "包含不存在的账号".to_string())?;
+        if account.is_deleted || account.is_permanently_deleted {
+            return Err("包含已在回收站的账号".into());
+        }
+        let id = account.resolved_record_id();
+        if !id.is_empty() && seen.insert(id.to_ascii_lowercase()) {
+            selected.push(id);
+        }
+    }
+    if selected.is_empty() {
+        return Err("没有可移入回收站的账号".into());
+    }
+    snapshot_current_vault(&conn, &dir, "批量移入回收站前自动备份")?;
+    let device = load_device_name(&conn)?;
+    let now = now_ms();
+    for account_id in selected {
+        if let Some(account) = accounts
+            .iter_mut()
+            .find(|item| item.resolved_record_id().eq_ignore_ascii_case(&account_id))
+        {
+            account.is_deleted = true;
+            account.deleted_at_ms = Some(now);
+            account.deleted_device_name = device.clone();
+            account.last_operated_device_name = device.clone();
+            account.updated_at_ms = now;
+        }
+    }
+    let mut folders = load_folders(&conn)?;
+    let mut all_order = load_all_regular_order(&conn)?;
+    normalize_order_state(&accounts, &mut folders, &mut all_order);
+    save_accounts(&conn, &accounts)?;
+    save_folders(&conn, &folders)?;
+    save_all_regular_order(&conn, &all_order)?;
+    Ok(())
+}
+
 #[tauri::command]
 fn restore_account(
     app: AppHandle,
@@ -2054,6 +2244,19 @@ fn move_account_to_folder_top(
     }
 }
 
+fn move_accounts_to_folder_top(
+    folders: &mut [Folder],
+    folder_id: &str,
+    account_ids: &[String],
+    now: i64,
+    device: &str,
+) {
+    // The primitive inserts one ID at the top, so apply IDs in reverse order.
+    for account_id in account_ids.iter().rev() {
+        move_account_to_folder_top(folders, folder_id, account_id, now, device);
+    }
+}
+
 fn local_payload_from_conn(conn: &Connection, device: &str) -> Result<SyncPayload, String> {
     let accounts = load_accounts(conn)?;
     let folders = load_folders(conn)?;
@@ -3195,6 +3398,9 @@ fn main() {
             create_account,
             update_account,
             soft_delete_account,
+            add_accounts_to_folders,
+            set_accounts_pinned,
+            soft_delete_accounts,
             restore_account,
             hard_delete_account,
             restore_all_deleted_accounts,
