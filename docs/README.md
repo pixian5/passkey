@@ -18,6 +18,7 @@
 14. [开发路线图（A+C+J+G）：dev-roadmap-a-c-j-g-zh.md](/Users/x/code/pass/docs/dev-roadmap-a-c-j-g-zh.md)
 15. [Web/Docker/Ubuntu 三阶段设计：pass-web-three-stage-design-zh.md](/Users/x/code/pass/docs/pass-web-three-stage-design-zh.md)
 16. [Pass Web Docker 开发与发布设计：pass-web-docker-development-zh.md](/Users/x/code/pass/docs/pass-web-docker-development-zh.md)
+17. [全部账号与文件夹独立账号排序设计：scoped-account-order-design-zh.md](/Users/x/code/pass/docs/scoped-account-order-design-zh.md)
 
 ## 文档职责
 
@@ -37,3 +38,4 @@
 - `dev-roadmap-a-c-j-g-zh.md`：现行交付路线（A+C+J+G）、阶段退出门、前 30 天清单与禁止项；与「单框架全平台 UI」路线区分。
 - `pass-web-three-stage-design-zh.md`：无 GUI Web 版三阶段架构、API、加密、部署、迁移、安全和验收标准。
 - `pass-web-docker-development-zh.md`：只聚焦 Docker/OCI 的开发、Compose、数据卷、发布、多架构、备份、回滚和排障规范。
+- `scoped-account-order-design-zh.md`：全部账号与各文件夹独立账号顺序、同步冲突、迁移和分阶段实施方案。
