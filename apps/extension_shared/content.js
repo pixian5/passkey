@@ -539,6 +539,7 @@ function renderFillChooser(accounts, input) {
   root.style.display = "flex";
   root.style.flexDirection = "column";
   root.style.overflow = "hidden";
+  root.style.position = "relative";
   root.style.font = '12px/1.4 "SF Pro Text", "PingFang SC", sans-serif';
   root.style.color = "#1d314d";
 
@@ -547,6 +548,7 @@ function renderFillChooser(accounts, input) {
   title.style.fontWeight = "600";
   title.style.fontSize = "13px";
   title.style.margin = "2px 4px 8px";
+  title.style.paddingRight = "56px";
   root.appendChild(title);
 
   const list = document.createElement("div");
@@ -599,9 +601,9 @@ function renderFillChooser(accounts, input) {
   root.appendChild(list);
 
   const footer = document.createElement("div");
-  footer.style.display = "flex";
-  footer.style.justifyContent = "flex-end";
-  footer.style.marginTop = "8px";
+  footer.style.position = "absolute";
+  footer.style.top = "8px";
+  footer.style.right = "8px";
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
   closeBtn.textContent = "关闭";
