@@ -2586,8 +2586,10 @@
     "PASS_CONTENT_GET_ACCOUNTS",
     "PASS_CONTENT_CHECK_LOGIN",
     "PASS_CONTENT_LIST_FILL_ACCOUNTS",
-    "PASS_CONTENT_FILL_ACCOUNT"
+    "PASS_CONTENT_FILL_ACCOUNT",
+    "PASS_WEB_BRIDGE_SYNC_DATA"
   ]);
+  var webBridgeSyncChain = Promise.resolve();
   function normalizeLegacySelfHostedServerBaseUrl(value) {
     const trimmed = String(value || "").trim();
     if (!trimmed) return DEFAULT_SELF_HOSTED_SERVER_BASE_URL;
@@ -2623,6 +2625,7 @@
     });
     ensureActionContextMenu();
     await scheduleAutoSyncAlarm();
+    void injectExistingTabScripts();
   });
   void ensureDataStorageReady().catch(() => {
   });
@@ -2630,9 +2633,11 @@
   });
   ensureActionContextMenu();
   void scheduleAutoSyncAlarm();
+  void injectExistingTabScripts();
   chrome.runtime.onStartup.addListener(() => {
     ensureActionContextMenu();
     void scheduleAutoSyncAlarm();
+    void injectExistingTabScripts();
   });
   chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (changeInfo.status !== "complete") return;
@@ -2724,6 +2729,18 @@
       logPasskeyFlow("main-world-bridge-inject-failed", {
         tabId,
         url,
+        message: error?.message || String(error || "")
+      });
+    }
+  }
+  async function injectExistingTabScripts() {
+    try {
+      const tabs = await chrome.tabs.query({});
+      await Promise.allSettled(
+        tabs.filter((tab) => tab?.id && shouldInjectMainWorldBridge(tab.url || "")).map((tab) => ensureMainWorldPasskeyBridge(tab.id, tab.url || ""))
+      );
+    } catch (error) {
+      logPasskeyFlow("existing-tab-injection-failed", {
         message: error?.message || String(error || "")
       });
     }
@@ -3079,6 +3096,9 @@
         case "PASS_FILL_ACTIVE_TAB":
           sendResponse(await handleFillActiveTab(message.payload));
           return;
+        case "PASS_WEB_BRIDGE_SYNC_DATA":
+          sendResponse(await handleWebBridgeSyncData(message.payload));
+          return;
         case "PASS_CONTENT_LIST_FILL_ACCOUNTS":
           sendResponse(await handleContentListFillAccounts(sender));
           return;
@@ -3355,6 +3375,30 @@
       filledPassword: Boolean(response.filledPassword)
     };
   }
+  function handleWebBridgeSyncData(payload) {
+    const run = webBridgeSyncChain.then(async () => {
+      const source = payload && typeof payload === "object" ? payload : {};
+      const accounts = Array.isArray(source.accounts) ? source.accounts.map(normalizeAccountShape) : [];
+      const folders = Array.isArray(source.folders) ? source.folders.map(normalizeFolderShape) : [];
+      const passkeys = buildUnifiedPasskeys(
+        accounts,
+        Array.isArray(source.passkeys) ? source.passkeys.map(normalizePasskeyShape) : []
+      );
+      await setAllData({ accounts, folders, passkeys });
+      return {
+        ok: true,
+        accounts: accounts.length,
+        folders: folders.length,
+        passkeys: passkeys.length
+      };
+    });
+    webBridgeSyncChain = run.catch(() => {
+    });
+    return run.catch((error) => ({
+      ok: false,
+      error: error?.message || String(error || "\u540E\u53F0\u6570\u636E\u955C\u50CF\u5931\u8D25")
+    }));
+  }
   async function handleContentListFillAccounts(sender) {
     const tabUrl = String(sender?.tab?.url || "");
     const { tabHost, allowedProtocol } = parseTabSecurityContext(tabUrl);
@@ -3365,7 +3409,7 @@
       return { ok: false, error: "\u4EC5\u5141\u8BB8\u5728 HTTPS \u9875\u9762\uFF08\u6216\u672C\u673A HTTP\uFF09\u5217\u51FA\u53EF\u586B\u5145\u8D26\u53F7", accounts: [] };
     }
     const accounts = await getAccounts2();
-    const matched = accounts.filter((item) => !item?.isDeleted && accountMatchesDomain(item, tabHost) && String(item?.username || "").trim()).sort((left, right) => {
+    const matched = accounts.filter((item) => !item?.isDeleted && accountMatchesDomain(item, tabHost)).sort((left, right) => {
       const leftUpdated = Number(left?.updatedAtMs || left?.createdAtMs || 0);
       const rightUpdated = Number(right?.updatedAtMs || right?.createdAtMs || 0);
       if (leftUpdated !== rightUpdated) return rightUpdated - leftUpdated;

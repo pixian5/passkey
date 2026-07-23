@@ -115,6 +115,11 @@
   - `pass.data.migratedToIndexedDb.v1`
   - `pass.data.bump.v1`
 
+### 4.3 Chrome Web 测试插件
+- 管理页工作区单独使用 `pass.web.workspace.bridge.v1`（`chrome.storage.local` 加密保存），以便与旧扩展并行测试。
+- 内容脚本和后台填充仍使用 `pass.local.db.v1`，两者不是同一个数据源。
+- `extension-bridge.js` 首次加载和每次持久化都通过 `PASS_WEB_BRIDGE_SYNC_DATA` 将账号、文件夹、通行密钥镜像到后台 IndexedDB；扩展重载时后台还会给已有 HTTP/HTTPS 标签页重新注入内容脚本。
+
 ## 5. 关键业务规则（当前实现）
 
 ### 5.1 域名与站点别名

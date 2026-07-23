@@ -300,7 +300,23 @@ function isUsernameLikeInput(element, { strict = true } = {}) {
 }
 
 function isFillableCredentialInput(element) {
-  return isPasswordInput(element) || isUsernameLikeInput(element, { strict: true });
+  if (isPasswordInput(element) || isUsernameLikeInput(element, { strict: true })) return true;
+  if (!(element instanceof HTMLInputElement) || !isUsernameLikeInput(element, { strict: false })) {
+    return false;
+  }
+
+  // Some login pages expose a plain text username field without any semantic
+  // name, id, or autocomplete attribute. Treat it as a credential field only
+  // when it is paired with a visible password input, keeping search fields on
+  // ordinary pages out of the chooser.
+  const form = element.form || element.closest("form");
+  if (form) return collectVisiblePasswordInputs(form).length > 0;
+  const passwordInputs = collectVisiblePasswordInputs(document);
+  if (passwordInputs.length === 0) return false;
+  if (passwordInputs.length === 1) return true;
+  return passwordInputs.some((passwordInput) => Boolean(
+    element.compareDocumentPosition(passwordInput) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ));
 }
 
 function collectVisiblePasswordInputs(scope = document) {

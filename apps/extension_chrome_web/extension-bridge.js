@@ -159,19 +159,56 @@
       const result = await chrome.storage.local.get([STORAGE_KEY]);
       const raw = await decryptStore(result?.[STORAGE_KEY]);
       if (raw?.data) {
-        return {
+        const store = {
           data: normalizeData(raw.data),
           undo: Array.isArray(raw.undo) ? raw.undo : [],
           redo: Array.isArray(raw.redo) ? raw.redo : [],
           snapshots: Array.isArray(raw.snapshots) ? raw.snapshots : [],
         };
+        await syncWebBridgeData(store.data);
+        return store;
       }
-      return defaultStore();
+      const store = defaultStore();
+      await syncWebBridgeData(store.data);
+      return store;
     })();
     return storePromise;
   };
   const persist = async (store) => {
-    await chrome.storage.local.set({ [STORAGE_KEY]: await encryptStore(clone(store)) });
+    const snapshot = clone(store);
+    await chrome.storage.local.set({ [STORAGE_KEY]: await encryptStore(snapshot) });
+    await syncWebBridgeData(snapshot.data);
+  };
+
+  // The web workspace and the content-script service worker have separate
+  // vault implementations. Mirror only business records through an internal
+  // extension message so autofill sees changes made in the web UI.
+  const syncWebBridgeData = async (data) => {
+    if (typeof globalThis.chrome?.runtime?.sendMessage !== "function") return;
+    try {
+      const response = await new Promise((resolve) => {
+        globalThis.chrome.runtime.sendMessage({
+          type: "PASS_WEB_BRIDGE_SYNC_DATA",
+          payload: {
+            accounts: clone(data?.accounts || []),
+            folders: clone(data?.folders || []),
+            passkeys: clone(data?.passkeys || []),
+          },
+        }, (result) => {
+          if (globalThis.chrome.runtime.lastError) {
+            resolve({ ok: false, error: globalThis.chrome.runtime.lastError.message || "后台数据镜像失败" });
+            return;
+          }
+          resolve(result || { ok: false, error: "后台数据镜像没有响应" });
+        });
+      });
+      if (response?.ok === false) {
+        console.warn("Pass Web 数据镜像未完成", response.error || response);
+      }
+    } catch (error) {
+      // This page can also run in Tauri or a normal browser without a listener.
+      console.warn("Pass Web 数据镜像失败", error);
+    }
   };
 
   let mutationChain = Promise.resolve();

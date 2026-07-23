@@ -113,7 +113,10 @@ const SENSITIVE_MESSAGE_TYPES = new Set([
   "PASS_CONTENT_CHECK_LOGIN",
   "PASS_CONTENT_LIST_FILL_ACCOUNTS",
   "PASS_CONTENT_FILL_ACCOUNT",
+  "PASS_WEB_BRIDGE_SYNC_DATA",
 ]);
+
+let webBridgeSyncChain = Promise.resolve();
 
 function normalizeLegacySelfHostedServerBaseUrl(value) {
   const trimmed = String(value || "").trim();
@@ -156,16 +159,19 @@ chrome.runtime.onInstalled.addListener(async () => {
   await ensurePasskeyStorageShape().catch(() => {});
   ensureActionContextMenu();
   await scheduleAutoSyncAlarm();
+  void injectExistingTabScripts();
 });
 
 void ensureDataStorageReady().catch(() => {});
 void ensurePasskeyStorageShape().catch(() => {});
 ensureActionContextMenu();
 void scheduleAutoSyncAlarm();
+void injectExistingTabScripts();
 
 chrome.runtime.onStartup.addListener(() => {
   ensureActionContextMenu();
   void scheduleAutoSyncAlarm();
+  void injectExistingTabScripts();
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -276,6 +282,21 @@ async function ensureMainWorldPasskeyBridge(tabId, url) {
     logPasskeyFlow("main-world-bridge-inject-failed", {
       tabId,
       url,
+      message: error?.message || String(error || ""),
+    });
+  }
+}
+
+async function injectExistingTabScripts() {
+  try {
+    const tabs = await chrome.tabs.query({});
+    await Promise.allSettled(
+      tabs
+        .filter((tab) => tab?.id && shouldInjectMainWorldBridge(tab.url || ""))
+        .map((tab) => ensureMainWorldPasskeyBridge(tab.id, tab.url || ""))
+    );
+  } catch (error) {
+    logPasskeyFlow("existing-tab-injection-failed", {
       message: error?.message || String(error || ""),
     });
   }
@@ -679,6 +700,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "PASS_FILL_ACTIVE_TAB":
         sendResponse(await handleFillActiveTab(message.payload));
         return;
+      case "PASS_WEB_BRIDGE_SYNC_DATA":
+        sendResponse(await handleWebBridgeSyncData(message.payload));
+        return;
       case "PASS_CONTENT_LIST_FILL_ACCOUNTS":
         sendResponse(await handleContentListFillAccounts(sender));
         return;
@@ -988,6 +1012,34 @@ async function handleFillActiveTab(payload) {
   };
 }
 
+function handleWebBridgeSyncData(payload) {
+  const run = webBridgeSyncChain.then(async () => {
+    const source = payload && typeof payload === "object" ? payload : {};
+    const accounts = Array.isArray(source.accounts)
+      ? source.accounts.map(normalizeAccountShape)
+      : [];
+    const folders = Array.isArray(source.folders)
+      ? source.folders.map(normalizeFolderShape)
+      : [];
+    const passkeys = buildUnifiedPasskeys(
+      accounts,
+      Array.isArray(source.passkeys) ? source.passkeys.map(normalizePasskeyShape) : [],
+    );
+    await setAllDataToDataStore({ accounts, folders, passkeys });
+    return {
+      ok: true,
+      accounts: accounts.length,
+      folders: folders.length,
+      passkeys: passkeys.length,
+    };
+  });
+  webBridgeSyncChain = run.catch(() => {});
+  return run.catch((error) => ({
+    ok: false,
+    error: error?.message || String(error || "后台数据镜像失败"),
+  }));
+}
+
 async function handleContentListFillAccounts(sender) {
   const tabUrl = String(sender?.tab?.url || "");
   const { tabHost, allowedProtocol } = parseTabSecurityContext(tabUrl);
@@ -1000,7 +1052,7 @@ async function handleContentListFillAccounts(sender) {
 
   const accounts = await getAccounts();
   const matched = accounts
-    .filter((item) => !item?.isDeleted && accountMatchesDomain(item, tabHost) && String(item?.username || "").trim())
+    .filter((item) => !item?.isDeleted && accountMatchesDomain(item, tabHost))
     .sort((left, right) => {
       const leftUpdated = Number(left?.updatedAtMs || left?.createdAtMs || 0);
       const rightUpdated = Number(right?.updatedAtMs || right?.createdAtMs || 0);
