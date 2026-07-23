@@ -1,0 +1,54 @@
+name: Deploy Pass Web
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "apps/pass-web/**"
+      - "apps/codex-tauri/index.html"
+      - "apps/codex-tauri/src/**"
+      - "core/pass_core/crates/**"
+      - ".github/workflows/deploy-pass-web.yml"
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/codex-tauri/package-lock.json
+      - run: npm ci
+        working-directory: apps/codex-tauri
+      - run: npm run prepare:dist
+        working-directory: apps/codex-tauri
+      - run: cargo test --manifest-path apps/pass-web/Cargo.toml
+      - run: node --check apps/codex-tauri/src/main.js
+
+  deploy:
+    needs: verify
+    if: ${{ vars.PASS_WEB_DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy on Ubuntu host
+        uses: appleboy/ssh-action@v1.2.1
+        with:
+          host: ${{ secrets.PASS_WEB_SERVER_HOST }}
+          username: ${{ secrets.PASS_WEB_SERVER_USER }}
+          key: ${{ secrets.PASS_WEB_SERVER_SSH_KEY }}
+          script: |
+            set -eu
+            cd /opt/pass
+            git fetch origin master
+            git checkout -f origin/master
+            docker compose -f apps/pass-web/docker-compose.yml up -d --build
+            for attempt in $(seq 1 30); do
+              if curl --fail --silent http://127.0.0.1:53335/healthz >/dev/null; then exit 0; fi
+              sleep 2
+            done
+            docker compose -f apps/pass-web/docker-compose.yml logs --tail=100
+            exit 1

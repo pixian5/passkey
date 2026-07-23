@@ -16,6 +16,7 @@
 12. [同步包 Schema（V2）：schemas/pass-sync-bundle-v2.schema.json](/Users/x/code/pass/docs/schemas/pass-sync-bundle-v2.schema.json)
 13. [跨平台同步后端契约（V2）：cross-platform-sync-backends-v2-zh.md](/Users/x/code/pass/docs/cross-platform-sync-backends-v2-zh.md)
 14. [开发路线图（A+C+J+G）：dev-roadmap-a-c-j-g-zh.md](/Users/x/code/pass/docs/dev-roadmap-a-c-j-g-zh.md)
+15. [Web/Docker/Ubuntu 三阶段设计：pass-web-three-stage-design-zh.md](/Users/x/code/pass/docs/pass-web-three-stage-design-zh.md)
 
 ## 文档职责
 
@@ -33,3 +34,4 @@
 - `schemas/pass-sync-bundle-v2.schema.json`：统一同步包 `pass.sync.bundle.v2` 的机器可校验定义。
 - `cross-platform-sync-backends-v2-zh.md`：WebDAV/自建服务器跨平台同步协议与接入清单。
 - `dev-roadmap-a-c-j-g-zh.md`：现行交付路线（A+C+J+G）、阶段退出门、前 30 天清单与禁止项；与「单框架全平台 UI」路线区分。
+- `pass-web-three-stage-design-zh.md`：无 GUI Web 版三阶段架构、API、加密、部署、迁移、安全和验收标准。

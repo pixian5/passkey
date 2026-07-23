@@ -1,0 +1,25 @@
+[Unit]
+Description=Pass Web headless vault
+After=network.target
+
+[Service]
+Type=simple
+User=passweb
+Group=passweb
+WorkingDirectory=/opt/pass-web
+Environment=PASS_WEB_HOST=127.0.0.1
+Environment=PASS_WEB_PORT=53335
+Environment=PASS_WEB_DATA_DIR=/var/lib/pass-web
+Environment=PASS_WEB_STATIC_DIR=/opt/pass-web/dist
+EnvironmentFile=-/etc/pass-web/pass-web.env
+ExecStart=/opt/pass-web/pass-web
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pass-web
+
+[Install]
+WantedBy=multi-user.target

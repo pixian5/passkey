@@ -1,0 +1,16 @@
+services:
+  pass-web:
+    build:
+      context: ../..
+      dockerfile: apps/pass-web/Dockerfile
+    image: pass-web:latest
+    restart: unless-stopped
+    ports:
+      - "53335:53335"
+    environment:
+      PASS_WEB_AUTH_TOKEN: ${PASS_WEB_AUTH_TOKEN:?set PASS_WEB_AUTH_TOKEN in .env}
+    volumes:
+      - pass_web_data:/data
+
+volumes:
+  pass_web_data:

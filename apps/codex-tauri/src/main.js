@@ -1,11 +1,39 @@
 // This page is copied directly into the Tauri webview without a bundler, so a
 // bare npm import such as "@tauri-apps/api/core" cannot be resolved here.
-const invoke = (command, args) => {
+const invoke = async (command, args = {}) => {
   const runtime = window.__TAURI__?.core ?? window.__TAURI_INTERNALS__;
-  if (typeof runtime?.invoke !== "function") {
-    throw new Error("Tauri 运行时不可用，请从 Tauri 应用内启动");
+  if (typeof runtime?.invoke === "function") {
+    return runtime.invoke(command, args);
   }
-  return runtime.invoke(command, args);
+  const invokeWeb = async (retryAuth) => {
+    const token = window.localStorage?.getItem("pass.web.authToken") || "";
+    const response = await fetch(`/api/invoke/${encodeURIComponent(command)}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(args || {}),
+    });
+    let body = null;
+    try {
+      body = await response.json();
+    } catch (_) {
+      body = null;
+    }
+    if (response.status === 401 && retryAuth && !token && typeof window.prompt === "function") {
+      const entered = window.prompt("请输入 Pass Web 访问令牌");
+      if (entered?.trim()) {
+        window.localStorage?.setItem("pass.web.authToken", entered.trim());
+        return invokeWeb(false);
+      }
+    }
+    if (!response.ok) {
+      throw new Error(body?.error || `Web API 请求失败（HTTP ${response.status}）`);
+    }
+    return body?.result;
+  };
+  return invokeWeb(true);
 };
 
 const $ = (s) => document.querySelector(s);
