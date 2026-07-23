@@ -451,13 +451,124 @@
     return { created, updated, skipped };
   }
   async function syncRemote(mode, dryRun) {
-    const settings = await getSync(); if (!settings.enabled) throw new Error("请先启用自建服务器同步"); if (!text(settings.baseUrl)) throw new Error("请先配置同步服务器 URL");
-    const base = text(settings.baseUrl).replace(/\/$/, ""); const headers = { Accept: "application/json" }; if (text(settings.authToken)) headers.Authorization = `Bearer ${text(settings.authToken)}`;
-    const response = await fetch(`${base}/v2/sync/state`, { headers }); if (!(response.ok || response.status === 404)) throw new Error(`拉取同步状态失败 HTTP ${response.status}`);
-    const remote = response.status === 404 ? { accounts: [], folders: [], passkeys: [] } : normalizePayload(await decryptDocument(await response.json(), settings.encryptionKey, settings.previousEncryptionKey)); const store = await loadStore(); const local = payloadFromData(store.data); const payload = mode === "remoteOverwriteLocal" ? remote : mode === "localOverwriteRemote" ? local : mergePayload(local, remote); const report = { safe: true, ok: true, dryRun, mode, message: dryRun ? "预览完成（未写入）" : "同步完成", localAccounts: local.accounts.filter((a) => !a.isPermanentlyDeleted).length, remoteAccounts: remote.accounts.filter((a) => !a.isPermanentlyDeleted).length, mergedAccounts: payload.accounts.filter((a) => !a.isPermanentlyDeleted).length, applied: false, pushed: false };
+    const settings = await getSync();
+    if (!settings.enabled) throw new Error("请先启用自建服务器同步");
+    if (!text(settings.baseUrl)) throw new Error("请先配置同步服务器 URL");
+
+    const base = text(settings.baseUrl).replace(/\/$/, "");
+    const headers = { Accept: "application/json" };
+    if (text(settings.authToken)) headers.Authorization = `Bearer ${text(settings.authToken)}`;
+
+    const pull = async () => {
+      const response = await fetch(`${base}/v2/sync/state`, {
+        method: "GET",
+        headers,
+        cache: "no-store",
+      });
+      if (response.status === 404) {
+        return {
+          payload: { accounts: [], folders: [], passkeys: [], allRegularAccountIds: [] },
+          etag: null,
+          hasState: false,
+        };
+      }
+      if (!response.ok) {
+        throw new Error(`拉取同步状态失败 HTTP ${response.status}`);
+      }
+      const envelope = await response.json();
+      const etag = text(response.headers?.get?.("ETag")) || null;
+      if (!etag) {
+        throw new Error("服务器返回同步数据但没有 ETag，无法安全更新（请检查服务器版本）");
+      }
+      return {
+        payload: normalizePayload(await decryptDocument(envelope, settings.encryptionKey, settings.previousEncryptionKey)),
+        etag,
+        hasState: true,
+      };
+    };
+
+    const initialRemote = await pull();
+    const store = await loadStore();
+    const local = payloadFromData(store.data);
+    const choosePayload = (remote) => mode === "remoteOverwriteLocal"
+      ? remote
+      : mode === "localOverwriteRemote"
+        ? local
+        : mergePayload(local, remote);
+    let remoteState = initialRemote;
+    let payload = choosePayload(remoteState.payload);
+    const report = {
+      safe: true,
+      ok: true,
+      dryRun,
+      mode,
+      message: dryRun ? "预览完成（未写入）" : "同步完成",
+      localAccounts: local.accounts.filter((account) => !account.isPermanentlyDeleted).length,
+      remoteAccounts: remoteState.payload.accounts.filter((account) => !account.isPermanentlyDeleted).length,
+      mergedAccounts: payload.accounts.filter((account) => !account.isPermanentlyDeleted).length,
+      applied: false,
+      pushed: false,
+    };
     if (dryRun) return { report, localPayload: local, payload };
-    if (mode !== "localOverwriteRemote") await mutate("同步写入本地", (data) => { data.accounts = payload.accounts; data.folders = payload.folders; data.passkeys = payload.passkeys; data.allRegularAccountIds = payload.allRegularAccountIds; });
-    const putHeaders = { ...headers, "Content-Type": "application/json" }; const body = await encryptDocument({ schema: "pass.sync.bundle.v2", exportedAtMs: now(), source: { app: "pass-extension-chrome-web", formatVersion: 2 }, payload }, settings.encryptionKey); const put = await fetch(`${base}/v2/sync/state`, { method: "PUT", headers: putHeaders, body: JSON.stringify(body) }); if (!put.ok) throw new Error(`推送同步状态失败 HTTP ${put.status}`); report.applied = mode !== "localOverwriteRemote"; report.pushed = true; return { report };
+
+    if (mode !== "localOverwriteRemote") {
+      await mutate("同步写入本地", (data) => {
+        data.accounts = payload.accounts;
+        data.folders = payload.folders;
+        data.passkeys = payload.passkeys;
+        data.allRegularAccountIds = payload.allRegularAccountIds;
+      });
+    }
+
+    // Keep one key for the logical write. The server can safely replay it if a
+    // response is lost after it committed the payload.
+    const idempotencyKey = id("sync");
+    const maxAttempts = 5;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const putHeaders = { ...headers, "Content-Type": "application/json", "Idempotency-Key": idempotencyKey };
+      if (remoteState.etag) putHeaders["If-Match"] = remoteState.etag;
+      const body = await encryptDocument({
+        schema: "pass.sync.bundle.v2",
+        exportedAtMs: now(),
+        source: { app: "pass-extension-chrome-web", formatVersion: 2 },
+        payload,
+      }, settings.encryptionKey);
+      const put = await fetch(`${base}/v2/sync/state`, {
+        method: "PUT",
+        headers: putHeaders,
+        body: JSON.stringify(body),
+      });
+      if (put.ok) {
+        report.remoteAccounts = remoteState.payload.accounts.filter((account) => !account.isPermanentlyDeleted).length;
+        report.mergedAccounts = payload.accounts.filter((account) => !account.isPermanentlyDeleted).length;
+        report.applied = mode !== "localOverwriteRemote";
+        report.pushed = true;
+        return { report };
+      }
+      if (put.status !== 412) {
+        if (put.status === 428) {
+          throw new Error("推送同步状态失败 HTTP 428：服务器要求 If-Match，但当前远端状态没有可用 ETag");
+        }
+        throw new Error(`推送同步状态失败 HTTP ${put.status}`);
+      }
+      if (attempt === maxAttempts - 1) {
+        throw new Error("推送同步状态失败 HTTP 412：远端持续发生并发更新，已停止重试");
+      }
+
+      // The remote changed between GET and PUT. Pull its new ETag and merge
+      // again before retrying, so a concurrent device's fields are preserved.
+      remoteState = await pull();
+      payload = choosePayload(remoteState.payload);
+      if (mode !== "localOverwriteRemote") {
+        await mutate("同步冲突重试写入本地", (data) => {
+          data.accounts = payload.accounts;
+          data.folders = payload.folders;
+          data.passkeys = payload.passkeys;
+          data.allRegularAccountIds = payload.allRegularAccountIds;
+        });
+      }
+    }
+    throw new Error("远端并发冲突重试次数已用尽");
   }
 
   globalThis.__PASS_EXTENSION_INVOKE__ = invokeCommand;
