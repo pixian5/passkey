@@ -107,25 +107,27 @@
           <button type="button" class="icon-btn" data-close-edit>×</button>
         </header>
         <form id="accountForm" class="modal-body">
-          <input type="hidden" id="accountId" />
-          <label class="account-field account-sites-field">站点别名（每行一个）
-            <textarea id="sites" rows="4"></textarea>
-          </label>
-          <label class="account-inline-field"><span>用户名（可选）</span><input id="username" placeholder="例如 alice@icloud.com" /></label>
-          <label class="account-inline-field"><span>密码（可选）</span><span class="secret-field"><input id="password" type="password" placeholder="可留空" /><button type="button" class="icon-btn secret-toggle" data-toggle-secret="password" title="显示密码" aria-label="显示密码">◎</button></span></label>
-          <section class="account-totp-field">
-            <label class="account-inline-field"><span>TOTP</span><span class="secret-field"><input id="totpSecret" type="password" placeholder="TOTP 种子密钥" /><button type="button" class="icon-btn secret-toggle" data-toggle-secret="totpSecret" title="显示 TOTP 密钥" aria-label="显示 TOTP 密钥">◎</button></span></label>
-            <div class="totp-actions">
-              <button type="button" id="btn-paste-totp-raw">粘贴原始密钥</button>
-              <button type="button" id="btn-paste-totp-uri">粘贴完整 otpauth URI</button>
-              <button type="button" id="btn-paste-totp-qr">粘贴二维码</button>
-            </div>
-          </section>
-          <label class="account-field">恢复码<textarea id="recoveryCodes" rows="4"></textarea></label>
-          <label class="account-field">备注<textarea id="note" rows="5"></textarea></label>
-          <label class="account-field account-folders-field">文件夹（⌘/Ctrl 多选）
-            <select id="editFolders" multiple size="5"></select>
-          </label>
+          <div class="account-editor-scroll">
+            <input type="hidden" id="accountId" />
+            <label class="account-field account-sites-field">站点别名（每行一个）
+              <textarea id="sites" rows="4"></textarea>
+            </label>
+            <label class="account-inline-field"><span>用户名（可选）</span><input id="username" placeholder="例如 alice@icloud.com" /></label>
+            <label class="account-inline-field"><span>密码（可选）</span><span class="secret-field"><input id="password" type="password" placeholder="可留空" /><button type="button" class="icon-btn secret-toggle" data-toggle-secret="password" title="显示密码" aria-label="显示密码">◎</button></span></label>
+            <section class="account-totp-field">
+              <label class="account-inline-field"><span>TOTP</span><span class="secret-field"><input id="totpSecret" type="password" placeholder="TOTP 种子密钥" /><button type="button" class="icon-btn secret-toggle" data-toggle-secret="totpSecret" title="显示 TOTP 密钥" aria-label="显示 TOTP 密钥">◎</button></span></label>
+              <div class="totp-actions">
+                <button type="button" id="btn-paste-totp-raw">粘贴原始密钥</button>
+                <button type="button" id="btn-paste-totp-uri">粘贴完整 otpauth URI</button>
+                <button type="button" id="btn-paste-totp-qr">粘贴二维码</button>
+              </div>
+            </section>
+            <label class="account-field">恢复码<textarea id="recoveryCodes" rows="4"></textarea></label>
+            <label class="account-field">备注<textarea id="note" rows="5"></textarea></label>
+            <label class="account-field account-folders-field">文件夹（⌘/Ctrl 多选）
+              <select id="editFolders" multiple size="5"></select>
+            </label>
+          </div>
           <div class="form-actions account-actions">
             <button type="submit" class="primary" id="btn-save-account">创建并关闭</button>
             <button type="button" id="btn-restore" class="primary" hidden>恢复账号</button>
