@@ -88,6 +88,7 @@ const els = {
   btnPasteTotpUri: $("#btn-paste-totp-uri"),
   btnPasteTotpQr: $("#btn-paste-totp-qr"),
   folderModal: $("#folderModal"),
+  folderModalTitle: $("#folderModalTitle"),
   newFolderName: $("#newFolderName"),
   folderSitesModal: $("#folderSitesModal"),
   folderSitesForm: $("#folderSitesForm"),
@@ -280,6 +281,7 @@ let selectedId = "";
 let selectedAccountIds = new Set();
 let selectionAnchorId = "";
 let folderSitesTargetId = "";
+let folderModalTargetId = "";
 let accountFolderTarget = null;
 let folderDedupTarget = null;
 let folderDeleteTarget = null;
@@ -1021,6 +1023,13 @@ const openAccountFolderPicker = (accountsOrAccount) => {
     els.accountFolderTitle.textContent = `设置 ${activeAccounts.length} 个账号的文件夹`;
   }
   const currentFolderId = filter.type === "folder" ? String(filter.id || "").toLowerCase() : "";
+  const commonFolderIds = new Set(
+    folders
+      .filter((folder) => activeAccounts.every((account) =>
+        existingByFolder.get(accountKey(account).toLowerCase())?.has(String(folder.id).toLowerCase())
+      ))
+      .map((folder) => String(folder.id).toLowerCase())
+  );
   if (els.accountFolderOptions) {
     els.accountFolderOptions.innerHTML = "";
     folders.forEach((folder) => {
@@ -1033,7 +1042,9 @@ const openAccountFolderPicker = (accountsOrAccount) => {
       const anyAlreadyAdded = activeAccounts.some((account) =>
         existingByFolder.get(accountKey(account).toLowerCase())?.has(folderKey)
       );
-      checkbox.checked = currentFolderId ? folderKey === currentFolderId : anyAlreadyAdded;
+      checkbox.checked = currentFolderId
+        ? folderKey === currentFolderId || commonFolderIds.has(folderKey)
+        : anyAlreadyAdded;
       checkbox.disabled = false;
       checkbox.setAttribute("aria-label", folder.name || folder.id);
       const name = document.createElement("span");
@@ -2601,6 +2612,7 @@ document.addEventListener("contextmenu", (e) => {
     const folder = (state.folders || []).find((item) => String(item.id) === folderId);
     if (!folder) return;
     showContextMenu(e, [
+      { label: "重命名", action: () => openRenameFolderDialog(folder) },
       { label: "加入指定网站全部账号", action: () => openFolderSites(folder) },
       { label: "文件夹内去重", action: () => openFolderDedup(folder) },
       {
@@ -2703,7 +2715,10 @@ document.addEventListener("contextmenu", (e) => {
 
 const openNewFolderDialog = () => {
   try {
+    folderModalTargetId = "";
+    if (els.folderModalTitle) els.folderModalTitle.textContent = "新建文件夹";
     if (els.newFolderName) els.newFolderName.value = "";
+    if (els.btnCreateFolder) els.btnCreateFolder.textContent = "创建";
     if (els.folderModal) {
       els.folderModal.hidden = false;
       els.folderModal.removeAttribute("hidden");
@@ -2715,6 +2730,26 @@ const openNewFolderDialog = () => {
   }
 };
 
+const openRenameFolderDialog = (folder) => {
+  if (!folder || folder.isDeleted || folder.isPermanentlyDeleted) return;
+  if (String(folder.id).toLowerCase() === "f16a2c4e-4a2a-43d5-a670-3f1767d41001") {
+    toastWarn("固定文件夹不可重命名");
+    return;
+  }
+  folderModalTargetId = String(folder.id);
+  if (els.folderModalTitle) els.folderModalTitle.textContent = "重命名文件夹";
+  if (els.newFolderName) els.newFolderName.value = folder.name || "";
+  if (els.btnCreateFolder) els.btnCreateFolder.textContent = "保存";
+  if (els.folderModal) {
+    els.folderModal.hidden = false;
+    els.folderModal.removeAttribute("hidden");
+  }
+  setTimeout(() => {
+    els.newFolderName?.focus();
+    els.newFolderName?.select();
+  }, 50);
+};
+
 // Robust sidebar + folder actions via document-level delegation.
 document.addEventListener("click", (e) => {
   const t = e.target;
@@ -2724,8 +2759,9 @@ document.addEventListener("click", (e) => {
   if (t.closest("#btn-create-folder")) {
     e.preventDefault();
     e.stopPropagation();
-    const restoreButton = setButtonBusy(els.btnCreateFolder, "正在创建…");
-    toastWarn("正在创建文件夹，请稍候…");
+    const isRename = Boolean(folderModalTargetId);
+    const restoreButton = setButtonBusy(els.btnCreateFolder, isRename ? "正在保存…" : "正在创建…");
+    toastWarn(isRename ? "正在保存文件夹名称，请稍候…" : "正在创建文件夹，请稍候…");
     (async () => {
       try {
         const name = (els.newFolderName?.value || "").trim();
@@ -2733,13 +2769,19 @@ document.addEventListener("click", (e) => {
           toastWarn("文件夹名不能为空");
           return;
         }
-        await invoke("create_folder", { name });
+        if (isRename) {
+          await invoke("rename_folder", { id: folderModalTargetId, name });
+        } else {
+          await invoke("create_folder", { name });
+        }
         if (els.folderModal) {
           els.folderModal.hidden = true;
           els.folderModal.setAttribute("hidden", "");
         }
+        const renamed = isRename;
+        folderModalTargetId = "";
         await refreshState();
-        toastSuccess(`文件夹「${name}」已创建`);
+        toastSuccess(renamed ? `文件夹已重命名为「${name}」` : `文件夹「${name}」已创建`);
       } catch (err) {
         toastError(`创建文件夹失败: ${err}`);
       } finally {

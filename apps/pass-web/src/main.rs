@@ -2594,6 +2594,42 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             v.save()?;
             Ok(serde_json::to_value(f).unwrap())
         }
+        "rename_folder" => {
+            let id: String = arg(&args, "id")?;
+            let name: String = arg(&args, "name")?;
+            if id.eq_ignore_ascii_case(FIXED_FOLDER_ID) {
+                return Err("固定文件夹不可重命名".into());
+            }
+            let trimmed = name.trim();
+            if trimmed.is_empty() {
+                return Err("文件夹名不能为空".into());
+            }
+            let existing = v
+                .data
+                .folders
+                .iter()
+                .find(|folder| folder.id.eq_ignore_ascii_case(&id))
+                .cloned()
+                .ok_or("未找到文件夹")?;
+            if existing.is_deleted || existing.is_permanently_deleted {
+                return Err("文件夹已删除".into());
+            }
+            if existing.name == trimmed {
+                return Ok(serde_json::to_value(existing).unwrap());
+            }
+            v.begin("重命名文件夹");
+            let folder = v
+                .data
+                .folders
+                .iter_mut()
+                .find(|folder| folder.id.eq_ignore_ascii_case(&id))
+                .ok_or("未找到文件夹")?;
+            folder.name = trimmed.into();
+            folder.updated_at_ms = now_ms();
+            let renamed = folder.clone();
+            v.save()?;
+            Ok(serde_json::to_value(renamed).unwrap())
+        }
         "configure_folder_site_rules" => {
             let folder_id: String = arg(&args, "folderId")?;
             let site_inputs: Vec<String> = arg(&args, "siteInputs")?;

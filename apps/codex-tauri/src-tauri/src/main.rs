@@ -3027,6 +3027,43 @@ fn create_folder(
     Ok(folder)
 }
 
+#[tauri::command(rename_all = "camelCase")]
+fn rename_folder(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    id: String,
+    name: String,
+) -> Result<Folder, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let conn = open_db(&app)?;
+    let mut folders = load_folders(&conn)?;
+    let normalized_id = id.trim().to_ascii_lowercase();
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("文件夹名不能为空".into());
+    }
+    if normalized_id.eq_ignore_ascii_case(pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID) {
+        return Err("固定文件夹不可重命名".into());
+    }
+    let target = folders
+        .iter_mut()
+        .find(|folder| folder.id.eq_ignore_ascii_case(&normalized_id))
+        .ok_or_else(|| "未找到文件夹".to_string())?;
+    if target.is_deleted || target.is_permanently_deleted {
+        return Err("文件夹已删除".into());
+    }
+    if target.name == trimmed {
+        return Ok(target.clone());
+    }
+    snapshot_current_vault(&conn, &dir, "重命名文件夹前自动备份")?;
+    target.name = trimmed.to_string();
+    target.updated_at_ms = now_ms();
+    let renamed = target.clone();
+    save_folders(&conn, &folders)?;
+    Ok(renamed)
+}
+
 #[tauri::command]
 fn delete_folder(
     app: AppHandle,
@@ -3492,6 +3529,7 @@ fn main() {
             hard_delete_all_deleted_accounts,
             generate_demo_accounts,
             create_folder,
+            rename_folder,
             delete_folder,
             set_account_folders,
             configure_folder_site_rules,
