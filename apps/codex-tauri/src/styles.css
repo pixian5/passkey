@@ -749,7 +749,11 @@ textarea { min-height: 84px; resize: vertical; }
 .inline-actions input { flex: 1; }
 .form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
-.account-editor-card .modal-body { gap: 12px; padding: 18px; }
+.account-editor-card .modal-body {
+  gap: 12px;
+  padding: 18px 18px 108px;
+  scroll-padding-bottom: 108px;
+}
 .account-field { gap: 6px; font-size: calc(1.0000 * var(--ui-text-size)); font-weight: 600; }
 .account-sites-field textarea { min-height: 96px; max-height: 156px; }
 .account-inline-field {
