@@ -33,6 +33,8 @@ test("普通 eTLD+1 与中国多级后缀仍可用", () => {
 
 test("显式微软域名别名可以跨主域匹配", () => {
   assert.equal(domainAliasGroupKey("login.microsoftonline.com"), "microsoft");
+  assert.equal(domainAliasGroupKey("microsoftonline"), "microsoft");
+  assert.equal(domainsMatch("microsoftonline", "outlook.com"), true);
   assert.equal(domainsMatch("microsoft.com", "login.microsoftonline.com"), true);
   assert.equal(domainsMatch("live.com", "outlook.com"), true);
   assert.equal(domainsMatch("microsoft.com", "google.com"), false);

@@ -41,6 +41,10 @@ export const STORAGE_KEY_DATA_BUMP = "pass.data.bump.v1";
 let dbPromise = null;
 let readyPromise = null;
 let unlockedEncryptionKey = null;
+// Several collections are initialized in parallel. Keep the first key load or
+// creation serialized so concurrent callers cannot mint different keys and
+// encrypt different collections with them.
+let encryptionKeyPromise = null;
 
 function requestAsPromise(request) {
   return new Promise((resolve, reject) => {
@@ -140,32 +144,40 @@ async function writeCollection(key, value) {
 
 async function loadOrCreateEncryptionKey() {
   if (unlockedEncryptionKey) return unlockedEncryptionKey;
-  const session = await chrome.storage.session.get([STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
-  const sessionKey = base64ToBytes(session[STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
-  if (sessionKey.length === 32) {
-    unlockedEncryptionKey = await crypto.subtle.importKey("raw", sessionKey, "AES-GCM", false, ["encrypt", "decrypt"]);
-    return unlockedEncryptionKey;
-  }
-
-  const stored = await chrome.storage.local.get([
-    STORAGE_KEY_ENCRYPTION_KEY,
-    STORAGE_KEY_WRAPPED_ENCRYPTION_KEY,
-  ]);
-  if (stored[STORAGE_KEY_WRAPPED_ENCRYPTION_KEY]) {
-    throw new Error("扩展已锁定，无法读取本地数据");
-  }
-  let rawKey = base64ToBytes(stored[STORAGE_KEY_ENCRYPTION_KEY]);
-  if (rawKey.length !== 32) {
-    // Never mint a replacement key when encrypted collections already exist —
-    // that would permanently brick the vault. Only mint on a truly empty store.
-    if (await hasEncryptedCollections()) {
-      throw new Error("本地数据密钥缺失，请恢复密钥或从备份导入");
+  if (encryptionKeyPromise) return encryptionKeyPromise;
+  encryptionKeyPromise = (async () => {
+    if (unlockedEncryptionKey) return unlockedEncryptionKey;
+    const session = await chrome.storage.session.get([STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
+    const sessionKey = base64ToBytes(session[STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
+    if (sessionKey.length === 32) {
+      unlockedEncryptionKey = await crypto.subtle.importKey("raw", sessionKey, "AES-GCM", false, ["encrypt", "decrypt"]);
+      return unlockedEncryptionKey;
     }
-    rawKey = crypto.getRandomValues(new Uint8Array(32));
-    await chrome.storage.local.set({ [STORAGE_KEY_ENCRYPTION_KEY]: bytesToBase64(rawKey) });
-  }
-  unlockedEncryptionKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt", "decrypt"]);
-  return unlockedEncryptionKey;
+
+    const stored = await chrome.storage.local.get([
+      STORAGE_KEY_ENCRYPTION_KEY,
+      STORAGE_KEY_WRAPPED_ENCRYPTION_KEY,
+    ]);
+    if (stored[STORAGE_KEY_WRAPPED_ENCRYPTION_KEY]) {
+      throw new Error("扩展已锁定，无法读取本地数据");
+    }
+    let rawKey = base64ToBytes(stored[STORAGE_KEY_ENCRYPTION_KEY]);
+    if (rawKey.length !== 32) {
+      // Never mint a replacement key when encrypted collections already exist —
+      // that would permanently brick the vault. Only mint on a truly empty store.
+      if (await hasEncryptedCollections()) {
+        throw new Error("本地数据密钥缺失，请恢复密钥或从备份导入");
+      }
+      rawKey = crypto.getRandomValues(new Uint8Array(32));
+      await chrome.storage.local.set({ [STORAGE_KEY_ENCRYPTION_KEY]: bytesToBase64(rawKey) });
+    }
+    unlockedEncryptionKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt", "decrypt"]);
+    return unlockedEncryptionKey;
+  })().catch((error) => {
+    encryptionKeyPromise = null;
+    throw error;
+  });
+  return encryptionKeyPromise;
 }
 
 async function hasEncryptedCollections() {
@@ -211,6 +223,7 @@ async function hasEncryptedCollections() {
 /** Test-only helper: drop cached DB handles after indexedDB.deleteDatabase. */
 export async function resetDataStoreRuntimeForTests() {
   unlockedEncryptionKey = null;
+  encryptionKeyPromise = null;
   readyPromise = null;
   if (dbPromise) {
     try {
@@ -273,6 +286,7 @@ export async function rewrapDataEncryption(currentPassword, currentCredential, n
 
 export async function lockDataEncryption() {
   unlockedEncryptionKey = null;
+  encryptionKeyPromise = null;
   await chrome.storage.session.remove(STORAGE_KEY_SESSION_ENCRYPTION_KEY);
 }
 
@@ -549,7 +563,15 @@ export async function getAllData() {
 }
 
 export async function setAllData({ accounts, passkeys, folders }) {
-  await ensureDataStorageReady();
+  try {
+    await ensureDataStorageReady();
+  } catch (error) {
+    // A previous buggy parallel initialization could leave one collection
+    // encrypted with a different key. A complete Web bridge snapshot is an
+    // authoritative replacement, so allow it to rewrite all collections
+    // instead of blocking forever in the migration read path.
+    if (String(error?.name || "") !== "OperationError") throw error;
+  }
   await Promise.all([
     writeCollection(COLLECTION_ACCOUNTS, accounts),
     writeCollection(COLLECTION_PASSKEYS, passkeys),

@@ -10,6 +10,8 @@ const WEB_AUTHN_NOTICE_DOM_ATTR = "data-pass-webauthn-notice";
 const WEB_AUTHN_NOTICE_MAX_AGE_MS = 5000;
 const WEB_AUTHN_NOTICE_TOAST_DEDUPE_MS = 2500;
 const PASS_PAGE_TOAST_HOST_ID = "pass-page-toast-host";
+const PASS_PAGE_UI_OWNER_ATTR = "data-pass-ui-owner";
+const PASS_PAGE_UI_OWNER_PRIORITY_ATTR = "data-pass-ui-owner-priority";
 const PASS_PAGE_TOAST_DURATION_MS = 3000;
 const PASS_PAGE_TOAST_STAGGER_MS = 450;
 const PASS_PAGE_TOAST_MAX = 6;
@@ -56,12 +58,49 @@ function logPasskeyContent(event, details = {}) {
   }
 }
 
+function getPageUiOwnerIdentity() {
+  try {
+    const manifest = chrome.runtime.getManifest?.() || {};
+    const name = String(manifest.name || "Pass").trim();
+    const runtimeId = String(chrome.runtime.id || "").trim();
+    // The separately loaded Web preview must win over the legacy extension
+    // while both are installed for side-by-side testing.
+    const priority = /web\s*预览/i.test(name) ? 20 : 10;
+    return { key: `${runtimeId}|${name}`, priority };
+  } catch {
+    return { key: "pass-extension|unknown", priority: 10 };
+  }
+}
+
+function claimPageUiOwner() {
+  const root = document.documentElement;
+  if (!root) return false;
+  const current = getPageUiOwnerIdentity();
+  const existingKey = String(root.getAttribute(PASS_PAGE_UI_OWNER_ATTR) || "");
+  const existingPriority = Number(root.getAttribute(PASS_PAGE_UI_OWNER_PRIORITY_ATTR) || 0);
+  if (existingKey && existingKey !== current.key) {
+    if (existingPriority > current.priority) return false;
+    if (existingPriority === current.priority && existingKey.localeCompare(current.key) < 0) return false;
+    // A higher-priority extension is taking over an already rendered chooser.
+    document.getElementById(PASS_FILL_CHOOSER_ID)?.remove();
+    document.getElementById(PASS_PAGE_TOAST_HOST_ID)?.remove();
+  }
+  root.setAttribute(PASS_PAGE_UI_OWNER_ATTR, current.key);
+  root.setAttribute(PASS_PAGE_UI_OWNER_PRIORITY_ATTR, String(current.priority));
+  return true;
+}
+
+function ownsPageUi() {
+  return claimPageUiOwner();
+}
+
 if (!globalThis.__passContentBridgeInstalled) {
   globalThis.__passContentBridgeInstalled = true;
   installPassContentBridge();
 }
 
 function installPassContentBridge() {
+  claimPageUiOwner();
   try {
     window.__passContentVersion = PASS_EXTENSION_VERSION;
     document.documentElement?.setAttribute("data-pass-content-version", PASS_EXTENSION_VERSION);
@@ -93,6 +132,10 @@ function installPassContentBridge() {
       return;
     }
     if (message?.type === "PASS_FILL_CREDENTIALS") {
+      if (!ownsPageUi()) {
+        sendResponse({ ok: false, error: "页面已由另一个 Pass 扩展接管" });
+        return;
+      }
       sendResponse(applyExternalFillCredentials(message.payload));
       return;
     }
@@ -739,7 +782,7 @@ function shouldSkipChooserForFilledInput(input, { userInitiated = false } = {}) 
 }
 
 function reshowFillChooser(input) {
-  if (!(input instanceof HTMLElement) || fillChooserLocked || !isFillableCredentialInput(input)) return;
+  if (!ownsPageUi() || !(input instanceof HTMLElement) || fillChooserLocked || !isFillableCredentialInput(input)) return;
   if (Array.isArray(fillChooserLastAccounts) && fillChooserLastAccounts.length > 0) {
     renderFillChooser(fillChooserLastAccounts, input);
     return;
@@ -748,7 +791,7 @@ function reshowFillChooser(input) {
 }
 
 async function showFillChooserForInput(input, { userInitiated = false } = {}) {
-  if (fillChooserLocked || isFillChooserBlocked() || !isFillableCredentialInput(input)) return;
+  if (!ownsPageUi() || fillChooserLocked || isFillChooserBlocked() || !isFillableCredentialInput(input)) return;
   if (shouldSkipChooserForFilledInput(input, { userInitiated })) return;
   const now = Date.now();
   if (fillChooserListInFlight) return;
@@ -764,7 +807,7 @@ async function showFillChooserForInput(input, { userInitiated = false } = {}) {
     const response = await runtimeSendMessage({ type: "PASS_CONTENT_LIST_FILL_ACCOUNTS" });
     fillChooserLastListAt = Date.now();
     // Drop stale list work: a newer list started, or the user already filled.
-    if (listGeneration !== fillChooserListGeneration || isFillChooserBlocked()) {
+    if (listGeneration !== fillChooserListGeneration || !ownsPageUi() || isFillChooserBlocked()) {
       return;
     }
     if (!response?.ok) {
@@ -792,7 +835,7 @@ async function showFillChooserForInput(input, { userInitiated = false } = {}) {
 
 async function applyFillAccount(accountId) {
   const id = String(accountId || "").trim();
-  if (!id || fillChooserApplying) return;
+  if (!id || fillChooserApplying || !ownsPageUi()) return;
   // Capture before hide: hide tears down the host but must not lose the fill target.
   const targetInput = fillChooserActiveInput;
   fillChooserApplying = true;
@@ -861,7 +904,7 @@ async function applyFillAccount(accountId) {
 }
 
 function onFillChooserUserPointer(event) {
-  if (event.isTrusted === false) return;
+  if (event.isTrusted === false || !ownsPageUi()) return;
   const input = resolveFillableInputFromEventTarget(event.target);
   if (!input) return;
   fillChooserPointerActivation = { input, at: Date.now() };
@@ -872,7 +915,7 @@ function onFillChooserUserPointer(event) {
 }
 
 function onFillChooserUserClick(event) {
-  if (event.isTrusted === false) return;
+  if (event.isTrusted === false || !ownsPageUi()) return;
   const input = resolveFillableInputFromEventTarget(event.target);
   if (!input || isFillChooserBlocked()) return;
   // Some login pages suppress the native focus event while routing clicks
@@ -890,7 +933,7 @@ function onFillChooserUserKeydown(event) {
 }
 
 function onFillFieldFocusIn(event) {
-  if (isFillChooserBlocked()) return;
+  if (!ownsPageUi() || isFillChooserBlocked()) return;
   const target = event.target;
   if (!isFillableCredentialInput(target)) return;
   // Prefer explicit activation (pointer on field / Tab). Bare isTrusted is not enough:
@@ -900,7 +943,7 @@ function onFillFieldFocusIn(event) {
 }
 
 function onDocumentPointerDownForFillChooser(event) {
-  if (!fillChooserHost) return;
+  if (!ownsPageUi() || !fillChooserHost) return;
   const path = typeof event.composedPath === "function" ? event.composedPath() : [];
   if (path.includes(fillChooserHost)) return;
   if (event.target === fillChooserActiveInput) return;
@@ -977,6 +1020,7 @@ function drainPendingWebAuthnNotice() {
 }
 
 function handleWebAuthnBridgeNotice(data, { clearDomBuffer = true } = {}) {
+  if (!ownsPageUi()) return;
   const message = String(data?.message || "").trim();
   if (!message) return;
   // Live postMessage delivery supersedes the DOM buffer for this notice.
@@ -1004,6 +1048,7 @@ function handleWebAuthnBridgeNotice(data, { clearDomBuffer = true } = {}) {
 }
 
 async function handleWebAuthnBridgeRequest(requestId, payload) {
+  if (!ownsPageUi()) return;
   try {
     if (!isRuntimeAvailable()) {
       logPasskeyContent("bridge-runtime-unavailable", {
@@ -1183,6 +1228,7 @@ function dismissPassPageToast(id) {
 }
 
 function showPassPageToast(message, tone = "success") {
+  if (!ownsPageUi()) return;
   const text = String(message || "").trim();
   if (!text) return;
 

@@ -207,6 +207,7 @@
   var dbPromise = null;
   var readyPromise = null;
   var unlockedEncryptionKey = null;
+  var encryptionKeyPromise = null;
   function requestAsPromise(request) {
     return new Promise((resolve, reject) => {
       request.onsuccess = () => resolve(request.result);
@@ -299,29 +300,37 @@
   }
   async function loadOrCreateEncryptionKey() {
     if (unlockedEncryptionKey) return unlockedEncryptionKey;
-    const session = await chrome.storage.session.get([STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
-    const sessionKey = base64ToBytes(session[STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
-    if (sessionKey.length === 32) {
-      unlockedEncryptionKey = await crypto.subtle.importKey("raw", sessionKey, "AES-GCM", false, ["encrypt", "decrypt"]);
-      return unlockedEncryptionKey;
-    }
-    const stored = await chrome.storage.local.get([
-      STORAGE_KEY_ENCRYPTION_KEY,
-      STORAGE_KEY_WRAPPED_ENCRYPTION_KEY
-    ]);
-    if (stored[STORAGE_KEY_WRAPPED_ENCRYPTION_KEY]) {
-      throw new Error("\u6269\u5C55\u5DF2\u9501\u5B9A\uFF0C\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u6570\u636E");
-    }
-    let rawKey = base64ToBytes(stored[STORAGE_KEY_ENCRYPTION_KEY]);
-    if (rawKey.length !== 32) {
-      if (await hasEncryptedCollections()) {
-        throw new Error("\u672C\u5730\u6570\u636E\u5BC6\u94A5\u7F3A\u5931\uFF0C\u8BF7\u6062\u590D\u5BC6\u94A5\u6216\u4ECE\u5907\u4EFD\u5BFC\u5165");
+    if (encryptionKeyPromise) return encryptionKeyPromise;
+    encryptionKeyPromise = (async () => {
+      if (unlockedEncryptionKey) return unlockedEncryptionKey;
+      const session = await chrome.storage.session.get([STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
+      const sessionKey = base64ToBytes(session[STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
+      if (sessionKey.length === 32) {
+        unlockedEncryptionKey = await crypto.subtle.importKey("raw", sessionKey, "AES-GCM", false, ["encrypt", "decrypt"]);
+        return unlockedEncryptionKey;
       }
-      rawKey = crypto.getRandomValues(new Uint8Array(32));
-      await chrome.storage.local.set({ [STORAGE_KEY_ENCRYPTION_KEY]: bytesToBase64(rawKey) });
-    }
-    unlockedEncryptionKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt", "decrypt"]);
-    return unlockedEncryptionKey;
+      const stored = await chrome.storage.local.get([
+        STORAGE_KEY_ENCRYPTION_KEY,
+        STORAGE_KEY_WRAPPED_ENCRYPTION_KEY
+      ]);
+      if (stored[STORAGE_KEY_WRAPPED_ENCRYPTION_KEY]) {
+        throw new Error("\u6269\u5C55\u5DF2\u9501\u5B9A\uFF0C\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u6570\u636E");
+      }
+      let rawKey = base64ToBytes(stored[STORAGE_KEY_ENCRYPTION_KEY]);
+      if (rawKey.length !== 32) {
+        if (await hasEncryptedCollections()) {
+          throw new Error("\u672C\u5730\u6570\u636E\u5BC6\u94A5\u7F3A\u5931\uFF0C\u8BF7\u6062\u590D\u5BC6\u94A5\u6216\u4ECE\u5907\u4EFD\u5BFC\u5165");
+        }
+        rawKey = crypto.getRandomValues(new Uint8Array(32));
+        await chrome.storage.local.set({ [STORAGE_KEY_ENCRYPTION_KEY]: bytesToBase64(rawKey) });
+      }
+      unlockedEncryptionKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt", "decrypt"]);
+      return unlockedEncryptionKey;
+    })().catch((error) => {
+      encryptionKeyPromise = null;
+      throw error;
+    });
+    return encryptionKeyPromise;
   }
   async function hasEncryptedCollections() {
     return await new Promise((resolve) => {
@@ -407,6 +416,7 @@
   }
   async function lockDataEncryption() {
     unlockedEncryptionKey = null;
+    encryptionKeyPromise = null;
     await chrome.storage.session.remove(STORAGE_KEY_SESSION_ENCRYPTION_KEY);
   }
   async function disableDataEncryption(password, rawCredential) {
@@ -635,7 +645,11 @@
     return { accounts, passkeys, folders };
   }
   async function setAllData({ accounts, passkeys, folders }) {
-    await ensureDataStorageReady();
+    try {
+      await ensureDataStorageReady();
+    } catch (error) {
+      if (String(error?.name || "") !== "OperationError") throw error;
+    }
     await Promise.all([
       writeCollection(COLLECTION_ACCOUNTS, accounts),
       writeCollection(COLLECTION_PASSKEYS, passkeys),
@@ -1679,6 +1693,9 @@
       domains: Object.freeze([
         "microsoft.com",
         "microsoftonline.com",
+        // Keep the common shorthand used by older records linked to the same
+        // Microsoft sign-in provider as the fully qualified host names.
+        "microsoftonline",
         "login.microsoftonline.com",
         "login.microsoft.com",
         "account.microsoft.com",
@@ -3302,7 +3319,7 @@
     const accountId = String(payload?.accountId || "").trim();
     if (accountId) {
       const accounts2 = await getAccounts2();
-      const account = accounts2.find((item) => !item?.isDeleted && String(item?.accountId || "") === accountId);
+      const account = accounts2.find((item) => !item?.isDeleted && !item?.isPermanentlyDeleted && String(item?.accountId || "") === accountId);
       if (!account) {
         return { ok: false, error: "\u627E\u4E0D\u5230\u8981\u586B\u5145\u7684\u8D26\u53F7" };
       }
@@ -3318,7 +3335,7 @@
     }
     const accounts = await getAccounts2();
     const matched = accounts.find((item) => {
-      return !item?.isDeleted && accountMatchesDomain(item, tabHost) && String(item?.username || "") === username && String(item?.password || "") === password;
+      return !item?.isDeleted && !item?.isPermanentlyDeleted && accountMatchesDomain(item, tabHost) && String(item?.username || "") === username && String(item?.password || "") === password;
     });
     if (!matched) {
       return { ok: false, error: "\u5F53\u524D\u9875\u9762\u57DF\u540D\u4E0E\u8D26\u53F7\u7AD9\u70B9\u4E0D\u5339\u914D\uFF0C\u5DF2\u963B\u6B62\u8DE8\u57DF\u586B\u5145" };
@@ -3409,7 +3426,7 @@
       return { ok: false, error: "\u4EC5\u5141\u8BB8\u5728 HTTPS \u9875\u9762\uFF08\u6216\u672C\u673A HTTP\uFF09\u5217\u51FA\u53EF\u586B\u5145\u8D26\u53F7", accounts: [] };
     }
     const accounts = await getAccounts2();
-    const matched = accounts.filter((item) => !item?.isDeleted && accountMatchesDomain(item, tabHost)).sort((left, right) => {
+    const matched = accounts.filter((item) => !item?.isDeleted && !item?.isPermanentlyDeleted && accountMatchesDomain(item, tabHost)).sort((left, right) => {
       const leftUpdated = Number(left?.updatedAtMs || left?.createdAtMs || 0);
       const rightUpdated = Number(right?.updatedAtMs || right?.createdAtMs || 0);
       if (leftUpdated !== rightUpdated) return rightUpdated - leftUpdated;
@@ -3451,7 +3468,7 @@
       return { shouldPrompt: false };
     }
     const accounts = await getAccounts2();
-    const active = accounts.filter((item) => !item.isDeleted);
+    const active = accounts.filter((item) => !item.isDeleted && !item.isPermanentlyDeleted);
     const exact = active.some((account) => {
       return accountMatchesDomain(account, domain) && account.username === username && account.password === password;
     });

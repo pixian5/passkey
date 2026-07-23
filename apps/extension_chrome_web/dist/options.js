@@ -213,6 +213,9 @@
       domains: Object.freeze([
         "microsoft.com",
         "microsoftonline.com",
+        // Keep the common shorthand used by older records linked to the same
+        // Microsoft sign-in provider as the fully qualified host names.
+        "microsoftonline",
         "login.microsoftonline.com",
         "login.microsoft.com",
         "account.microsoft.com",
@@ -1105,6 +1108,7 @@
   var dbPromise = null;
   var readyPromise = null;
   var unlockedEncryptionKey = null;
+  var encryptionKeyPromise = null;
   function requestAsPromise(request) {
     return new Promise((resolve, reject) => {
       request.onsuccess = () => resolve(request.result);
@@ -1197,29 +1201,37 @@
   }
   async function loadOrCreateEncryptionKey() {
     if (unlockedEncryptionKey) return unlockedEncryptionKey;
-    const session = await chrome.storage.session.get([STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
-    const sessionKey = base64ToBytes(session[STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
-    if (sessionKey.length === 32) {
-      unlockedEncryptionKey = await crypto.subtle.importKey("raw", sessionKey, "AES-GCM", false, ["encrypt", "decrypt"]);
-      return unlockedEncryptionKey;
-    }
-    const stored = await chrome.storage.local.get([
-      STORAGE_KEY_ENCRYPTION_KEY,
-      STORAGE_KEY_WRAPPED_ENCRYPTION_KEY
-    ]);
-    if (stored[STORAGE_KEY_WRAPPED_ENCRYPTION_KEY]) {
-      throw new Error("\u6269\u5C55\u5DF2\u9501\u5B9A\uFF0C\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u6570\u636E");
-    }
-    let rawKey = base64ToBytes(stored[STORAGE_KEY_ENCRYPTION_KEY]);
-    if (rawKey.length !== 32) {
-      if (await hasEncryptedCollections()) {
-        throw new Error("\u672C\u5730\u6570\u636E\u5BC6\u94A5\u7F3A\u5931\uFF0C\u8BF7\u6062\u590D\u5BC6\u94A5\u6216\u4ECE\u5907\u4EFD\u5BFC\u5165");
+    if (encryptionKeyPromise) return encryptionKeyPromise;
+    encryptionKeyPromise = (async () => {
+      if (unlockedEncryptionKey) return unlockedEncryptionKey;
+      const session = await chrome.storage.session.get([STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
+      const sessionKey = base64ToBytes(session[STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
+      if (sessionKey.length === 32) {
+        unlockedEncryptionKey = await crypto.subtle.importKey("raw", sessionKey, "AES-GCM", false, ["encrypt", "decrypt"]);
+        return unlockedEncryptionKey;
       }
-      rawKey = crypto.getRandomValues(new Uint8Array(32));
-      await chrome.storage.local.set({ [STORAGE_KEY_ENCRYPTION_KEY]: bytesToBase64(rawKey) });
-    }
-    unlockedEncryptionKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt", "decrypt"]);
-    return unlockedEncryptionKey;
+      const stored = await chrome.storage.local.get([
+        STORAGE_KEY_ENCRYPTION_KEY,
+        STORAGE_KEY_WRAPPED_ENCRYPTION_KEY
+      ]);
+      if (stored[STORAGE_KEY_WRAPPED_ENCRYPTION_KEY]) {
+        throw new Error("\u6269\u5C55\u5DF2\u9501\u5B9A\uFF0C\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u6570\u636E");
+      }
+      let rawKey = base64ToBytes(stored[STORAGE_KEY_ENCRYPTION_KEY]);
+      if (rawKey.length !== 32) {
+        if (await hasEncryptedCollections()) {
+          throw new Error("\u672C\u5730\u6570\u636E\u5BC6\u94A5\u7F3A\u5931\uFF0C\u8BF7\u6062\u590D\u5BC6\u94A5\u6216\u4ECE\u5907\u4EFD\u5BFC\u5165");
+        }
+        rawKey = crypto.getRandomValues(new Uint8Array(32));
+        await chrome.storage.local.set({ [STORAGE_KEY_ENCRYPTION_KEY]: bytesToBase64(rawKey) });
+      }
+      unlockedEncryptionKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt", "decrypt"]);
+      return unlockedEncryptionKey;
+    })().catch((error) => {
+      encryptionKeyPromise = null;
+      throw error;
+    });
+    return encryptionKeyPromise;
   }
   async function hasEncryptedCollections() {
     return await new Promise((resolve) => {
@@ -1382,7 +1394,11 @@
     return { accounts, passkeys, folders };
   }
   async function setAllData({ accounts, passkeys, folders }) {
-    await ensureDataStorageReady();
+    try {
+      await ensureDataStorageReady();
+    } catch (error) {
+      if (String(error?.name || "") !== "OperationError") throw error;
+    }
     await Promise.all([
       writeCollection(COLLECTION_ACCOUNTS, accounts),
       writeCollection(COLLECTION_PASSKEYS, passkeys),

@@ -84,6 +84,9 @@
       domains: Object.freeze([
         "microsoft.com",
         "microsoftonline.com",
+        // Keep the common shorthand used by older records linked to the same
+        // Microsoft sign-in provider as the fully qualified host names.
+        "microsoftonline",
         "login.microsoftonline.com",
         "login.microsoft.com",
         "account.microsoft.com",
@@ -149,6 +152,8 @@
   var WEB_AUTHN_NOTICE_MAX_AGE_MS = 5e3;
   var WEB_AUTHN_NOTICE_TOAST_DEDUPE_MS = 2500;
   var PASS_PAGE_TOAST_HOST_ID = "pass-page-toast-host";
+  var PASS_PAGE_UI_OWNER_ATTR = "data-pass-ui-owner";
+  var PASS_PAGE_UI_OWNER_PRIORITY_ATTR = "data-pass-ui-owner-priority";
   var PASS_PAGE_TOAST_DURATION_MS = 3e3;
   var PASS_PAGE_TOAST_STAGGER_MS = 450;
   var PASS_PAGE_TOAST_MAX = 6;
@@ -184,11 +189,42 @@
     } catch {
     }
   }
+  function getPageUiOwnerIdentity() {
+    try {
+      const manifest = chrome.runtime.getManifest?.() || {};
+      const name = String(manifest.name || "Pass").trim();
+      const runtimeId = String(chrome.runtime.id || "").trim();
+      const priority = /web\s*预览/i.test(name) ? 20 : 10;
+      return { key: `${runtimeId}|${name}`, priority };
+    } catch {
+      return { key: "pass-extension|unknown", priority: 10 };
+    }
+  }
+  function claimPageUiOwner() {
+    const root = document.documentElement;
+    if (!root) return false;
+    const current = getPageUiOwnerIdentity();
+    const existingKey = String(root.getAttribute(PASS_PAGE_UI_OWNER_ATTR) || "");
+    const existingPriority = Number(root.getAttribute(PASS_PAGE_UI_OWNER_PRIORITY_ATTR) || 0);
+    if (existingKey && existingKey !== current.key) {
+      if (existingPriority > current.priority) return false;
+      if (existingPriority === current.priority && existingKey.localeCompare(current.key) < 0) return false;
+      document.getElementById(PASS_FILL_CHOOSER_ID)?.remove();
+      document.getElementById(PASS_PAGE_TOAST_HOST_ID)?.remove();
+    }
+    root.setAttribute(PASS_PAGE_UI_OWNER_ATTR, current.key);
+    root.setAttribute(PASS_PAGE_UI_OWNER_PRIORITY_ATTR, String(current.priority));
+    return true;
+  }
+  function ownsPageUi() {
+    return claimPageUiOwner();
+  }
   if (!globalThis.__passContentBridgeInstalled) {
     globalThis.__passContentBridgeInstalled = true;
     installPassContentBridge();
   }
   function installPassContentBridge() {
+    claimPageUiOwner();
     try {
       window.__passContentVersion = PASS_EXTENSION_VERSION;
       document.documentElement?.setAttribute("data-pass-content-version", PASS_EXTENSION_VERSION);
@@ -214,6 +250,10 @@
         return;
       }
       if (message?.type === "PASS_FILL_CREDENTIALS") {
+        if (!ownsPageUi()) {
+          sendResponse({ ok: false, error: "\u9875\u9762\u5DF2\u7531\u53E6\u4E00\u4E2A Pass \u6269\u5C55\u63A5\u7BA1" });
+          return;
+        }
         sendResponse(applyExternalFillCredentials(message.payload));
         return;
       }
@@ -757,7 +797,7 @@
     return isRecentFillChooserValue(input.value);
   }
   function reshowFillChooser(input) {
-    if (!(input instanceof HTMLElement) || fillChooserLocked || !isFillableCredentialInput(input)) return;
+    if (!ownsPageUi() || !(input instanceof HTMLElement) || fillChooserLocked || !isFillableCredentialInput(input)) return;
     if (Array.isArray(fillChooserLastAccounts) && fillChooserLastAccounts.length > 0) {
       renderFillChooser(fillChooserLastAccounts, input);
       return;
@@ -765,7 +805,7 @@
     void showFillChooserForInput(input, { userInitiated: true });
   }
   async function showFillChooserForInput(input, { userInitiated = false } = {}) {
-    if (fillChooserLocked || isFillChooserBlocked() || !isFillableCredentialInput(input)) return;
+    if (!ownsPageUi() || fillChooserLocked || isFillChooserBlocked() || !isFillableCredentialInput(input)) return;
     if (shouldSkipChooserForFilledInput(input, { userInitiated })) return;
     const now = Date.now();
     if (fillChooserListInFlight) return;
@@ -779,7 +819,7 @@
     try {
       const response = await runtimeSendMessage({ type: "PASS_CONTENT_LIST_FILL_ACCOUNTS" });
       fillChooserLastListAt = Date.now();
-      if (listGeneration !== fillChooserListGeneration || isFillChooserBlocked()) {
+      if (listGeneration !== fillChooserListGeneration || !ownsPageUi() || isFillChooserBlocked()) {
         return;
       }
       if (!response?.ok) {
@@ -806,7 +846,7 @@
   }
   async function applyFillAccount(accountId) {
     const id = String(accountId || "").trim();
-    if (!id || fillChooserApplying) return;
+    if (!id || fillChooserApplying || !ownsPageUi()) return;
     const targetInput = fillChooserActiveInput;
     fillChooserApplying = true;
     fillChooserListGeneration += 1;
@@ -863,7 +903,7 @@
     if (shouldReshow) reshowFillChooser(targetInput);
   }
   function onFillChooserUserPointer(event) {
-    if (event.isTrusted === false) return;
+    if (event.isTrusted === false || !ownsPageUi()) return;
     const input = resolveFillableInputFromEventTarget(event.target);
     if (!input) return;
     fillChooserPointerActivation = { input, at: Date.now() };
@@ -872,7 +912,7 @@
     }
   }
   function onFillChooserUserClick(event) {
-    if (event.isTrusted === false) return;
+    if (event.isTrusted === false || !ownsPageUi()) return;
     const input = resolveFillableInputFromEventTarget(event.target);
     if (!input || isFillChooserBlocked()) return;
     if (document.activeElement === input || event.target === input) {
@@ -885,14 +925,14 @@
     fillChooserKeyboardNavAt = Date.now();
   }
   function onFillFieldFocusIn(event) {
-    if (isFillChooserBlocked()) return;
+    if (!ownsPageUi() || isFillChooserBlocked()) return;
     const target = event.target;
     if (!isFillableCredentialInput(target)) return;
     const userInitiated = hasUserActivationForFillChooser(target);
     void showFillChooserForInput(target, { userInitiated });
   }
   function onDocumentPointerDownForFillChooser(event) {
-    if (!fillChooserHost) return;
+    if (!ownsPageUi() || !fillChooserHost) return;
     const path = typeof event.composedPath === "function" ? event.composedPath() : [];
     if (path.includes(fillChooserHost)) return;
     if (event.target === fillChooserActiveInput) return;
@@ -956,6 +996,7 @@
     }
   }
   function handleWebAuthnBridgeNotice(data, { clearDomBuffer = true } = {}) {
+    if (!ownsPageUi()) return;
     const message = String(data?.message || "").trim();
     if (!message) return;
     if (clearDomBuffer) clearPendingWebAuthnNoticeAttr();
@@ -975,6 +1016,7 @@
     showPassPageToast(message, "warning");
   }
   async function handleWebAuthnBridgeRequest(requestId, payload) {
+    if (!ownsPageUi()) return;
     try {
       if (!isRuntimeAvailable()) {
         logPasskeyContent("bridge-runtime-unavailable", {
@@ -1143,6 +1185,7 @@
     renumberPassPageToasts();
   }
   function showPassPageToast(message, tone = "success") {
+    if (!ownsPageUi()) return;
     const text = String(message || "").trim();
     if (!text) return;
     while (passPageToasts.length >= PASS_PAGE_TOAST_MAX) {

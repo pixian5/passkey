@@ -926,7 +926,7 @@ async function resolveFillAccountForHost(payload, tabHost) {
   const accountId = String(payload?.accountId || "").trim();
   if (accountId) {
     const accounts = await getAccounts();
-    const account = accounts.find((item) => !item?.isDeleted && String(item?.accountId || "") === accountId);
+    const account = accounts.find((item) => !item?.isDeleted && !item?.isPermanentlyDeleted && String(item?.accountId || "") === accountId);
     if (!account) {
       return { ok: false, error: "找不到要填充的账号" };
     }
@@ -944,6 +944,7 @@ async function resolveFillAccountForHost(payload, tabHost) {
   const accounts = await getAccounts();
   const matched = accounts.find((item) => {
     return !item?.isDeleted
+      && !item?.isPermanentlyDeleted
       && accountMatchesDomain(item, tabHost)
       && String(item?.username || "") === username
       && String(item?.password || "") === password;
@@ -1052,7 +1053,7 @@ async function handleContentListFillAccounts(sender) {
 
   const accounts = await getAccounts();
   const matched = accounts
-    .filter((item) => !item?.isDeleted && accountMatchesDomain(item, tabHost))
+    .filter((item) => !item?.isDeleted && !item?.isPermanentlyDeleted && accountMatchesDomain(item, tabHost))
     .sort((left, right) => {
       const leftUpdated = Number(left?.updatedAtMs || left?.createdAtMs || 0);
       const rightUpdated = Number(right?.updatedAtMs || right?.createdAtMs || 0);
@@ -1108,7 +1109,7 @@ async function handleLoginDetected(payload) {
   }
 
   const accounts = await getAccounts();
-  const active = accounts.filter((item) => !item.isDeleted);
+  const active = accounts.filter((item) => !item.isDeleted && !item.isPermanentlyDeleted);
 
   const exact = active.some((account) => {
     return accountMatchesDomain(account, domain) && account.username === username && account.password === password;

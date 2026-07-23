@@ -15,6 +15,7 @@
   const MAX_HISTORY = 100;
   const MAX_SNAPSHOTS = 5;
   let storePromise;
+  let dataKeyPromise;
 
   const clone = (value) => {
     try { return JSON.parse(JSON.stringify(value)); } catch (_) { return value; }
@@ -132,18 +133,28 @@
   };
   const bytesToBase64Early = (bytes) => btoa(bytesToBinary(bytes));
   const base64ToBytesEarly = (value) => { try { return Uint8Array.from(atob(String(value || "")), (char) => char.charCodeAt(0)); } catch (_) { return new Uint8Array(); } };
-  const loadDataKey = async () => {
-    const result = await chrome.storage.local.get([DATA_KEY]);
-    let raw = base64ToBytesEarly(result?.[DATA_KEY]);
-    if (raw.length !== 32) {
-      raw = crypto.getRandomValues(new Uint8Array(32));
-      await chrome.storage.local.set({ [DATA_KEY]: bytesToBase64Early(raw) });
-    }
-    return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
+  const loadDataKey = async ({ createIfMissing = true } = {}) => {
+    if (dataKeyPromise) return dataKeyPromise;
+    dataKeyPromise = (async () => {
+      const result = await chrome.storage.local.get([DATA_KEY]);
+      let raw = base64ToBytesEarly(result?.[DATA_KEY]);
+      if (raw.length !== 32) {
+        if (!createIfMissing) {
+          throw new Error("Web 预览数据密钥缺失，原数据未覆盖；请重新加载原管理页或导入备份");
+        }
+        raw = crypto.getRandomValues(new Uint8Array(32));
+        await chrome.storage.local.set({ [DATA_KEY]: bytesToBase64Early(raw) });
+      }
+      return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
+    })().catch((error) => {
+      dataKeyPromise = null;
+      throw error;
+    });
+    return dataKeyPromise;
   };
   const decryptStore = async (raw) => {
     if (!raw?.ciphertextBase64 || !raw?.nonceBase64) return raw;
-    const key = await loadDataKey();
+    const key = await loadDataKey({ createIfMissing: false });
     const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: base64ToBytesEarly(raw.nonceBase64), additionalData: new TextEncoder().encode(STORAGE_KEY) }, key, base64ToBytesEarly(raw.ciphertextBase64));
     return JSON.parse(new TextDecoder().decode(plaintext));
   };

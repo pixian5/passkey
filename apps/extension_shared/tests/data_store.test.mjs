@@ -35,6 +35,8 @@ globalThis.chrome = { storage: { local, session } };
 const {
   disableDataEncryption,
   getAccounts,
+  getFolders,
+  getPasskeys,
   getSafetySnapshots,
   getSyncOutbox,
   getSyncSecrets,
@@ -44,6 +46,7 @@ const {
   rewrapDataEncryption,
   setSyncSecrets,
   setSafetySnapshots,
+  setAllData,
   setSyncOutbox,
   unlockDataEncryption,
 } = await import("../data_store.js");
@@ -170,6 +173,18 @@ test("v3 包装不能被主密码摘要直接解密，且锁定会清除会话�
     base64ToBytes((await session.get([SESSION_KEY]))[SESSION_KEY]),
     rawKey
   );
+});
+
+test("并行首次写入所有集合使用同一个数据密钥", async () => {
+  await setAllData({
+    accounts: [{ accountId: "account-1", sites: ["microsoftonline.com"], username: "alice", password: "" }],
+    folders: [{ id: "folder-1", name: "工作" }],
+    passkeys: [{ credentialIdB64u: "credential-1", rpId: "microsoftonline.com" }],
+  });
+
+  assert.equal((await getAccounts()).length, 1);
+  assert.equal((await getFolders()).length, 1);
+  assert.equal((await getPasskeys()).length, 1);
 });
 
 test("正确主密码解开 v2 后会立即迁移并重包为 v3", async () => {

@@ -55,6 +55,9 @@ export const DOMAIN_ALIAS_GROUPS = Object.freeze([
     domains: Object.freeze([
       "microsoft.com",
       "microsoftonline.com",
+      // Keep the common shorthand used by older records linked to the same
+      // Microsoft sign-in provider as the fully qualified host names.
+      "microsoftonline",
       "login.microsoftonline.com",
       "login.microsoft.com",
       "account.microsoft.com",
