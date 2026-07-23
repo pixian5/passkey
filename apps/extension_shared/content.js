@@ -544,7 +544,11 @@ function renderFillChooser(accounts, input) {
   root.style.color = "#1d314d";
 
   const title = document.createElement("div");
-  title.textContent = "Pass 填充账号";
+  const siteLabel = normalizeDomain(window.location.hostname) || "当前网站";
+  const windowTitle = `Pass · 填充账号 · ${siteLabel}`;
+  root.setAttribute("role", "dialog");
+  root.setAttribute("aria-label", windowTitle);
+  title.textContent = windowTitle;
   title.style.fontWeight = "600";
   title.style.fontSize = "13px";
   title.style.margin = "2px 4px 8px";
@@ -1408,7 +1412,11 @@ function selectPasskeyCandidate(candidates) {
     root.style.color = "#1d314d";
 
     const title = document.createElement("div");
-    title.textContent = "选择要使用的通行密钥";
+    const siteLabel = normalizeDomain(window.location.hostname) || "当前网站";
+    const windowTitle = `Pass · 选择通行密钥 · ${siteLabel}`;
+    root.setAttribute("role", "dialog");
+    root.setAttribute("aria-label", windowTitle);
+    title.textContent = windowTitle;
     title.style.fontSize = "13px";
     title.style.fontWeight = "600";
     title.style.marginBottom = "8px";
