@@ -1,6 +1,6 @@
 # Pass Web（Ubuntu / Docker 无 GUI 版）
 
-这是 Pass 的无 GUI 网页版第一阶段实现。完整三阶段方案见 [`docs/pass-web-three-stage-design-zh.md`](../../docs/pass-web-three-stage-design-zh.md)。它复用 `pass_merge::v2` 的账号、文件夹和同步数据结构，并直接提供与 Tauri 前端兼容的命令 RPC：
+这是 Pass 的无 GUI 网页版第一阶段实现。完整三阶段方案见 [`docs/pass-web-three-stage-design-zh.md`](../../docs/pass-web-three-stage-design-zh.md)，Docker 专项开发、发布和运维规范见 [`docs/pass-web-docker-development-zh.md`](../../docs/pass-web-docker-development-zh.md)。它复用 `pass_merge::v2` 的账号、文件夹和同步数据结构，并直接提供与 Tauri 前端兼容的命令 RPC：
 
 - 账号新建、编辑、回收站、恢复、永久删除
 - 文件夹创建、删除、账号归属和排序
