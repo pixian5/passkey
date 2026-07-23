@@ -122,7 +122,15 @@
   };
 
   const defaultStore = () => ({ data: emptyData(), undo: [], redo: [], snapshots: [] });
-  const bytesToBase64Early = (bytes) => btoa(String.fromCharCode(...bytes));
+  const bytesToBinary = (bytes) => {
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)));
+    }
+    return binary;
+  };
+  const bytesToBase64Early = (bytes) => btoa(bytesToBinary(bytes));
   const base64ToBytesEarly = (value) => { try { return Uint8Array.from(atob(String(value || "")), (char) => char.charCodeAt(0)); } catch (_) { return new Uint8Array(); } };
   const loadDataKey = async () => {
     const result = await chrome.storage.local.get([DATA_KEY]);
@@ -282,7 +290,7 @@
     return { accounts, folders, passkeys, allRegularAccountIds };
   };
   const payloadFromData = (data) => ({ accounts: clone(data.accounts), folders: clone(data.folders), passkeys: clone(data.passkeys), allRegularAccountIds: clone(data.allRegularAccountIds) });
-  const bytesToBase64 = (bytes) => btoa(String.fromCharCode(...bytes));
+  const bytesToBase64 = (bytes) => btoa(bytesToBinary(bytes));
   const base64ToBytes = (value) => { try { return Uint8Array.from(atob(String(value || "")), (char) => char.charCodeAt(0)); } catch (_) { return new Uint8Array(); } };
   const base64UrlToBytes = (value) => { const base64 = text(value).replaceAll("-", "+").replaceAll("_", "/"); return base64ToBytes(base64 + "=".repeat((4 - (base64.length % 4)) % 4)); };
   const normalizeSyncKey = (value) => { const key = text(value); return base64UrlToBytes(key).length === 32 ? key : ""; };
@@ -393,7 +401,7 @@
       case "generate_demo_accounts": return invokeCommand("create_account", { input: { sites: ["example.com"], username: "demo", password: "", note: "演示账号" } });
       case "health_check": return { ok: true, mode: "chrome-extension-web", storage: "chrome.storage.local", oldExtensionUntouched: true };
       case "sync_key_id": return syncKeyId(args.key);
-      case "generate_sync_encryption_key": { const bytes = crypto.getRandomValues(new Uint8Array(32)); return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", ""); }
+      case "generate_sync_encryption_key": { const bytes = crypto.getRandomValues(new Uint8Array(32)); return bytesToBase64(bytes).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", ""); }
       case "save_provision_draft": return saveJsonKey("pass.web.workspace.provision.v1", args.draft || {});
       case "get_provision_draft": { const result = await chrome.storage.local.get(["pass.web.workspace.provision.v1"]); return result?.["pass.web.workspace.provision.v1"] || {}; }
       case "get_ssh_credential": return {};
