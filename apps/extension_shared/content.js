@@ -545,7 +545,7 @@ function renderFillChooser(accounts, input) {
 
   const title = document.createElement("div");
   const siteLabel = normalizeDomain(window.location.hostname) || "当前网站";
-  const windowTitle = `Pass · 填充账号 · ${siteLabel}`;
+  const windowTitle = `填充账号 · ${siteLabel}`;
   root.setAttribute("role", "dialog");
   root.setAttribute("aria-label", windowTitle);
   title.textContent = windowTitle;
@@ -1413,7 +1413,7 @@ function selectPasskeyCandidate(candidates) {
 
     const title = document.createElement("div");
     const siteLabel = normalizeDomain(window.location.hostname) || "当前网站";
-    const windowTitle = `Pass · 选择通行密钥 · ${siteLabel}`;
+    const windowTitle = `选择通行密钥 · ${siteLabel}`;
     root.setAttribute("role", "dialog");
     root.setAttribute("aria-label", windowTitle);
     title.textContent = windowTitle;
