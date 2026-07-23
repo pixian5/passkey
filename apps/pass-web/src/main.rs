@@ -427,6 +427,22 @@ fn account_mut<'a>(
         .find(|a| account_key(a).eq_ignore_ascii_case(id) || a.account_id.eq_ignore_ascii_case(id))
 }
 
+/// New folder memberships enter the ordinary manual sequence at the top.
+/// This never changes pin state or pinned ordering.
+fn promote_regular_account_to_top(accounts: &mut [PasswordAccount], id: &str) {
+    let next = accounts
+        .iter()
+        .filter_map(|account| account.regular_sort_order)
+        .min()
+        .map(|order| order.saturating_sub(1))
+        .unwrap_or(0);
+    if let Some(account) = accounts.iter_mut().find(|account| {
+        account_key(account).eq_ignore_ascii_case(id) || account.account_id.eq_ignore_ascii_case(id)
+    }) {
+        account.regular_sort_order = Some(next);
+    }
+}
+
 fn app_state(v: &VaultData) -> AppStateOutput {
     AppStateOutput {
         device_name: v.device_name.clone(),
@@ -2172,6 +2188,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             }
             let mut matched_count = 0;
             let mut added_count = 0;
+            let mut added_account_ids = Vec::new();
             for account in v
                 .data
                 .accounts
@@ -2189,9 +2206,13 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                         account.folder_ids.push(folder_id.clone());
                         account.folder_id = Some(folder_id.clone());
                         account.updated_at_ms = now_ms();
+                        added_account_ids.push(account_key(account));
                         added_count += 1;
                     }
                 }
+            }
+            for account_id in added_account_ids {
+                promote_regular_account_to_top(&mut v.data.accounts, &account_id);
             }
             v.save()?;
             Ok(serde_json::to_value(FolderRuleResult {
@@ -2321,10 +2342,21 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 return Err("包含不存在或已删除的文件夹".into());
             }
             v.begin("调整账号文件夹");
-            let a = account_mut(&mut v.data.accounts, &id).ok_or("未找到账号")?;
-            a.folder_ids = ids.clone();
-            a.folder_id = ids.first().cloned();
-            a.updated_at_ms = now_ms();
+            let added_to_folder;
+            {
+                let a = account_mut(&mut v.data.accounts, &id).ok_or("未找到账号")?;
+                added_to_folder = ids.iter().any(|folder_id| {
+                    !a.folder_ids
+                        .iter()
+                        .any(|current| current.eq_ignore_ascii_case(folder_id))
+                });
+                a.folder_ids = ids.clone();
+                a.folder_id = ids.first().cloned();
+                a.updated_at_ms = now_ms();
+            }
+            if added_to_folder {
+                promote_regular_account_to_top(&mut v.data.accounts, &id);
+            }
             v.save()?;
             Ok(json!(null))
         }
@@ -2896,5 +2928,27 @@ mod tests {
         .unwrap();
         assert!(do_command(&mut vault, "get_app_state", json!({})).is_ok());
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn adding_folder_membership_promotes_regular_order_without_pinning() {
+        let mut existing = PasswordAccount {
+            record_id: Some("existing".into()),
+            regular_sort_order: Some(0),
+            ..Default::default()
+        };
+        let mut added = PasswordAccount {
+            record_id: Some("added".into()),
+            is_pinned: false,
+            regular_sort_order: None,
+            ..Default::default()
+        };
+        let mut accounts = vec![existing.clone(), added.clone()];
+        promote_regular_account_to_top(&mut accounts, "added");
+        existing = accounts.remove(0);
+        added = accounts.remove(0);
+        assert_eq!(added.regular_sort_order, Some(-1));
+        assert!(!added.is_pinned);
+        assert_eq!(existing.regular_sort_order, Some(0));
     }
 }

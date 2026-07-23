@@ -1612,6 +1612,23 @@ fn add_account_to_folder(account: &mut PasswordAccount, folder_id: &str) -> bool
     true
 }
 
+/// Put a newly joined account at the start of the ordinary manual sequence.
+/// This deliberately leaves is_pinned and pinned_sort_order untouched.
+fn promote_regular_account_to_top(accounts: &mut [PasswordAccount], id: &str) {
+    let next = accounts
+        .iter()
+        .filter_map(|account| account.regular_sort_order)
+        .min()
+        .map(|order| order.saturating_sub(1))
+        .unwrap_or(0);
+    if let Some(account) = accounts.iter_mut().find(|account| {
+        account.resolved_record_id().eq_ignore_ascii_case(id)
+            || account.account_id.eq_ignore_ascii_case(id)
+    }) {
+        account.regular_sort_order = Some(next);
+    }
+}
+
 fn apply_automatic_folder_rules(account: &mut PasswordAccount, folders: &[Folder]) {
     if account.is_deleted || account.is_permanently_deleted {
         return;
@@ -2664,8 +2681,12 @@ fn set_account_folders(
     let device = load_device_name(&conn)?;
     let now = now_ms();
     let mut found = false;
+    let mut added_to_folder = false;
     for a in &mut accounts {
         if account_matches_id(a, &id) {
+            added_to_folder = normalized
+                .iter()
+                .any(|folder_id| !account_in_folder(a, folder_id));
             a.folder_ids = normalized.clone();
             a.folder_id = normalized.first().cloned();
             a.updated_at_ms = now;
@@ -2675,6 +2696,9 @@ fn set_account_folders(
         }
     }
     debug_assert!(found);
+    if added_to_folder {
+        promote_regular_account_to_top(&mut accounts, &id);
+    }
     save_accounts(&conn, &accounts)?;
     Ok(())
 }
@@ -2716,6 +2740,7 @@ fn configure_folder_site_rules(
     let now = now_ms();
     let mut matched_count = 0;
     let mut added_count = 0;
+    let mut added_account_ids = Vec::new();
     for account in accounts
         .iter_mut()
         .filter(|account| !account.is_deleted && !account.is_permanently_deleted)
@@ -2725,9 +2750,13 @@ fn configure_folder_site_rules(
             if add_account_to_folder(account, &normalized_id) {
                 account.updated_at_ms = now;
                 account.last_operated_device_name = device_name.clone();
+                added_account_ids.push(account.resolved_record_id());
                 added_count += 1;
             }
         }
+    }
+    for account_id in added_account_ids {
+        promote_regular_account_to_top(&mut accounts, &account_id);
     }
     save_accounts(&conn, &accounts)?;
     save_folders(&conn, &folders)?;
@@ -3083,6 +3112,25 @@ mod tests {
 
         assert_eq!(account.folder_ids, vec!["folder-1"]);
         assert_eq!(account.folder_id.as_deref(), Some("folder-1"));
+    }
+
+    #[test]
+    fn regular_folder_addition_goes_to_manual_top_without_pin() {
+        let existing = PasswordAccount {
+            record_id: Some("existing".into()),
+            regular_sort_order: Some(0),
+            ..Default::default()
+        };
+        let added = PasswordAccount {
+            record_id: Some("added".into()),
+            is_pinned: false,
+            regular_sort_order: None,
+            ..Default::default()
+        };
+        let mut accounts = vec![existing, added];
+        promote_regular_account_to_top(&mut accounts, "added");
+        assert_eq!(accounts[1].regular_sort_order, Some(-1));
+        assert!(!accounts[1].is_pinned);
     }
 
     #[test]
