@@ -374,3 +374,7 @@ cd apps/extension_shared && npm test -- tests/command_matrix.test.mjs
 
 目的：避免“本机移出文件夹后，旧设备同步又把账号塞回来”。
 
+## 15. 小修：去重/单删路径统一走 soft_delete_account
+
+桌面与 Docker Web 的去重删除、Web 单账号软删除均改为共享 `soft_delete_account`，避免漏写设备名/更新时间。
+

@@ -2138,11 +2138,10 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
         "soft_delete_account" => {
             let id: String = arg(&args, "id")?;
             v.begin("移入回收站");
+            let now = now_ms();
+            let device = v.data.device_name.clone();
             let a = account_mut(&mut v.data.accounts, &id).ok_or("未找到账号")?;
-            a.is_deleted = true;
-            a.deleted_at_ms = Some(now_ms());
-            a.deleted_device_name = v.data.device_name.clone();
-            a.updated_at_ms = now_ms();
+            let _ = soft_delete_account(a, now, &device);
             v.save()?;
             Ok(json!(null))
         }
@@ -2739,13 +2738,10 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             let mut deleted_count = 0;
             for account in &mut v.data.accounts {
                 let id = account_key(account);
-                if duplicate_ids.contains(&id) && !keep.contains(&id) && !account.is_deleted {
-                    account.is_deleted = true;
-                    account.deleted_at_ms = Some(now);
-                    account.deleted_device_name = device.clone();
-                    account.last_operated_device_name = device.clone();
-                    account.updated_at_ms = now;
-                    deleted_count += 1;
+                if duplicate_ids.contains(&id) && !keep.contains(&id) {
+                    if soft_delete_account(account, now, &device) {
+                        deleted_count += 1;
+                    }
                 }
             }
             v.save()?;

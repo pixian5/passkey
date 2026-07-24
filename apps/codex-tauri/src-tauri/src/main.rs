@@ -3475,13 +3475,10 @@ fn deduplicate_folder(
     let mut deleted_count = 0;
     for account in accounts.iter_mut() {
         let id = account.resolved_record_id();
-        if duplicate_ids.contains(&id) && !keep_ids.contains(&id) && !account.is_deleted {
-            account.is_deleted = true;
-            account.deleted_at_ms = Some(now);
-            account.deleted_device_name = device_name.clone();
-            account.updated_at_ms = now;
-            account.last_operated_device_name = device_name.clone();
-            deleted_count += 1;
+        if duplicate_ids.contains(&id) && !keep_ids.contains(&id) {
+            if soft_delete_account_mutation(account, now, &device_name) {
+                deleted_count += 1;
+            }
         }
     }
     if deleted_count > 0 {
