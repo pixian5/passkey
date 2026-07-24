@@ -144,11 +144,17 @@ pub fn local_payload_from_vault_with_order(
     all_regular_account_ids: Vec<String>,
     all_regular_order_updated_at_ms: i64,
     all_regular_order_updated_device_name: String,
+    folder_order_ids: Vec<String>,
+    folder_order_updated_at_ms: i64,
+    folder_order_updated_device_name: String,
 ) -> SyncPayload {
     let mut payload = local_payload_from_vault(accounts, folders, passkeys, device_name);
     payload.all_regular_account_ids = all_regular_account_ids;
     payload.all_regular_order_updated_at_ms = all_regular_order_updated_at_ms;
     payload.all_regular_order_updated_device_name = all_regular_order_updated_device_name;
+    payload.folder_order_ids = folder_order_ids;
+    payload.folder_order_updated_at_ms = folder_order_updated_at_ms;
+    payload.folder_order_updated_device_name = folder_order_updated_device_name;
     payload
 }
 

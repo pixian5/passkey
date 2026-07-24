@@ -211,6 +211,14 @@ pub struct SyncPayload {
     pub all_regular_order_updated_at_ms: i64,
     #[serde(default)]
     pub all_regular_order_updated_device_name: String,
+    /// Manual order for active folders. Folder contents and this collection
+    /// order have independent clocks so renaming a folder cannot reorder it.
+    #[serde(default)]
+    pub folder_order_ids: Vec<String>,
+    #[serde(default)]
+    pub folder_order_updated_at_ms: i64,
+    #[serde(default)]
+    pub folder_order_updated_device_name: String,
 }
 
 impl PasswordAccount {

@@ -92,6 +92,18 @@
         },
         "allRegularOrderUpdatedDeviceName": {
           "type": "string"
+        },
+        "folderOrderIds": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "folderOrderUpdatedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "folderOrderUpdatedDeviceName": {
+          "type": "string"
         }
       }
     }

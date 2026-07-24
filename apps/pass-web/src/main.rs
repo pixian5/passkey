@@ -97,6 +97,12 @@ struct VaultData {
     all_regular_order_updated_at_ms: i64,
     #[serde(default)]
     all_regular_order_updated_device_name: String,
+    #[serde(default)]
+    folder_order_ids: Vec<String>,
+    #[serde(default)]
+    folder_order_updated_at_ms: i64,
+    #[serde(default)]
+    folder_order_updated_device_name: String,
     ui_prefs: Value,
     sync_settings: Value,
     undo: Vec<HistoryItem>,
@@ -316,6 +322,12 @@ fn normalize_order_state(data: &mut VaultData) {
         normalize_all_regular_order(&data.all_regular_account_ids, &data.accounts);
     data.folders =
         normalize_folder_regular_orders(std::mem::take(&mut data.folders), &data.accounts);
+    let (folders, order) = pass_merge::v2::apply_folder_order(
+        std::mem::take(&mut data.folders),
+        &data.folder_order_ids,
+    );
+    data.folders = folders;
+    data.folder_order_ids = order;
 }
 
 fn move_account_to_order_top(ids: &mut Vec<String>, account_id: &str) {
@@ -399,6 +411,9 @@ impl Vault {
                 .data
                 .all_regular_order_updated_device_name
                 .clone(),
+            folder_order_ids: self.data.folder_order_ids.clone(),
+            folder_order_updated_at_ms: self.data.folder_order_updated_at_ms,
+            folder_order_updated_device_name: self.data.folder_order_updated_device_name.clone(),
         }
     }
     fn apply_payload(&mut self, payload: SyncPayload) {
@@ -409,6 +424,9 @@ impl Vault {
         self.data.all_regular_order_updated_at_ms = payload.all_regular_order_updated_at_ms;
         self.data.all_regular_order_updated_device_name =
             payload.all_regular_order_updated_device_name;
+        self.data.folder_order_ids = payload.folder_order_ids;
+        self.data.folder_order_updated_at_ms = payload.folder_order_updated_at_ms;
+        self.data.folder_order_updated_device_name = payload.folder_order_updated_device_name;
         ensure_fixed_folder(&mut self.data);
         normalize_order_state(&mut self.data);
     }
@@ -2591,6 +2609,10 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 ..Default::default()
             };
             v.data.folders.push(f.clone());
+            v.data.folder_order_ids.push(f.id.clone());
+            v.data.folder_order_updated_at_ms = now;
+            v.data.folder_order_updated_device_name = v.data.device_name.clone();
+            normalize_order_state(&mut v.data);
             v.save()?;
             Ok(serde_json::to_value(f).unwrap())
         }
@@ -2696,6 +2718,8 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 );
             }
             normalize_order_state(&mut v.data);
+            v.data.folder_order_updated_at_ms = now_ms();
+            v.data.folder_order_updated_device_name = v.data.device_name.clone();
             v.save()?;
             Ok(serde_json::to_value(FolderRuleResult {
                 folder: updated_folder,
@@ -2901,16 +2925,21 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
         "reorder_folders" => {
             let order: Vec<String> = arg(&args, "orderedIds")?;
             v.begin("调整文件夹顺序");
-            let rank = order
-                .iter()
-                .enumerate()
-                .map(|(i, x)| (x.to_ascii_lowercase(), i as i64))
-                .collect::<std::collections::HashMap<_, _>>();
-            v.data.folders.sort_by_key(|f| {
-                rank.get(&f.id.to_ascii_lowercase())
-                    .copied()
-                    .unwrap_or(i64::MAX)
-            });
+            let active = v.data.folders.iter().filter(|f| !f.is_deleted && !f.is_permanently_deleted);
+            let mut known = std::collections::BTreeSet::new();
+            let mut next = Vec::new();
+            for id in order {
+                let key = id.trim().to_ascii_lowercase();
+                if !key.is_empty() && active.clone().any(|f| f.id.eq_ignore_ascii_case(&key)) && known.insert(key.clone()) { next.push(key); }
+            }
+            for folder in active {
+                let key = folder.id.to_ascii_lowercase();
+                if known.insert(key.clone()) { next.push(key); }
+            }
+            v.data.folder_order_ids = next;
+            v.data.folder_order_updated_at_ms = now_ms();
+            v.data.folder_order_updated_device_name = v.data.device_name.clone();
+            normalize_order_state(&mut v.data);
             v.save()?;
             Ok(json!(null))
         }

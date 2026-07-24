@@ -960,6 +960,20 @@ pub fn merge_sync_payloads(local: SyncPayload, remote: SyncPayload) -> SyncPaylo
         remote.all_regular_order_updated_at_ms,
         &remote.all_regular_order_updated_device_name,
     );
+    let folder_order_from_remote = prefer_remote_order(
+        local.folder_order_updated_at_ms,
+        &local.folder_order_updated_device_name,
+        remote.folder_order_updated_at_ms,
+        &remote.folder_order_updated_device_name,
+    );
+    let folder_order_ids = merge_order_ids(
+        &local.folder_order_ids,
+        local.folder_order_updated_at_ms,
+        &local.folder_order_updated_device_name,
+        &remote.folder_order_ids,
+        remote.folder_order_updated_at_ms,
+        &remote.folder_order_updated_device_name,
+    );
     let accounts = merge_account_collections(local.accounts, remote.accounts);
     let folders = merge_folder_collections(local.folders, remote.folders);
     let passkeys = merge_passkey_collections(local.passkeys, remote.passkeys);
@@ -967,6 +981,7 @@ pub fn merge_sync_payloads(local: SyncPayload, remote: SyncPayload) -> SyncPaylo
     let accounts = reconcile_account_folders(accounts, &folders, 0);
     let all_regular_account_ids = normalize_all_regular_order(&all_regular_account_ids, &accounts);
     let folders = normalize_folder_regular_orders(folders, &accounts);
+    let (folders, folder_order_ids) = apply_folder_order(folders, &folder_order_ids);
     SyncPayload {
         accounts,
         folders,
@@ -982,7 +997,73 @@ pub fn merge_sync_payloads(local: SyncPayload, remote: SyncPayload) -> SyncPaylo
         } else {
             local.all_regular_order_updated_device_name
         },
+        folder_order_ids,
+        folder_order_updated_at_ms: if folder_order_from_remote {
+            remote.folder_order_updated_at_ms
+        } else {
+            local.folder_order_updated_at_ms
+        },
+        folder_order_updated_device_name: if folder_order_from_remote {
+            remote.folder_order_updated_device_name
+        } else {
+            local.folder_order_updated_device_name
+        },
     }
+}
+
+/// Applies the synchronized folder collection order and returns its normalized
+/// ID list. Tombstones stay in the payload but never occupy a visible slot.
+pub fn apply_folder_order(
+    folders: Vec<Folder>,
+    saved_ids: &[String],
+) -> (Vec<Folder>, Vec<String>) {
+    let mut by_id: BTreeMap<String, Folder> = folders
+        .into_iter()
+        .map(|folder| (normalize_folder_id(&folder.id), folder))
+        .filter(|(id, _)| !id.is_empty())
+        .collect();
+    let fixed_id = FIXED_NEW_ACCOUNT_FOLDER_ID.to_string();
+    let mut order = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+
+    if by_id
+        .get(&fixed_id)
+        .map(|folder| !folder.is_deleted && !folder.is_permanently_deleted)
+        .unwrap_or(false)
+    {
+        order.push(fixed_id.clone());
+        seen.insert(fixed_id.clone());
+    }
+    for raw_id in saved_ids {
+        let id = normalize_folder_id(raw_id);
+        if seen.contains(&id) {
+            continue;
+        }
+        if by_id
+            .get(&id)
+            .map(|folder| !folder.is_deleted && !folder.is_permanently_deleted)
+            .unwrap_or(false)
+        {
+            seen.insert(id.clone());
+            order.push(id);
+        }
+    }
+    for (id, folder) in &by_id {
+        if !folder.is_deleted && !folder.is_permanently_deleted && seen.insert(id.clone()) {
+            order.push(id.clone());
+        }
+    }
+
+    let mut ordered = Vec::with_capacity(by_id.len());
+    for id in &order {
+        if let Some(folder) = by_id.remove(id) {
+            ordered.push(folder);
+        }
+    }
+    // Deleted folders are durable tombstones. Their display order is irrelevant,
+    // so append them deterministically after all active folders.
+    ordered.extend(by_id.into_values());
+    (ordered, order)
 }
 
 fn prefer_remote_order(
@@ -1117,10 +1198,10 @@ fn normalize_regular_order(
 #[cfg(test)]
 mod order_tests {
     use super::{
-        merge_sync_payloads, normalize_all_regular_order, normalize_folder_regular_order,
-        normalize_folder_regular_orders,
+        apply_folder_order, merge_sync_payloads, normalize_all_regular_order,
+        normalize_folder_regular_order, normalize_folder_regular_orders,
     };
-    use crate::v2::{Folder, PasswordAccount, SyncPayload};
+    use crate::v2::{Folder, PasswordAccount, SyncPayload, FIXED_NEW_ACCOUNT_FOLDER_ID};
 
     fn account(id: &str, folders: &[&str]) -> PasswordAccount {
         PasswordAccount {
@@ -1132,6 +1213,24 @@ mod order_tests {
             updated_at_ms: 10,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn folder_collection_order_keeps_fixed_first_and_excludes_tombstones() {
+        let mut deleted = folder("deleted", &[], 0);
+        deleted.is_deleted = true;
+        let (folders, ids) = apply_folder_order(
+            vec![folder("work", &[], 0), deleted, folder("personal", &[], 0)],
+            &["personal".into(), "deleted".into()],
+        );
+        assert_eq!(ids, vec!["personal", "work"]);
+        assert_eq!(
+            folders
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["personal", "work", "deleted"]
+        );
     }
 
     fn folder(id: &str, order: &[&str], updated_at_ms: i64) -> Folder {
@@ -1184,6 +1283,9 @@ mod order_tests {
             all_regular_account_ids: vec![a.into(), b.into()],
             all_regular_order_updated_at_ms: 10,
             all_regular_order_updated_device_name: "device-a".into(),
+            folder_order_ids: vec!["work".into(), "personal".into()],
+            folder_order_updated_at_ms: 10,
+            folder_order_updated_device_name: "device-a".into(),
         };
         let remote = SyncPayload {
             accounts: vec![
@@ -1205,6 +1307,9 @@ mod order_tests {
             all_regular_account_ids: vec![b.into(), a.into()],
             all_regular_order_updated_at_ms: 30,
             all_regular_order_updated_device_name: "device-b".into(),
+            folder_order_ids: vec!["personal".into(), "work".into()],
+            folder_order_updated_at_ms: 30,
+            folder_order_updated_device_name: "device-b".into(),
         };
 
         let merged = merge_sync_payloads(local, remote);
@@ -1221,6 +1326,10 @@ mod order_tests {
         assert_eq!(work.regular_account_ids, vec![b, a]);
         assert_eq!(personal.regular_account_ids, vec![a, b]);
         assert_eq!(merged.all_regular_account_ids, vec![b, a]);
+        assert_eq!(
+            merged.folder_order_ids,
+            vec![FIXED_NEW_ACCOUNT_FOLDER_ID, "personal", "work"]
+        );
         assert_eq!(
             merged
                 .accounts

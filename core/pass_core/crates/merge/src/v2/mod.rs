@@ -13,9 +13,9 @@ mod types;
 
 pub use alias::sync_alias_groups;
 pub use merge::{
-    merge_account_collections, merge_folder_collections, merge_passkey_collections,
-    merge_sync_payloads, normalize_all_regular_order, normalize_folder_regular_order,
-    normalize_folder_regular_orders, reconcile_account_folders,
+    apply_folder_order, merge_account_collections, merge_folder_collections,
+    merge_passkey_collections, merge_sync_payloads, normalize_all_regular_order,
+    normalize_folder_regular_order, normalize_folder_regular_orders, reconcile_account_folders,
 };
 pub use policy::{
     DEFAULT_DEVICE_NAME, ETLD2_SUFFIXES, FIXED_NEW_ACCOUNT_FOLDER_ID, FIXED_NEW_ACCOUNT_FOLDER_NAME,

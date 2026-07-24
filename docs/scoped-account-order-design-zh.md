@@ -114,6 +114,20 @@ pub all_regular_order_updated_device_name: String,
 
 同一个账号属于多个文件夹时，在每个文件夹列表中分别保存一个位置。
 
+### 3.3 文件夹列表
+
+侧边栏文件夹顺序是 Vault 顶层集合属性，不属于任意单个 `Folder`。同步包使用：
+
+```json
+{
+  "folderOrderIds": ["folder-work", "folder-personal"],
+  "folderOrderUpdatedAtMs": 1777777777000,
+  "folderOrderUpdatedDeviceName": "MacBook"
+}
+```
+
+数组位置就是文件夹显示顺序。固定“新账号”文件夹始终规范化到第一位；删除和永久删除文件夹不进入活动顺序，但墓碑继续留在文件夹集合中。胜出顺序遗漏的活动文件夹追加到末尾。
+
 文件夹列表不复制账号资料，只通过账号稳定 ID 引用账号。
 
 ### 3.3 缺失、重复和无效 ID
@@ -207,7 +221,7 @@ pub all_regular_order_updated_device_name: String,
 1. 合并账号集合及账号字段；
 2. 合并文件夹集合及文件夹墓碑；
 3. 合并账号文件夹成员关系；
-4. 合并 `allRegularAccountIds` 和每个 `Folder.regularAccountIds`；
+4. 独立合并 `allRegularAccountIds`、每个 `Folder.regularAccountIds` 和顶层 `folderOrderIds`；
 5. 按最终成员关系清理和补全每个列表；
 6. 输出规范化后的连续顺序。
 
@@ -218,6 +232,7 @@ pub all_regular_order_updated_device_name: String,
 本次保持 `pass.sync.bundle.v2` 和 `formatVersion: 2`。三个排序字段作为 V2 的可选扩展，并已写入机器 Schema：
 
 - 顶层 `allRegularAccountIds`、`allRegularOrderUpdatedAtMs`、`allRegularOrderUpdatedDeviceName`；
+- 顶层 `folderOrderIds`、`folderOrderUpdatedAtMs`、`folderOrderUpdatedDeviceName`；
 - `Folder.regularAccountIds`、`regularOrderUpdatedAtMs`、`regularOrderUpdatedDeviceName`；
 - 缺少这些字段的旧 V2 包照常导入，首次规范化时从旧 `regularSortOrder` 生成全部账号的初始顺序。
 
@@ -227,7 +242,7 @@ pub all_regular_order_updated_device_name: String,
 
 ### 6.1 Tauri
 
-Tauri 的账号与文件夹都以加密 JSON 存在 SQLite `kv` 记录中，因此直接扩展 `Folder` JSON；全部账号排序保存在独立的加密键 `all_regular_order.v1`：
+Tauri 的账号与文件夹都以加密 JSON 存在 SQLite `kv` 记录中，因此直接扩展 `Folder` JSON；全部账号排序保存在独立的加密键 `all_regular_order.v1`，侧边栏文件夹顺序保存在 `folder_order.v1`。旧版 `ui_prefs.folder_order` 仅用于首次迁移，不再是权威数据源：
 
 ```text
 all_regular_order.v1 = {

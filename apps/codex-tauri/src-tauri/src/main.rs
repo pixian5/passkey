@@ -51,6 +51,7 @@ const KEY_ACCOUNTS_LEGACY: &str = "accounts.v1";
 const KEY_FOLDERS: &str = "folders.v1";
 const KEY_PASSKEYS: &str = "passkeys.v1";
 const KEY_ALL_REGULAR_ORDER: &str = "all_regular_order.v1";
+const KEY_FOLDER_ORDER: &str = "folder_order.v1";
 const KEY_DEVICE_NAME: &str = "settings.device_name";
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -95,6 +96,14 @@ struct AppState {
 #[serde(rename_all = "camelCase")]
 struct AllRegularOrder {
     account_ids: Vec<String>,
+    updated_at_ms: i64,
+    updated_device_name: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FolderOrder {
+    folder_ids: Vec<String>,
     updated_at_ms: i64,
     updated_device_name: String,
 }
@@ -274,6 +283,7 @@ fn get_app_state(app: AppHandle, state: tauri::State<AppLockState>) -> Result<Ap
     let mut accounts = load_accounts(&conn)?;
     let mut folders = load_folders(&conn)?;
     let mut all_order = load_all_regular_order(&conn)?;
+    let mut folder_order = load_folder_order(&conn)?;
     let (folders_changed, legacy_folder_ids) = ensure_fixed_new_account_folder(&mut folders);
     let accounts_changed =
         migrate_legacy_new_account_folder_ids(&mut accounts, &folders, &legacy_folder_ids);
@@ -283,13 +293,16 @@ fn get_app_state(app: AppHandle, state: tauri::State<AppLockState>) -> Result<Ap
     if accounts_changed {
         save_accounts(&conn, &accounts)?;
     }
+    if folder_order.folder_ids.is_empty() {
+        folder_order.folder_ids = load_ui_prefs(&dir).folder_order;
+        save_folder_order(&conn, &folder_order)?;
+    }
     if normalize_order_state(&accounts, &mut folders, &mut all_order) {
         save_folders(&conn, &folders)?;
         save_all_regular_order(&conn, &all_order)?;
     }
     sort_accounts(&mut accounts);
-    let prefs = load_ui_prefs(&dir);
-    apply_folder_order(&mut folders, &prefs.folder_order);
+    apply_folder_order(&mut folders, &folder_order.folder_ids);
     let passkeys = load_passkeys(&conn)?;
     let active_accounts = accounts
         .iter()
@@ -2282,6 +2295,18 @@ fn load_all_regular_order(conn: &Connection) -> Result<AllRegularOrder, String> 
     }
 }
 
+fn load_folder_order(conn: &Connection) -> Result<FolderOrder, String> {
+    match read_kv(conn, KEY_FOLDER_ORDER)? {
+        Some(raw) => serde_json::from_str(&raw).map_err(|e| format!("解析文件夹排序失败: {e}")),
+        None => Ok(FolderOrder::default()),
+    }
+}
+
+fn save_folder_order(conn: &Connection, order: &FolderOrder) -> Result<(), String> {
+    let raw = serde_json::to_string(order).map_err(|e| format!("序列化文件夹排序失败: {e}"))?;
+    write_kv(conn, KEY_FOLDER_ORDER, &raw)
+}
+
 fn save_all_regular_order(conn: &Connection, order: &AllRegularOrder) -> Result<(), String> {
     let raw = serde_json::to_string(order).map_err(|e| format!("序列化全部账号排序失败: {e}"))?;
     write_kv(conn, KEY_ALL_REGULAR_ORDER, &raw)
@@ -2346,6 +2371,7 @@ fn local_payload_from_conn(conn: &Connection, device: &str) -> Result<SyncPayloa
     let folders = load_folders(conn)?;
     let passkeys = load_passkeys(conn)?;
     let all_order = load_all_regular_order(conn)?;
+    let folder_order = load_folder_order(conn)?;
     Ok(local_payload_from_vault_with_order(
         &accounts,
         &folders,
@@ -2354,6 +2380,9 @@ fn local_payload_from_conn(conn: &Connection, device: &str) -> Result<SyncPayloa
         all_order.account_ids,
         all_order.updated_at_ms,
         all_order.updated_device_name,
+        folder_order.folder_ids,
+        folder_order.updated_at_ms,
+        folder_order.updated_device_name,
     ))
 }
 
@@ -2497,6 +2526,14 @@ fn save_payload_atomic(conn: &mut Connection, payload: &SyncPayload) -> Result<(
             account_ids: payload.all_regular_account_ids.clone(),
             updated_at_ms: payload.all_regular_order_updated_at_ms,
             updated_device_name: payload.all_regular_order_updated_device_name.clone(),
+        },
+    )?;
+    save_folder_order(
+        &tx,
+        &FolderOrder {
+            folder_ids: payload.folder_order_ids.clone(),
+            updated_at_ms: payload.folder_order_updated_at_ms,
+            updated_device_name: payload.folder_order_updated_device_name.clone(),
         },
     )?;
     tx.commit()
@@ -2737,7 +2774,7 @@ fn reorder_folders(
         .filter(|f| !f.is_deleted && !f.is_permanently_deleted)
         .map(|f| f.id.to_ascii_lowercase())
         .collect();
-    let mut prefs = load_ui_prefs(&dir);
+    let mut folder_order = load_folder_order(&conn)?;
     let mut seen = BTreeSet::new();
     let mut order = Vec::new();
     for id in ordered_ids {
@@ -2763,8 +2800,10 @@ fn reorder_folders(
             order.push(folder.id.clone());
         }
     }
-    prefs.folder_order = order;
-    save_ui_prefs(&dir, &prefs)
+    folder_order.folder_ids = order;
+    folder_order.updated_at_ms = now_ms();
+    folder_order.updated_device_name = load_device_name(&conn)?;
+    save_folder_order(&conn, &folder_order)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -3024,6 +3063,14 @@ fn create_folder(
     snapshot_current_vault(&conn, &dir, "新建文件夹前自动备份")?;
     folders.push(folder.clone());
     save_folders(&conn, &folders)?;
+    let mut folder_order = load_folder_order(&conn)?;
+    folder_order
+        .folder_ids
+        .retain(|id| !id.eq_ignore_ascii_case(&folder.id));
+    folder_order.folder_ids.push(folder.id.clone());
+    folder_order.updated_at_ms = now;
+    folder_order.updated_device_name = load_device_name(&conn)?;
+    save_folder_order(&conn, &folder_order)?;
     Ok(folder)
 }
 
@@ -3131,6 +3178,13 @@ fn delete_folder(
     save_accounts(&conn, &accounts)?;
     save_folders(&conn, &folders)?;
     save_all_regular_order(&conn, &all_order)?;
+    let mut folder_order = load_folder_order(&conn)?;
+    folder_order
+        .folder_ids
+        .retain(|folder_id| !folder_id.eq_ignore_ascii_case(&id));
+    folder_order.updated_at_ms = now;
+    folder_order.updated_device_name = device;
+    save_folder_order(&conn, &folder_order)?;
     Ok(())
 }
 
