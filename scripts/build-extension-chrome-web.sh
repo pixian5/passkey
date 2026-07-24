@@ -24,4 +24,7 @@ elif [[ -f "${TAURI_DIR}/dist/vendor/jsQR.js" ]]; then
   cp -p "${TAURI_DIR}/dist/vendor/jsQR.js" "${TARGET_DIR}/vendor/jsQR.js"
 fi
 
+cp -p "${ROOT_DIR}/core/pass_core/js/sync_merge_core.js" "${TARGET_DIR}/sync_merge_core.js"
+cp -p "${ROOT_DIR}/core/pass_core/js/sync_policy.js" "${TARGET_DIR}/sync_policy.js"
+
 echo "Pass Web 预览扩展已刷新：${TARGET_DIR}"

@@ -18,6 +18,7 @@ import {
   mergeAccountCollections,
   mergeFolderCollections,
   mergePasskeyCollections,
+  mergeSyncPayloads,
 } from "./sync_merge_core.js";
 import {
   FIXED_NEW_ACCOUNT_FOLDER_ID,
@@ -193,6 +194,48 @@ function main() {
     (rustMerged.passkeys || []).find((item) => item.credentialIdB64u === "credential-local")?.signCount,
     9
   );
+
+  const localPayload = structuredClone(vector.local);
+  const remotePayload = structuredClone(vector.remote);
+  const recordIds = {
+    "record-example": "00000000-0000-0000-0000-000000000101",
+    "record-local-only": "00000000-0000-0000-0000-000000000102",
+    "record-remote-only": "00000000-0000-0000-0000-000000000103",
+  };
+  for (const payload of [localPayload, remotePayload]) {
+    for (const account of payload.accounts) account.recordId = recordIds[account.recordId];
+  }
+  localPayload.allRegularAccountIds = [recordIds["record-local-only"], recordIds["record-example"]];
+  localPayload.allRegularOrderUpdatedAtMs = 300;
+  localPayload.allRegularOrderUpdatedDeviceName = "Mac";
+  localPayload.folderOrderIds = ["folder-main"];
+  localPayload.folderOrderUpdatedAtMs = 100;
+  localPayload.folderOrderUpdatedDeviceName = "Mac";
+  localPayload.folders[0].regularAccountIds = [recordIds["record-example"]];
+  localPayload.folders[0].regularOrderUpdatedAtMs = 100;
+  localPayload.folders[0].regularOrderUpdatedDeviceName = "Mac";
+  remotePayload.allRegularAccountIds = [recordIds["record-remote-only"], recordIds["record-example"]];
+  remotePayload.allRegularOrderUpdatedAtMs = 200;
+  remotePayload.allRegularOrderUpdatedDeviceName = "Chrome";
+  remotePayload.folderOrderIds = ["folder-remote", "folder-main"];
+  remotePayload.folderOrderUpdatedAtMs = 400;
+  remotePayload.folderOrderUpdatedDeviceName = "Chrome";
+  remotePayload.folders[0].regularAccountIds = [recordIds["record-example"]];
+  remotePayload.folders[0].regularOrderUpdatedAtMs = 500;
+  remotePayload.folders[0].regularOrderUpdatedDeviceName = "Chrome";
+  const jsPayload = mergeSyncPayloads(localPayload, remotePayload, helpers);
+  const rustPayload = runRustMerge(localPayload, remotePayload);
+  assert.deepEqual(jsPayload.allRegularAccountIds, rustPayload.allRegularAccountIds, "all-account order JS↔Rust parity");
+  assert.equal(jsPayload.allRegularOrderUpdatedAtMs, rustPayload.allRegularOrderUpdatedAtMs);
+  assert.equal(jsPayload.allRegularOrderUpdatedDeviceName, rustPayload.allRegularOrderUpdatedDeviceName);
+  assert.deepEqual(jsPayload.folderOrderIds, rustPayload.folderOrderIds, "folder order JS↔Rust parity");
+  assert.equal(jsPayload.folderOrderUpdatedAtMs, rustPayload.folderOrderUpdatedAtMs);
+  assert.equal(jsPayload.folderOrderUpdatedDeviceName, rustPayload.folderOrderUpdatedDeviceName);
+  const jsMainFolder = jsPayload.folders.find((item) => item.id === "folder-main");
+  const rustMainFolder = rustPayload.folders.find((item) => item.id === "folder-main");
+  assert.deepEqual(jsMainFolder.regularAccountIds, rustMainFolder.regularAccountIds, "folder account order JS↔Rust parity");
+  assert.equal(jsMainFolder.regularOrderUpdatedAtMs, rustMainFolder.regularOrderUpdatedAtMs);
+  assert.equal(jsMainFolder.regularOrderUpdatedDeviceName, rustMainFolder.regularOrderUpdatedDeviceName);
 
   const empty = golden.cases.find((item) => item.name === "empty-remote-safety");
   const safety = evaluateSyncSafety(
