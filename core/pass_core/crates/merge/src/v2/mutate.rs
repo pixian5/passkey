@@ -2,7 +2,7 @@
 //! Surfaces should call these instead of hand-rolling delete/restore field writes.
 
 use super::policy::FIXED_NEW_ACCOUNT_FOLDER_ID;
-use super::types::{Folder, PasswordAccount};
+use super::types::{AccountFolderMembershipState, Folder, PasswordAccount};
 
 /// Soft-delete an account into recycle bin. Returns false if already deleted/permanent.
 pub fn soft_delete_account(
@@ -85,6 +85,32 @@ pub fn set_account_pinned(
     account.updated_at_ms = now_ms;
     account.last_operated_device_name = device_name.to_string();
     Ok(())
+}
+
+
+/// Write a folder membership relation tombstone/state for one account.
+/// Does not mutate `folder_ids` itself; callers own membership list edits.
+pub fn mark_folder_membership(
+    account: &mut PasswordAccount,
+    folder_id: &str,
+    is_deleted: bool,
+    now_ms: i64,
+    device_name: &str,
+) {
+    let key = folder_id.trim().to_ascii_lowercase();
+    if key.is_empty() {
+        return;
+    }
+    account.folder_membership_states.insert(
+        key,
+        AccountFolderMembershipState {
+            is_deleted,
+            updated_at_ms: now_ms,
+            device_name: device_name.to_string(),
+        },
+    );
+    account.updated_at_ms = now_ms;
+    account.last_operated_device_name = device_name.to_string();
 }
 
 /// Permanent-delete a folder tombstone. Does not rewrite account membership lists.
@@ -185,5 +211,16 @@ mod tests {
             ..Default::default()
         };
         assert!(permanently_delete_folder(&mut fixed, 42, "D").is_err());
+    }
+
+    #[test]
+    fn mark_folder_membership_writes_relation_tombstone() {
+        let mut account = sample();
+        mark_folder_membership(&mut account, "Folder-1", true, 50, "E");
+        let state = account.folder_membership_states.get("folder-1").unwrap();
+        assert!(state.is_deleted);
+        assert_eq!(state.updated_at_ms, 50);
+        assert_eq!(state.device_name, "E");
+        assert_eq!(account.updated_at_ms, 50);
     }
 }

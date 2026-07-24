@@ -72,3 +72,20 @@ export function permanentlyDeleteFolder(folder, nowMs, deviceName) {
   return true;
 }
 
+export function markFolderMembership(account, folderId, isDeleted, nowMs, deviceName) {
+  if (!account) throw new Error("账号不存在");
+  const key = String(folderId || "").trim().toLowerCase();
+  if (!key) return false;
+  account.folderMembershipStates = {
+    ...(account.folderMembershipStates || {}),
+    [key]: {
+      isDeleted: Boolean(isDeleted),
+      updatedAtMs: nowMs,
+      deviceName: deviceName || "",
+    },
+  };
+  account.updatedAtMs = nowMs;
+  account.lastOperatedDeviceName = deviceName || "";
+  return true;
+}
+

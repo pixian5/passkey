@@ -1,7 +1,7 @@
 import { mergeSyncPayloads, evaluateSyncSafety } from "./sync_merge_core.js";
 import { syncAliasGroups } from "./sync_alias_core.js";
 import { accountsToBrowserCsv, browserCsvToAccountDrafts, escapeCsvCell, buildCsv } from "./csv_core.js";
-import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, restoreAccountFields, setAccountPinned, FIXED_NEW_ACCOUNT_FOLDER_ID } from "./vault_mutate_core.js";
+import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, restoreAccountFields, setAccountPinned, markFolderMembership, FIXED_NEW_ACCOUNT_FOLDER_ID } from "./vault_mutate_core.js";
 
 /*
  * Chrome adapter for the Tauri/Web workspace.
@@ -329,10 +329,7 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
     return changed;
   };
   const markFolderRelation = (account, folderId, isDeleted, updatedAtMs, deviceName) => {
-    account.folderMembershipStates = {
-      ...(account.folderMembershipStates || {}),
-      [text(folderId).toLowerCase()]: { isDeleted: Boolean(isDeleted), updatedAtMs, deviceName },
-    };
+    markFolderMembership(account, folderId, isDeleted, updatedAtMs, deviceName);
   };
   const removeFromOrders = (data, accountId) => {
     data.allRegularAccountIds = data.allRegularAccountIds.filter((item) => !sameId(item, accountId));

@@ -6,6 +6,7 @@ import {
   permanentlyDeleteFolder,
   restoreAccountFields,
   setAccountPinned,
+  markFolderMembership,
   FIXED_NEW_ACCOUNT_FOLDER_ID,
 } from "../../extension_chrome_web/vault_mutate_core.js";
 
@@ -60,4 +61,12 @@ test("permanentlyDeleteFolder keeps tombstone and rejects fixed folder", () => {
     () => permanentlyDeleteFolder({ id: FIXED_NEW_ACCOUNT_FOLDER_ID, name: "新账号" }, 41, "D"),
     /固定文件夹/
   );
+});
+
+test("markFolderMembership writes relation tombstone", () => {
+  const account = sample();
+  markFolderMembership(account, "Folder-1", true, 50, "E");
+  assert.equal(account.folderMembershipStates["folder-1"].isDeleted, true);
+  assert.equal(account.folderMembershipStates["folder-1"].updatedAtMs, 50);
+  assert.equal(account.lastOperatedDeviceName, "E");
 });

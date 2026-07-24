@@ -364,3 +364,13 @@ cd apps/extension_shared && npm test -- tests/command_matrix.test.mjs
 3. 已删除/永久删除文件夹不可重命名
 4. 重命名名称不可为空
 
+## 14. 阶段 H：文件夹关系墓碑写入对齐
+
+已交付：
+
+1. 共享 `mark_folder_membership` / `markFolderMembership`
+2. 删除文件夹时，移出账号写入关系墓碑
+3. 单账号/批量设置文件夹归属时，新增与移除都写入关系状态
+
+目的：避免“本机移出文件夹后，旧设备同步又把账号塞回来”。
+

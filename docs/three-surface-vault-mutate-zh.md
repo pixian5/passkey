@@ -13,6 +13,7 @@
 - `restore_account_fields(account, now_ms, device_name) -> Result<bool, String>`
 - `set_account_pinned(account, pinned, next_pin_order, now_ms, device_name) -> Result<(), String>`
 - `permanently_delete_folder(folder, now_ms, device_name) -> Result<bool, String>`
+- `mark_folder_membership(account, folder_id, is_deleted, now_ms, device_name)`
 
 ### JS (`vault_mutate_core.js`)
 
@@ -21,6 +22,7 @@
 - `restoreAccountFields(account, nowMs, deviceName)`
 - `setAccountPinned(account, pinned, nextPinOrder, nowMs, deviceName)`
 - `permanentlyDeleteFolder(folder, nowMs, deviceName)`
+- `markFolderMembership(account, folderId, isDeleted, nowMs, deviceName)`
 
 ## 边界
 

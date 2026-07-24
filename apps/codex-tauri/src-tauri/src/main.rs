@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use pass_merge::v2::{
     normalize_all_regular_order, normalize_folder_regular_order, normalize_folder_regular_orders,
+    mark_folder_membership as mark_folder_membership_mutation,
     permanently_delete_account as mark_account_permanently_deleted,
     permanently_delete_folder as permanently_delete_folder_mutation,
     restore_account_fields as restore_account_mutation,
@@ -684,6 +685,7 @@ fn set_accounts_folders(
                     .iter()
                     .any(|folder_id| folder_id.eq_ignore_ascii_case(existing))
             });
+        let previous = account.folder_ids.clone();
         let newly_added = normalized_folders
             .iter()
             .enumerate()
@@ -692,8 +694,25 @@ fn set_accounts_folders(
             .collect::<Vec<_>>();
         let is_pinned = account.is_pinned;
         if !same_membership {
+            let removed_folder_ids: Vec<String> = previous
+                .iter()
+                .filter(|folder_id| {
+                    !normalized_folders
+                        .iter()
+                        .any(|current| current.eq_ignore_ascii_case(folder_id))
+                })
+                .cloned()
+                .collect();
             account.folder_ids = normalized_folders.clone();
             account.folder_id = normalized_folders.first().cloned();
+            for folder_id in &normalized_folders {
+                if !previous.iter().any(|current| current.eq_ignore_ascii_case(folder_id)) {
+                    mark_folder_membership_mutation(account, folder_id, false, now, &device);
+                }
+            }
+            for folder_id in &removed_folder_ids {
+                mark_folder_membership_mutation(account, folder_id, true, now, &device);
+            }
             account.updated_at_ms = now;
             account.last_operated_device_name = device.clone();
         }
@@ -3159,8 +3178,7 @@ fn delete_folder(
             }
         }
         if was_in_folder {
-            a.updated_at_ms = now;
-            a.last_operated_device_name = device.clone();
+            mark_folder_membership_mutation(a, &id, true, now, &device);
         }
     }
     let mut all_order = load_all_regular_order(&conn)?;
@@ -3234,13 +3252,29 @@ fn set_account_folders(
     let mut added_folder_ids = Vec::new();
     for a in &mut accounts {
         if account_matches_id(a, &id) {
+            let previous = a.folder_ids.clone();
             added_folder_ids = normalized
                 .iter()
                 .filter(|folder_id| !account_in_folder(a, folder_id))
                 .cloned()
                 .collect();
+            let removed_folder_ids: Vec<String> = previous
+                .iter()
+                .filter(|folder_id| {
+                    !normalized
+                        .iter()
+                        .any(|current| current.eq_ignore_ascii_case(folder_id))
+                })
+                .cloned()
+                .collect();
             a.folder_ids = normalized.clone();
             a.folder_id = normalized.first().cloned();
+            for folder_id in &added_folder_ids {
+                mark_folder_membership_mutation(a, folder_id, false, now, &device);
+            }
+            for folder_id in &removed_folder_ids {
+                mark_folder_membership_mutation(a, folder_id, true, now, &device);
+            }
             a.updated_at_ms = now;
             a.last_operated_device_name = device.clone();
             found = true;

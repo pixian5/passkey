@@ -28,6 +28,7 @@ use pass_merge::v2::{
     soft_delete_account,
     permanently_delete_account,
     permanently_delete_folder,
+    mark_folder_membership,
     restore_account_fields,
     set_account_pinned,
 };
@@ -2297,6 +2298,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                     .iter_mut()
                     .find(|item| account_key(item).eq_ignore_ascii_case(account_id))
                     .ok_or_else(|| "账号已不存在".to_string())?;
+                let previous = account.folder_ids.clone();
                 let same_membership = account.folder_ids.len() == normalized_folders.len()
                     && account.folder_ids.iter().all(|existing| {
                         normalized_folders
@@ -2320,8 +2322,25 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                     .collect::<Vec<_>>();
                 let is_pinned = account.is_pinned;
                 if !same_membership {
+                    let removed_folder_ids: Vec<String> = previous
+                        .iter()
+                        .filter(|folder_id| {
+                            !normalized_folders
+                                .iter()
+                                .any(|current| current.eq_ignore_ascii_case(folder_id))
+                        })
+                        .cloned()
+                        .collect();
                     account.folder_ids = normalized_folders.clone();
                     account.folder_id = normalized_folders.first().cloned();
+                    for folder_id in &normalized_folders {
+                        if !previous.iter().any(|current| current.eq_ignore_ascii_case(folder_id)) {
+                            mark_folder_membership(account, folder_id, false, now, &device);
+                        }
+                    }
+                    for folder_id in &removed_folder_ids {
+                        mark_folder_membership(account, folder_id, true, now, &device);
+                    }
                     account.updated_at_ms = now;
                     account.last_operated_device_name = device.clone();
                 }
@@ -2769,8 +2788,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                     a.folder_id = a.folder_ids.first().cloned();
                 }
                 if was {
-                    a.updated_at_ms = now;
-                    a.last_operated_device_name = device.clone();
+                    mark_folder_membership(a, &id, true, now, &device);
                 }
             }
             normalize_order_state(&mut v.data);
@@ -2809,13 +2827,19 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 a.folder_ids = ids.clone();
                 a.folder_id = ids.first().cloned();
                 now = now_ms();
-                a.updated_at_ms = now;
                 device = v.data.device_name.clone();
+                for folder_id in &added_folder_ids {
+                    mark_folder_membership(a, folder_id, false, now, &device);
+                }
+                for folder_id in &removed_folder_ids {
+                    mark_folder_membership(a, folder_id, true, now, &device);
+                }
+                a.updated_at_ms = now;
+                a.last_operated_device_name = device.clone();
             }
             for folder_id in added_folder_ids {
                 move_account_to_folder_top(&mut v.data.folders, &folder_id, &id, now, &device);
             }
-            let _ = removed_folder_ids;
             normalize_order_state(&mut v.data);
             v.save()?;
             Ok(json!(null))
