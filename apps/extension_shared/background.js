@@ -1140,7 +1140,9 @@ async function handleSaveFromLogin(payload) {
 
   const next = await getAccounts();
   const existing = next.find((account) => {
-    return !account.isDeleted && accountMatchesDomain(account, domain) && account.username === username;
+    return !account.isDeleted && !account.isPermanentlyDeleted
+      && accountMatchesDomain(account, domain)
+      && account.username === username;
   });
 
   if (existing) {
@@ -1197,7 +1199,7 @@ async function handleContentGetAccounts() {
   return {
     ok: true,
     accounts: accounts
-      .filter((account) => !account?.isDeleted)
+      .filter((account) => !account?.isDeleted && !account?.isPermanentlyDeleted)
       .map((account) => ({
         sites: normalizeSites(account?.sites || []),
         username: String(account?.username || ""),
@@ -1220,7 +1222,7 @@ async function handleContentCheckLogin(payload, sender) {
     return { ok: true, shouldPrompt: false };
   }
   const accounts = await getAccounts();
-  const active = accounts.filter((item) => !item.isDeleted);
+  const active = accounts.filter((item) => !item.isDeleted && !item.isPermanentlyDeleted);
   const exact = active.some((account) => {
     return accountMatchesDomain(account, domain)
       && account.username === username
@@ -1264,7 +1266,9 @@ async function upsertAccountForPasskey(accountHint) {
   let matchIndexes = [];
   for (let i = 0; i < allAccounts.length; i += 1) {
     const account = allAccounts[i];
-    if (accountMatchesDomain(account, domain) && normalizeUsername(account.username) === username) {
+    if (!account.isDeleted && !account.isPermanentlyDeleted
+        && accountMatchesDomain(account, domain)
+        && normalizeUsername(account.username) === username) {
       matchIndexes.push(i);
     }
   }
@@ -1275,7 +1279,8 @@ async function upsertAccountForPasskey(accountHint) {
     const fallbackIndexes = [];
     for (let i = 0; i < allAccounts.length; i += 1) {
       const account = allAccounts[i];
-      if (!account.isDeleted && accountMatchesDomain(account, domain)) {
+      if (!account.isDeleted && !account.isPermanentlyDeleted
+          && accountMatchesDomain(account, domain)) {
         fallbackIndexes.push(i);
       }
     }

@@ -1125,7 +1125,7 @@ async function exportBrowserPasswordCsv(format) {
     const localAccounts = Array.isArray(localStored.accounts)
       ? localStored.accounts.map(normalizeAccountShape)
       : [];
-    const activeAccounts = localAccounts.filter((account) => !account.isDeleted);
+    const activeAccounts = localAccounts.filter((account) => !account.isDeleted && !account.isPermanentlyDeleted);
     const csv = buildBrowserPasswordCsv(activeAccounts, browser);
     const fileName = `pass-${browser}-passwords-${formatFileTimestamp(Date.now())}.csv`;
     await downloadTextFile(fileName, csv, "text/csv;charset=utf-8");
@@ -3133,7 +3133,7 @@ function renderRecycleAccounts(inputAccounts) {
 
 function renderSidebar(inputAccounts) {
   const accounts = (Array.isArray(inputAccounts) ? inputAccounts : []).map(normalizeAccountShape);
-  const active = accounts.filter((item) => !item.isDeleted);
+  const active = accounts.filter((item) => !item.isDeleted && !item.isPermanentlyDeleted);
   const recycle = accounts.filter((item) => item.isDeleted && !item.isPermanentlyDeleted);
   const passkeys = active.filter((item) => (item.passkeyCredentialIds || []).length > 0);
   const totp = active.filter((item) => hasTotpSecret(item.totpSecret));
@@ -3217,7 +3217,7 @@ function buildSettingsAccountMetaHtml(account) {
 
 function currentViewAccounts(inputAccounts) {
   const accounts = (Array.isArray(inputAccounts) ? inputAccounts : []).map(normalizeAccountShape);
-  const active = accounts.filter((item) => !item.isDeleted);
+  const active = accounts.filter((item) => !item.isDeleted && !item.isPermanentlyDeleted);
   const recycle = accounts.filter((item) => item.isDeleted && !item.isPermanentlyDeleted);
 
   if (activeAccountView === "recycle") {

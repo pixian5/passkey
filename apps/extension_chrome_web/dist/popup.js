@@ -1570,7 +1570,7 @@
   function getVisibleAccountsForCurrentMode({ includeSearch = true } = {}) {
     const showRecycleBinMode = viewMode === "recycle";
     const showAllAccountsMode = viewMode === "all";
-    let visibleAccounts = showRecycleBinMode ? accounts.filter((account) => account.isDeleted && !account.isPermanentlyDeleted) : accounts.filter((account) => !account.isDeleted);
+    let visibleAccounts = showRecycleBinMode ? accounts.filter((account) => account.isDeleted && !account.isPermanentlyDeleted) : accounts.filter((account) => !account.isDeleted && !account.isPermanentlyDeleted);
     if (!showAllAccountsMode) {
       visibleAccounts = visibleAccounts.filter(
         (account) => isAccountMatchCurrentDomain(account, currentDomain)
