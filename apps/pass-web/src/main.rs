@@ -1744,6 +1744,10 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 "folderDedup": true,
                 "selfHostedSync": true,
                 "localSnapshots": true,
+                "syncSafetyEvaluation": true,
+                "fieldLevelTimestamps": true,
+                "relationTombstones": true,
+                "domainAliasSync": true,
                 "sharedWebUi": true
             },
             "featureParityTarget": [

@@ -1,4 +1,5 @@
-import { mergeSyncPayloads } from "./sync_merge_core.js";
+import { mergeSyncPayloads, evaluateSyncSafety } from "./sync_merge_core.js";
+import { syncAliasGroups } from "./sync_alias_core.js";
 
 /*
  * Chrome adapter for the Tauri/Web workspace.
@@ -15,7 +16,8 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
   const SYNC_KEY = "pass.web.workspace.sync.v1";
   const LOCK_KEY = "pass.web.workspace.lock.v1";
   const MAX_HISTORY = 100;
-  const MAX_SNAPSHOTS = 5;
+  const MAX_SNAPSHOTS = 20;
+  const LOCK_PBKDF2_ITERATIONS = 310000;
   let storePromise;
   let dataKeyPromise;
 
@@ -50,6 +52,7 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
     const recordId = text(source.recordId || source.accountId || source.id) || id("account");
     const createdAtMs = Number(source.createdAtMs) || now();
     const updatedAtMs = Number(source.updatedAtMs) || createdAtMs;
+    const deviceName = text(source.lastOperatedDeviceName || source.createdDeviceName) || "Chrome";
     return {
       ...clone(source),
       id: text(source.id) || recordId,
@@ -58,6 +61,7 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
       sites,
       canonicalSite: text(source.canonicalSite) || sites[0] || "",
       username: String(source.username ?? ""),
+      usernameAtCreate: String(source.usernameAtCreate ?? source.username ?? ""),
       password: String(source.password ?? ""),
       totpSecret: String(source.totpSecret ?? ""),
       recoveryCodes: String(source.recoveryCodes ?? ""),
@@ -68,10 +72,28 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
       isPinned: Boolean(source.isPinned),
       pinnedSortOrder: source.pinnedSortOrder == null ? null : Number(source.pinnedSortOrder),
       regularSortOrder: source.regularSortOrder == null ? null : Number(source.regularSortOrder),
+      folderMembershipStates: clone(source.folderMembershipStates || {}),
+      siteAliasStates: clone(source.siteAliasStates || {}),
+      passkeyLinkStates: clone(source.passkeyLinkStates || {}),
+      usernameUpdatedAtMs: Number(source.usernameUpdatedAtMs) || updatedAtMs,
+      usernameUpdatedDeviceName: text(source.usernameUpdatedDeviceName) || deviceName,
+      passwordUpdatedAtMs: Number(source.passwordUpdatedAtMs) || updatedAtMs,
+      passwordUpdatedDeviceName: text(source.passwordUpdatedDeviceName) || deviceName,
+      totpUpdatedAtMs: Number(source.totpUpdatedAtMs) || updatedAtMs,
+      totpUpdatedDeviceName: text(source.totpUpdatedDeviceName) || deviceName,
+      recoveryCodesUpdatedAtMs: Number(source.recoveryCodesUpdatedAtMs) || updatedAtMs,
+      recoveryCodesUpdatedDeviceName: text(source.recoveryCodesUpdatedDeviceName) || deviceName,
+      noteUpdatedAtMs: Number(source.noteUpdatedAtMs) || updatedAtMs,
+      noteUpdatedDeviceName: text(source.noteUpdatedDeviceName) || deviceName,
+      passkeyUpdatedAtMs: Number(source.passkeyUpdatedAtMs) || updatedAtMs,
+      passkeyUpdatedDeviceName: text(source.passkeyUpdatedDeviceName) || deviceName,
       createdAtMs,
       updatedAtMs,
       deletedAtMs: Number(source.deletedAtMs || 0) || null,
       deletedFromFolderIds: unique(source.deletedFromFolderIds || []),
+      deletedDeviceName: text(source.deletedDeviceName),
+      lastOperatedDeviceName: deviceName,
+      createdDeviceName: text(source.createdDeviceName) || deviceName,
     };
   };
 
@@ -90,6 +112,8 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
       isDeleted: Boolean(source.isDeleted),
       isPermanentlyDeleted: Boolean(source.isPermanentlyDeleted),
       updatedAtMs: Number(source.updatedAtMs) || now(),
+      deletedAtMs: Number(source.deletedAtMs || 0) || null,
+      deletedDeviceName: text(source.deletedDeviceName),
     };
   };
 
@@ -216,6 +240,12 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
             accounts: clone(data?.accounts || []),
             folders: clone(data?.folders || []),
             passkeys: clone(data?.passkeys || []),
+            allRegularAccountIds: clone(data?.allRegularAccountIds || []),
+            allRegularOrderUpdatedAtMs: Number(data?.allRegularOrderUpdatedAtMs) || 0,
+            allRegularOrderUpdatedDeviceName: text(data?.allRegularOrderUpdatedDeviceName),
+            folderOrderIds: clone(data?.folderOrderIds || []),
+            folderOrderUpdatedAtMs: Number(data?.folderOrderUpdatedAtMs) || 0,
+            folderOrderUpdatedDeviceName: text(data?.folderOrderUpdatedDeviceName),
           },
         }, (result) => {
           if (globalThis.chrome.runtime.lastError) {
@@ -245,6 +275,11 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
       const store = await loadStore();
       const before = clone(store.data);
       const result = await callback(store.data);
+      const aliasResult = syncAliasGroups(store.data.accounts, syncMergeHelpers, {
+        nowMs: now(),
+        deviceName: store.data.deviceName || "Chrome",
+      });
+      store.data.accounts = aliasResult.accounts;
       const after = clone(store.data);
       if (JSON.stringify(before) !== JSON.stringify(after)) {
         const entry = { id: id("operation"), title: text(title) || "本地操作", createdAtMs: now(), before, after };
@@ -276,6 +311,24 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
     folder.regularOrderUpdatedAtMs = now();
     folder.regularOrderUpdatedDeviceName = data.deviceName || "Chrome";
   };
+  const markAccountField = (account, field, value, updatedAtMs, deviceName) => {
+    const changed = JSON.stringify(account[field] ?? null) !== JSON.stringify(value ?? null);
+    account[field] = clone(value);
+    if (changed) {
+      const clockField = ({ totpSecret: "totp", recoveryCodes: "recoveryCodes" })[field] || field;
+      account[`${clockField}UpdatedAtMs`] = updatedAtMs;
+      account[`${clockField}UpdatedDeviceName`] = deviceName;
+      account.updatedAtMs = updatedAtMs;
+      account.lastOperatedDeviceName = deviceName;
+    }
+    return changed;
+  };
+  const markFolderRelation = (account, folderId, isDeleted, updatedAtMs, deviceName) => {
+    account.folderMembershipStates = {
+      ...(account.folderMembershipStates || {}),
+      [text(folderId).toLowerCase()]: { isDeleted: Boolean(isDeleted), updatedAtMs, deviceName },
+    };
+  };
   const removeFromOrders = (data, accountId) => {
     data.allRegularAccountIds = data.allRegularAccountIds.filter((item) => !sameId(item, accountId));
     touchAllRegularOrder(data);
@@ -293,6 +346,8 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
     return next;
   };
   const setMembership = (data, account, nextIds) => {
+    const updatedAtMs = now();
+    const deviceName = data.deviceName || "Chrome";
     const oldIds = new Set(account.folderIds.map((item) => item.toLowerCase()));
     const next = unique(nextIds).filter((folderId) => visibleFolders(data).some((folder) => sameId(folder.id, folderId)));
     const nextSet = new Set(next.map((item) => item.toLowerCase()));
@@ -303,12 +358,16 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
       if (had && !has) {
         folder.regularAccountIds = folder.regularAccountIds.filter((item) => !sameId(item, account.recordId));
         touchFolderRegularOrder(data, folder);
+        markFolderRelation(account, folder.id, true, updatedAtMs, deviceName);
       }
       if (!had && has && !account.isDeleted) {
         folder.regularAccountIds = addToTop(folder.regularAccountIds, account.recordId);
         touchFolderRegularOrder(data, folder);
+        markFolderRelation(account, folder.id, false, updatedAtMs, deviceName);
       }
     }
+    account.updatedAtMs = Math.max(Number(account.updatedAtMs) || 0, updatedAtMs);
+    account.lastOperatedDeviceName = deviceName;
   };
 
   const normalizePayload = (payload) => {
@@ -332,6 +391,30 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
       folderOrderUpdatedDeviceName: text(source.folderOrderUpdatedDeviceName),
     };
   };
+  const domainAliasGroups = [
+    ["apple.com", "apple.com.cn", "icloud.com", "icloud.com.cn"],
+    ["qq.com", "wx.qq.com"],
+    ["baidu.com", "passport.baidu.com", "pan.baidu.com"],
+    ["sina.com", "mail.sina.com", "weibo.com"],
+    ["github.com", "gist.github.com"],
+    ["gitlab.com", "about.gitlab.com"],
+    ["google.com", "accounts.google.com"],
+    ["youtube.com", "studio.youtube.com"],
+    ["x.com", "twitter.com"],
+    ["facebook.com", "messenger.com"],
+    ["amazon.com", "smile.amazon.com"],
+    ["microsoft.com", "microsoftonline.com", "microsoftonline", "login.microsoftonline.com", "login.microsoft.com", "account.microsoft.com", "live.com", "hotmail.com", "outlook.com", "account.live.com", "office.com", "outlook.office.com", "microsoft365.com", "office365.com", "azure.com", "msn.com"],
+    ["paypal.com"],
+    ["netflix.com", "help.netflix.com"],
+    ["spotify.com", "open.spotify.com"],
+    ["linkedin.com"],
+    ["dropbox.com"],
+  ];
+  const domainAliasGroupKey = (value) => {
+    const domain = text(value).toLowerCase();
+    const group = domainAliasGroups.find((aliases) => aliases.some((alias) => domain === alias || domain.endsWith(`.${alias}`)));
+    return group ? group[0] : "";
+  };
   const syncMergeHelpers = {
     normalizeAccountShape: normalizeAccount,
     normalizeFolderIdList: (values) => unique(values).map((value) => value.toLowerCase()),
@@ -345,6 +428,8 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
       const suffix = labels.slice(-2).join(".");
       return suffixes.has(suffix) && labels.length >= 3 ? labels.slice(-3).join(".") : suffix;
     },
+    normalizeDomain: (value) => text(value).toLowerCase().replace(/^https?:\/\//, "").split("/")[0].replace(/\.$/, ""),
+    domainAliasGroupKey,
     normalizePasskeyCredentialIds: (values) => unique(values),
     stableUuidFromText: (value) => text(value),
     normalizePasskeyShape: (value) => ({ ...clone(value || {}), credentialIdB64u: text(value?.credentialIdB64u || value?.credentialId || value?.id) }),
@@ -354,7 +439,14 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
     fixedNewAccountFolderId: "f16a2c4e-4a2a-43d5-a670-3f1767d41001",
     fixedNewAccountFolderName: "新账号",
   };
-  const mergePayload = (local, remote) => mergeSyncPayloads(local, remote, syncMergeHelpers);
+  const mergePayload = (local, remote) => {
+    const merged = mergeSyncPayloads(local, remote, syncMergeHelpers);
+    const aliasResult = syncAliasGroups(merged.accounts, syncMergeHelpers, {
+      nowMs: now(),
+      deviceName: local?.deviceName || "Chrome",
+    });
+    return { ...merged, accounts: aliasResult.accounts };
+  };
   const payloadFromData = (data) => ({ accounts: clone(data.accounts), folders: clone(data.folders), passkeys: clone(data.passkeys), allRegularAccountIds: clone(data.allRegularAccountIds), allRegularOrderUpdatedAtMs: Number(data.allRegularOrderUpdatedAtMs) || 0, allRegularOrderUpdatedDeviceName: text(data.allRegularOrderUpdatedDeviceName), folderOrderIds: clone(data.folderOrderIds), folderOrderUpdatedAtMs: Number(data.folderOrderUpdatedAtMs) || 0, folderOrderUpdatedDeviceName: text(data.folderOrderUpdatedDeviceName) });
   const bytesToBase64 = (bytes) => btoa(bytesToBinary(bytes));
   const base64ToBytes = (value) => { try { return Uint8Array.from(atob(String(value || "")), (char) => char.charCodeAt(0)); } catch (_) { return new Uint8Array(); } };
@@ -397,15 +489,46 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
       webdavUsername: "", webdavPassword: "", syncPrimarySource: "selfHosted",
     };
   };
+  const syncDefault = () => ({ enabled: false, baseUrl: "", authToken: "", encryptionKey: "", mode: "merge" });
   const getSync = async () => {
     const result = await chrome.storage.local.get([SYNC_KEY]);
-    return result?.[SYNC_KEY] || { enabled: false, baseUrl: "", authToken: "", encryptionKey: "", mode: "merge" };
+    const stored = result?.[SYNC_KEY];
+    const decoded = await decryptStore(stored).catch(() => null);
+    const settings = decoded?.syncSettings || (decoded && !decoded.ciphertextBase64 ? decoded : null);
+    const normalized = { ...syncDefault(), ...(settings || {}) };
+    if (settings && stored && !stored.ciphertextBase64) await saveSync(normalized);
+    return normalized;
   };
-  const lockDefault = () => ({ enabled: false, locked: false, lockPolicy: "onceUntilQuit", idleLockMinutes: 5, preferBiometrics: false, backgroundLockDelaySeconds: 60, biometricReady: false });
+  const saveSync = async (settings) => {
+    await chrome.storage.local.set({ [SYNC_KEY]: await encryptStore({ syncSettings: clone(settings) }) });
+    return settings;
+  };
+  const lockDefault = () => ({ enabled: false, locked: false, lockPolicy: "onceUntilQuit", idleLockMinutes: 5, preferBiometrics: false, backgroundLockDelaySeconds: 60, biometricReady: false, saltBase64: "", verifierBase64: "", iterations: LOCK_PBKDF2_ITERATIONS, lastActivityAtMs: 0 });
   const getLock = async () => {
     const result = await chrome.storage.local.get([LOCK_KEY]);
     return { ...lockDefault(), ...(result?.[LOCK_KEY] || {}) };
   };
+  const deriveLockVerifier = async (password, saltBase64, iterations = LOCK_PBKDF2_ITERATIONS) => {
+    const passwordKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(String(password)), "PBKDF2", false, ["deriveBits"]);
+    const salt = base64ToBytesEarly(saltBase64);
+    const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations: Math.max(1, Number(iterations) || LOCK_PBKDF2_ITERATIONS), hash: "SHA-256" }, passwordKey, 256);
+    return new Uint8Array(bits);
+  };
+  const equalBytes = (left, right) => left.length === right.length && left.every((value, index) => value === right[index]);
+  const verifyLockPassword = async (lock, password) => {
+    if (!lock.enabled || !lock.saltBase64 || !lock.verifierBase64) throw new Error("应用锁未启用");
+    const actual = await deriveLockVerifier(password, lock.saltBase64, lock.iterations);
+    if (!equalBytes(actual, base64ToBytesEarly(lock.verifierBase64))) throw new Error("主密码错误");
+  };
+  const refreshLock = async () => {
+    const lock = await getLock();
+    if (lock.enabled && !lock.locked && lock.lockPolicy === "idleTimeout" && Number(lock.idleLockMinutes) > 0 && now() - Number(lock.lastActivityAtMs || 0) >= Number(lock.idleLockMinutes) * 60000) {
+      lock.locked = true;
+      await saveJsonKey(LOCK_KEY, lock);
+    }
+    return lock;
+  };
+  const lockExemptCommands = new Set(["health_check", "get_lock_state", "get_sync_settings", "lock_enable", "lock_unlock", "lock_unlock_biometric", "lock_biometric_available", "lock_touch"]);
   const saveJsonKey = async (key, value) => { await chrome.storage.local.set({ [key]: clone(value) }); return value; };
 
 
@@ -433,7 +556,15 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
   };
 
   const invokeCommand = async (command, args = {}) => {
-    const store = await loadStore();
+    const lock = await refreshLock();
+    if (lock.enabled && lock.locked && !lockExemptCommands.has(command)) {
+      throw new Error("应用已锁定，请先解锁");
+    }
+    if (lock.enabled && !lock.locked && !lockExemptCommands.has(command)) {
+      lock.lastActivityAtMs = now();
+      await saveJsonKey(LOCK_KEY, lock);
+    }
+    const store = lockExemptCommands.has(command) ? null : await loadStore();
     switch (command) {
       case "get_app_state": {
         const data = store.data;
@@ -447,19 +578,19 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
       }
       case "get_ui_prefs": return getPrefs();
       case "set_ui_prefs": return saveJsonKey(PREFS_KEY, { ...(await getPrefs()), ...(args.prefs || {}) });
-      case "get_sync_settings": return getSync();
-      case "set_sync_settings": return saveJsonKey(SYNC_KEY, { ...(await getSync()), ...(args.settings || {}) });
+      case "get_sync_settings": { const settings = await getSync(); return lock.enabled && lock.locked ? { ...settings, authToken: "", encryptionKey: "" } : settings; }
+      case "set_sync_settings": return saveSync({ ...(await getSync()), ...(args.settings || {}) });
       case "set_device_name": return mutate("修改设备名称", (data) => { data.deviceName = text(args.deviceName); return data.deviceName; });
       case "get_lock_state": return getLock();
       case "lock_biometric_available": return false;
-      case "lock_touch": return true;
+      case "lock_touch": { const current = await getLock(); if (current.enabled && !current.locked) { current.lastActivityAtMs = now(); await saveJsonKey(LOCK_KEY, current); } return true; }
       case "lock_now": return saveJsonKey(LOCK_KEY, { ...(await getLock()), locked: true });
-      case "lock_unlock": { const lock = await getLock(); if (!lock.enabled) return lock; if (!text(args.password)) throw new Error("请输入主密码"); return saveJsonKey(LOCK_KEY, { ...lock, locked: false }); }
+      case "lock_unlock": { const current = await getLock(); if (!current.enabled) return current; await verifyLockPassword(current, args.password); current.locked = false; current.lastActivityAtMs = now(); return saveJsonKey(LOCK_KEY, current); }
       case "lock_unlock_biometric": throw new Error("当前 Chrome 测试插件不提供系统指纹解锁");
-      case "lock_enable": { const lock = { ...(await getLock()), enabled: true, locked: false, lockPolicy: args.lockPolicy || "onceUntilQuit", idleLockMinutes: Number(args.idleLockMinutes || 5), preferBiometrics: false, biometricReady: false }; return saveJsonKey(LOCK_KEY, lock); }
-      case "lock_disable": return saveJsonKey(LOCK_KEY, { ...lockDefault() });
-      case "lock_save_preferences": return saveJsonKey(LOCK_KEY, { ...(await getLock()), lockPolicy: args.lockPolicy || "onceUntilQuit", idleLockMinutes: Number(args.idleLockMinutes || 5), backgroundLockDelaySeconds: Number(args.backgroundLockDelaySeconds || 60), preferBiometrics: false });
-      case "lock_change_password": return getLock();
+      case "lock_enable": { const existing = await getLock(); if (existing.enabled) throw new Error("应用锁已启用，请先关闭后再设置新的主密码"); const password = String(args.password || ""); const confirm = String(args.confirm || ""); if (!password.trim()) throw new Error("请输入主密码"); if (password !== confirm) throw new Error("两次输入的主密码不一致"); const salt = crypto.getRandomValues(new Uint8Array(16)); const verifier = await deriveLockVerifier(password, bytesToBase64Early(salt)); const next = { ...existing, enabled: true, locked: false, lockPolicy: args.lockPolicy || "onceUntilQuit", idleLockMinutes: Number(args.idleLockMinutes || 5), preferBiometrics: false, biometricReady: false, saltBase64: bytesToBase64Early(salt), verifierBase64: bytesToBase64Early(verifier), iterations: LOCK_PBKDF2_ITERATIONS, lastActivityAtMs: now() }; return saveJsonKey(LOCK_KEY, next); }
+      case "lock_disable": { const current = await getLock(); await verifyLockPassword(current, args.password); return saveJsonKey(LOCK_KEY, lockDefault()); }
+      case "lock_save_preferences": { const current = await getLock(); if (!current.enabled) throw new Error("应用锁未启用"); return saveJsonKey(LOCK_KEY, { ...current, lockPolicy: args.lockPolicy || "onceUntilQuit", idleLockMinutes: Number(args.idleLockMinutes || 5), backgroundLockDelaySeconds: Number(args.backgroundLockDelaySeconds || 60), preferBiometrics: false, lastActivityAtMs: now() }); }
+      case "lock_change_password": { const current = await getLock(); await verifyLockPassword(current, args.oldPassword); const password = String(args.newPassword || ""); if (!password.trim()) throw new Error("请输入新主密码"); if (password !== String(args.confirm || "")) throw new Error("两次输入的新主密码不一致"); const salt = crypto.getRandomValues(new Uint8Array(16)); const verifier = await deriveLockVerifier(password, bytesToBase64Early(salt)); return saveJsonKey(LOCK_KEY, { ...current, saltBase64: bytesToBase64Early(salt), verifierBase64: bytesToBase64Early(verifier), iterations: LOCK_PBKDF2_ITERATIONS, locked: false, lastActivityAtMs: now() }); }
       case "get_undo_status": { const entry = store.undo.at(-1); return entry ? { title: entry.title, createdAtMs: entry.createdAtMs } : null; }
       case "get_redo_status": { const entry = store.redo.at(-1); return entry ? { title: entry.title, createdAtMs: entry.createdAtMs } : null; }
       case "get_operation_history": return [...store.undo.map((entry) => ({ ...entry, stack: "undo" })), ...store.redo.map((entry) => ({ ...entry, stack: "redo" }))].sort((a, b) => b.createdAtMs - a.createdAtMs).slice(0, MAX_HISTORY);
@@ -469,21 +600,42 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
         const input = args.input || {};
         return mutate("新建账号", (data) => { const requestedFolderIds = input.folderIds || []; const account = normalizeAccount({ ...input, folderIds: [], recordId: id("account"), createdAtMs: now(), updatedAtMs: now(), isDeleted: false }); data.accounts.push(account); data.allRegularAccountIds = addToTop(data.allRegularAccountIds, account.recordId); touchAllRegularOrder(data); setMembership(data, account, requestedFolderIds); return clone(account); });
       }
-      case "update_account": return mutate("编辑账号", (data) => { const account = findAccount(data, args.id); if (!account) throw new Error("账号不存在"); Object.assign(account, clone(args.input || {}), { updatedAtMs: now() }); account.sites = unique(account.sites); account.canonicalSite = account.sites[0] || account.canonicalSite || ""; return clone(account); });
+      case "update_account": return mutate("编辑账号", (data) => {
+        const account = findAccount(data, args.id);
+        if (!account) throw new Error("账号不存在");
+        const input = args.input || {};
+        const updatedAtMs = now();
+        const deviceName = data.deviceName || "Chrome";
+        markAccountField(account, "username", String(input.username ?? ""), updatedAtMs, deviceName);
+        markAccountField(account, "password", String(input.password ?? ""), updatedAtMs, deviceName);
+        markAccountField(account, "totpSecret", String(input.totpSecret ?? ""), updatedAtMs, deviceName);
+        markAccountField(account, "recoveryCodes", String(input.recoveryCodes ?? ""), updatedAtMs, deviceName);
+        markAccountField(account, "note", String(input.note ?? ""), updatedAtMs, deviceName);
+        const sites = unique(input.sites || []);
+        const previousSites = new Set(account.sites || []);
+        account.sites = sites;
+        account.canonicalSite = sites[0] || account.canonicalSite || "";
+        account.siteAliasStates = { ...(account.siteAliasStates || {}) };
+        for (const site of previousSites) if (!sites.some((value) => value.toLowerCase() === site.toLowerCase())) account.siteAliasStates[site.toLowerCase()] = { isDeleted: true, updatedAtMs, deviceName };
+        for (const site of sites) account.siteAliasStates[site.toLowerCase()] = { isDeleted: false, updatedAtMs, deviceName };
+        account.updatedAtMs = Math.max(Number(account.updatedAtMs) || 0, updatedAtMs);
+        account.lastOperatedDeviceName = deviceName;
+        return clone(account);
+      });
       case "set_account_folders": return mutate("修改账号文件夹", (data) => { const account = findAccount(data, args.id); if (!account) throw new Error("账号不存在"); setMembership(data, account, args.folderIds || []); account.updatedAtMs = now(); return clone(account.folderIds); });
       case "set_accounts_folders": return mutate("批量修改账号文件夹", (data) => { for (const accountId of unique(args.accountIds || [])) { const account = findAccount(data, accountId); if (account && !account.isDeleted) setMembership(data, account, args.folderIds || []); } return true; });
       case "create_folder": return mutate("新建文件夹", (data) => { const folder = normalizeFolder({ id: id("folder"), name: args.name, updatedAtMs: now() }); data.folders.push(folder); data.folderOrderIds.push(folder.id); data.folderOrderUpdatedAtMs = now(); data.folderOrderUpdatedDeviceName = data.deviceName || "Chrome"; return clone(folder); });
       case "rename_folder": return mutate("重命名文件夹", (data) => { const folder = findFolder(data, args.id); if (!folder) throw new Error("文件夹不存在"); folder.name = text(args.name) || folder.name; folder.updatedAtMs = now(); return clone(folder); });
-      case "delete_folder": return mutate("删除文件夹", (data) => { const folder = findFolder(data, args.id); if (!folder) throw new Error("文件夹不存在"); folder.isDeleted = true; data.folderOrderIds = data.folderOrderIds.filter((folderId) => !sameId(folderId, folder.id)); data.folderOrderUpdatedAtMs = now(); data.folderOrderUpdatedDeviceName = data.deviceName || "Chrome"; for (const account of data.accounts) account.folderIds = account.folderIds.filter((folderId) => !sameId(folderId, folder.id)); return true; });
+      case "delete_folder": return mutate("删除文件夹", (data) => { const folder = findFolder(data, args.id); if (!folder) throw new Error("文件夹不存在"); const updatedAtMs = now(); const deviceName = data.deviceName || "Chrome"; folder.isDeleted = true; folder.deletedAtMs = updatedAtMs; folder.deletedDeviceName = deviceName; data.folderOrderIds = data.folderOrderIds.filter((folderId) => !sameId(folderId, folder.id)); data.folderOrderUpdatedAtMs = updatedAtMs; data.folderOrderUpdatedDeviceName = deviceName; for (const account of data.accounts) if (account.folderIds.some((folderId) => sameId(folderId, folder.id))) { account.deletedFromFolderIds = unique([...(account.deletedFromFolderIds || []), folder.id]); account.folderIds = account.folderIds.filter((folderId) => !sameId(folderId, folder.id)); markFolderRelation(account, folder.id, true, updatedAtMs, deviceName); account.updatedAtMs = updatedAtMs; account.lastOperatedDeviceName = deviceName; } return true; });
       case "reorder_folders": return mutate("调整文件夹顺序", (data) => { const ids = unique(args.orderedIds || []); const active = visibleFolders(data).map((folder) => folder.id); data.folderOrderIds = [...ids.filter((item) => active.some((id2) => sameId(id2, item))), ...active.filter((item) => !ids.some((id2) => sameId(id2, item)))]; data.folderOrderUpdatedAtMs = now(); data.folderOrderUpdatedDeviceName = data.deviceName || "Chrome"; return data.folderOrderIds; });
       case "reorder_accounts": return mutate("调整账号顺序", (data) => { const ids = unique(args.orderedIds || []); const scope = text(args.scopeId); if (scope.toLowerCase().startsWith("folder:")) { const folder = findFolder(data, scope.slice(7)); if (!folder) throw new Error("文件夹不存在"); folder.regularAccountIds = ids; touchFolderRegularOrder(data, folder); } else if (args.pinned) { const ranks = new Map(ids.map((item, index) => [item.toLowerCase(), index])); for (const account of data.accounts) if (ranks.has(account.recordId.toLowerCase())) account.pinnedSortOrder = ranks.get(account.recordId.toLowerCase()); } else { data.allRegularAccountIds = ids; touchAllRegularOrder(data); } return ids; });
       case "toggle_account_pin": return mutate("切换账号置顶", (data) => { const account = findAccount(data, args.id); if (!account) throw new Error("账号不存在"); account.isPinned = !account.isPinned; if (account.isPinned) account.pinnedSortOrder = 0; return account.isPinned; });
       case "set_accounts_pinned": return mutate(args.pinned ? "批量置顶账号" : "批量取消置顶", (data) => { for (const accountId of unique(args.accountIds || [])) { const account = findAccount(data, accountId); if (account) account.isPinned = Boolean(args.pinned); } return true; });
       case "soft_delete_account": return invokeCommand("soft_delete_accounts", { accountIds: [args.id] });
-      case "soft_delete_accounts": return mutate("移入回收站", (data) => { let count = 0; for (const accountId of unique(args.accountIds || [])) { const account = findAccount(data, accountId); if (!account || account.isDeleted) continue; account.deletedFromFolderIds = [...account.folderIds]; account.isDeleted = true; account.deletedAtMs = now(); removeFromOrders(data, account.recordId); count += 1; } return count; });
-      case "restore_account": return mutate("恢复账号", (data) => { const account = findAccount(data, args.id); if (!account) throw new Error("账号不存在"); account.isDeleted = false; account.deletedAtMs = null; account.folderIds = unique(account.deletedFromFolderIds || account.folderIds); data.allRegularAccountIds = addToTop(data.allRegularAccountIds, account.recordId); touchAllRegularOrder(data); for (const folder of visibleFolders(data)) if (account.folderIds.some((folderId) => sameId(folderId, folder.id))) { folder.regularAccountIds = addToTop(folder.regularAccountIds, account.recordId); touchFolderRegularOrder(data, folder); } return clone(account); });
+      case "soft_delete_accounts": return mutate("移入回收站", (data) => { let count = 0; for (const accountId of unique(args.accountIds || [])) { const account = findAccount(data, accountId); if (!account || account.isDeleted) continue; const updatedAtMs = now(); account.deletedFromFolderIds = [...account.folderIds]; account.isDeleted = true; account.deletedAtMs = updatedAtMs; account.deletedDeviceName = data.deviceName || "Chrome"; account.updatedAtMs = updatedAtMs; account.lastOperatedDeviceName = data.deviceName || "Chrome"; removeFromOrders(data, account.recordId); count += 1; } return count; });
+      case "restore_account": return mutate("恢复账号", (data) => { const account = findAccount(data, args.id); if (!account) throw new Error("账号不存在"); const updatedAtMs = now(); const deviceName = data.deviceName || "Chrome"; account.isDeleted = false; account.deletedAtMs = null; account.deletedDeviceName = ""; account.folderIds = unique(account.deletedFromFolderIds || account.folderIds).filter((folderId) => visibleFolders(data).some((folder) => sameId(folder.id, folderId))); account.updatedAtMs = updatedAtMs; account.lastOperatedDeviceName = deviceName; data.allRegularAccountIds = addToTop(data.allRegularAccountIds, account.recordId); touchAllRegularOrder(data); for (const folder of visibleFolders(data)) if (account.folderIds.some((folderId) => sameId(folderId, folder.id))) { folder.regularAccountIds = addToTop(folder.regularAccountIds, account.recordId); touchFolderRegularOrder(data, folder); markFolderRelation(account, folder.id, false, updatedAtMs, deviceName); } return clone(account); });
       case "restore_all_deleted_accounts": return mutate("恢复全部回收站账号", (data) => { const restored = data.accounts.filter((account) => account.isDeleted && !account.isPermanentlyDeleted); for (const account of restored) { account.isDeleted = false; account.folderIds = unique(account.deletedFromFolderIds || account.folderIds); } if (restored.length) { const restoredIds = restored.map((account) => account.recordId); data.allRegularAccountIds = [...restoredIds, ...data.allRegularAccountIds.filter((item) => !restoredIds.some((id2) => sameId(id2, item)))]; touchAllRegularOrder(data); for (const folder of visibleFolders(data)) { const folderIds = restored.filter((account) => account.folderIds.some((folderId) => sameId(folderId, folder.id))).map((account) => account.recordId); if (folderIds.length) { folder.regularAccountIds = [...folderIds, ...folder.regularAccountIds.filter((item) => !folderIds.some((id2) => sameId(id2, item)))]; touchFolderRegularOrder(data, folder); } } } return restored.length; });
-      case "hard_delete_account": return mutate("永久删除账号", (data) => { const account = findAccount(data, args.id); if (!account) throw new Error("账号不存在"); account.isPermanentlyDeleted = true; account.isDeleted = true; removeFromOrders(data, account.recordId); return true; });
+      case "hard_delete_account": return mutate("永久删除账号", (data) => { const account = findAccount(data, args.id); if (!account) throw new Error("账号不存在"); account.isPermanentlyDeleted = true; account.isDeleted = true; account.deletedAtMs = now(); account.deletedDeviceName = data.deviceName || "Chrome"; account.lastOperatedDeviceName = data.deviceName || "Chrome"; removeFromOrders(data, account.recordId); return true; });
       case "hard_delete_all_deleted_accounts": return mutate("清空回收站", (data) => { const before = data.accounts.length; data.accounts = data.accounts.filter((account) => !account.isDeleted); const removed = before - data.accounts.length; if (removed) { data.allRegularAccountIds = data.allRegularAccountIds.filter((id2) => data.accounts.some((account) => sameId(account.recordId, id2))); touchAllRegularOrder(data); for (const folder of data.folders) { const next = folder.regularAccountIds.filter((id2) => data.accounts.some((account) => sameId(account.recordId, id2))); if (next.length !== folder.regularAccountIds.length) { folder.regularAccountIds = next; touchFolderRegularOrder(data, folder); } } } return removed; });
       case "configure_folder_site_rules": return mutate("配置文件夹网站规则", (data) => { const folder = findFolder(data, args.folderId); if (!folder) throw new Error("文件夹不存在"); folder.matchedSites = unique(args.siteInputs || []); folder.autoAddMatchingSites = Boolean(args.autoAdd); let addedCount = 0; if (folder.autoAddMatchingSites) for (const account of activeAccounts(data)) if (account.sites.some((site) => folder.matchedSites.some((input) => site.toLowerCase().includes(input.toLowerCase()))) && !account.folderIds.some((id2) => sameId(id2, folder.id))) { setMembership(data, account, [...account.folderIds, folder.id]); addedCount += 1; } return { addedCount, message: `已加入 ${addedCount} 个账号` }; });
       case "get_folder_duplicate_groups": {
@@ -527,7 +679,7 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
         mode: "chrome-extension-web",
         storage: "chrome.storage.local",
         oldExtensionUntouched: true,
-        sharedCore: ["pass-merge-js-local"],
+        sharedCore: ["pass-merge-js-local", "sync-alias-js", "sync-safety-js"],
         capabilities: {
           nativeFilePicker: false,
           sshProvision: false,
@@ -537,6 +689,10 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
           folderDedup: true,
           selfHostedSync: true,
           localSnapshots: true,
+          syncSafetyEvaluation: true,
+          fieldLevelTimestamps: true,
+          relationTombstones: true,
+          domainAliasSync: true,
           sharedWebUi: true,
         },
       };
@@ -567,8 +723,8 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
       case "import_browser_csv_text": return importCsv(text(args.content));
       case "import_google_authenticator_totp": return importTotpEntries(args.entries || []);
       case "export_sync_bundle": { const payload = payloadFromData(store.data); const settings = await getSync(); const bundle = await encryptDocument({ schema: "pass.sync.bundle.v2", exportedAtMs: now(), source: { app: "pass-extension-chrome-web", formatVersion: 2 }, payload }, settings.encryptionKey); downloadJson(bundle, "pass-sync-bundle.json"); return { message: `同步包已导出：账号 ${payload.accounts.filter((a) => !a.isPermanentlyDeleted).length}，文件夹 ${payload.folders.filter((f) => !f.isPermanentlyDeleted).length}` }; }
-      case "import_sync_bundle_text": { const settings = await getSync(); const documentValue = await decryptDocument(JSON.parse(text(args.content)), settings.encryptionKey, settings.previousEncryptionKey); const remote = normalizePayload(documentValue); const local = payloadFromData(store.data); const merged = mergePayload(local, remote); const result = { safe: true, reasons: [], localPayload: local, payload: merged, report: { safe: true, message: `同步包预览：本地 ${local.accounts.filter((a) => !a.isPermanentlyDeleted).length} → 合并 ${merged.accounts.filter((a) => !a.isPermanentlyDeleted).length}` } }; if (args.apply) { await mutate("导入并合并同步包", (data) => { Object.assign(data, merged); return true; }); result.message = "同步包已合并写入"; } return result; }
-      case "merge_sync_payloads": { const local = normalizePayload(JSON.parse(text(args.localJson))); const remote = normalizePayload(JSON.parse(text(args.remoteJson))); return { safe: true, reasons: [], payload: mergePayload(local, remote) }; }
+      case "import_sync_bundle_text": { const settings = await getSync(); const documentValue = await decryptDocument(JSON.parse(text(args.content)), settings.encryptionKey, settings.previousEncryptionKey); const remote = normalizePayload(documentValue); const local = payloadFromData(store.data); const merged = mergePayload(local, remote); const safety = evaluateSyncSafety({ local, remote, merged, mode: "merge" }, syncMergeHelpers); const result = { safe: safety.safe, reasons: safety.reasons, localPayload: local, payload: merged, report: { safe: safety.safe, reasons: safety.reasons, message: safety.safe ? `同步包预览：本地 ${local.accounts.filter((a) => !a.isPermanentlyDeleted).length} → 合并 ${merged.accounts.filter((a) => !a.isPermanentlyDeleted).length}` : `同步包导入停止：安全检查未通过（${safety.reasons.join("、")}）` } }; if (args.apply && safety.safe) { await mutate("导入并合并同步包", (data) => { Object.assign(data, merged); return true; }); result.message = "同步包已合并写入"; } return result; }
+      case "merge_sync_payloads": { const local = normalizePayload(JSON.parse(text(args.localJson))); const remote = normalizePayload(JSON.parse(text(args.remoteJson))); const payload = mergePayload(local, remote); const safety = evaluateSyncSafety({ local, remote, merged: payload, mode: "merge" }, syncMergeHelpers); return { ...safety, safe: safety.safe, reasons: safety.reasons, payload }; }
       case "sync_preview": return syncRemote("merge", true);
       case "sync_now_mode": return syncRemote(text(args.mode) || "merge", false);
       case "sync_webdav_now_mode": throw new Error("当前 Chrome 扩展表面尚未实现 WebDAV；请使用桌面端或 Docker Web，或改用自建服务器同步");
@@ -648,8 +804,10 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
         : mergePayload(local, remote);
     let remoteState = initialRemote;
     let payload = choosePayload(remoteState.payload);
+    const safety = evaluateSyncSafety({ local, remote: remoteState.payload, merged: payload, mode }, syncMergeHelpers);
     const report = {
-      safe: true,
+      safe: safety.safe,
+      reasons: safety.reasons,
       ok: true,
       dryRun,
       mode,
@@ -661,6 +819,7 @@ import { mergeSyncPayloads } from "./sync_merge_core.js";
       pushed: false,
     };
     if (dryRun) return { report, localPayload: local, payload };
+    if (!safety.safe) throw new Error(`同步安全检查未通过：${safety.reasons.join("、")}`);
 
     if (mode !== "localOverwriteRemote") {
       await mutate("同步写入本地", (data) => {

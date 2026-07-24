@@ -11,6 +11,7 @@ const sourceStyles = resolve(root, "src/styles.css");
 const sourceHtml = resolve(root, "index.html");
 const coreJs = resolve(repoRoot, "core/pass_core/js/sync_merge_core.js");
 const corePolicyJs = resolve(repoRoot, "core/pass_core/js/sync_policy.js");
+const coreAliasJs = resolve(repoRoot, "core/pass_core/js/sync_alias_core.js");
 
 async function syncExtensionUi() {
   await mkdir(extensionDir, { recursive: true });
@@ -19,6 +20,7 @@ async function syncExtensionUi() {
   await cp(sourceStyles, resolve(extensionDir, "web-options.css"));
   await cp(coreJs, resolve(extensionDir, "sync_merge_core.js"));
   await cp(corePolicyJs, resolve(extensionDir, "sync_policy.js"));
+  await cp(coreAliasJs, resolve(extensionDir, "sync_alias_core.js"));
 
   let html = await readFile(sourceHtml, "utf8");
   html = html

@@ -174,6 +174,10 @@ fn health_check() -> serde_json::Value {
             "folderDedup": true,
             "selfHostedSync": true,
             "localSnapshots": true,
+            "syncSafetyEvaluation": true,
+            "fieldLevelTimestamps": true,
+            "relationTombstones": true,
+            "domainAliasSync": true,
             "sharedWebUi": true
         },
         "featureParityTarget": [
