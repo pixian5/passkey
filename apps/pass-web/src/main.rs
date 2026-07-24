@@ -27,6 +27,7 @@ use pass_merge::v2::{
     SyncPayload,
     soft_delete_account,
     permanently_delete_account,
+    permanently_delete_folder,
     restore_account_fields,
     set_account_pinned,
 };
@@ -2747,22 +2748,29 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 return Err("固定文件夹不可删除".into());
             }
             v.begin("删除文件夹");
+            let now = now_ms();
+            let device = v.data.device_name.clone();
             let f = v
                 .data
                 .folders
                 .iter_mut()
                 .find(|f| f.id.eq_ignore_ascii_case(&id))
                 .ok_or("未找到文件夹")?;
-            f.is_deleted = true;
-            f.is_permanently_deleted = true;
-            f.deleted_at_ms = Some(now_ms());
+            if !permanently_delete_folder(f, now, &device)? {
+                return Err("文件夹已删除".into());
+            }
             for a in &mut v.data.accounts {
+                let was = a.folder_ids.iter().any(|x| x.eq_ignore_ascii_case(&id));
                 a.folder_ids.retain(|x| !x.eq_ignore_ascii_case(&id));
                 if a.folder_id
                     .as_deref()
                     .is_some_and(|x| x.eq_ignore_ascii_case(&id))
                 {
                     a.folder_id = a.folder_ids.first().cloned();
+                }
+                if was {
+                    a.updated_at_ms = now;
+                    a.last_operated_device_name = device.clone();
                 }
             }
             normalize_order_state(&mut v.data);

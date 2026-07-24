@@ -339,3 +339,4 @@ cd apps/extension_shared && npm test -- tests/command_matrix.test.mjs
 3. 恢复走 `restore_account_fields`，永久删除不可恢复。
 4. 排序/列表维护仍由各表面负责，共享层只保证账号字段语义一致。
 5. 三端置顶/批量置顶统一走 `set_account_pinned` / `setAccountPinned`。
+6. 删除文件夹统一走 `permanently_delete_folder` / `permanentlyDeleteFolder`（永久墓碑，非软删除）。

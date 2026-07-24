@@ -20,6 +20,7 @@ use uuid::Uuid;
 use pass_merge::v2::{
     normalize_all_regular_order, normalize_folder_regular_order, normalize_folder_regular_orders,
     permanently_delete_account as mark_account_permanently_deleted,
+    permanently_delete_folder as permanently_delete_folder_mutation,
     restore_account_fields as restore_account_mutation,
     set_account_pinned as set_account_pinned_mutation,
     soft_delete_account as soft_delete_account_mutation, sync_alias_groups, Folder, Passkey,
@@ -3145,11 +3146,9 @@ fn delete_folder(
         .iter_mut()
         .find(|folder| folder.id.eq_ignore_ascii_case(&id))
         .ok_or_else(|| "未找到文件夹".to_string())?;
-    folder.is_deleted = true;
-    folder.is_permanently_deleted = true;
-    folder.deleted_at_ms = Some(now);
-    folder.deleted_device_name = device.clone();
-    folder.updated_at_ms = now;
+    if !permanently_delete_folder_mutation(folder, now, &device)? {
+        return Err("文件夹已删除".into());
+    }
 
     for a in &mut accounts {
         let was_in_folder = account_in_folder(a, &id);

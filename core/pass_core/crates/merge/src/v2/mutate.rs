@@ -1,7 +1,8 @@
 //! Shared local vault mutation helpers.
 //! Surfaces should call these instead of hand-rolling delete/restore field writes.
 
-use super::types::PasswordAccount;
+use super::policy::FIXED_NEW_ACCOUNT_FOLDER_ID;
+use super::types::{Folder, PasswordAccount};
 
 /// Soft-delete an account into recycle bin. Returns false if already deleted/permanent.
 pub fn soft_delete_account(
@@ -86,6 +87,30 @@ pub fn set_account_pinned(
     Ok(())
 }
 
+/// Permanent-delete a folder tombstone. Does not rewrite account membership lists.
+pub fn permanently_delete_folder(
+    folder: &mut Folder,
+    now_ms: i64,
+    device_name: &str,
+) -> Result<bool, String> {
+    if folder
+        .id
+        .eq_ignore_ascii_case(FIXED_NEW_ACCOUNT_FOLDER_ID)
+    {
+        return Err("固定文件夹不可删除".into());
+    }
+    if folder.is_deleted || folder.is_permanently_deleted {
+        return Ok(false);
+    }
+    folder.is_deleted = true;
+    folder.is_permanently_deleted = true;
+    folder.deleted_at_ms = Some(now_ms);
+    folder.deleted_device_name = device_name.to_string();
+    folder.updated_at_ms = now_ms;
+    // Keep regular_account_ids empty after normalize; callers may clear or leave for reconcile.
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +163,27 @@ mod tests {
         assert_eq!(account.pinned_sort_order, None);
         soft_delete_account(&mut account, 32, "C");
         assert!(set_account_pinned(&mut account, true, Some(1), 33, "C").is_err());
+    }
+
+    #[test]
+    fn permanently_delete_folder_keeps_id_and_rejects_fixed() {
+        let mut folder = Folder {
+            id: "folder-1".into(),
+            name: "工作".into(),
+            ..Default::default()
+        };
+        assert_eq!(permanently_delete_folder(&mut folder, 40, "D").unwrap(), true);
+        assert!(folder.is_deleted);
+        assert!(folder.is_permanently_deleted);
+        assert_eq!(folder.deleted_at_ms, Some(40));
+        assert_eq!(folder.deleted_device_name, "D");
+        assert_eq!(permanently_delete_folder(&mut folder, 41, "D").unwrap(), false);
+
+        let mut fixed = Folder {
+            id: FIXED_NEW_ACCOUNT_FOLDER_ID.into(),
+            name: "固定".into(),
+            ..Default::default()
+        };
+        assert!(permanently_delete_folder(&mut fixed, 42, "D").is_err());
     }
 }

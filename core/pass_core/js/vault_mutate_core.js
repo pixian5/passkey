@@ -55,3 +55,20 @@ export function setAccountPinned(account, pinned, nextPinOrder, nowMs, deviceNam
   return true;
 }
 
+// Fixed new-account folder id — keep aligned with pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID
+export const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
+
+export function permanentlyDeleteFolder(folder, nowMs, deviceName) {
+  if (!folder) throw new Error("文件夹不存在");
+  if (String(folder.id || "").toLowerCase() === FIXED_NEW_ACCOUNT_FOLDER_ID.toLowerCase()) {
+    throw new Error("固定文件夹不可删除");
+  }
+  if (folder.isDeleted || folder.isPermanentlyDeleted) return false;
+  folder.isDeleted = true;
+  folder.isPermanentlyDeleted = true;
+  folder.deletedAtMs = nowMs;
+  folder.deletedDeviceName = deviceName || "";
+  folder.updatedAtMs = nowMs;
+  return true;
+}
+

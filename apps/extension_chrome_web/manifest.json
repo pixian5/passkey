@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Pass Web 预览",
   "description": "Pass 的独立 Chrome Web 风格管理页预览版，与旧插件并行测试。",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "permissions": [
     "storage",
     "alarms",
@@ -32,14 +32,22 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["dist/webauthn_injected.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "dist/webauthn_injected.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["dist/content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "dist/content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true,
       "match_about_blank": true
