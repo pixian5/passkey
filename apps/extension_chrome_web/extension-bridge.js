@@ -405,6 +405,30 @@
   };
   const saveJsonKey = async (key, value) => { await chrome.storage.local.set({ [key]: clone(value) }); return value; };
 
+
+  const accountInFolder = (account, folderId) => (account.folderIds || []).some((id) => sameId(id, folderId));
+  const folderDuplicateGroups = (data, folderId) => {
+    const groups = new Map();
+    for (const account of activeAccounts(data).filter((item) => accountInFolder(item, folderId))) {
+      const sites = unique([...(account.sites || []), account.canonicalSite].filter(Boolean)).map((site) => site.toLowerCase()).sort();
+      const key = `${sites.join("|")}\n${text(account.username).toLowerCase()}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(clone(account));
+    }
+    return [...groups.entries()]
+      .map(([id, accounts]) => {
+        accounts.sort((left, right) => (Number(right.updatedAtMs) || 0) - (Number(left.updatedAtMs) || 0) || (Number(right.createdAtMs) || 0) - (Number(left.createdAtMs) || 0));
+        return {
+          id,
+          siteAliases: unique(accounts.flatMap((account) => account.sites || []).concat(accounts.map((account) => account.canonicalSite)).filter(Boolean)),
+          username: text(accounts[0]?.username) || "(空用户名)",
+          accounts,
+        };
+      })
+      .filter((group) => group.accounts.length > 1)
+      .sort((left, right) => (Number(right.accounts[0]?.updatedAtMs) || 0) - (Number(left.accounts[0]?.updatedAtMs) || 0));
+  };
+
   const invokeCommand = async (command, args = {}) => {
     const store = await loadStore();
     switch (command) {
@@ -459,19 +483,80 @@
       case "hard_delete_account": return mutate("永久删除账号", (data) => { const account = findAccount(data, args.id); if (!account) throw new Error("账号不存在"); account.isPermanentlyDeleted = true; account.isDeleted = true; removeFromOrders(data, account.recordId); return true; });
       case "hard_delete_all_deleted_accounts": return mutate("清空回收站", (data) => { const before = data.accounts.length; data.accounts = data.accounts.filter((account) => !account.isDeleted); data.allRegularAccountIds = data.allRegularAccountIds.filter((id2) => data.accounts.some((account) => sameId(account.recordId, id2))); for (const folder of data.folders) folder.regularAccountIds = folder.regularAccountIds.filter((id2) => data.accounts.some((account) => sameId(account.recordId, id2))); return before - data.accounts.length; });
       case "configure_folder_site_rules": return mutate("配置文件夹网站规则", (data) => { const folder = findFolder(data, args.folderId); if (!folder) throw new Error("文件夹不存在"); folder.matchedSites = unique(args.siteInputs || []); folder.autoAddMatchingSites = Boolean(args.autoAdd); let addedCount = 0; if (folder.autoAddMatchingSites) for (const account of activeAccounts(data)) if (account.sites.some((site) => folder.matchedSites.some((input) => site.toLowerCase().includes(input.toLowerCase()))) && !account.folderIds.some((id2) => sameId(id2, folder.id))) { setMembership(data, account, [...account.folderIds, folder.id]); addedCount += 1; } return { addedCount, message: `已加入 ${addedCount} 个账号` }; });
-      case "get_folder_duplicate_groups": return [];
-      case "deduplicate_folder": return 0;
+      case "get_folder_duplicate_groups": {
+        if (!findFolder(store.data, args.folderId) || findFolder(store.data, args.folderId).isDeleted) throw new Error("未找到文件夹");
+        return folderDuplicateGroups(store.data, text(args.folderId));
+      }
+      case "deduplicate_folder": return mutate("文件夹去重", (data) => {
+        const folder = findFolder(data, args.folderId);
+        if (!folder || folder.isDeleted) throw new Error("未找到文件夹");
+        const groups = folderDuplicateGroups(data, folder.id);
+        if (!groups.length) return { deletedCount: 0, keptCount: 0, groupCount: 0, message: "当前文件夹暂无重复账号" };
+        const mode = text(args.mode).toLowerCase() || "latest";
+        const keepIds = new Set();
+        if (mode === "latest") for (const group of groups) keepIds.add(group.accounts[0].recordId);
+        else if (mode === "earliest") for (const group of groups) keepIds.add(group.accounts[group.accounts.length - 1].recordId);
+        else if (mode === "account") {
+          const requested = text(args.accountId);
+          const group = groups.find((item) => item.accounts.some((account) => sameId(account.recordId, requested) || sameId(account.accountId, requested)));
+          if (!group) throw new Error("当前重复分组中未找到指定账号");
+          const keep = group.accounts.find((account) => sameId(account.recordId, requested) || sameId(account.accountId, requested));
+          keepIds.add(keep.recordId);
+        } else throw new Error("未知去重方式");
+        const duplicateIds = new Set(groups.flatMap((group) => group.accounts.map((account) => account.recordId)));
+        let deletedCount = 0;
+        for (const account of data.accounts) {
+          if (duplicateIds.has(account.recordId) && !keepIds.has(account.recordId) && !account.isDeleted) {
+            account.isDeleted = true;
+            account.deletedAtMs = now();
+            account.updatedAtMs = now();
+            removeFromOrders(data, account.recordId);
+            deletedCount += 1;
+          }
+        }
+        return { deletedCount, keptCount: keepIds.size, groupCount: groups.length, message: `去重完成，已移入回收站 ${deletedCount} 个重复账号，保留 ${keepIds.size} 个账号` };
+      });
       case "generate_demo_accounts": return invokeCommand("create_account", { input: { sites: ["example.com"], username: "demo", password: "", note: "演示账号" } });
-      case "health_check": return { ok: true, mode: "chrome-extension-web", storage: "chrome.storage.local", oldExtensionUntouched: true };
+      case "health_check": return {
+        ok: true,
+        app: "pass-extension-chrome-web",
+        surface: "chrome-extension-web",
+        mode: "chrome-extension-web",
+        storage: "chrome.storage.local",
+        oldExtensionUntouched: true,
+        sharedCore: ["pass-merge-js-local"],
+        capabilities: {
+          nativeFilePicker: false,
+          sshProvision: false,
+          biometricUnlock: false,
+          webdavSync: false,
+          serverVersions: false,
+          folderDedup: true,
+          selfHostedSync: true,
+          localSnapshots: true,
+          sharedWebUi: true,
+        },
+      };
       case "sync_key_id": return syncKeyId(args.key);
       case "generate_sync_encryption_key": { const bytes = crypto.getRandomValues(new Uint8Array(32)); return bytesToBase64(bytes).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", ""); }
       case "save_provision_draft": return saveJsonKey("pass.web.workspace.provision.v1", args.draft || {});
       case "get_provision_draft": { const result = await chrome.storage.local.get(["pass.web.workspace.provision.v1"]); return result?.["pass.web.workspace.provision.v1"] || {}; }
       case "get_ssh_credential": return {};
       case "save_ssh_credential_cmd": return true;
-      case "verify_sync_endpoint": return { ok: false, message: "Chrome 测试插件未实现 SSH 服务部署" };
-      case "detect_existing_sync_service": return { exists: false, message: "Chrome 测试插件未实现 SSH 服务部署" };
-      case "provision_self_hosted_server": throw new Error("创建服务需要 Tauri 桌面端的 SSH 能力");
+      case "verify_sync_endpoint": {
+        const settings = await getSync();
+        if (!text(settings.baseUrl)) return { ok: false, message: "请先配置同步服务器 URL" };
+        try {
+          const headers = {};
+          if (text(settings.authToken)) headers.Authorization = `Bearer ${text(settings.authToken)}`;
+          const response = await fetch(`${text(settings.baseUrl).replace(/\/$/, "")}/health`, { headers });
+          return { ok: response.ok, status: response.status, message: response.ok ? "端点可访问" : `端点返回 HTTP ${response.status}` };
+        } catch (error) {
+          return { ok: false, message: String(error) };
+        }
+      }
+      case "detect_existing_sync_service": return { exists: false, message: "Chrome 扩展不提供 SSH 部署检测；请在桌面端创建服务，或手动配置已有服务器地址" };
+      case "provision_self_hosted_server": throw new Error("创建服务需要桌面端 SSH 能力；Chrome 扩展只保存草稿并支持已有服务器同步");
       case "choose_export_directory": return null;
       case "export_csv_to_path": return exportCsv("pass.csv");
       case "export_csv": return exportCsv("pass.csv");
@@ -483,11 +568,11 @@
       case "merge_sync_payloads": { const local = normalizePayload(JSON.parse(text(args.localJson))); const remote = normalizePayload(JSON.parse(text(args.remoteJson))); return { safe: true, reasons: [], payload: mergePayload(local, remote) }; }
       case "sync_preview": return syncRemote("merge", true);
       case "sync_now_mode": return syncRemote(text(args.mode) || "merge", false);
-      case "sync_webdav_now_mode": throw new Error("Chrome 测试插件尚未实现 WebDAV 同步");
-      case "list_server_versions": return [];
-      case "restore_server_version": throw new Error("Chrome 测试插件尚未实现服务器版本恢复");
+      case "sync_webdav_now_mode": throw new Error("当前 Chrome 扩展表面尚未实现 WebDAV；请使用桌面端或 Docker Web，或改用自建服务器同步");
+      case "list_server_versions": return []; // Chrome 扩展暂不提供服务器版本列表
+      case "restore_server_version": throw new Error("当前 Chrome 扩展表面尚未实现服务器版本恢复；请使用桌面端或 Docker Web");
       case "list_local_snapshots": return store.snapshots.map((snapshot) => ({ id: snapshot.id, reason: snapshot.reason, createdAtMs: snapshot.createdAtMs, accounts: (snapshot.payload.accounts || []).filter((a) => !a.isPermanentlyDeleted).length, folders: (snapshot.payload.folders || []).filter((f) => !f.isPermanentlyDeleted).length, passkeys: (snapshot.payload.passkeys || []).filter((p) => !p.isPermanentlyDeleted).length }));
-      case "restore_local_snapshot": { const snapshot = store.snapshots.find((item) => sameId(item.id, args.snapshotId)); if (!snapshot) throw new Error("本地快照不存在"); return mutate("恢复本地安全快照", (data) => { data.accounts = clone(snapshot.payload.accounts || []); data.folders = clone(snapshot.payload.folders || []); data.passkeys = clone(snapshot.payload.passkeys || []); data.allRegularAccountIds = data.accounts.filter((a) => !a.isDeleted && !a.isPermanentlyDeleted).map((a) => a.recordId); return true; }).then(() => "本地安全快照已恢复"); }
+      case "restore_local_snapshot": { const snapshot = store.snapshots.find((item) => sameId(item.id, args.snapshotId)); if (!snapshot) throw new Error("本地快照不存在"); return mutate("恢复本地安全快照", (data) => { data.accounts = clone(snapshot.payload.accounts || []); data.folders = clone(snapshot.payload.folders || []); data.passkeys = clone(snapshot.payload.passkeys || []); data.allRegularAccountIds = clone(snapshot.payload.allRegularAccountIds || data.accounts.filter((a) => !a.isDeleted && !a.isPermanentlyDeleted).map((a) => a.recordId)); data.folderOrderIds = clone(snapshot.payload.folderOrderIds || data.folders.filter((f) => !f.isDeleted && !f.isPermanentlyDeleted).map((f) => f.id)); data.folderOrderUpdatedAtMs = Number(snapshot.payload.folderOrderUpdatedAtMs) || 0; data.folderOrderUpdatedDeviceName = text(snapshot.payload.folderOrderUpdatedDeviceName); return true; }).then(() => "本地安全快照已恢复"); }
       default: throw new Error(`Chrome 测试插件暂未实现命令：${command}`);
     }
   };

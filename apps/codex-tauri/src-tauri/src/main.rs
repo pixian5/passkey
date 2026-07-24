@@ -161,8 +161,21 @@ struct DeduplicateResult {
 fn health_check() -> serde_json::Value {
     serde_json::json!({
         "app": "codex-tauri",
+        "surface": "tauri-desktop",
         "rustBackend": "ok",
         "supportedPlatforms": ["windows", "ubuntu-linux", "macos"],
+        "sharedCore": ["pass-merge", "pass-csvio"],
+        "capabilities": {
+            "nativeFilePicker": true,
+            "sshProvision": true,
+            "biometricUnlock": cfg!(target_os = "macos"),
+            "webdavSync": true,
+            "serverVersions": true,
+            "folderDedup": true,
+            "selfHostedSync": true,
+            "localSnapshots": true,
+            "sharedWebUi": true
+        },
         "featureParityTarget": [
             "device-name",
             "account-crud",
@@ -171,9 +184,9 @@ fn health_check() -> serde_json::Value {
             "demo-data",
             "csv-export",
             "merge-preview-core",
-            "self-hosted-sync"
-        ],
-        "sharedCore": ["pass-merge", "pass-csvio"]
+            "self-hosted-sync",
+            "folder-order-sync"
+        ]
     })
 }
 

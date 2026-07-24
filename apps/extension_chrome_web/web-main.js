@@ -1,5 +1,54 @@
 // This page is copied directly into the Tauri webview without a bundler, so a
 // bare npm import such as "@tauri-apps/api/core" cannot be resolved here.
+// Shared UI for Tauri desktop, Docker/Web headless, and Chrome web-options.
+// Platform adapters only differ by how they implement invoke():
+// 1) Chrome extension bridge via window.__PASS_EXTENSION_INVOKE__
+// 2) Tauri runtime invoke
+// 3) Pass Web HTTP RPC /api/invoke/:command
+const platformCapabilities = {
+  surface: "unknown",
+  nativeFilePicker: false,
+  sshProvision: false,
+  biometricUnlock: false,
+  webdavSync: false,
+  serverVersions: false,
+  folderDedup: true,
+  selfHostedSync: true,
+  localSnapshots: true,
+};
+
+const applyPlatformCapabilities = (caps = {}) => {
+  Object.assign(platformCapabilities, caps || {});
+  const hideIfUnsupported = (el, supported) => {
+    if (!el) return;
+    el.hidden = !supported;
+    if ("disabled" in el) el.disabled = !supported;
+  };
+  // Desktop-only SSH provision controls.
+  hideIfUnsupported(els?.btnRunProvision, platformCapabilities.sshProvision);
+  hideIfUnsupported(els?.btnOpenProvision, platformCapabilities.sshProvision);
+  hideIfUnsupported(els?.btnLoadSshCred, platformCapabilities.sshProvision);
+  // Biometrics are only meaningful on capable desktop surfaces.
+  const bioLabel = els?.preferBiometrics?.closest?.("label") || els?.preferBiometrics;
+  hideIfUnsupported(bioLabel, platformCapabilities.biometricUnlock);
+  if (els?.btnUnlockBiometric && !platformCapabilities.biometricUnlock) {
+    els.btnUnlockBiometric.hidden = true;
+  }
+  // WebDAV stays visible; unsupported surfaces fail with a clear command error.
+  if (els?.webdavEnabled && !platformCapabilities.webdavSync) {
+    els.webdavEnabled.title = "当前运行环境尚未实现 WebDAV 同步";
+  }
+  if (els?.btnLoadVersions) {
+    els.btnLoadVersions.hidden = !platformCapabilities.serverVersions;
+  }
+  if (els?.syncVersionsList && !platformCapabilities.serverVersions) {
+    els.syncVersionsList.innerHTML = "";
+  }
+  if (els?.syncVersionsStatus && !platformCapabilities.serverVersions) {
+    els.syncVersionsStatus.textContent = "当前环境不提供服务器版本列表";
+  }
+};
+
 const invoke = async (command, args = {}) => {
   if (typeof window.__PASS_EXTENSION_INVOKE__ === "function") {
     return window.__PASS_EXTENSION_INVOKE__(command, args);
@@ -2269,9 +2318,10 @@ const applyLockUi = () => {
   if (els.lockOverlay) els.lockOverlay.hidden = !locked;
   if (els.appMain) els.appMain.style.visibility = locked ? "hidden" : "visible";
   if (els.btnUnlockBiometric) {
-    els.btnUnlockBiometric.hidden = !canBiometric;
+    const showBio = Boolean(platformCapabilities.biometricUnlock) && canBiometric;
+    els.btnUnlockBiometric.hidden = !showBio;
     // Prefer fingerprint as primary action when available.
-    els.btnUnlockBiometric.classList.toggle("primary", canBiometric);
+    els.btnUnlockBiometric.classList.toggle("primary", showBio);
   }
   if (els.btnUnlock) {
     els.btnUnlock.classList.toggle("primary", !canBiometric);
@@ -3761,8 +3811,7 @@ els.btnExportBundle?.addEventListener("click", async () => {
   const restore = setButtonBusy(els.btnExportBundle, "正在导出…");
   try {
     await saveAllSyncRelated().catch(() => {});
-    const runtime = window.__TAURI__?.core ?? window.__TAURI_INTERNALS__;
-    const hasNativeDirectoryPicker = typeof runtime?.invoke === "function";
+    const hasNativeDirectoryPicker = Boolean(platformCapabilities.nativeFilePicker);
     const directory = hasNativeDirectoryPicker ? await invoke("choose_export_directory") : null;
     if (hasNativeDirectoryPicker && !directory) {
       toastWarn("已取消选择导出文件夹");
@@ -4220,6 +4269,22 @@ els.btnLockNow?.addEventListener("click", doLockNow);
 els.btnLockNowSettings?.addEventListener("click", doLockNow);
 
 const boot = async () => {
+  try {
+    const health = await invoke("health_check");
+    applyPlatformCapabilities({
+      surface: health?.surface || health?.mode || health?.app || "unknown",
+      nativeFilePicker: Boolean(health?.capabilities?.nativeFilePicker),
+      sshProvision: Boolean(health?.capabilities?.sshProvision),
+      biometricUnlock: Boolean(health?.capabilities?.biometricUnlock),
+      webdavSync: health?.capabilities?.webdavSync !== false,
+      serverVersions: health?.capabilities?.serverVersions !== false,
+      folderDedup: health?.capabilities?.folderDedup !== false,
+      selfHostedSync: health?.capabilities?.selfHostedSync !== false,
+      localSnapshots: health?.capabilities?.localSnapshots !== false,
+    });
+  } catch (_) {
+    applyPlatformCapabilities({});
+  }
   await refreshLock();
   await loadUiPrefs();
   if (!(lockState.enabled && lockState.locked)) {

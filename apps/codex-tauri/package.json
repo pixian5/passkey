@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "prepare:dist": "node scripts/prepare-dist.mjs",
+    "sync:web-ui": "node scripts/sync-web-ui.mjs",
     "dev": "npm run prepare:dist && tauri dev",
     "build": "npm run prepare:dist && tauri build",
     "tauri": "tauri"

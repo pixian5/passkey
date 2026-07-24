@@ -1729,9 +1729,34 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
         v.touch();
     }
     match command {
-        "health_check" => Ok(
-            json!({"app":"pass-web","rustBackend":"ok","mode":"headless-web","featureParityTarget":["account-crud","folders","recycle-bin","undo-redo","snapshots" ]}),
-        ),
+        "health_check" => Ok(json!({
+            "app": "pass-web",
+            "surface": "docker-web",
+            "mode": "headless-web",
+            "rustBackend": "ok",
+            "sharedCore": ["pass-merge", "pass-csvio"],
+            "capabilities": {
+                "nativeFilePicker": false,
+                "sshProvision": false,
+                "biometricUnlock": false,
+                "webdavSync": true,
+                "serverVersions": true,
+                "folderDedup": true,
+                "selfHostedSync": true,
+                "localSnapshots": true,
+                "sharedWebUi": true
+            },
+            "featureParityTarget": [
+                "account-crud",
+                "folders",
+                "recycle-bin",
+                "undo-redo",
+                "snapshots",
+                "self-hosted-sync",
+                "webdav-sync",
+                "folder-order-sync"
+            ]
+        })),
         "get_lock_state" => Ok(v.lock_public_state()),
         "lock_touch" => {
             v.touch();
