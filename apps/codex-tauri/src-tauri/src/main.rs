@@ -19,7 +19,11 @@ use uuid::Uuid;
 
 use pass_merge::v2::{
     normalize_all_regular_order, normalize_folder_regular_order, normalize_folder_regular_orders,
-    sync_alias_groups, Folder, Passkey, PasswordAccount, SyncPayload,
+    permanently_delete_account as mark_account_permanently_deleted,
+    restore_account_fields as restore_account_mutation,
+    set_account_pinned as set_account_pinned_mutation,
+    soft_delete_account as soft_delete_account_mutation, sync_alias_groups, Folder, Passkey,
+    PasswordAccount, SyncPayload,
 };
 
 use app_lock::{AppLockPolicy, AppLockPublicState, AppLockState};
@@ -548,10 +552,7 @@ fn soft_delete_account(
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
     if let Some(item) = accounts.iter_mut().find(|a| account_matches_id(a, &id)) {
-        item.is_deleted = true;
-        item.deleted_at_ms = Some(now);
-        item.deleted_device_name = device_name;
-        item.updated_at_ms = now;
+        let _ = soft_delete_account_mutation(item, now, &device_name);
     }
     save_accounts(&conn, &accounts)?;
     Ok(())
@@ -761,18 +762,16 @@ fn set_accounts_pinned(
             .iter_mut()
             .find(|item| item.resolved_record_id().eq_ignore_ascii_case(account_id))
         {
-            if pinned {
-                if !account.is_pinned {
-                    account.pinned_sort_order = Some(next_pin_order);
-                    next_pin_order += 1;
-                }
-                account.is_pinned = true;
+            let was_pinned = account.is_pinned;
+            let order = if pinned && !was_pinned {
+                Some(next_pin_order)
             } else {
-                account.is_pinned = false;
-                account.pinned_sort_order = None;
+                account.pinned_sort_order
+            };
+            set_account_pinned_mutation(account, pinned, order, now, &device)?;
+            if pinned && !was_pinned {
+                next_pin_order += 1;
             }
-            account.updated_at_ms = now;
-            account.last_operated_device_name = device.clone();
         }
     }
     save_accounts(&conn, &accounts)?;
@@ -816,12 +815,9 @@ fn soft_delete_accounts(
             .iter_mut()
             .find(|item| item.resolved_record_id().eq_ignore_ascii_case(&account_id))
         {
-            account.is_deleted = true;
-            account.deleted_at_ms = Some(now);
-            account.deleted_device_name = device.clone();
-            account.last_operated_device_name = device.clone();
-            account.updated_at_ms = now;
-            count += 1;
+            if soft_delete_account_mutation(account, now, &device) {
+                count += 1;
+            }
         }
     }
     let mut folders = load_folders(&conn)?;
@@ -861,11 +857,7 @@ fn restore_account(
     let now = now_ms();
     let mut restored_folder_ids = Vec::new();
     if let Some(item) = accounts.iter_mut().find(|a| account_matches_id(a, &id)) {
-        item.is_deleted = false;
-        item.deleted_at_ms = None;
-        item.deleted_device_name.clear();
-        item.updated_at_ms = now;
-        item.last_operated_device_name = device_name.clone();
+        restore_account_mutation(item, now, &device_name).map_err(|e| e)?;
         restored_folder_ids = item.folder_ids.clone();
     }
     sync_alias_sites(&mut accounts);
@@ -909,14 +901,7 @@ fn hard_delete_account(
     let mut found = false;
     for item in &mut accounts {
         if account_matches_id(item, &id) {
-            item.is_deleted = true;
-            item.is_permanently_deleted = true;
-            item.deleted_at_ms = Some(now);
-            item.deleted_device_name = device_name.clone();
-            item.updated_at_ms = now;
-            item.password.clear();
-            item.totp_secret.clear();
-            item.recovery_codes.clear();
+            let _ = mark_account_permanently_deleted(item, now, &device_name);
             found = true;
             break;
         }
@@ -953,11 +938,7 @@ fn restore_all_deleted_accounts(
     let mut restored_ids = Vec::new();
     for account in &mut accounts {
         if account.is_deleted && !account.is_permanently_deleted {
-            account.is_deleted = false;
-            account.deleted_at_ms = None;
-            account.deleted_device_name.clear();
-            account.updated_at_ms = now;
-            account.last_operated_device_name = device_name.clone();
+            let _ = restore_account_mutation(account, now, &device_name);
             restored_ids.push(account.resolved_record_id());
         }
     }
@@ -1011,13 +992,7 @@ fn hard_delete_all_deleted_accounts(
     let now = now_ms();
     for account in &mut accounts {
         if account.is_deleted && !account.is_permanently_deleted {
-            account.is_permanently_deleted = true;
-            account.deleted_at_ms = Some(now);
-            account.deleted_device_name = device_name.clone();
-            account.updated_at_ms = now;
-            account.password.clear();
-            account.totp_secret.clear();
-            account.recovery_codes.clear();
+            let _ = mark_account_permanently_deleted(account, now, &device_name);
         }
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
@@ -2860,10 +2835,7 @@ fn toggle_account_pin(
     };
     for item in &mut accounts {
         if account_matches_id(item, &id) {
-            item.is_pinned = next_pinned;
-            item.pinned_sort_order = next_pinned_order;
-            item.updated_at_ms = now;
-            item.last_operated_device_name = device_name.clone();
+            set_account_pinned_mutation(item, next_pinned, next_pinned_order, now, &device_name)?;
             break;
         }
     }

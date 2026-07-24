@@ -16,9 +16,19 @@ use base64::{
 };
 use pass_csvio::{browser_csv_to_account_drafts, build_csv, host_from_site_value};
 use pass_merge::v2::{
-    evaluate_sync_safety, normalize_all_regular_order, normalize_folder_regular_order,
-    normalize_folder_regular_orders, sync_alias_groups, Folder, Passkey, PasswordAccount,
+    evaluate_sync_safety,
+    normalize_all_regular_order,
+    normalize_folder_regular_order,
+    normalize_folder_regular_orders,
+    sync_alias_groups,
+    Folder,
+    Passkey,
+    PasswordAccount,
     SyncPayload,
+    soft_delete_account,
+    permanently_delete_account,
+    restore_account_fields,
+    set_account_pinned,
 };
 use pbkdf2::pbkdf2_hmac;
 use rand::RngCore;
@@ -371,15 +381,7 @@ fn move_accounts_to_folder_top(
 }
 
 fn mark_account_permanently_deleted(account: &mut PasswordAccount, now: i64, device: &str) {
-    account.is_deleted = true;
-    account.is_permanently_deleted = true;
-    account.deleted_at_ms = Some(now);
-    account.deleted_device_name = device.to_string();
-    account.updated_at_ms = now;
-    account.last_operated_device_name = device.to_string();
-    account.password.clear();
-    account.totp_secret.clear();
-    account.recovery_codes.clear();
+    let _ = permanently_delete_account(account, now, device);
 }
 
 impl Vault {
@@ -2383,18 +2385,16 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                     .iter_mut()
                     .find(|item| account_key(item).eq_ignore_ascii_case(&account_id))
                 {
-                    if pinned {
-                        if !account.is_pinned {
-                            account.pinned_sort_order = Some(next_pin_order);
-                            next_pin_order += 1;
-                        }
-                        account.is_pinned = true;
+                    let was_pinned = account.is_pinned;
+                    let order = if pinned && !was_pinned {
+                        Some(next_pin_order)
                     } else {
-                        account.is_pinned = false;
-                        account.pinned_sort_order = None;
+                        account.pinned_sort_order
+                    };
+                    set_account_pinned(account, pinned, order, now, &device)?;
+                    if pinned && !was_pinned {
+                        next_pin_order += 1;
                     }
-                    account.updated_at_ms = now;
-                    account.last_operated_device_name = device.clone();
                 }
             }
             v.save()?;
@@ -2433,12 +2433,9 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                     .iter_mut()
                     .find(|item| account_key(item).eq_ignore_ascii_case(&account_id))
                 {
-                    account.is_deleted = true;
-                    account.deleted_at_ms = Some(now);
-                    account.deleted_device_name = device.clone();
-                    account.last_operated_device_name = device.clone();
-                    account.updated_at_ms = now;
-                    count += 1;
+                    if soft_delete_account(account, now, &device) {
+                        count += 1;
+                    }
                 }
             }
             normalize_order_state(&mut v.data);
@@ -2455,11 +2452,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 if a.is_permanently_deleted {
                     return Err("已永久删除的账号不能恢复".into());
                 }
-                a.is_deleted = false;
-                a.deleted_at_ms = None;
-                a.deleted_device_name.clear();
-                a.updated_at_ms = now;
-                a.last_operated_device_name = device.clone();
+                restore_account_fields(a, now, &device)?;
                 (account_key(a), a.folder_ids.clone())
             };
             move_account_to_order_top(&mut v.data.all_regular_account_ids, &restored_id);
@@ -2497,13 +2490,10 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             let mut restored = Vec::new();
             for a in &mut v.data.accounts {
                 if a.is_deleted && !a.is_permanently_deleted {
-                    a.is_deleted = false;
-                    a.deleted_at_ms = None;
-                    a.deleted_device_name.clear();
-                    a.updated_at_ms = now;
-                    a.last_operated_device_name = device.clone();
-                    restored.push((account_key(a), a.folder_ids.clone()));
-                    count += 1;
+                    if restore_account_fields(a, now, &device).unwrap_or(false) {
+                        restored.push((account_key(a), a.folder_ids.clone()));
+                        count += 1;
+                    }
                 }
             }
             for (restored_id, folder_ids) in restored.into_iter().rev() {
@@ -2852,10 +2842,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             let now = now_ms();
             let device = v.data.device_name.clone();
             let a = account_mut(&mut v.data.accounts, &id).ok_or("未找到账号")?;
-            a.is_pinned = next_pinned;
-            a.pinned_sort_order = next_order;
-            a.updated_at_ms = now;
-            a.last_operated_device_name = device;
+            set_account_pinned(a, next_pinned, next_order, now, &device)?;
             let updated = a.clone();
             v.save()?;
             Ok(serde_json::to_value(updated).unwrap())

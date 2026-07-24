@@ -7,6 +7,7 @@
 mod alias;
 mod merge;
 pub mod normalize;
+pub mod mutate;
 mod policy;
 mod safety;
 mod types;
@@ -22,3 +23,5 @@ pub use policy::{
 };
 pub use safety::{evaluate_sync_safety, SyncSafetyReport};
 pub use types::{AccountFolderMembershipState, Folder, Passkey, PasswordAccount, SyncPayload};
+
+pub use mutate::{permanently_delete_account, restore_account_fields, set_account_pinned, soft_delete_account};

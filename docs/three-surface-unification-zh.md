@@ -320,3 +320,22 @@ cd apps/extension_shared && npm test -- tests/command_matrix.test.mjs
 - Rust `pass_csvio` 新增 `parse_csv_rows` / `browser_csv_to_account_drafts`
 - Tauri 与 Docker Web 浏览器 CSV 导入改为共享映射
 - 用户名/密码可选，站点可识别即可导入
+
+## 11. 阶段 F：共享 vault mutation
+
+已交付初版共享 mutation helper：
+
+- Rust：`pass_merge::v2::{soft_delete_account, permanently_delete_account, restore_account_fields, set_account_pinned}`
+- JS：`core/pass_core/js/vault_mutate_core.js`（含 `setAccountPinned`）
+- 接入：
+  - Tauri 删除/恢复
+  - Docker Web 删除/恢复
+  - Chrome 扩展删除 helper
+
+规则：
+
+1. 清空回收站/永久删除必须走 `permanently_delete_account`，保留墓碑并清空敏感字段。
+2. 软删除走 `soft_delete_account`。
+3. 恢复走 `restore_account_fields`，永久删除不可恢复。
+4. 排序/列表维护仍由各表面负责，共享层只保证账号字段语义一致。
+5. 三端置顶/批量置顶统一走 `set_account_pinned` / `setAccountPinned`。
