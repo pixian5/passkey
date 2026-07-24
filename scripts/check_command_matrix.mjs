@@ -57,6 +57,9 @@ if (!/case "restore_server_version":[\s\S]*?\/v2\/sync\/versions\//.test(extSrc)
 if (!/serverVersions:\s*true/.test(extSrc)) {
   errors.push('extension health_check.capabilities.serverVersions must be true');
 }
+if (!/case "verify_sync_endpoint":[\s\S]*?\/healthz/.test(extSrc)) {
+  errors.push('extension verify_sync_endpoint must use the server /healthz endpoint');
+}
 
 // Count-return contracts in extension.
 const countCommands = [

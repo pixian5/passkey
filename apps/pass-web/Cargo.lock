@@ -758,7 +758,7 @@ dependencies = [
 
 [[package]]
 name = "pass-web"
-version = "0.1.8"
+version = "1.0.0"
 dependencies = [
  "aes-gcm",
  "axum",

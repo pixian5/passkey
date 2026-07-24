@@ -3336,7 +3336,7 @@ async fn invoke(
 }
 
 async fn health() -> Json<Value> {
-    Json(json!({"ok":true,"service":"pass-web","version":"0.1.0"}))
+    Json(json!({"ok":true,"service":"pass-web","version":env!("CARGO_PKG_VERSION")}))
 }
 
 async fn static_file(State(state): State<AppState>, uri: Uri) -> Response {

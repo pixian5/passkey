@@ -726,7 +726,7 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
         try {
           const headers = {};
           if (text(settings.authToken)) headers.Authorization = `Bearer ${text(settings.authToken)}`;
-          const response = await fetch(`${text(settings.baseUrl).replace(/\/$/, "")}/health`, { headers });
+          const response = await fetch(`${text(settings.baseUrl).replace(/\/$/, "")}/healthz`, { headers });
           return { ok: response.ok, status: response.status, message: response.ok ? "端点可访问" : `端点返回 HTTP ${response.status}` };
         } catch (error) {
           return { ok: false, message: String(error) };
