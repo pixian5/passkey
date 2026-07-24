@@ -234,3 +234,49 @@ cd apps/pass-web && cargo test && cargo build --release
 ```
 
 旧扩展 `apps/extension_chrome` 继续保留，不在本方案替换范围内。
+
+## 8. 当前对齐结论（截至 4587461）
+
+结论：**可统一且应统一的高风险数据语义已对齐到位；现阶段停止继续“硬对齐”。**
+
+### 8.1 已对齐、必须保持
+
+- 账号/文件夹/通行密钥字段级 LWW
+- 三类顺序字段：`allRegularAccountIds`、`folderOrderIds`、`Folder.regularAccountIds`
+- 永久删除墓碑：保留稳定 ID，清空敏感字段，不物理删除
+- 软删除/恢复的时间戳与设备名
+- 文件夹关系墓碑 `folderMembershipStates`、站点别名关系
+- 同步安全评估、空远端保护、合并 Core 一致性
+- UI 单源 + `health_check.capabilities` 降级
+- 扩展本地敏感配置加密（vault / 同步设置 / UI 偏好 / 创建服务草稿）
+
+### 8.2 明确停止线：平台边界，不再伪对齐
+
+以下能力**不要**为了表面一致而绕过平台限制：
+
+| 能力 | Tauri | Docker Web | Chrome 扩展 | 处理方式 |
+|---|---|---|---|---|
+| Touch ID | macOS 有 | 无 | 无 | capability 隐藏 |
+| SSH 创建服务 | 有 | 草稿 only | 草稿 only | 桌面专属；其他端明确报错/只存草稿 |
+| 原生文件选择器 | 有 | 无 | 无 | 下载/上传替代 |
+| WebDAV | 有 | 有 | 无 | 扩展明确报错；需代理方案才可做 |
+| 服务器版本列表/恢复 | 有 | 有 | 无 | 扩展明确报错或空列表 |
+| 页面自动填充 / WebAuthn | 无 | 无 | 有 | 扩展专属 |
+
+### 8.3 下一阶段再做的工程项（非本轮）
+
+这些不是“漏做的小修”，而是独立阶段：
+
+1. 共享 CSV Core（替换扩展轻量解析器）
+2. 命令返回形状完全对象化 + 契约测试
+3. 三端命令矩阵自动化覆盖
+4. vault mutation 抽到共享领域层
+5. 扩展 WebDAV / 服务器版本（需明确 CORS/代理方案后）
+
+### 8.4 本地辅助字段说明
+
+- 扩展本地可保留 `deletedFromFolderIds` 作为恢复辅助。
+- Tauri / Docker Web 软删除时保留 `folderIds`，恢复时直接使用。
+- 同步载荷以 `folderIds + folderMembershipStates` 为准；`deletedFromFolderIds` 不是跨端必需字段。
+- 任一表面恢复时都必须过滤已删除/永久删除文件夹，并把账号插到对应活动顺序顶部。
+
