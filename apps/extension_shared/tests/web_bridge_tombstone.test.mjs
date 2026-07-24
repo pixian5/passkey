@@ -25,7 +25,7 @@ globalThis.chrome = {
   },
 };
 
-await import("../../extension_chrome_web/extension-bridge.js");
+await import(`../../extension_chrome_web/extension-bridge.js?test=${Date.now()}-${Math.random()}`);
 const invoke = globalThis.__PASS_EXTENSION_INVOKE__;
 
 test("清空回收站保留永久删除墓碑并清除敏感字段", async () => {
@@ -42,7 +42,8 @@ test("清空回收站保留永久删除墓碑并清除敏感字段", async () =>
   assert.equal(await invoke("hard_delete_all_deleted_accounts"), 1);
 
   const history = await invoke("get_operation_history");
-  const tombstone = history[0].after.accounts.find((item) => item.recordId === account.recordId);
+  const purgeEntry = history.find((entry) => entry.title === "清空回收站") || history[0];
+  const tombstone = purgeEntry.after.accounts.find((item) => item.recordId === account.recordId);
   assert.ok(tombstone, "永久删除后必须保留稳定 ID 的账号墓碑");
   assert.equal(tombstone.isDeleted, true);
   assert.equal(tombstone.isPermanentlyDeleted, true);

@@ -1,6 +1,6 @@
 [package]
 name = "codex-tauri"
-version = "0.2.1"
+version = "0.2.3"
 description = "Cross-platform desktop shell for pass"
 authors = ["pass team"]
 edition = "2021"

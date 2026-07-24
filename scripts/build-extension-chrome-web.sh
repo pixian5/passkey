@@ -27,5 +27,6 @@ fi
 cp -p "${ROOT_DIR}/core/pass_core/js/sync_merge_core.js" "${TARGET_DIR}/sync_merge_core.js"
 cp -p "${ROOT_DIR}/core/pass_core/js/sync_policy.js" "${TARGET_DIR}/sync_policy.js"
 cp -p "${ROOT_DIR}/core/pass_core/js/sync_alias_core.js" "${TARGET_DIR}/sync_alias_core.js"
+cp -p "${ROOT_DIR}/core/pass_core/js/csv_core.js" "${TARGET_DIR}/csv_core.js"
 
 echo "Pass Web 预览扩展已刷新：${TARGET_DIR}"

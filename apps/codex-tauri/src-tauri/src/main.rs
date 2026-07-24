@@ -784,7 +784,7 @@ fn soft_delete_accounts(
     app: AppHandle,
     state: tauri::State<AppLockState>,
     account_ids: Vec<String>,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
     let conn = open_db(&app)?;
@@ -810,6 +810,7 @@ fn soft_delete_accounts(
     snapshot_current_vault(&conn, &dir, "批量移入回收站前自动备份")?;
     let device = load_device_name(&conn)?;
     let now = now_ms();
+    let mut count = 0usize;
     for account_id in selected {
         if let Some(account) = accounts
             .iter_mut()
@@ -820,6 +821,7 @@ fn soft_delete_accounts(
             account.deleted_device_name = device.clone();
             account.last_operated_device_name = device.clone();
             account.updated_at_ms = now;
+            count += 1;
         }
     }
     let mut folders = load_folders(&conn)?;
@@ -828,7 +830,7 @@ fn soft_delete_accounts(
     save_accounts(&conn, &accounts)?;
     save_folders(&conn, &folders)?;
     save_all_regular_order(&conn, &all_order)?;
-    Ok(())
+    Ok(count)
 }
 
 #[tauri::command]

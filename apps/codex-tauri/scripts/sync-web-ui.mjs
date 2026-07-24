@@ -10,6 +10,7 @@ const sourceMain = resolve(root, "src/main.js");
 const sourceStyles = resolve(root, "src/styles.css");
 const sourceHtml = resolve(root, "index.html");
 const coreJs = resolve(repoRoot, "core/pass_core/js/sync_merge_core.js");
+const csvCoreJs = resolve(repoRoot, "core/pass_core/js/csv_core.js");
 const corePolicyJs = resolve(repoRoot, "core/pass_core/js/sync_policy.js");
 const coreAliasJs = resolve(repoRoot, "core/pass_core/js/sync_alias_core.js");
 
@@ -19,6 +20,7 @@ async function syncExtensionUi() {
   await cp(sourceMain, resolve(extensionDir, "web-main.js"));
   await cp(sourceStyles, resolve(extensionDir, "web-options.css"));
   await cp(coreJs, resolve(extensionDir, "sync_merge_core.js"));
+  await cp(csvCoreJs, resolve(extensionDir, "csv_core.js"));
   await cp(corePolicyJs, resolve(extensionDir, "sync_policy.js"));
   await cp(coreAliasJs, resolve(extensionDir, "sync_alias_core.js"));
 

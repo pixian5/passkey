@@ -2517,6 +2517,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             v.begin("批量移入回收站");
             let device = v.data.device_name.clone();
             let now = now_ms();
+            let mut count = 0;
             for account_id in selected {
                 if let Some(account) = v
                     .data
@@ -2529,11 +2530,12 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                     account.deleted_device_name = device.clone();
                     account.last_operated_device_name = device.clone();
                     account.updated_at_ms = now;
+                    count += 1;
                 }
             }
             normalize_order_state(&mut v.data);
             v.save()?;
-            Ok(json!(null))
+            Ok(json!(count))
         }
         "restore_account" => {
             let id: String = arg(&args, "id")?;

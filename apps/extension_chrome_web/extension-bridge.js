@@ -1,5 +1,6 @@
 import { mergeSyncPayloads, evaluateSyncSafety } from "./sync_merge_core.js";
 import { syncAliasGroups } from "./sync_alias_core.js";
+import { accountsToBrowserCsv, browserCsvToAccountDrafts, escapeCsvCell, buildCsv } from "./csv_core.js";
 
 /*
  * Chrome adapter for the Tauri/Web workspace.
@@ -773,18 +774,44 @@ import { syncAliasGroups } from "./sync_alias_core.js";
 
   async function exportCsv(filename) {
     const store = await loadStore();
-    const rows = [["name","username","password","url","note"]];
-    for (const account of activeAccounts(store.data)) rows.push([account.canonicalSite || account.sites[0] || "", account.username, account.password, account.sites[0] || "", account.note]);
-    const csv = rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = filename; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-    return { message: `已导出 ${rows.length - 1} 条账号`, path: filename };
+    const accounts = activeAccounts(store.data);
+    const csv = accountsToBrowserCsv(accounts);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    return { message: `已导出 ${accounts.length} 条账号`, path: filename };
   }
   async function importCsv(csv) {
-    const lines = String(csv || "").split(/\r?\n/).filter(Boolean); if (lines.length < 2) return { imported: 0, message: "没有可导入的账号" };
-    const parse = (line) => { const out = []; let cell = "", quoted = false; for (let i = 0; i < line.length; i += 1) { const c = line[i]; if (c === '"' && line[i + 1] === '"') { cell += '"'; i += 1; } else if (c === '"') quoted = !quoted; else if (c === "," && !quoted) { out.push(cell); cell = ""; } else cell += c; } out.push(cell); return out; };
-    const header = parse(lines[0]).map((v) => v.toLowerCase()); const index = (names) => names.map((name) => header.indexOf(name)).find((i) => i >= 0) ?? -1;
-    const siteIndex = index(["url", "website", "name"]), userIndex = index(["username", "login_username"]), passIndex = index(["password", "login_password"]), noteIndex = index(["note", "extra"]); let imported = 0;
-    await mutate("导入浏览器密码", (data) => { const importedIds = []; for (const line of lines.slice(1)) { const row = parse(line); const site = text(row[siteIndex]); if (!site) continue; const account = normalizeAccount({ recordId: id("account"), sites: [site], username: row[userIndex] || "", password: row[passIndex] || "", note: row[noteIndex] || "", createdAtMs: now(), updatedAtMs: now() }); data.accounts.push(account); importedIds.push(account.recordId); imported += 1; } if (importedIds.length) { data.allRegularAccountIds = [...importedIds, ...data.allRegularAccountIds]; touchAllRegularOrder(data); } });
+    const drafts = browserCsvToAccountDrafts(csv);
+    if (!drafts.length) return { imported: 0, message: "CSV 为空或未识别到账号" };
+    let imported = 0;
+    await mutate("导入浏览器密码", (data) => {
+      const importedIds = [];
+      for (const draft of drafts) {
+        const sites = unique(draft.sites || []);
+        if (!sites.length) continue;
+        const account = normalizeAccount({
+          recordId: id("account"),
+          sites,
+          username: draft.username || "",
+          password: draft.password || "",
+          note: draft.note || "",
+          totpSecret: draft.totpSecret || "",
+          createdAtMs: now(),
+          updatedAtMs: now(),
+        });
+        data.accounts.push(account);
+        importedIds.push(account.recordId);
+        imported += 1;
+      }
+      if (importedIds.length) {
+        data.allRegularAccountIds = [...importedIds, ...data.allRegularAccountIds];
+        touchAllRegularOrder(data);
+      }
+    });
     return { imported, message: `已导入 ${imported} 条账号` };
   }
   async function importTotpEntries(entries) {

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Pass Web 预览",
   "description": "Pass 的独立 Chrome Web 风格管理页预览版，与旧插件并行测试。",
-  "version": "0.2.8",
+  "version": "0.2.10",
   "permissions": [
     "storage",
     "alarms",

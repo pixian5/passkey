@@ -191,18 +191,22 @@ UI 启动时读取并隐藏/降级不支持控件。
 
 ### 5.2 后续应继续统一的部分
 
+> 阶段 D 已启动：见 `docs/three-surface-command-matrix-zh.md` 与 `scripts/check_command_matrix.mjs`。
+
+### 5.2 后续应继续统一的部分
+
 优先级从高到低：
 
 1. **扩展 WebDAV**
    浏览器直接使用 WebDAV 需要 CORS；应选择受控代理或明确保持桌面/Web 专属，不能绕过浏览器安全边界。
 2. **扩展服务器版本**
    若自建服务器 API 已有版本接口，扩展可只读恢复。
-3. **共享 CSV Core**
-   Tauri/Web 已使用 `pass_csvio`，扩展仍有轻量 JS CSV 解析器；下一步统一格式映射和转义规则。
+3. **共享 CSV Core（阶段 E 已落地初版）**
+   JS `core/pass_core/js/csv_core.js` 已对齐 Rust 转义/构建，并接入扩展导入导出；完整 macOS 全字段 CSV 与所有浏览器方言可继续扩展。
 4. **命令返回形状完全对象化**
-   少数命令仍返回数字/布尔/字符串；后续统一为稳定对象字段，并补契约测试。
-5. **命令矩阵自动化测试**
-   从 UI `invoke("...")` 提取命令清单，对三端生成覆盖表和 stub 检测；重点覆盖删除墓碑、恢复顺序、置顶顺序。
+   少数命令仍返回数字/布尔/字符串；关键计数命令已统一为 number。完整对象化继续分阶段推进。
+5. **命令矩阵自动化测试（阶段 D 已落地初版）**
+   已有 `docs/three-surface-command-matrix-zh.md` + `scripts/check_command_matrix.mjs` + `apps/extension_shared/tests/command_matrix.test.mjs`。后续继续扩到完整返回 schema。
 6. **共享后端领域层**
    中长期把 vault mutation 从 Tauri/Web 重复逻辑抽到 `pass_core`，扩展继续用 JS 适配层。
 
@@ -280,3 +284,33 @@ cd apps/pass-web && cargo test && cargo build --release
 - 同步载荷以 `folderIds + folderMembershipStates` 为准；`deletedFromFolderIds` 不是跨端必需字段。
 - 任一表面恢复时都必须过滤已删除/永久删除文件夹，并把账号插到对应活动顺序顶部。
 
+## 9. 阶段 D：命令契约与矩阵
+
+目标：把三端 `invoke` 命令覆盖、平台降级、关键返回形状做成可自动检查的契约。
+
+已交付：
+
+1. `docs/three-surface-command-matrix-zh.md`
+2. `scripts/check_command_matrix.mjs`
+3. `apps/extension_shared/tests/command_matrix.test.mjs`
+4. `soft_delete_accounts` 三端统一返回数字 count
+
+检查命令：
+
+```bash
+node scripts/check_command_matrix.mjs
+cd apps/extension_shared && npm test -- tests/command_matrix.test.mjs
+```
+
+失败即阻断：UI 命令任一端缺失、扩展伪成功平台能力、关键计数命令返回非数字。
+
+## 10. 阶段 E：共享 CSV Core
+
+已交付：
+
+1. `core/pass_core/js/csv_core.js`
+2. 扩展导入/导出改用共享 CSV Core
+3. `apps/extension_shared/tests/csv_core.test.mjs`
+4. `docs/three-surface-csv-core-zh.md`
+
+下一小步：把 Docker Web/Tauri 浏览器 CSV 导入路径也尽量复用同一映射表，减少方言分叉。
