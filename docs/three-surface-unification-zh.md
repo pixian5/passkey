@@ -355,11 +355,12 @@ cd apps/extension_shared && npm test -- tests/command_matrix.test.mjs
 - WebDAV 仍不在扩展实现（浏览器 CORS）
 - SSH 创建服务仍桌面专属
 
-## 13. 小修：文件夹重命名规则对齐
+## 13. 小修：文件夹创建/重命名规则对齐
 
-扩展 `rename_folder` 与桌面/Web 对齐：
+扩展 `create_folder` / `rename_folder` 与桌面/Web 对齐：
 
-1. 固定“新账号”文件夹不可重命名
-2. 已删除/永久删除文件夹不可重命名
-3. 名称不可为空
+1. 新建文件夹名称不可为空
+2. 固定“新账号”文件夹不可重命名
+3. 已删除/永久删除文件夹不可重命名
+4. 重命名名称不可为空
 
