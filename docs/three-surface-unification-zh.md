@@ -197,18 +197,23 @@ UI 启动时读取并隐藏/降级不支持控件。
 
 优先级从高到低：
 
-1. **扩展 WebDAV**
+1. **扩展 WebDAV（平台边界）**
    浏览器直接使用 WebDAV 需要 CORS；应选择受控代理或明确保持桌面/Web 专属，不能绕过浏览器安全边界。
-2. **扩展服务器版本（已落地）**
-   扩展已直接调用 `/v2/sync/versions` 列表与恢复；WebDAV 仍保持桌面/Web 专属。
-3. **共享 CSV Core（阶段 E 已落地初版）**
-   JS `core/pass_core/js/csv_core.js` 已对齐 Rust 转义/构建，并接入扩展导入导出；Rust/JS 已共用 browser CSV 映射；后续仅补更多密码管理器方言样例。
-4. **命令返回形状完全对象化**
+2. **命令返回形状完全对象化**
    少数命令仍返回数字/布尔/字符串；关键计数命令已统一为 number。完整对象化继续分阶段推进。
-5. **命令矩阵自动化测试（阶段 D 已落地初版）**
-   已有 `docs/three-surface-command-matrix-zh.md` + `scripts/check_command_matrix.mjs` + `apps/extension_shared/tests/command_matrix.test.mjs`。后续继续扩到完整返回 schema。
-6. **共享后端领域层**
-   中长期把 vault mutation 从 Tauri/Web 重复逻辑抽到 `pass_core`，扩展继续用 JS 适配层。
+3. **命令矩阵完整返回 schema**
+   已有矩阵覆盖与部分契约；后续继续扩到完整返回 schema。
+4. **更多 CSV 方言样例**
+   共享 CSV Core 已落地；后续仅补更多密码管理器导入样例。
+5. **更深共享领域层**
+   账号/文件夹 mutation 主干已抽到 `pass_merge`/`vault_mutate_core`；排序数组、撤销栈、快照仍按表面实现。
+
+已落地（勿再当待办）：
+
+- 扩展服务器版本
+- 共享 CSV Core 初版 + browser CSV 映射
+- 命令矩阵自动化初版
+- 共享 vault mutation（删除/恢复/置顶/文件夹墓碑/关系墓碑）
 
 ## 6. 验收标准
 
@@ -269,13 +274,15 @@ cd apps/pass-web && cargo test && cargo build --release
 
 ### 8.3 下一阶段再做的工程项（非本轮）
 
-这些不是“漏做的小修”，而是独立阶段：
+这些不是“漏做的小修”，而是独立阶段/边界项：
 
-1. 共享 CSV Core（替换扩展轻量解析器）
-2. 命令返回形状完全对象化 + 契约测试
-3. 三端命令矩阵自动化覆盖
-4. vault mutation 抽到共享领域层
-5. 扩展 WebDAV（需明确 CORS/代理方案后；服务器版本已落地）
+1. 命令返回形状完全对象化 + 契约测试
+2. 命令矩阵完整返回 schema
+3. 扩展 WebDAV（需明确 CORS/代理方案后）
+4. 更多 CSV 方言样例
+5. 更深共享领域层（排序/撤销/快照等仍表面化）
+
+已完成：共享 CSV Core、命令矩阵初版、vault mutation 主干、扩展服务器版本、文件夹关系墓碑。
 
 ### 8.4 本地辅助字段说明
 
@@ -325,7 +332,7 @@ cd apps/extension_shared && npm test -- tests/command_matrix.test.mjs
 
 已交付初版共享 mutation helper：
 
-- Rust：`pass_merge::v2::{soft_delete_account, permanently_delete_account, restore_account_fields, set_account_pinned}`
+- Rust：`pass_merge::v2::{soft_delete_account, permanently_delete_account, restore_account_fields, set_account_pinned, permanently_delete_folder, mark_folder_membership}`
 - JS：`core/pass_core/js/vault_mutate_core.js`（含 `setAccountPinned`）
 - 接入：
   - Tauri 删除/恢复
