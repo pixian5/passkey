@@ -202,7 +202,7 @@ UI 启动时读取并隐藏/降级不支持控件。
 2. **扩展服务器版本**
    若自建服务器 API 已有版本接口，扩展可只读恢复。
 3. **共享 CSV Core（阶段 E 已落地初版）**
-   JS `core/pass_core/js/csv_core.js` 已对齐 Rust 转义/构建，并接入扩展导入导出；完整 macOS 全字段 CSV 与所有浏览器方言可继续扩展。
+   JS `core/pass_core/js/csv_core.js` 已对齐 Rust 转义/构建，并接入扩展导入导出；Rust/JS 已共用 browser CSV 映射；后续仅补更多密码管理器方言样例。
 4. **命令返回形状完全对象化**
    少数命令仍返回数字/布尔/字符串；关键计数命令已统一为 number。完整对象化继续分阶段推进。
 5. **命令矩阵自动化测试（阶段 D 已落地初版）**
@@ -314,3 +314,9 @@ cd apps/extension_shared && npm test -- tests/command_matrix.test.mjs
 4. `docs/three-surface-csv-core-zh.md`
 
 下一小步：把 Docker Web/Tauri 浏览器 CSV 导入路径也尽量复用同一映射表，减少方言分叉。
+
+### 阶段 E 续完成项
+
+- Rust `pass_csvio` 新增 `parse_csv_rows` / `browser_csv_to_account_drafts`
+- Tauri 与 Docker Web 浏览器 CSV 导入改为共享映射
+- 用户名/密码可选，站点可识别即可导入

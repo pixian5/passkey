@@ -14,7 +14,7 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
     Engine as _,
 };
-use pass_csvio::build_csv;
+use pass_csvio::{browser_csv_to_account_drafts, build_csv, host_from_site_value};
 use pass_merge::v2::{
     evaluate_sync_safety, normalize_all_regular_order, normalize_folder_regular_order,
     normalize_folder_regular_orders, sync_alias_groups, Folder, Passkey, PasswordAccount,
@@ -1473,144 +1473,52 @@ struct TotpImportResult {
     skipped: usize,
 }
 
-fn split_csv(text: &str) -> Vec<Vec<String>> {
-    let mut rows = Vec::new();
-    let mut row = Vec::new();
-    let mut field = String::new();
-    let mut quoted = false;
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if quoted {
-            if ch == '"' {
-                if chars.peek() == Some(&'"') {
-                    field.push('"');
-                    chars.next();
-                } else {
-                    quoted = false;
-                }
-            } else {
-                field.push(ch);
-            }
-            continue;
-        }
-        match ch {
-            '"' => quoted = true,
-            ',' => row.push(std::mem::take(&mut field)),
-            '\n' => {
-                row.push(std::mem::take(&mut field));
-                if row.iter().any(|v| !v.trim().is_empty()) {
-                    rows.push(std::mem::take(&mut row));
-                } else {
-                    row.clear();
-                }
-            }
-            '\r' => {}
-            other => field.push(other),
-        }
-    }
-    if !field.is_empty() || !row.is_empty() {
-        row.push(field);
-        if row.iter().any(|v| !v.trim().is_empty()) {
-            rows.push(row);
-        }
-    }
-    rows
-}
-
-fn csv_header(value: &str) -> String {
-    value
-        .trim()
-        .trim_start_matches('\u{feff}')
-        .to_ascii_lowercase()
-        .replace([' ', '_'], "")
-}
-
-fn csv_host(value: &str) -> Option<String> {
-    let raw = value.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    let host = raw
-        .strip_prefix("https://")
-        .or_else(|| raw.strip_prefix("http://"))
-        .unwrap_or(raw)
-        .split(['/', '?', '#', ':'])
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    (!host.is_empty()).then_some(host)
-}
-
 fn imported_accounts_from_csv(text: &str) -> Result<Vec<PasswordAccount>, String> {
-    let rows = split_csv(text);
-    if rows.is_empty() {
-        return Err("CSV 为空".into());
+    let drafts = browser_csv_to_account_drafts(text)?;
+    if drafts.is_empty() {
+        return Err("CSV 中没有可导入的账号".into());
     }
-    let headers = rows[0].iter().map(|v| csv_header(v)).collect::<Vec<_>>();
     let timestamp = now_ms();
-    let mut output = Vec::new();
-    for row in rows.iter().skip(1) {
-        let mut values = BTreeMap::new();
-        for (index, header) in headers.iter().enumerate() {
-            values.insert(
-                header.clone(),
-                row.get(index)
-                    .cloned()
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string(),
-            );
-        }
-        let url = values
-            .get("url")
-            .or_else(|| values.get("origin"))
-            .or_else(|| values.get("website"))
-            .or_else(|| values.get("hostname"))
+    let mut output = Vec::with_capacity(drafts.len());
+    for draft in drafts {
+        let site = draft
+            .sites
+            .first()
             .cloned()
+            .or_else(|| host_from_site_value(&draft.note))
             .unwrap_or_default();
-        let Some(site) = csv_host(&url) else { continue };
-        let username = values
-            .get("username")
-            .or_else(|| values.get("user"))
-            .cloned()
-            .unwrap_or_default();
-        let password = values
-            .get("password")
-            .or_else(|| values.get("pass"))
-            .cloned()
-            .unwrap_or_default();
-        if username.is_empty() && password.is_empty() {
+        if site.is_empty() {
             continue;
         }
-        let note = values
-            .get("note")
-            .or_else(|| values.get("notes"))
-            .cloned()
-            .unwrap_or_default();
         let id = Uuid::new_v4().to_string();
         output.push(PasswordAccount {
             record_id: Some(id.clone()),
             id: Some(id),
-            account_id: format!("{site}-{timestamp}-{username}"),
+            account_id: format!("{site}-{timestamp}-{}", draft.username),
             canonical_site: site.clone(),
-            username_at_create: username.clone(),
-            sites: vec![site],
-            username,
-            password,
-            note,
+            username_at_create: draft.username.clone(),
+            sites: draft.sites.clone(),
+            username: draft.username,
+            password: draft.password,
+            note: draft.note,
+            totp_secret: draft.totp_secret,
             created_at_ms: timestamp,
             updated_at_ms: timestamp,
             username_updated_at_ms: timestamp,
             password_updated_at_ms: timestamp,
             note_updated_at_ms: timestamp,
+            totp_updated_at_ms: timestamp,
             created_device_name: "Web CSV 导入".into(),
             last_operated_device_name: "Web CSV 导入".into(),
             username_updated_device_name: "Web CSV 导入".into(),
             password_updated_device_name: "Web CSV 导入".into(),
             note_updated_device_name: "Web CSV 导入".into(),
+            totp_updated_device_name: "Web CSV 导入".into(),
             ..Default::default()
         });
+    }
+    if output.is_empty() {
+        return Err("CSV 中没有可导入的账号".into());
     }
     Ok(output)
 }
@@ -3563,4 +3471,18 @@ mod tests {
         assert!(account.totp_secret.is_empty());
         assert!(account.recovery_codes.is_empty());
     }
+
+    #[test]
+    fn browser_csv_import_allows_optional_credentials() {
+        let csv = "url,username,password,note\nhttps://www.Example.com/login,alice,secret,hello\nhttps://github.com,,,\n";
+        let imported = imported_accounts_from_csv(csv).unwrap();
+        assert_eq!(imported.len(), 2);
+        assert_eq!(imported[0].canonical_site, "example.com");
+        assert_eq!(imported[0].username, "alice");
+        assert_eq!(imported[0].password, "secret");
+        assert_eq!(imported[1].canonical_site, "github.com");
+        assert!(imported[1].username.is_empty());
+        assert!(imported[1].password.is_empty());
+    }
+
 }

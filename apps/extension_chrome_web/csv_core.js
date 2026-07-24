@@ -1,6 +1,6 @@
 /**
  * Shared CSV helpers for Pass surfaces.
- * Keep escape/build semantics aligned with core/pass_core/crates/csvio.
+ * Keep semantics aligned with core/pass_core/crates/csvio.
  */
 
 export const MACOS_EXPORT_HEADERS = [
@@ -37,14 +37,12 @@ export function decodeSites(raw) {
   return [...new Set(values)].sort();
 }
 
-/** Escape a CSV cell like pass_csvio::escape_csv_cell. */
 export function escapeCsvCell(value) {
   let sanitized = String(value ?? "").replaceAll("\r", " ").replaceAll("\n", " ");
   if (/^[=+\-@\t]/.test(sanitized)) sanitized = `'${sanitized}`;
   return `"${sanitized.replaceAll('"', '""')}"`;
 }
 
-/** Build CSV document; headers stay bare, body cells escaped. */
 export function buildCsv(headers, rows) {
   const lines = [headers.join(",")];
   for (const row of rows) {
@@ -53,78 +51,101 @@ export function buildCsv(headers, rows) {
   return lines.join("\n");
 }
 
-/** Parse one CSV line with quotes/escapes. */
-export function parseCsvLine(line) {
-  const out = [];
-  let cell = "";
-  let quoted = false;
-  const text = String(line ?? "");
-  for (let i = 0; i < text.length; i += 1) {
-    const c = text[i];
-    if (quoted && c === '"' && text[i + 1] === '"') {
-      cell += '"';
-      i += 1;
-    } else if (c === '"') {
-      quoted = !quoted;
-    } else if (c === "," && !quoted) {
-      out.push(cell);
-      cell = "";
-    } else {
-      cell += c;
+export function parseCsvRows(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+  const source = String(text || "");
+  for (let i = 0; i < source.length; i += 1) {
+    const c = source[i];
+    if (inQuotes) {
+      if (c === '"' && source[i + 1] === '"') {
+        field += '"';
+        i += 1;
+      } else if (c === '"') {
+        inQuotes = false;
+      } else {
+        field += c;
+      }
+      continue;
+    }
+    if (c === '"') inQuotes = true;
+    else if (c === ",") {
+      row.push(field);
+      field = "";
+    } else if (c === "\n") {
+      row.push(field);
+      field = "";
+      if (row.some((cell) => String(cell).trim())) rows.push(row);
+      row = [];
+    } else if (c !== "\r") {
+      field += c;
     }
   }
-  out.push(cell);
-  return out;
+  if (field.length || row.length) {
+    row.push(field);
+    if (row.some((cell) => String(cell).trim())) rows.push(row);
+  }
+  return rows;
 }
 
 export function parseCsv(text) {
-  const normalized = String(text || "").replace(/^\uFEFF/, "").replaceAll("\r\n", "\n").replaceAll("\r", "\n");
-  const lines = normalized.split("\n").filter((line, index, arr) => !(index === arr.length - 1 && line === ""));
-  if (!lines.length) return { headers: [], rows: [] };
-  const headers = parseCsvLine(lines[0]).map((h) => h.trim());
-  const rows = lines.slice(1).filter((line) => line.trim().length).map(parseCsvLine);
-  return { headers, rows };
+  const rows = parseCsvRows(text);
+  if (!rows.length) return { headers: [], rows: [] };
+  return { headers: rows[0].map((h) => String(h || "").trim()), rows: rows.slice(1) };
 }
 
-function headerIndex(headers, names) {
-  const lower = headers.map((h) => h.toLowerCase());
+export function normalizeHeader(h) {
+  return String(h || "")
+    .trim()
+    .replace(/^\uFEFF/, "")
+    .toLowerCase()
+    .replace(/[ \t_\-]/g, "");
+}
+
+export function hostFromSiteValue(raw) {
+  const t = String(raw || "").trim();
+  if (!t) return "";
+  const withoutScheme = t.replace(/^https?:\/\//i, "");
+  let host = withoutScheme.split(/[\/?#:]/)[0] || "";
+  host = host.replace(/^\[/, "").replace(/\]$/, "").replace(/^www\./i, "").trim().toLowerCase();
+  return host;
+}
+
+function mapGet(map, names) {
   for (const name of names) {
-    const idx = lower.indexOf(name.toLowerCase());
-    if (idx >= 0) return idx;
+    if (map[name] != null && map[name] !== "") return map[name];
   }
-  return -1;
+  return "";
 }
 
-/**
- * Map browser/password-manager CSV rows into account drafts.
- * Supports common Chrome/Firefox/Safari/1Password-ish headers.
- */
 export function browserCsvToAccountDrafts(csvText) {
-  const { headers, rows } = parseCsv(csvText);
-  if (!headers.length) return [];
-  const siteIndex = headerIndex(headers, ["url", "website", "login_uri", "hostname", "name", "sites"]);
-  const userIndex = headerIndex(headers, ["username", "login_username", "user", "login"]);
-  const passIndex = headerIndex(headers, ["password", "login_password"]);
-  const noteIndex = headerIndex(headers, ["note", "notes", "extra", "comments"]);
-  const totpIndex = headerIndex(headers, ["totp", "totp_secret", "otpauth", "otp"]);
+  const rows = parseCsvRows(csvText);
+  if (!rows.length) return [];
+  const headers = rows[0].map(normalizeHeader);
   const drafts = [];
-  for (const row of rows) {
-    let site = siteIndex >= 0 ? String(row[siteIndex] || "").trim() : "";
+  for (const row of rows.slice(1)) {
+    const map = {};
+    headers.forEach((header, index) => {
+      if (!header) return;
+      map[header] = String(row[index] ?? "").trim();
+    });
+    const siteRaw = mapGet(map, ["url", "origin", "website", "hostname", "loginuri", "loginurl", "sites", "name"]);
+    const site = hostFromSiteValue(siteRaw);
     if (!site) continue;
-    // strip scheme for storage sites
-    try {
-      if (/^https?:\/\//i.test(site)) {
-        const url = new URL(site);
-        site = url.hostname || site;
-      }
-    } catch (_) {}
-    site = site.replace(/^www\./i, "");
+    let note = mapGet(map, ["note", "notes", "extra", "comments", "comment"]);
+    if (!note) {
+      const name = map.name || "";
+      const nameHost = hostFromSiteValue(name);
+      if (name && name.toLowerCase() !== site && nameHost !== site) note = name;
+    }
     drafts.push({
-      sites: decodeSites(site),
-      username: userIndex >= 0 ? String(row[userIndex] || "") : "",
-      password: passIndex >= 0 ? String(row[passIndex] || "") : "",
-      note: noteIndex >= 0 ? String(row[noteIndex] || "") : "",
-      totpSecret: totpIndex >= 0 ? String(row[totpIndex] || "") : "",
+      sites: [site],
+      username: mapGet(map, ["username", "user", "loginusername", "login", "username"]),
+      password: mapGet(map, ["password", "pass", "loginpassword", "passwd"]),
+      note,
+      totpSecret: mapGet(map, ["totp", "totpsecret", "otpauth", "otp", "otpsecre"]),
     });
   }
   return drafts;

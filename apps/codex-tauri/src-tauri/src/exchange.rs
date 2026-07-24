@@ -1,10 +1,9 @@
 //! Import / export helpers: sync bundle, browser password CSV.
 
-use pass_csvio::build_csv;
+use pass_csvio::{browser_csv_to_account_drafts, build_csv, host_from_site_value};
 use pass_merge::v2::{evaluate_sync_safety, merge_sync_payloads, PasswordAccount, SyncPayload};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
 
 use crate::sync::crypto::{decrypt_wire_body, encrypt_bundle_document, PLAINTEXT_SCHEMA};
 use crate::sync::http::{get_sync_state, put_sync_state, validate_base_url};
@@ -120,192 +119,55 @@ pub fn import_bundle_content(
 
 // --- Browser CSV ---
 
-fn parse_csv_rows(text: &str) -> Vec<Vec<String>> {
-    let mut rows = Vec::new();
-    let mut row = Vec::new();
-    let mut field = String::new();
-    let mut in_quotes = false;
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        if in_quotes {
-            if c == '"' {
-                if chars.peek() == Some(&'"') {
-                    field.push('"');
-                    chars.next();
-                } else {
-                    in_quotes = false;
-                }
-            } else {
-                field.push(c);
-            }
-        } else {
-            match c {
-                '"' => in_quotes = true,
-                ',' => {
-                    row.push(std::mem::take(&mut field));
-                }
-                '\n' => {
-                    row.push(std::mem::take(&mut field));
-                    if row.iter().any(|c| !c.trim().is_empty()) {
-                        rows.push(std::mem::take(&mut row));
-                    } else {
-                        row.clear();
-                    }
-                }
-                '\r' => {}
-                other => field.push(other),
-            }
-        }
-    }
-    if !field.is_empty() || !row.is_empty() {
-        row.push(field);
-        if row.iter().any(|c| !c.trim().is_empty()) {
-            rows.push(row);
-        }
-    }
-    rows
-}
-
-fn normalize_header(h: &str) -> String {
-    h.trim()
-        .trim_start_matches('\u{feff}')
-        .to_ascii_lowercase()
-        .replace(' ', "")
-        .replace('_', "")
-}
-
-fn host_from_url(raw: &str) -> Option<String> {
-    let t = raw.trim();
-    if t.is_empty() {
-        return None;
-    }
-    if let Some(rest) = t
-        .strip_prefix("https://")
-        .or_else(|| t.strip_prefix("http://"))
-    {
-        let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
-        let host = host.trim().trim_start_matches('[').trim_end_matches(']');
-        if host.is_empty() {
-            return None;
-        }
-        return Some(host.to_ascii_lowercase());
-    }
-    let host = t
-        .split(['/', '?', '#', ':'])
-        .next()
-        .unwrap_or(t)
-        .trim()
-        .to_ascii_lowercase();
-    if host.is_empty() || !host.contains('.') {
-        // still allow bare domains without dot (intranet)
-        if host.is_empty() {
-            return None;
-        }
-    }
-    Some(host)
-}
-
 pub fn browser_entries_from_csv(text: &str) -> Result<Vec<PasswordAccount>, String> {
-    let rows = parse_csv_rows(text);
-    if rows.is_empty() {
-        return Err("CSV 为空".into());
+    let drafts = browser_csv_to_account_drafts(text)?;
+    if drafts.is_empty() {
+        return Err("CSV 中没有可导入的账号".into());
     }
-    let headers: Vec<String> = rows[0].iter().map(|h| normalize_header(h)).collect();
-    let mut out = Vec::new();
     let ts = now_ms();
-    for row in rows.iter().skip(1) {
-        let mut map: BTreeMap<String, String> = BTreeMap::new();
-        for (i, h) in headers.iter().enumerate() {
-            let v = row.get(i).map(|s| s.trim().to_string()).unwrap_or_default();
-            map.insert(h.clone(), v);
-        }
-        let url = map
-            .get("url")
-            .or_else(|| map.get("origin"))
-            .or_else(|| map.get("website"))
-            .or_else(|| map.get("hostname"))
-            .or_else(|| map.get("loginuri"))
+    let mut out = Vec::with_capacity(drafts.len());
+    for draft in drafts {
+        let site = draft
+            .sites
+            .first()
             .cloned()
+            .or_else(|| host_from_site_value(&draft.username))
             .unwrap_or_default();
-        let username = map
-            .get("username")
-            .or_else(|| map.get("user"))
-            .cloned()
-            .unwrap_or_default();
-        let password = map
-            .get("password")
-            .or_else(|| map.get("pass"))
-            .cloned()
-            .unwrap_or_default();
-        let Some(site) = host_from_url(&url) else {
+        if site.is_empty() {
             continue;
-        };
-        if username.is_empty() && password.is_empty() {
-            continue;
-        }
-        let mut note_parts = Vec::new();
-        if let Some(n) = map.get("name").filter(|s| !s.is_empty()) {
-            note_parts.push(format!("来源名称: {n}"));
-        }
-        if let Some(n) = map
-            .get("note")
-            .or_else(|| map.get("notes"))
-            .filter(|s| !s.is_empty())
-        {
-            note_parts.push(format!("备注: {n}"));
         }
         let id = uuid::Uuid::new_v4().to_string();
-        let account_id = format!("{site}-{username}-{ts}");
+        let account_id = format!("{site}-{}-{ts}", draft.username);
         out.push(PasswordAccount {
             record_id: Some(id.clone()),
             id: Some(id),
             account_id,
             canonical_site: site.clone(),
-            sites: vec![site],
-            username: username.clone(),
-            password,
-            note: note_parts.join("\n"),
-            username_at_create: username,
+            sites: draft.sites.clone(),
+            username: draft.username.clone(),
+            password: draft.password,
+            note: draft.note,
+            totp_secret: draft.totp_secret,
+            username_at_create: draft.username,
             created_at_ms: ts,
             updated_at_ms: ts,
             username_updated_at_ms: ts,
             password_updated_at_ms: ts,
             note_updated_at_ms: ts,
+            totp_updated_at_ms: ts,
             created_device_name: "import".into(),
             last_operated_device_name: "import".into(),
             username_updated_device_name: "import".into(),
             password_updated_device_name: "import".into(),
             note_updated_device_name: "import".into(),
+            totp_updated_device_name: "import".into(),
             ..Default::default()
         });
     }
-    Ok(out)
-}
-
-pub fn merge_imported_accounts(
-    existing: Vec<PasswordAccount>,
-    imported: Vec<PasswordAccount>,
-    device: &str,
-) -> Vec<PasswordAccount> {
-    let local = SyncPayload {
-        accounts: existing,
-        folders: vec![],
-        passkeys: vec![],
-        ..Default::default()
-    };
-    let remote = SyncPayload {
-        accounts: imported,
-        folders: vec![],
-        passkeys: vec![],
-        ..Default::default()
-    };
-    let mut merged = merge_sync_payloads(local, remote);
-    for a in &mut merged.accounts {
-        if a.last_operated_device_name.trim().is_empty() {
-            a.last_operated_device_name = device.to_string();
-        }
+    if out.is_empty() {
+        return Err("CSV 中没有可导入的账号".into());
     }
-    merged.accounts
+    Ok(out)
 }
 
 pub fn export_browser_csv(
@@ -366,6 +228,31 @@ pub fn export_browser_csv(
 pub fn build_csv_string(headers: &[&str], rows: &[Vec<String>]) -> String {
     build_csv(headers, rows)
 }
+
+pub fn merge_imported_accounts(
+    existing: Vec<PasswordAccount>,
+    imported: Vec<PasswordAccount>,
+    device_name: &str,
+) -> Vec<PasswordAccount> {
+    let mut merged = merge_sync_payloads(
+        SyncPayload {
+            accounts: existing,
+            ..Default::default()
+        },
+        SyncPayload {
+            accounts: imported,
+            ..Default::default()
+        },
+    )
+    .accounts;
+    for account in &mut merged {
+        if account.last_operated_device_name.trim().is_empty() {
+            account.last_operated_device_name = device_name.to_string();
+        }
+    }
+    merged
+}
+
 
 // --- Sync versions ---
 

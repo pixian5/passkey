@@ -7,6 +7,7 @@ import {
   decodeSites,
   encodeSites,
   escapeCsvCell,
+  hostFromSiteValue,
   parseCsv,
 } from "../../../core/pass_core/js/csv_core.js";
 
@@ -29,11 +30,11 @@ test("parseCsv 支持引号逗号与 CRLF", () => {
   assert.deepEqual(parsed.rows[0], ["git,hub", "alice", "p,ass", "https://github.com", 'n"ote']);
 });
 
-test("browserCsvToAccountDrafts 识别常见浏览器列并剥离协议", () => {
+test("browserCsvToAccountDrafts 识别常见浏览器列并允许空用户名密码", () => {
   const csv = [
     "url,username,password,note",
     "https://www.Example.com/login,alice,secret,hello",
-    "https://github.com,bob,pw,",
+    "https://github.com,,,",
   ].join("\n");
   const drafts = browserCsvToAccountDrafts(csv);
   assert.equal(drafts.length, 2);
@@ -41,6 +42,8 @@ test("browserCsvToAccountDrafts 识别常见浏览器列并剥离协议", () => 
   assert.equal(drafts[0].username, "alice");
   assert.equal(drafts[0].password, "secret");
   assert.deepEqual(drafts[1].sites, ["github.com"]);
+  assert.equal(drafts[1].username, "");
+  assert.equal(drafts[1].password, "");
 });
 
 test("accountsToBrowserCsv 往返字段", () => {
@@ -55,7 +58,8 @@ test("accountsToBrowserCsv 往返字段", () => {
   assert.equal(drafts[0].note, "c");
 });
 
-test("encode/decode sites", () => {
+test("hostFromSiteValue 与 encode/decode sites", () => {
+  assert.equal(hostFromSiteValue("https://www.Example.com/path"), "example.com");
   assert.equal(encodeSites(["Apple.com", "icloud.com"]), "Apple.com;icloud.com");
   assert.deepEqual(decodeSites(" iCloud.com ; apple.com;icloud.com ; ;APPLE.COM "), [
     "apple.com",

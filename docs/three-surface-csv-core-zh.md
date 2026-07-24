@@ -25,3 +25,11 @@
 cd apps/extension_shared && npm test -- tests/csv_core.test.mjs
 node scripts/check_command_matrix.mjs
 ```
+
+## 阶段 E 续：Rust 共享导入
+
+- `pass_csvio::browser_csv_to_account_drafts` 成为浏览器 CSV 导入唯一映射入口。
+- Tauri：`apps/codex-tauri/src-tauri/src/exchange.rs` 仅负责把 draft 变成 `PasswordAccount`。
+- Docker Web：`imported_accounts_from_csv` 同样只做 draft → 账号装配。
+- JS：`core/pass_core/js/csv_core.js` 与 Rust 规则对齐（表头归一化、站点 host 提取、可选用户名密码、TOTP 列）。
+- 用户名/密码不再是导入前置条件；有站点即可导入。
