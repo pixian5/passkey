@@ -44,7 +44,7 @@ UI 调用约 66 个命令。
 | 文件夹顺序同步 | 完整 | 完整 | 完整 |
 | 文件夹去重 | 完整 | 完整 | 完整（本轮补齐） |
 | WebDAV | 完整 | 完整 | 未实现，明确报错 |
-| 服务器版本列表/恢复 | 完整 | 完整 | 未实现，明确报错 |
+| 服务器版本列表/恢复 | 完整 | 完整 | 完整（`/v2/sync/versions`） |
 | SSH 创建服务 | 完整 | 草稿/检测 only | 草稿 only |
 | Touch ID / 生物识别 | macOS | 无 | 无 |
 | 原生目录选择器 | 有 | 无（浏览器下载） | 无（浏览器下载） |
@@ -275,7 +275,7 @@ cd apps/pass-web && cargo test && cargo build --release
 2. 命令返回形状完全对象化 + 契约测试
 3. 三端命令矩阵自动化覆盖
 4. vault mutation 抽到共享领域层
-5. 扩展 WebDAV / 服务器版本（需明确 CORS/代理方案后）
+5. 扩展 WebDAV（需明确 CORS/代理方案后；服务器版本已落地）
 
 ### 8.4 本地辅助字段说明
 
@@ -354,3 +354,12 @@ cd apps/extension_shared && npm test -- tests/command_matrix.test.mjs
 
 - WebDAV 仍不在扩展实现（浏览器 CORS）
 - SSH 创建服务仍桌面专属
+
+## 13. 小修：文件夹重命名规则对齐
+
+扩展 `rename_folder` 与桌面/Web 对齐：
+
+1. 固定“新账号”文件夹不可重命名
+2. 已删除/永久删除文件夹不可重命名
+3. 名称不可为空
+
