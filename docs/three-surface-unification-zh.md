@@ -135,6 +135,25 @@ UI 启动时读取并隐藏/降级不支持控件。
 - 对“列表类”可返回空数组并在 UI 侧隐藏入口；
 - 不允许静默 no-op 且假装成功。
 
+## 3.5 三端不可违反的数据规则
+
+这些规则适用于 Tauri、Docker Web、Chrome 新扩展，任何表面实现 mutation 时都必须遵守。违反会导致同步后账号复活、敏感信息残留或顺序漂移。
+
+1. **清空回收站不是物理删除**：`hard_delete_all_deleted_accounts` 只能把回收站账号标记为永久删除墓碑，禁止 `filter` 掉记录。
+2. **永久删除墓碑必须保留稳定 `recordId`/`accountId`**，以便远端旧副本合并时继续识别为已永久删除。
+3. **永久删除必须清空敏感明文**：至少清空 `password`、`totpSecret`、`recoveryCodes`；可保留站点、用户名、备注等非密钥字段供审计与冲突裁决。
+4. **永久删除字段必须写全**：`isDeleted=true`、`isPermanentlyDeleted=true`、`deletedAtMs`、`deletedDeviceName`、`updatedAtMs`、`lastOperatedDeviceName`。
+5. **普通同步不得清除 `isPermanentlyDeleted`**；只有明确的恢复策略或未来压缩策略才能处理墓碑。
+6. **软删除/恢复必须写删除时间与设备名**：进入回收站时写 `deletedAtMs/deletedDeviceName`；恢复时清空删除时间与设备名，并更新 `updatedAtMs/lastOperatedDeviceName`。
+7. **恢复时只能回到仍存在的文件夹**：过滤已删除/永久删除文件夹；恢复后账号进入“全部账号”和所属文件夹顺序顶部，批量恢复保持原相对顺序。
+8. **文件夹加入/移除必须同步更新 `folderMembershipStates`**；站点别名关系用 `siteAliasStates`，禁止只改数组不写关系墓碑。
+9. **顺序字段与内容字段分离 LWW**：`allRegularAccountIds`、`folderOrderIds`、`Folder.regularAccountIds` 各自带更新时间与设备名，不可被账号内容更新时间覆盖。
+10. **单删、批量删、去重删必须复用同一删除 helper**，禁止某条路径漏写字段。
+11. **本地 mutation 写入的 payload 必须可被三端合并 Core 正确理解**；快照、导入、同步写回必须包含顺序字段与关系墓碑。
+12. **平台不支持功能通过 capability 隐藏或明确报错**，禁止伪成功。
+13. **命令返回结构逐步统一为对象**；不要再新增只返回裸字符串的成功接口。
+14. **扩展本地敏感配置必须加密**：账号库、同步设置、UI 偏好中的密钥/密码、创建服务草稿都使用本地 AES-GCM；旧明文读取后自动迁移。
+
 ## 4. 本轮已统一
 
 1. UI 单源同步脚本：`apps/codex-tauri/scripts/sync-web-ui.mjs`
@@ -153,6 +172,13 @@ UI 启动时读取并隐藏/降级不支持控件。
 14. 扩展同步预览/导入复用同步安全评估，避免空远端或实体丢失静默写入
 15. 扩展同步合并补齐显式域名别名规则（包括 Microsoft/Microsoft Online）
 16. 扩展同步设置改为 AES-GCM 加密保存，自动填充镜像携带完整排序字段
+17. 扩展清空回收站改为保留永久删除墓碑，并清空密码/TOTP/恢复码
+18. 扩展单删、批量删、去重统一 `softDeleteAccountState` / `permanentlyDeleteAccountState`
+19. 扩展批量恢复补齐删除时间清理、有效文件夹过滤、关系状态与原顺序
+20. 扩展置顶/批量置顶补齐 `pinnedSortOrder`、`updatedAtMs`、设备名，并拒绝回收站账号
+21. 扩展 UI 偏好与创建服务草稿改为 AES-GCM 加密，旧明文自动迁移
+22. Docker Web 永久删除统一 `mark_account_permanently_deleted`，补齐删除时间/设备名/更新时间
+23. Docker Web 单账号置顶对齐桌面：写 `pinnedSortOrder` 与设备名，返回账号对象
 
 ## 5. 明确不统一 / 后续阶段
 
@@ -173,9 +199,11 @@ UI 启动时读取并隐藏/降级不支持控件。
    若自建服务器 API 已有版本接口，扩展可只读恢复。
 3. **共享 CSV Core**
    Tauri/Web 已使用 `pass_csvio`，扩展仍有轻量 JS CSV 解析器；下一步统一格式映射和转义规则。
-4. **命令矩阵自动化测试**
-   从 UI `invoke("...")` 提取命令清单，对三端生成覆盖表和 stub 检测。
-5. **共享后端领域层**
+4. **命令返回形状完全对象化**
+   少数命令仍返回数字/布尔/字符串；后续统一为稳定对象字段，并补契约测试。
+5. **命令矩阵自动化测试**
+   从 UI `invoke("...")` 提取命令清单，对三端生成覆盖表和 stub 检测；重点覆盖删除墓碑、恢复顺序、置顶顺序。
+6. **共享后端领域层**
    中长期把 vault mutation 从 Tauri/Web 重复逻辑抽到 `pass_core`，扩展继续用 JS 适配层。
 
 ## 6. 验收标准
@@ -187,6 +215,9 @@ UI 启动时读取并隐藏/降级不支持控件。
 5. 桌面专属按钮在扩展/Web 上隐藏或给出清晰错误，不出现英文堆栈或空白失败。
 6. `npm run test:core-parity` 必须比较完整 payload 顺序字段，不能只分别比较账号、文件夹和通行密钥集合。
 7. 扩展桥接冒烟测试必须覆盖锁定拦截、错误密码、Microsoft 别名和安全预览。
+8. 清空回收站后账号记录仍在，且 `isPermanentlyDeleted=true`、敏感字段已清空。
+9. 永久删除墓碑与旧远端活动记录合并后，不得复活为可见账号。
+10. 批量恢复后删除时间清空，原文件夹关系与相对顺序保持，无效文件夹被过滤。
 
 ## 7. 开发操作
 

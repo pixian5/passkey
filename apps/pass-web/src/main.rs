@@ -370,6 +370,18 @@ fn move_accounts_to_folder_top(
     }
 }
 
+fn mark_account_permanently_deleted(account: &mut PasswordAccount, now: i64, device: &str) {
+    account.is_deleted = true;
+    account.is_permanently_deleted = true;
+    account.deleted_at_ms = Some(now);
+    account.deleted_device_name = device.to_string();
+    account.updated_at_ms = now;
+    account.last_operated_device_name = device.to_string();
+    account.password.clear();
+    account.totp_secret.clear();
+    account.recovery_codes.clear();
+}
+
 impl Vault {
     fn open(dir: PathBuf) -> Result<Self, String> {
         private_dir_result(&dir)?;
@@ -2559,13 +2571,10 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
         "hard_delete_account" => {
             let id: String = arg(&args, "id")?;
             v.begin("永久删除账号");
+            let now = now_ms();
+            let device = v.data.device_name.clone();
             let a = account_mut(&mut v.data.accounts, &id).ok_or("未找到账号")?;
-            a.is_deleted = true;
-            a.is_permanently_deleted = true;
-            a.deleted_at_ms = Some(now_ms());
-            a.password.clear();
-            a.totp_secret.clear();
-            a.recovery_codes.clear();
+            mark_account_permanently_deleted(a, now, &device);
             normalize_order_state(&mut v.data);
             v.save()?;
             Ok(json!(null))
@@ -2609,13 +2618,12 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
         }
         "hard_delete_all_deleted_accounts" => {
             v.begin("清空回收站");
+            let now = now_ms();
+            let device = v.data.device_name.clone();
             let mut count = 0;
             for a in &mut v.data.accounts {
                 if a.is_deleted && !a.is_permanently_deleted {
-                    a.is_permanently_deleted = true;
-                    a.password.clear();
-                    a.totp_secret.clear();
-                    a.recovery_codes.clear();
+                    mark_account_permanently_deleted(a, now, &device);
                     count += 1;
                 }
             }
@@ -2907,11 +2915,40 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
         "toggle_account_pin" => {
             let id: String = arg(&args, "id")?;
             v.begin("切换账号置顶");
+            let target = v
+                .data
+                .accounts
+                .iter()
+                .find(|account| account_key(account).eq_ignore_ascii_case(&id) || account.account_id.eq_ignore_ascii_case(&id))
+                .ok_or("未找到账号")?;
+            if target.is_deleted || target.is_permanently_deleted {
+                return Err("回收站账号不支持置顶".into());
+            }
+            let next_pinned = !target.is_pinned;
+            let next_order = if next_pinned {
+                Some(
+                    v.data
+                        .accounts
+                        .iter()
+                        .filter(|account| !account.is_deleted && !account.is_permanently_deleted && account.is_pinned)
+                        .filter_map(|account| account.pinned_sort_order)
+                        .max()
+                        .unwrap_or(-1)
+                        + 1,
+                )
+            } else {
+                None
+            };
+            let now = now_ms();
+            let device = v.data.device_name.clone();
             let a = account_mut(&mut v.data.accounts, &id).ok_or("未找到账号")?;
-            a.is_pinned = !a.is_pinned;
-            a.updated_at_ms = now_ms();
+            a.is_pinned = next_pinned;
+            a.pinned_sort_order = next_order;
+            a.updated_at_ms = now;
+            a.last_operated_device_name = device;
+            let updated = a.clone();
             v.save()?;
-            Ok(json!(null))
+            Ok(serde_json::to_value(updated).unwrap())
         }
         "reorder_accounts" => {
             let order: Vec<String> = arg(&args, "orderedIds")?;
@@ -3501,5 +3538,27 @@ mod tests {
         let mut order = vec!["existing".to_string()];
         move_account_to_order_top(&mut order, "added");
         assert_eq!(order, vec!["added", "existing"]);
+    }
+
+    #[test]
+    fn permanent_delete_keeps_tombstone_and_clears_secrets() {
+        let mut account = PasswordAccount {
+            record_id: Some("stable-account-id".into()),
+            password: "secret".into(),
+            totp_secret: "totp".into(),
+            recovery_codes: "codes".into(),
+            ..Default::default()
+        };
+        mark_account_permanently_deleted(&mut account, 1234, "Web test");
+        assert_eq!(account.resolved_record_id(), "stable-account-id");
+        assert!(account.is_deleted);
+        assert!(account.is_permanently_deleted);
+        assert_eq!(account.deleted_at_ms, Some(1234));
+        assert_eq!(account.deleted_device_name, "Web test");
+        assert_eq!(account.updated_at_ms, 1234);
+        assert_eq!(account.last_operated_device_name, "Web test");
+        assert!(account.password.is_empty());
+        assert!(account.totp_secret.is_empty());
+        assert!(account.recovery_codes.is_empty());
     }
 }
