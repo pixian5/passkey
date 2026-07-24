@@ -706,7 +706,7 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
           sshProvision: false,
           biometricUnlock: false,
           webdavSync: false,
-          serverVersions: false,
+          serverVersions: true,
           folderDedup: true,
           selfHostedSync: true,
           localSnapshots: true,
@@ -749,8 +749,59 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
       case "sync_preview": return syncRemote("merge", true);
       case "sync_now_mode": return syncRemote(text(args.mode) || "merge", false);
       case "sync_webdav_now_mode": throw new Error("当前 Chrome 扩展表面尚未实现 WebDAV；请使用桌面端或 Docker Web，或改用自建服务器同步");
-      case "list_server_versions": return []; // Chrome 扩展暂不提供服务器版本列表
-      case "restore_server_version": throw new Error("当前 Chrome 扩展表面尚未实现服务器版本恢复；请使用桌面端或 Docker Web");
+      case "list_server_versions": {
+        const settings = await getSync();
+        const base = text(settings.baseUrl).replace(/\/$/, "");
+        if (!base) return [];
+        const headers = { Accept: "application/json" };
+        if (text(settings.authToken)) headers.Authorization = `Bearer ${text(settings.authToken)}`;
+        const response = await fetch(`${base}/v2/sync/versions`, { headers, cache: "no-store" });
+        if (!response.ok) {
+          const body = await response.text().catch(() => "");
+          throw new Error(`读取服务器快照失败 HTTP ${response.status}${body ? `：${body}` : ""}`);
+        }
+        const value = await response.json();
+        const rows = Array.isArray(value) ? value : (Array.isArray(value?.versions) ? value.versions : []);
+        return rows.map((item) => {
+          const rawId = item?.id ?? item?.versionId;
+          const id = rawId == null ? "" : String(rawId);
+          if (!id) return null;
+          return {
+            id,
+            exportedAtMs: Number(item?.exportedAtMs) || 0,
+            savedAtMs: Number(item?.savedAtMs) || 0,
+            payloadSha256: text(item?.payloadSha256 || item?.sha256 || ""),
+          };
+        }).filter(Boolean);
+      }
+      case "restore_server_version": {
+        const versionId = text(args.versionId);
+        if (!/^\d+$/.test(versionId)) throw new Error("服务器快照编号无效");
+        const settings = await getSync();
+        const base = text(settings.baseUrl).replace(/\/$/, "");
+        if (!base) throw new Error("请先配置同步服务器 URL");
+        const headers = { Accept: "application/json" };
+        if (text(settings.authToken)) headers.Authorization = `Bearer ${text(settings.authToken)}`;
+        const response = await fetch(`${base}/v2/sync/versions/${encodeURIComponent(versionId)}`, { headers, cache: "no-store" });
+        if (!response.ok) {
+          const body = await response.text().catch(() => "");
+          throw new Error(`下载服务器快照失败 HTTP ${response.status}${body ? `：${body}` : ""}`);
+        }
+        const envelope = await response.json();
+        const document = await decryptDocument(envelope, settings.encryptionKey, settings.previousEncryptionKey || "");
+        const restoredPayload = normalizePayload(document);
+        return mutate("恢复服务器快照前自动备份", (data) => {
+          const deviceName = data.deviceName || "Chrome";
+          Object.assign(data, restoredPayload);
+          data.deviceName = deviceName;
+          return true;
+        }).then(() => {
+          const accounts = (restoredPayload.accounts || []).filter((account) => !account.isPermanentlyDeleted).length;
+          const folders = (restoredPayload.folders || []).filter((folder) => !folder.isPermanentlyDeleted).length;
+          const passkeys = (restoredPayload.passkeys || []).filter((passkey) => !passkey.isPermanentlyDeleted).length;
+          return `已恢复快照 ${versionId}：账号 ${accounts}，文件夹 ${folders}，通行密钥 ${passkeys}`;
+        });
+      }
       case "list_local_snapshots": return store.snapshots.map((snapshot) => ({ id: snapshot.id, reason: snapshot.reason, createdAtMs: snapshot.createdAtMs, accounts: (snapshot.payload.accounts || []).filter((a) => !a.isPermanentlyDeleted).length, folders: (snapshot.payload.folders || []).filter((f) => !f.isPermanentlyDeleted).length, passkeys: (snapshot.payload.passkeys || []).filter((p) => !p.isPermanentlyDeleted).length }));
       case "restore_local_snapshot": { const snapshot = store.snapshots.find((item) => sameId(item.id, args.snapshotId)); if (!snapshot) throw new Error("本地快照不存在"); return mutate("恢复本地安全快照", (data) => { const restored = normalizePayload(snapshot.payload); Object.assign(data, restored); return true; }).then(() => "本地安全快照已恢复"); }
       default: throw new Error(`Chrome 测试插件暂未实现命令：${command}`);

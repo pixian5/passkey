@@ -37,15 +37,25 @@ for (const [surface, list] of Object.entries(missing)) {
 const extSrc = read("apps/extension_chrome_web/extension-bridge.js");
 const mustError = [
   ["sync_webdav_now_mode", /case "sync_webdav_now_mode":\s*throw new Error/],
-  ["restore_server_version", /case "restore_server_version":\s*throw new Error/],
   ["provision_self_hosted_server", /case "provision_self_hosted_server":\s*throw new Error/],
   ["lock_unlock_biometric", /case "lock_unlock_biometric":\s*throw new Error/],
 ];
 for (const [cmd, re] of mustError) {
   if (!re.test(extSrc)) errors.push(`extension must throw for unsupported command: ${cmd}`);
 }
-if (!/case "list_server_versions":\s*return \[\]/.test(extSrc)) {
-  errors.push('extension list_server_versions must return []');
+if (!/case "list_server_versions":/.test(extSrc) || /case "list_server_versions":\s*return \[\]/.test(extSrc)) {
+  // empty-list stub no longer allowed once serverVersions capability is enabled
+  if (/case "list_server_versions":\s*return \[\]/.test(extSrc)) {
+    errors.push('extension list_server_versions must call /v2/sync/versions instead of returning []');
+  } else if (!/case "list_server_versions":/.test(extSrc)) {
+    errors.push('extension list_server_versions missing');
+  }
+}
+if (!/case "restore_server_version":[\s\S]*?\/v2\/sync\/versions\//.test(extSrc)) {
+  errors.push('extension restore_server_version must download /v2/sync/versions/{id}');
+}
+if (!/serverVersions:\s*true/.test(extSrc)) {
+  errors.push('extension health_check.capabilities.serverVersions must be true');
 }
 
 // Count-return contracts in extension.

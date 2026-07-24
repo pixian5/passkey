@@ -199,8 +199,8 @@ UI 启动时读取并隐藏/降级不支持控件。
 
 1. **扩展 WebDAV**
    浏览器直接使用 WebDAV 需要 CORS；应选择受控代理或明确保持桌面/Web 专属，不能绕过浏览器安全边界。
-2. **扩展服务器版本**
-   若自建服务器 API 已有版本接口，扩展可只读恢复。
+2. **扩展服务器版本（已落地）**
+   扩展已直接调用 `/v2/sync/versions` 列表与恢复；WebDAV 仍保持桌面/Web 专属。
 3. **共享 CSV Core（阶段 E 已落地初版）**
    JS `core/pass_core/js/csv_core.js` 已对齐 Rust 转义/构建，并接入扩展导入导出；Rust/JS 已共用 browser CSV 映射；后续仅补更多密码管理器方言样例。
 4. **命令返回形状完全对象化**
@@ -264,7 +264,7 @@ cd apps/pass-web && cargo test && cargo build --release
 | SSH 创建服务 | 有 | 草稿 only | 草稿 only | 桌面专属；其他端明确报错/只存草稿 |
 | 原生文件选择器 | 有 | 无 | 无 | 下载/上传替代 |
 | WebDAV | 有 | 有 | 无 | 扩展明确报错；需代理方案才可做 |
-| 服务器版本列表/恢复 | 有 | 有 | 无 | 扩展明确报错或空列表 |
+| 服务器版本列表/恢复 | 有 | 有 | 有 | 三端均走 `/v2/sync/versions`；WebDAV 仍桌面/Web 专属 |
 | 页面自动填充 / WebAuthn | 无 | 无 | 有 | 扩展专属 |
 
 ### 8.3 下一阶段再做的工程项（非本轮）
@@ -340,3 +340,17 @@ cd apps/extension_shared && npm test -- tests/command_matrix.test.mjs
 4. 排序/列表维护仍由各表面负责，共享层只保证账号字段语义一致。
 5. 三端置顶/批量置顶统一走 `set_account_pinned` / `setAccountPinned`。
 6. 删除文件夹统一走 `permanently_delete_folder` / `permanentlyDeleteFolder`（永久墓碑，非软删除）。
+
+## 12. 阶段 G：扩展服务器版本
+
+已交付：
+
+1. 扩展 `list_server_versions` 读取自建服务器 `/v2/sync/versions`
+2. 扩展 `restore_server_version` 下载 `/v2/sync/versions/{id}` 并覆盖本地 vault（自动备份/撤销栈）
+3. `health_check.capabilities.serverVersions = true`
+4. 命令矩阵/契约测试同步更新
+
+边界：
+
+- WebDAV 仍不在扩展实现（浏览器 CORS）
+- SSH 创建服务仍桌面专属

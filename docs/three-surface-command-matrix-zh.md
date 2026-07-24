@@ -43,8 +43,8 @@
 |---|---|---|---|
 | `lock_unlock_biometric` | macos-only | error | error |
 | `sync_webdav_now_mode` | full | full | error |
-| `list_server_versions` | full | full | empty-list |
-| `restore_server_version` | full | full | error |
+| `list_server_versions` | full | full | full |
+| `restore_server_version` | full | full | full |
 | `provision_self_hosted_server` | full | error/draft | error/draft |
 | `detect_existing_sync_service` | full | limited | limited |
 | `choose_export_directory` | full | null | null |
@@ -85,7 +85,7 @@
 | `import_google_authenticator_totp` | ✅ | ✅ | ✅ |  |
 | `import_sync_bundle_text` | ✅ | ✅ | ✅ |  |
 | `list_local_snapshots` | ✅ | ✅ | ✅ |  |
-| `list_server_versions` | ✅ | ✅ | ✅ | platform={"tauri": "full", "web": "full", "ext": "empty-list"} |
+| `list_server_versions` | ✅ | ✅ | ✅ | platform={"tauri": "full", "web": "full", "ext": "full"} |
 | `lock_biometric_available` | ✅ | ✅ | ✅ | platform={"tauri": "macos", "web": "false", "ext": "false"} |
 | `lock_change_password` | ✅ | ✅ | ✅ |  |
 | `lock_disable` | ✅ | ✅ | ✅ |  |
@@ -104,7 +104,7 @@
 | `restore_account` | ✅ | ✅ | ✅ |  |
 | `restore_all_deleted_accounts` | ✅ | ✅ | ✅ | count-number |
 | `restore_local_snapshot` | ✅ | ✅ | ✅ |  |
-| `restore_server_version` | ✅ | ✅ | ✅ | platform={"tauri": "full", "web": "full", "ext": "error"} |
+| `restore_server_version` | ✅ | ✅ | ✅ | platform={"tauri": "full", "web": "full", "ext": "full"} |
 | `save_provision_draft` | ✅ | ✅ | ✅ |  |
 | `save_ssh_credential_cmd` | ✅ | ✅ | ✅ | platform={"tauri": "full", "web": "true", "ext": "true"} |
 | `set_account_folders` | ✅ | ✅ | ✅ |  |
@@ -118,7 +118,7 @@
 | `sync_key_id` | ✅ | ✅ | ✅ |  |
 | `sync_now_mode` | ✅ | ✅ | ✅ | object(report,...) |
 | `sync_preview` | ✅ | ✅ | ✅ | object(report,...) |
-| `sync_webdav_now_mode` | ✅ | ✅ | ✅ | platform={"tauri": "full", "web": "full", "ext": "error"} |
+| `sync_webdav_now_mode` | ✅ | ✅ | ✅ | platform={"tauri": "full", "web": "full", "ext": "full"} |
 | `toggle_account_pin` | ✅ | ✅ | ✅ | account-object |
 | `undo_last_operation` | ✅ | ✅ | ✅ |  |
 | `update_account` | ✅ | ✅ | ✅ |  |

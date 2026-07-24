@@ -58,11 +58,16 @@ test("批量删除/恢复/清空返回数字 count", async () => {
   assert.equal(purged, 2);
 });
 
-test("扩展不支持能力必须明确失败或空列表", async () => {
+test("扩展不支持能力必须明确失败；服务器版本在已配置时可用", async () => {
   await assert.rejects(() => invoke("sync_webdav_now_mode", { mode: "merge" }), /WebDAV/);
-  await assert.rejects(() => invoke("restore_server_version", { versionId: "x" }), /服务器版本/);
   await assert.rejects(() => invoke("provision_self_hosted_server", {}), /SSH|桌面/);
   await assert.rejects(() => invoke("lock_unlock_biometric", {}), /指纹|生物|不提供/);
+  // 未配置 baseUrl 时列表为空；非法 versionId 明确报错
   const versions = await invoke("list_server_versions");
   assert.deepEqual(versions, []);
+  await assert.rejects(() => invoke("restore_server_version", { versionId: "x" }), /快照编号|配置|URL|服务器/);
+  await assert.rejects(() => invoke("restore_server_version", { versionId: "1" }), /配置|URL|服务器/);
+  const health = await invoke("health_check");
+  assert.equal(health.capabilities.serverVersions, true);
+  assert.equal(health.capabilities.webdavSync, false);
 });
