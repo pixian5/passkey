@@ -76,9 +76,12 @@ flowchart LR
 ```txt
 pass/
   apps/
-    app_flutter/                    # 五端共享 UI
+    codex-tauri/                    # Win/macOS/Linux 统一桌面 UI
+    pass-web/                       # Docker/Ubuntu Web UI
+    android_credential_provider/    # Android 系统凭据接入
     extension_chrome/               # 浏览器扩展（MV3）
-    sync_agent_desktop/             # 桌面本地同步代理
+    sync_server_local/              # macOS 本地同步服务脚本
+    sync_server_ubuntu/             # Ubuntu 自建同步服务
   core/
     pass_core/                      # Rust workspace
       crates/

@@ -243,7 +243,7 @@ P0 冻结 → P1 merge 运行时化 → P2 Core 变厚
 
 #### 仓库收敛
 
-- 选定唯一产品桌面路径后，停止在 `apps/codex-tauri`、`copilot-*-tauri`、`app_flutter` 等 **未接 Core 的分叉**上叠加产品功能；文档标明废弃或实验。
+- 当前跨平台桌面产品路径统一为 `apps/codex-tauri`；旧 Copilot/Flutter 实验壳已从仓库移除，禁止再创建未接共享 Core 的平行业务实现。
 
 #### 验收（退出门）
 

@@ -34,16 +34,15 @@ pass/
 │           └── ffi/        # C ABI / UniFFI bindings
 ├── apps/
 │   ├── app_macos/          # macOS 原生应用（SwiftUI）✅ 可运行
-│   ├── app_flutter/        # 五端共享 UI（Flutter）🚧 规划中
-│   ├── copilot-Claude-flutter/ # Flutter 桌面端（Win/Ubuntu/macOS）✅ 可构建
-│   ├── copilot-53-flutter/ # Flutter 桌面端（Win/Ubuntu/macOS）✅ 可构建
-│   ├── codex-tauri/        # Tauri 2 桌面端（Win/Ubuntu/macOS）✅ 初始化
-│   ├── copilot-53-tauri/   # Tauri 2 桌面端（Win/Ubuntu/macOS）✅ 可构建
+│   ├── codex-tauri/        # Tauri 2 桌面端（Win/Ubuntu/macOS）✅ 可运行
+│   ├── pass-web/           # Docker / Ubuntu 无 GUI Web 端 ✅ 可运行
+│   ├── android_credential_provider/ # Android Credential Provider
 │   ├── extension_chrome/   # Chrome 扩展（MV3）✅ 可构建
+│   ├── extension_chrome_web/ # 与 Web UI 统一的 Chrome 扩展
 │   ├── extension_firefox/  # Firefox 扩展
 │   ├── extension_safari/   # Safari 扩展（Swift + Web Extension）
 │   ├── extension_shared/   # 扩展共享代码（popup/background/content）
-│   ├── sync_agent_desktop/ # 桌面本地同步代理 🚧 规划中
+│   ├── sync_server_local/  # macOS 本地同步服务脚本
 │   └── sync_server_ubuntu/ # Ubuntu 自建同步服务（Python）✅ 可部署
 └── docs/                   # 详细设计文档（中文）
 ```
@@ -65,16 +64,15 @@ pass/
 | 模块 | 路径 | 状态 | 说明 |
 |------|------|------|------|
 | macOS 应用 | [`apps/app_macos`](apps/app_macos/README.md) | ✅ 可运行 | SwiftUI，支持账号管理、CSV 导出、回收站 |
-| Flutter 应用 | [`apps/app_flutter`](apps/app_flutter/README.md) | 🚧 规划中 | 五端（iOS/Android/Win/macOS/Linux）共享 UI |
-| Copilot Claude Flutter 桌面应用 | [`apps/copilot-Claude-flutter`](apps/copilot-Claude-flutter/README.md) | ✅ 可构建 | Windows / Ubuntu / macOS 统一 Flutter 桌面工程 |
-| Copilot 53 Flutter 桌面应用 | [`apps/copilot-53-flutter`](apps/copilot-53-flutter/README.md) | ✅ 可构建 | Windows / Ubuntu / macOS 统一 Flutter 桌面工程 |
 | Tauri 桌面应用 | [`apps/codex-tauri`](apps/codex-tauri/README.md) | ✅ 可构建 | 已接 `pass-merge` 别名/merge 预览与 `pass-csvio` CSV |
-| Copilot 53 Tauri 桌面应用 | [`apps/copilot-53-tauri`](apps/copilot-53-tauri/README.md) | ✅ 可构建 | Windows / Ubuntu / macOS 三端基础骨架 |
+| Docker Web | [`apps/pass-web`](apps/pass-web/README.md) | ✅ 可运行 | Ubuntu / Docker 无 GUI，浏览器访问统一管理界面 |
+| Android Provider | [`apps/android_credential_provider`](apps/android_credential_provider/README.md) | 🚧 开发中 | Android 14+ Credential Manager Provider |
 | Chrome 扩展 | [`apps/extension_chrome`](apps/extension_chrome/README.md) | ✅ 可构建 | MV3，自动填充 + 同步触发 |
+| Chrome Web UI 扩展 | [`apps/extension_chrome_web`](apps/extension_chrome_web/README.md) | ✅ 可构建 | 复用桌面/Web 管理界面，与旧扩展并行验证 |
 | Firefox 扩展 | [`apps/extension_firefox`](apps/extension_firefox/README.md) | ✅ 可构建 | WebExtension |
 | Safari 扩展 | [`apps/extension_safari`](apps/extension_safari/README.md) | ✅ 可构建 | Swift + Web Extension |
 | 扩展共享代码 | [`apps/extension_shared`](apps/extension_shared/README.md) | ✅ 共享 | popup/background/content/options |
-| 桌面同步代理 | [`apps/sync_agent_desktop`](apps/sync_agent_desktop/README.md) | 🚧 规划中 | 局域网配对与同步 |
+| macOS 本地同步服务 | [`apps/sync_server_local`](apps/sync_server_local/README.md) | ✅ 可运行 | 复用 Ubuntu 同步服务的本地启动与 launchd 脚本 |
 | Ubuntu 同步服务 | [`apps/sync_server_ubuntu`](apps/sync_server_ubuntu/README.md) | ✅ 可部署 | Python，单文件，零依赖 |
 | Rust 核心库 | [`core/pass_core`](core/pass_core/README.md) | ✅ 初始化 | 6 个 crate，含 FFI |
 
@@ -161,7 +159,7 @@ pass-domain / pass-merge / pass-storage / pass-transport
 ```
 
 **优势**：
-- 一套代码覆盖 Windows / macOS / Linux / iOS / Android，与项目已有 `app_flutter` 规划完全契合
+- 一套代码可覆盖 Windows / macOS / Linux / iOS / Android；若未来重启 Flutter 路线，应新建接入共享 Core 的正式工程
 - `flutter_rust_bridge` 生态成熟，可直接调用 Rust Core FFI，无需重写业务逻辑
 - Flutter 在 Windows 上产出原生 Win32/ANGLE 渲染的 `.exe`，无 WebView 依赖
 - Google 官方维护，社区活跃，桌面端渐趋稳定
@@ -383,7 +381,7 @@ pass-domain / pass-merge / pass-storage / pass-transport
 
 #### 🥇 首选：Flutter（W1 + U1）— 最快覆盖 Windows + Linux + 移动端
 
-与项目现有 `apps/app_flutter` 规划完全一致。一套代码库，通过 `flutter_rust_bridge` 接入 Rust Core FFI，Flutter 官方支持 Windows / Linux 桌面目标。
+若未来选择该路线，应以 `flutter_rust_bridge` 接入 Rust Core FFI，禁止恢复旧原型中的独立数据与合并实现。
 
 ```
 适合：团队规模小、优先快速上线、希望移动与桌面共用一套 UI

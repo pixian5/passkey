@@ -3,7 +3,7 @@
 Pass 的 **Win / macOS / Linux** 统一桌面壳（Tauri 2）。  
 macOS **系统级**能力（AutoFill、Credential Exchange）仍在 `apps/app_macos`（SwiftUI）；本壳用于跨桌面与 **自建同步互通**，设置面板与快捷键对齐 PassMac 主力功能。
 
-> `apps/copilot-53-tauri` 已冻结，请勿继续加功能。
+旧 Tauri/Flutter 实验壳已移除；跨平台桌面功能只在本目录继续开发。
 
 ## 已实现
 

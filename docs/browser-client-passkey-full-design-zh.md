@@ -374,8 +374,9 @@ sequenceDiagram
 ## 14. 与当前仓库模块映射
 - 插件目录：`apps/extension_chrome`
 - mac 客户端目录：`apps/app_macos`
+- 统一桌面客户端目录：`apps/codex-tauri`
+- Docker Web 目录：`apps/pass-web`
 - 核心目录：`core/pass_core`
-- 同步代理目录：`apps/sync_agent_desktop`
+- 同步服务目录：`apps/sync_server_ubuntu`
 - 协议参考：`docs/sync-protocol-contract-zh.md`
 - 总体架构参考：`docs/cross-platform-architecture-zh.md`
-
