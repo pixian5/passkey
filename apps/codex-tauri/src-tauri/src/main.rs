@@ -1554,7 +1554,17 @@ fn import_browser_csv(
     let undo_title = "导入浏览器密码前自动备份";
     let before = existing.len();
     let merged = merge_imported_accounts(existing, imported.clone(), &device);
-    save_accounts(&conn, &merged)?;
+    let mut folders = load_folders(&conn)?;
+    let mut all_order = load_all_regular_order(&conn)?;
+    normalize_order_state(&merged, &mut folders, &mut all_order);
+    save_collections_atomic(
+        &conn,
+        Some(&merged),
+        Some(&folders),
+        Some(&all_order),
+        None,
+        None,
+    )?;
     commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(ImportResult {
         format: "browser".into(),
@@ -1583,7 +1593,17 @@ fn import_browser_csv_text(
     let undo_title = "导入浏览器密码前自动备份";
     let before = existing.len();
     let merged = merge_imported_accounts(existing, imported.clone(), &device);
-    save_accounts(&conn, &merged)?;
+    let mut folders = load_folders(&conn)?;
+    let mut all_order = load_all_regular_order(&conn)?;
+    normalize_order_state(&merged, &mut folders, &mut all_order);
+    save_collections_atomic(
+        &conn,
+        Some(&merged),
+        Some(&folders),
+        Some(&all_order),
+        None,
+        None,
+    )?;
     commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(ImportResult {
         format: "browser".into(),
@@ -1608,7 +1628,7 @@ fn import_google_authenticator_totp(
     state.require_unlocked(&dir)?;
     let conn = open_db(&app)?;
     let mut accounts = load_accounts(&conn)?;
-    let folders = load_folders(&conn)?;
+    let mut folders = load_folders(&conn)?;
     let values: Vec<_> = entries
         .into_iter()
         .filter_map(|entry| {
@@ -1682,7 +1702,16 @@ fn import_google_authenticator_totp(
         created += 1;
     }
     sync_alias_sites(&mut accounts);
-    save_accounts(&conn, &accounts)?;
+    let mut all_order = load_all_regular_order(&conn)?;
+    normalize_order_state(&accounts, &mut folders, &mut all_order);
+    save_collections_atomic(
+        &conn,
+        Some(&accounts),
+        Some(&folders),
+        Some(&all_order),
+        None,
+        None,
+    )?;
     commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(TotpImportResult {
         created,
@@ -3582,7 +3611,17 @@ fn deduplicate_folder(
         }
     }
     if deleted_count > 0 {
-        save_accounts(&conn, &accounts)?;
+        let mut folders = load_folders(&conn)?;
+        let mut all_order = load_all_regular_order(&conn)?;
+        normalize_order_state(&accounts, &mut folders, &mut all_order);
+        save_collections_atomic(
+            &conn,
+            Some(&accounts),
+            Some(&folders),
+            Some(&all_order),
+            None,
+            None,
+        )?;
         commit_undo_point(&dir, undo_title, pre_payload)?;
     }
     Ok(DeduplicateResult {

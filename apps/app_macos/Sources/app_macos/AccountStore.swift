@@ -591,7 +591,6 @@ final class AccountStore: ObservableObject {
             folders[index].updatedAtMs = now
         }
         _ = normalizeFoldersEnsuringFixedNewAccountFolder()
-        saveFoldersToDefaults()
 
         var removedFromAccountCount = 0
 
@@ -604,8 +603,11 @@ final class AccountStore: ObservableObject {
             removedFromAccountCount += 1
         }
 
+        guard saveAccountsAndFoldersAtomically() else {
+            return
+        }
+
         if removedFromAccountCount > 0 {
-            saveAccounts()
             appendHistoryEntry(action: "删除文件夹：\(folder.name)，并从 \(removedFromAccountCount) 个账号中移除")
             statusMessage = "已删除文件夹: \(folder.name)，并从 \(removedFromAccountCount) 个账号中移除"
         } else {
@@ -3966,7 +3968,7 @@ final class AccountStore: ObservableObject {
             }
             CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
             if folderNormalization.foldersChanged || migratedFoldersFromDefaults {
-                saveFoldersToDefaults()
+                _ = saveFoldersToDefaults()
             }
             return
         }
@@ -3978,13 +3980,16 @@ final class AccountStore: ObservableObject {
                     legacyFolderIds: folderNormalization.legacyNewAccountFolderIds
                 )
                 let usingDatabaseData = accountDataFromDatabase.map { $0 == data } ?? false
-                if accountsChanged || !usingDatabaseData {
-                    saveAccountsToLocalDisk()
+                let foldersChanged = folderNormalization.foldersChanged || migratedFoldersFromDefaults
+                let accountsNeedSave = accountsChanged || !usingDatabaseData
+                if accountsNeedSave && foldersChanged {
+                    _ = saveAccountsAndFoldersAtomically(pushICloud: false)
+                } else if accountsNeedSave {
+                    _ = saveAccountsToLocalDisk()
+                } else if foldersChanged {
+                    _ = saveFoldersToDefaults()
                 }
                 CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
-                if folderNormalization.foldersChanged || migratedFoldersFromDefaults {
-                    saveFoldersToDefaults()
-                }
                 return
             }
 
@@ -3993,11 +3998,13 @@ final class AccountStore: ObservableObject {
                 _ = migrateAccountFolderIdsFromLegacyNewAccountFolder(
                     legacyFolderIds: folderNormalization.legacyNewAccountFolderIds
                 )
-                CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
-                if folderNormalization.foldersChanged || migratedFoldersFromDefaults {
-                    saveFoldersToDefaults()
+                let foldersChanged = folderNormalization.foldersChanged || migratedFoldersFromDefaults
+                if foldersChanged {
+                    _ = saveAccountsAndFoldersAtomically(pushICloud: true)
+                } else {
+                    _ = saveAccounts()
                 }
-                saveAccounts()
+                CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
                 return
             }
         }
@@ -4005,7 +4012,7 @@ final class AccountStore: ObservableObject {
         accounts = []
         CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
         if folderNormalization.foldersChanged || migratedFoldersFromDefaults {
-            saveFoldersToDefaults()
+            _ = saveFoldersToDefaults()
         }
     }
 
@@ -4082,18 +4089,69 @@ final class AccountStore: ObservableObject {
     }
 
     private func saveCoreCollectionsAtomically() throws {
-        let accountsData = try encoder.encode(accounts)
-        let foldersData = try encoder.encode(folders)
-        let passkeysData = try encoder.encode(passkeys.map(normalizePasskeyRecord))
+        try writeCollectionsAtomically(
+            includeAccounts: true,
+            includeFolders: true,
+            includePasskeys: true,
+            pushICloud: true
+        )
+    }
+
+    /// Persists any combination of account/folder/passkey collections in one SQLite transaction.
+    /// On failure, memory is restored to the pre-write snapshot so UI state matches disk.
+    @discardableResult
+    private func saveAccountsAndFoldersAtomically(
+        includePasskeys: Bool = false,
+        pushICloud: Bool = true
+    ) -> Bool {
+        let previousAccounts = accounts
+        let previousFolders = folders
+        let previousPasskeys = passkeys
+        do {
+            try writeCollectionsAtomically(
+                includeAccounts: true,
+                includeFolders: true,
+                includePasskeys: includePasskeys,
+                pushICloud: pushICloud
+            )
+            return true
+        } catch {
+            accounts = previousAccounts
+            folders = previousFolders
+            passkeys = previousPasskeys
+            statusMessage = "保存账号/文件夹失败: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    private func writeCollectionsAtomically(
+        includeAccounts: Bool,
+        includeFolders: Bool,
+        includePasskeys: Bool,
+        pushICloud: Bool
+    ) throws {
+        let accountsData = includeAccounts ? try encoder.encode(accounts) : nil
+        let foldersData = includeFolders ? try encoder.encode(folders) : nil
+        let passkeysData = includePasskeys ? try encoder.encode(passkeys.map(normalizePasskeyRecord)) : nil
         let timestamp = nowMs()
         try localSQLiteStore.transaction {
-            try localSQLiteStore.writeData(accountsData, for: LocalDatabaseKeys.accounts, updatedAtMs: timestamp)
-            try localSQLiteStore.writeData(foldersData, for: LocalDatabaseKeys.folders, updatedAtMs: timestamp)
-            try localSQLiteStore.writeData(passkeysData, for: LocalDatabaseKeys.passkeys, updatedAtMs: timestamp)
+            if let accountsData {
+                try localSQLiteStore.writeData(accountsData, for: LocalDatabaseKeys.accounts, updatedAtMs: timestamp)
+            }
+            if let foldersData {
+                try localSQLiteStore.writeData(foldersData, for: LocalDatabaseKeys.folders, updatedAtMs: timestamp)
+            }
+            if let passkeysData {
+                try localSQLiteStore.writeData(passkeysData, for: LocalDatabaseKeys.passkeys, updatedAtMs: timestamp)
+            }
         }
-        UserDefaults.standard.set(foldersData, forKey: Keys.foldersData)
-        CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
-        if !suppressCloudPush && syncEnableICloud {
+        if let foldersData {
+            UserDefaults.standard.set(foldersData, forKey: Keys.foldersData)
+        }
+        if includeAccounts {
+            CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
+        }
+        if pushICloud && !suppressCloudPush && syncEnableICloud {
             pushSyncDataToICloud(trigger: "local_update")
         }
     }
