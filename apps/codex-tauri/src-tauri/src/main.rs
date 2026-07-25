@@ -1272,13 +1272,17 @@ async fn sync_now(app: AppHandle, state: tauri::State<'_, AppLockState>) -> Resu
         let mut conn = open_db(&worker_app)?;
         let local_for_apply = local.clone();
         let worker_dir_for_apply = worker_dir.clone();
+        let mut snapshot_created = false;
         let (report, _applied) = run_sync(
             &settings,
             local.clone(),
             &device,
             &platform,
             |payload| {
-                local_snapshots::create(&worker_dir_for_apply, &local_for_apply, "同步写入本地前自动备份")?;
+                if !snapshot_created {
+                    local_snapshots::create(&worker_dir_for_apply, &local_for_apply, "同步写入本地前自动备份")?;
+                    snapshot_created = true;
+                }
                 save_payload_atomic(&mut conn, payload)
             },
         )?;
@@ -1325,6 +1329,7 @@ async fn sync_now_mode(
         let mut conn = open_db(&worker_app)?;
         let local_for_apply = local.clone();
         let worker_dir_for_apply = worker_dir.clone();
+        let mut snapshot_created = false;
         let (report, _applied) = run_sync_with_mode(
             &settings,
             local.clone(),
@@ -1332,7 +1337,10 @@ async fn sync_now_mode(
             &platform,
             mode,
             |payload| {
-                local_snapshots::create(&worker_dir_for_apply, &local_for_apply, "同步写入本地前自动备份")?;
+                if !snapshot_created {
+                    local_snapshots::create(&worker_dir_for_apply, &local_for_apply, "同步写入本地前自动备份")?;
+                    snapshot_created = true;
+                }
                 save_payload_atomic(&mut conn, payload)
             },
         )?;
@@ -1369,6 +1377,7 @@ async fn sync_webdav_now_mode(
         let mut conn = open_db(&worker_app)?;
         let local_for_apply = local.clone();
         let worker_dir_for_apply = worker_dir.clone();
+        let mut snapshot_created = false;
         let (report, _applied) = webdav::run_sync(
             &webdav_settings,
             parsed_mode,
@@ -1377,11 +1386,14 @@ async fn sync_webdav_now_mode(
             &platform,
             &encryption_key,
             |payload| {
-                local_snapshots::create(
-                    &worker_dir_for_apply,
-                    &local_for_apply,
-                    "WebDAV 同步写入本地前自动备份",
-                )?;
+                if !snapshot_created {
+                    local_snapshots::create(
+                        &worker_dir_for_apply,
+                        &local_for_apply,
+                        "WebDAV 同步写入本地前自动备份",
+                    )?;
+                    snapshot_created = true;
+                }
                 save_payload_atomic(&mut conn, payload)
             },
         )?;

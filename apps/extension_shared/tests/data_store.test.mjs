@@ -35,6 +35,7 @@ globalThis.chrome = { storage: { local, session } };
 const {
   disableDataEncryption,
   getAccounts,
+  getAllData,
   getFolders,
   getPasskeys,
   getSafetySnapshots,
@@ -199,6 +200,26 @@ test("并行首次写入所有集合使用同一个数据密钥", async () => {
   assert.equal((await getAccounts()).length, 1);
   assert.equal((await getFolders()).length, 1);
   assert.equal((await getPasskeys()).length, 1);
+});
+
+test("完整写入会在同一快照中保存全局与文件夹顺序", async () => {
+  await setAllData({
+    accounts: [{ accountId: "account-1", sites: ["example.com"], username: "", password: "" }],
+    folders: [{ id: "folder-1", name: "工作" }],
+    passkeys: [],
+    allRegularAccountIds: ["account-1"],
+    allRegularOrderUpdatedAtMs: 10,
+    allRegularOrderUpdatedDeviceName: "Mac",
+    folderOrderIds: ["folder-1"],
+    folderOrderUpdatedAtMs: 11,
+    folderOrderUpdatedDeviceName: "Mac",
+    deviceName: "Mac",
+  });
+  const data = await getAllData();
+  assert.deepEqual(data.allRegularAccountIds, ["account-1"]);
+  assert.deepEqual(data.folderOrderIds, ["folder-1"]);
+  assert.equal(data.allRegularOrderUpdatedAtMs, 10);
+  assert.equal(data.folderOrderUpdatedAtMs, 11);
 });
 
 test("正确主密码解开 v2 后会立即迁移并重包为 v3", async () => {

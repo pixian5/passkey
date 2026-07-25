@@ -11,6 +11,7 @@ import {
 } from "./account_core.js";
 import {
   evaluateSyncSafety,
+  mergeSyncPayloads as mergeSyncPayloadsCore,
   mergeAccountCollections as mergeAccountCollectionsCore,
   mergeFolderCollections as mergeFolderCollectionsCore,
   mergePasskeyCollections as mergePasskeyCollectionsCore,
@@ -28,7 +29,6 @@ import {
   migrateLegacySyncSecrets,
   rewrapDataEncryption,
   setAllData as setAllDataToDataStore,
-  setAccounts as setAccountsToDataStore,
   setSafetySnapshots,
   setSyncOutbox,
   setSyncSecrets,
@@ -397,25 +397,36 @@ async function runAutoSync() {
         accounts: remoteAccounts,
         passkeys: remotePasskeys,
         folders: remoteFolders,
+        allRegularAccountIds: remotePayload?.allRegularAccountIds || [],
+        allRegularOrderUpdatedAtMs: remotePayload?.allRegularOrderUpdatedAtMs || 0,
+        allRegularOrderUpdatedDeviceName: remotePayload?.allRegularOrderUpdatedDeviceName || "",
+        folderOrderIds: remotePayload?.folderOrderIds || [],
+        folderOrderUpdatedAtMs: remotePayload?.folderOrderUpdatedAtMs || 0,
+        folderOrderUpdatedDeviceName: remotePayload?.folderOrderUpdatedDeviceName || "",
       };
       continue;
     }
-
-    remoteAggregate.folders = mergeFolderCollections(remoteAggregate.folders, remoteFolders);
-    remoteAggregate.accounts = mergeAccountCollections(remoteAggregate.accounts, remoteAccounts);
-    remoteAggregate.accounts = syncAliasGroups(remoteAggregate.accounts);
-    remoteAggregate.accounts = reconcileAccountFolders(remoteAggregate.accounts, remoteAggregate.folders);
-    remoteAggregate.passkeys = mergePasskeyCollections(remoteAggregate.passkeys, remotePasskeys);
-    remoteAggregate.passkeys = buildUnifiedPasskeys(remoteAggregate.accounts, remoteAggregate.passkeys);
+    remoteAggregate = mergeSyncPayloadsCore(
+      remoteAggregate,
+      { ...remotePayload, accounts: remoteAccounts, folders: remoteFolders, passkeys: remotePasskeys },
+      syncMergeHelpers(),
+    );
   }
 
   if (remoteAggregate) {
-    mergedFolders = mergeFolderCollections(localFolders, remoteAggregate.folders);
-    mergedAccounts = mergeAccountCollections(localAccounts, remoteAggregate.accounts);
-    mergedAccounts = syncAliasGroups(mergedAccounts);
-    mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
-    mergedPasskeys = mergePasskeyCollections(localPasskeys, remoteAggregate.passkeys);
-    mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
+    const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+    const mergedPayload = mergeSyncPayloadsCore(
+      {
+        ...currentPayload,
+        accounts: localAccounts,
+        folders: localFolders,
+        passkeys: localPasskeys,
+      },
+      remoteAggregate,
+      syncMergeHelpers(),
+    );
+    ({ accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys } = mergedPayload);
+    remoteAggregate = mergedPayload;
   }
 
   if (remoteAggregate) {
@@ -437,6 +448,7 @@ async function runAutoSync() {
   }
 
   await writeBusinessDataToStore({
+    ...remoteAggregate,
     accounts: mergedAccounts,
     passkeys: mergedPasskeys,
     folders: mergedFolders,
@@ -470,6 +482,7 @@ async function runAutoSync() {
     let result;
     try {
       result = await pushRemotePayloadWithMode(target, {
+        ...remoteAggregate,
         accounts: mergedAccounts,
         passkeys: mergedPasskeys,
         folders: mergedFolders,
@@ -478,7 +491,7 @@ async function runAutoSync() {
       pushErrors.push(`${target.label}: ${error?.message || String(error || "")}`);
       const nextOutbox = upsertSyncOutbox([...outboxByTarget.values()], {
         targetKey,
-        payload: { accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders },
+        payload: { ...remoteAggregate, accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders },
         error,
       });
       outboxByTarget.clear();
@@ -507,6 +520,7 @@ async function runAutoSync() {
   await setSyncOutbox([...outboxByTarget.values()]);
 
   await writeBusinessDataToStore({
+    ...remoteAggregate,
     accounts: mergedAccounts,
     passkeys: mergedPasskeys,
     folders: mergedFolders,
@@ -529,6 +543,13 @@ async function readBusinessDataFromStore() {
     accounts: Array.isArray(stored.accounts) ? stored.accounts : [],
     passkeys: Array.isArray(stored.passkeys) ? stored.passkeys : [],
     folders: Array.isArray(stored.folders) ? stored.folders : [],
+    allRegularAccountIds: Array.isArray(stored.allRegularAccountIds) ? stored.allRegularAccountIds : [],
+    allRegularOrderUpdatedAtMs: Number(stored.allRegularOrderUpdatedAtMs) || 0,
+    allRegularOrderUpdatedDeviceName: String(stored.allRegularOrderUpdatedDeviceName || ""),
+    folderOrderIds: Array.isArray(stored.folderOrderIds) ? stored.folderOrderIds : [],
+    folderOrderUpdatedAtMs: Number(stored.folderOrderUpdatedAtMs) || 0,
+    folderOrderUpdatedDeviceName: String(stored.folderOrderUpdatedDeviceName || ""),
+    deviceName: String(stored.deviceName || ""),
   };
 }
 
@@ -553,6 +574,13 @@ function normalizeSyncPayloadShape(payload) {
     accounts,
     passkeys: buildUnifiedPasskeys(accounts, rawPasskeys),
     folders,
+    allRegularAccountIds: Array.isArray(payload?.allRegularAccountIds) ? payload.allRegularAccountIds.map(String).filter(Boolean) : [],
+    allRegularOrderUpdatedAtMs: Number(payload?.allRegularOrderUpdatedAtMs) || 0,
+    allRegularOrderUpdatedDeviceName: String(payload?.allRegularOrderUpdatedDeviceName || ""),
+    folderOrderIds: Array.isArray(payload?.folderOrderIds) ? payload.folderOrderIds.map(String).filter(Boolean) : [],
+    folderOrderUpdatedAtMs: Number(payload?.folderOrderUpdatedAtMs) || 0,
+    folderOrderUpdatedDeviceName: String(payload?.folderOrderUpdatedDeviceName || ""),
+    deviceName: String(payload?.deviceName || ""),
   };
 }
 
@@ -576,16 +604,30 @@ function sortSyncPayloadCollections(payload) {
     accounts: [...(payload?.accounts || [])].sort((lhs, rhs) => compare(lhs, rhs, ["recordId", "accountId"])),
     passkeys: [...(payload?.passkeys || [])].sort((lhs, rhs) => compare(lhs, rhs, ["credentialIdB64u"])),
     folders: [...(payload?.folders || [])].sort((lhs, rhs) => compare(lhs, rhs, ["id"])),
+    allRegularAccountIds: [...(payload?.allRegularAccountIds || [])],
+    folderOrderIds: [...(payload?.folderOrderIds || [])],
   };
 }
 
-async function writeBusinessDataToStore({ accounts, passkeys, folders }) {
-  const nextPayload = normalizeSyncPayloadShape({ accounts, passkeys, folders });
+async function broadcastWebBridgeData(data) {
+  try {
+    await chrome.runtime.sendMessage({
+      type: "PASS_WEB_BRIDGE_DATA_CHANGED",
+      payload: normalizeSyncPayloadShape(data),
+    });
+  } catch {
+    // The management page may not be open. The background store remains authoritative.
+  }
+}
+
+async function writeBusinessDataToStore(payload) {
   const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+  const nextPayload = normalizeSyncPayloadShape({ ...currentPayload, ...(payload || {}) });
   if (syncPayloadEquals(currentPayload, nextPayload)) {
     return false;
   }
   await setAllDataToDataStore(nextPayload);
+  await broadcastWebBridgeData(nextPayload);
   return true;
 }
 
@@ -1026,7 +1068,18 @@ function handleWebBridgeSyncData(payload) {
       accounts,
       Array.isArray(source.passkeys) ? source.passkeys.map(normalizePasskeyShape) : [],
     );
-    await setAllDataToDataStore({ accounts, folders, passkeys });
+    await setAllDataToDataStore({
+      accounts,
+      folders,
+      passkeys,
+      allRegularAccountIds: source.allRegularAccountIds,
+      allRegularOrderUpdatedAtMs: source.allRegularOrderUpdatedAtMs,
+      allRegularOrderUpdatedDeviceName: source.allRegularOrderUpdatedDeviceName,
+      folderOrderIds: source.folderOrderIds,
+      folderOrderUpdatedAtMs: source.folderOrderUpdatedAtMs,
+      folderOrderUpdatedDeviceName: source.folderOrderUpdatedDeviceName,
+      deviceName: source.deviceName,
+    });
     return {
       ok: true,
       accounts: accounts.length,
@@ -1051,10 +1104,20 @@ async function handleContentListFillAccounts(sender) {
     return { ok: false, error: "仅允许在 HTTPS 页面（或本机 HTTP）列出可填充账号", accounts: [] };
   }
 
-  const accounts = await getAccounts();
+  const stored = await getAllDataFromDataStore();
+  const accounts = Array.isArray(stored.accounts) ? stored.accounts.map(normalizeAccountShape) : [];
+  const order = Array.isArray(stored.allRegularAccountIds) ? stored.allRegularAccountIds : [];
+  const orderRank = new Map(order.map((accountId, index) => [String(accountId).toLowerCase(), index]));
   const matched = accounts
     .filter((item) => !item?.isDeleted && !item?.isPermanentlyDeleted && accountMatchesDomain(item, tabHost))
     .sort((left, right) => {
+      const leftRank = orderRank.get(String(left?.recordId || left?.accountId || "").toLowerCase());
+      const rightRank = orderRank.get(String(right?.recordId || right?.accountId || "").toLowerCase());
+      if (leftRank != null || rightRank != null) {
+        if (leftRank == null) return 1;
+        if (rightRank == null) return -1;
+        if (leftRank !== rightRank) return leftRank - rightRank;
+      }
       const leftUpdated = Number(left?.updatedAtMs || left?.createdAtMs || 0);
       const rightUpdated = Number(right?.updatedAtMs || right?.createdAtMs || 0);
       if (leftUpdated !== rightUpdated) return rightUpdated - leftUpdated;
@@ -1244,7 +1307,9 @@ async function getAccounts() {
 
 async function setAccounts(accounts) {
   const normalized = (Array.isArray(accounts) ? accounts : []).map(normalizeAccountShape);
-  await setAccountsToDataStore(normalized);
+  const current = await readBusinessDataFromStore();
+  await setAllDataToDataStore({ ...current, accounts: normalized });
+  await broadcastWebBridgeData({ ...current, accounts: normalized });
 }
 
 async function upsertAccountForPasskey(accountHint) {
@@ -1806,6 +1871,13 @@ function parseSyncBundlePayload(input, { requireBundleSchema = false } = {}) {
     accounts: Array.isArray(rawPayload.accounts) ? rawPayload.accounts : [],
     passkeys: Array.isArray(rawPayload.passkeys) ? rawPayload.passkeys : [],
     folders: Array.isArray(rawPayload.folders) ? rawPayload.folders : [],
+    allRegularAccountIds: Array.isArray(rawPayload.allRegularAccountIds) ? rawPayload.allRegularAccountIds : [],
+    allRegularOrderUpdatedAtMs: Number(rawPayload.allRegularOrderUpdatedAtMs) || 0,
+    allRegularOrderUpdatedDeviceName: String(rawPayload.allRegularOrderUpdatedDeviceName || ""),
+    folderOrderIds: Array.isArray(rawPayload.folderOrderIds) ? rawPayload.folderOrderIds : [],
+    folderOrderUpdatedAtMs: Number(rawPayload.folderOrderUpdatedAtMs) || 0,
+    folderOrderUpdatedDeviceName: String(rawPayload.folderOrderUpdatedDeviceName || ""),
+    deviceName: String(rawPayload.deviceName || ""),
   };
 }
 
@@ -1840,7 +1912,18 @@ async function buildSyncBundleFromPayload(payload) {
       logicalClockMs: Date.now(),
       formatVersion: 2,
     },
-    payload: sortSyncPayloadCollections({ accounts, passkeys, folders }),
+    payload: sortSyncPayloadCollections({
+      accounts,
+      passkeys,
+      folders,
+      allRegularAccountIds: payload?.allRegularAccountIds,
+      allRegularOrderUpdatedAtMs: payload?.allRegularOrderUpdatedAtMs,
+      allRegularOrderUpdatedDeviceName: payload?.allRegularOrderUpdatedDeviceName,
+      folderOrderIds: payload?.folderOrderIds,
+      folderOrderUpdatedAtMs: payload?.folderOrderUpdatedAtMs,
+      folderOrderUpdatedDeviceName: payload?.folderOrderUpdatedDeviceName,
+      deviceName: payload?.deviceName,
+    }),
   };
 }
 
@@ -2011,15 +2094,13 @@ async function pushRemotePayloadWithRetry(target, payload) {
     const remoteAccounts = remotePayload.accounts.map(normalizeAccountShape);
     const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys);
     const remoteFolders = remotePayload.folders.map(normalizeFolderShape);
-    let mergedFolders = mergeFolderCollections(localFolders, remoteFolders);
-    let mergedAccounts = mergeAccountCollections(localAccounts, remoteAccounts);
-    mergedAccounts = syncAliasGroups(mergedAccounts);
-    mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
-    let mergedPasskeys = mergePasskeyCollections(localPasskeys, remotePasskeys);
-    mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
-    candidate = { accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders };
+    candidate = mergeSyncPayloadsCore(
+      { ...candidate, accounts: localAccounts, passkeys: localPasskeys, folders: localFolders },
+      { ...remotePayload, accounts: remoteAccounts, passkeys: remotePasskeys, folders: remoteFolders },
+      syncMergeHelpers(),
+    );
     const safety = validateSyncSafety(
-      { accounts: localAccounts, folders: localFolders, passkeys: localPasskeys },
+      { ...candidate, accounts: localAccounts, folders: localFolders, passkeys: localPasskeys },
       remotePayload,
       candidate,
       SYNC_MODE_MERGE

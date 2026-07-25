@@ -1173,15 +1173,6 @@ final class AccountStore: ObservableObject {
             statusMessage = "站点别名不能为空"
             return
         }
-        guard !username.isEmpty else {
-            statusMessage = "用户名不能为空"
-            return
-        }
-        guard !password.isEmpty else {
-            statusMessage = "密码不能为空"
-            return
-        }
-
         let idSite = firstAlias.isEmpty ? sites[0] : firstAlias
         var created = AccountFactory.create(
             site: idSite,
@@ -2966,10 +2957,17 @@ final class AccountStore: ObservableObject {
     }
 
     private func buildCurrentSyncPayload() -> SyncBundlePayload {
-        SyncBundlePayload(
+        let orderedAccounts = sortedAccountsForDisplay(accounts.filter { !$0.isDeleted }, scopeKey: "all")
+        return SyncBundlePayload(
             accounts: accounts,
             folders: folders,
-            passkeys: passkeys
+            passkeys: passkeys,
+            allRegularAccountIds: orderedAccounts.map { $0.id.uuidString },
+            allRegularOrderUpdatedAtMs: accounts.map(\.updatedAtMs).max() ?? 0,
+            allRegularOrderUpdatedDeviceName: currentDeviceName(),
+            folderOrderIds: folders.filter { !$0.isDeleted && !$0.isPermanentlyDeleted }.map { $0.id.uuidString },
+            folderOrderUpdatedAtMs: folders.map(\.updatedAtMs).max() ?? 0,
+            folderOrderUpdatedDeviceName: currentDeviceName()
         )
     }
 
@@ -3221,10 +3219,22 @@ final class AccountStore: ObservableObject {
         )
         mergedAccounts = reconcileAccountsWithValidFolderIds(mergedAccounts, validFolderIds: validFolderIds)
         let mergedPasskeys = mergePasskeyCollections(local: local.passkeys, remote: remote.passkeys)
+        let useRemoteAllOrder = remote.allRegularOrderUpdatedAtMs > local.allRegularOrderUpdatedAtMs
+            || (remote.allRegularOrderUpdatedAtMs == local.allRegularOrderUpdatedAtMs
+                && remote.allRegularOrderUpdatedDeviceName > local.allRegularOrderUpdatedDeviceName)
+        let useRemoteFolderOrder = remote.folderOrderUpdatedAtMs > local.folderOrderUpdatedAtMs
+            || (remote.folderOrderUpdatedAtMs == local.folderOrderUpdatedAtMs
+                && remote.folderOrderUpdatedDeviceName > local.folderOrderUpdatedDeviceName)
         return SyncBundlePayload(
             accounts: mergedAccounts,
             folders: mergedFolders,
-            passkeys: mergedPasskeys
+            passkeys: mergedPasskeys,
+            allRegularAccountIds: useRemoteAllOrder ? remote.allRegularAccountIds : local.allRegularAccountIds,
+            allRegularOrderUpdatedAtMs: useRemoteAllOrder ? remote.allRegularOrderUpdatedAtMs : local.allRegularOrderUpdatedAtMs,
+            allRegularOrderUpdatedDeviceName: useRemoteAllOrder ? remote.allRegularOrderUpdatedDeviceName : local.allRegularOrderUpdatedDeviceName,
+            folderOrderIds: useRemoteFolderOrder ? remote.folderOrderIds : local.folderOrderIds,
+            folderOrderUpdatedAtMs: useRemoteFolderOrder ? remote.folderOrderUpdatedAtMs : local.folderOrderUpdatedAtMs,
+            folderOrderUpdatedDeviceName: useRemoteFolderOrder ? remote.folderOrderUpdatedDeviceName : local.folderOrderUpdatedDeviceName
         )
     }
 
@@ -3246,8 +3256,8 @@ final class AccountStore: ObservableObject {
         let previousAccounts = currentPayload.accounts
         suppressCloudPush = true
         defer { suppressCloudPush = false }
-        folders = payload.folders
-        accounts = payload.accounts
+        folders = orderedFolders(payload.folders, ids: payload.folderOrderIds)
+        accounts = orderedAccounts(payload.accounts, ids: payload.allRegularAccountIds)
         passkeys = payload.passkeys
         syncAliasGroups()
         do {
@@ -3270,6 +3280,28 @@ final class AccountStore: ObservableObject {
         return true
     }
 
+    private func orderedAccounts(_ source: [PasswordAccount], ids: [String]) -> [PasswordAccount] {
+        let byId = Dictionary(uniqueKeysWithValues: source.map { ($0.id.uuidString.lowercased(), $0) })
+        var seen = Set<String>()
+        var result: [PasswordAccount] = []
+        for id in ids.map({ $0.lowercased() }) {
+            if let account = byId[id], seen.insert(id).inserted { result.append(account) }
+        }
+        result.append(contentsOf: source.filter { seen.insert($0.id.uuidString.lowercased()).inserted })
+        return result
+    }
+
+    private func orderedFolders(_ source: [AccountFolder], ids: [String]) -> [AccountFolder] {
+        let byId = Dictionary(uniqueKeysWithValues: source.map { ($0.id.uuidString.lowercased(), $0) })
+        var seen = Set<String>()
+        var result: [AccountFolder] = []
+        for id in ids.map({ $0.lowercased() }) {
+            if let folder = byId[id], seen.insert(id).inserted { result.append(folder) }
+        }
+        result.append(contentsOf: source.filter { seen.insert($0.id.uuidString.lowercased()).inserted })
+        return result
+    }
+
     private func syncPayloadEquals(_ lhs: SyncBundlePayload, _ rhs: SyncBundlePayload) -> Bool {
         guard let leftData = try? encoder.encode(canonicalSyncPayload(lhs)),
               let rightData = try? encoder.encode(canonicalSyncPayload(rhs))
@@ -3288,7 +3320,13 @@ final class AccountStore: ObservableObject {
                 return lhs.accountId < rhs.accountId
             },
             folders: payload.folders.sorted { $0.id.uuidString.lowercased() < $1.id.uuidString.lowercased() },
-            passkeys: payload.passkeys.sorted { $0.credentialIdB64u < $1.credentialIdB64u }
+            passkeys: payload.passkeys.sorted { $0.credentialIdB64u < $1.credentialIdB64u },
+            allRegularAccountIds: payload.allRegularAccountIds,
+            allRegularOrderUpdatedAtMs: payload.allRegularOrderUpdatedAtMs,
+            allRegularOrderUpdatedDeviceName: payload.allRegularOrderUpdatedDeviceName,
+            folderOrderIds: payload.folderOrderIds,
+            folderOrderUpdatedAtMs: payload.folderOrderUpdatedAtMs,
+            folderOrderUpdatedDeviceName: payload.folderOrderUpdatedDeviceName
         )
     }
 
@@ -6716,7 +6754,11 @@ final class AccountStore: ObservableObject {
     private func saveLocalSyncSafetySnapshot(_ payload: SyncBundlePayload, reason: String) throws {
         let directory = dataDirectoryURL().appendingPathComponent("sync-safety-snapshots", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let fileName = "pass-sync-safety-\(timestampForFile())-\(UUID().uuidString).json"
+        let safeReason = reason
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: "\\", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let fileName = "pass-sync-safety-\(timestampForFile())-\(safeReason.isEmpty ? "backup" : safeReason)-\(UUID().uuidString).json"
         let fileURL = directory.appendingPathComponent(fileName, isDirectory: false)
         let data = try encodeEncryptedSyncBundle(payload: payload)
         try data.write(to: fileURL, options: [.atomic])
@@ -6734,7 +6776,6 @@ final class AccountStore: ObservableObject {
         for staleURL in sortedFiles.dropFirst(5) {
             try? FileManager.default.removeItem(at: staleURL)
         }
-        _ = reason
     }
 
     private func dataFileURL() -> URL {
@@ -6931,6 +6972,66 @@ private struct SyncBundlePayload: Codable {
     let accounts: [PasswordAccount]
     let folders: [AccountFolder]
     let passkeys: [PasskeyRecord]
+    let allRegularAccountIds: [String]
+    let allRegularOrderUpdatedAtMs: Int64
+    let allRegularOrderUpdatedDeviceName: String
+    let folderOrderIds: [String]
+    let folderOrderUpdatedAtMs: Int64
+    let folderOrderUpdatedDeviceName: String
+
+    init(
+        accounts: [PasswordAccount],
+        folders: [AccountFolder],
+        passkeys: [PasskeyRecord],
+        allRegularAccountIds: [String] = [],
+        allRegularOrderUpdatedAtMs: Int64 = 0,
+        allRegularOrderUpdatedDeviceName: String = "",
+        folderOrderIds: [String] = [],
+        folderOrderUpdatedAtMs: Int64 = 0,
+        folderOrderUpdatedDeviceName: String = ""
+    ) {
+        self.accounts = accounts
+        self.folders = folders
+        self.passkeys = passkeys
+        self.allRegularAccountIds = allRegularAccountIds
+        self.allRegularOrderUpdatedAtMs = allRegularOrderUpdatedAtMs
+        self.allRegularOrderUpdatedDeviceName = allRegularOrderUpdatedDeviceName
+        self.folderOrderIds = folderOrderIds
+        self.folderOrderUpdatedAtMs = folderOrderUpdatedAtMs
+        self.folderOrderUpdatedDeviceName = folderOrderUpdatedDeviceName
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case accounts, folders, passkeys
+        case allRegularAccountIds, allRegularOrderUpdatedAtMs, allRegularOrderUpdatedDeviceName
+        case folderOrderIds, folderOrderUpdatedAtMs, folderOrderUpdatedDeviceName
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        accounts = try container.decodeIfPresent([PasswordAccount].self, forKey: .accounts) ?? []
+        folders = try container.decodeIfPresent([AccountFolder].self, forKey: .folders) ?? []
+        passkeys = try container.decodeIfPresent([PasskeyRecord].self, forKey: .passkeys) ?? []
+        allRegularAccountIds = try container.decodeIfPresent([String].self, forKey: .allRegularAccountIds) ?? []
+        allRegularOrderUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .allRegularOrderUpdatedAtMs) ?? 0
+        allRegularOrderUpdatedDeviceName = try container.decodeIfPresent(String.self, forKey: .allRegularOrderUpdatedDeviceName) ?? ""
+        folderOrderIds = try container.decodeIfPresent([String].self, forKey: .folderOrderIds) ?? []
+        folderOrderUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .folderOrderUpdatedAtMs) ?? 0
+        folderOrderUpdatedDeviceName = try container.decodeIfPresent(String.self, forKey: .folderOrderUpdatedDeviceName) ?? ""
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(accounts, forKey: .accounts)
+        try container.encode(folders, forKey: .folders)
+        try container.encode(passkeys, forKey: .passkeys)
+        try container.encode(allRegularAccountIds, forKey: .allRegularAccountIds)
+        try container.encode(allRegularOrderUpdatedAtMs, forKey: .allRegularOrderUpdatedAtMs)
+        try container.encode(allRegularOrderUpdatedDeviceName, forKey: .allRegularOrderUpdatedDeviceName)
+        try container.encode(folderOrderIds, forKey: .folderOrderIds)
+        try container.encode(folderOrderUpdatedAtMs, forKey: .folderOrderUpdatedAtMs)
+        try container.encode(folderOrderUpdatedDeviceName, forKey: .folderOrderUpdatedDeviceName)
+    }
 }
 
 private enum Keys {

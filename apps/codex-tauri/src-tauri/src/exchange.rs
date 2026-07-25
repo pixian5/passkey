@@ -282,12 +282,10 @@ pub fn list_sync_versions(settings: &SyncSettings) -> Result<Vec<SyncVersionSumm
         .unwrap_or_default();
     let mut out = Vec::new();
     for item in arr {
-        let id = item
-            .get("id")
-            .or_else(|| item.get("versionId"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        let id_value = item.get("id").or_else(|| item.get("versionId"));
+        let id = id_value
+            .and_then(|value| value.as_str().map(str::to_owned).or_else(|| value.as_i64().map(|number| number.to_string())).or_else(|| value.as_u64().map(|number| number.to_string())))
+            .unwrap_or_default();
         if id.is_empty() {
             continue;
         }

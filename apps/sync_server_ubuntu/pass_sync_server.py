@@ -332,7 +332,7 @@ class PayloadRepository:
                             "IDEMPOTENCY_STALE",
                             "Idempotency-Key 对应的快照已被更新，请重新拉取合并后再上传。",
                         )
-                    self.record_operation(scope, "idempotent_replay", "success", replay["etag"], None)
+                    self.record_operation_best_effort(scope, "idempotent_replay", "success", replay["etag"], None)
                     return StoredPayload(
                         scope=scope,
                         etag=replay["etag"],
@@ -343,7 +343,7 @@ class PayloadRepository:
                     )
             current = self.get(scope)
             if current is not None and (if_match is None or not str(if_match).strip()):
-                self.record_operation(scope, operation, "conflict", current.etag, None)
+                self.record_operation_best_effort(scope, operation, "conflict", current.etag, None)
                 raise RequestError(
                     HTTPStatus.PRECONDITION_REQUIRED
                     if hasattr(HTTPStatus, "PRECONDITION_REQUIRED")
@@ -352,7 +352,7 @@ class PayloadRepository:
                     "更新已有同步数据必须提供 If-Match。",
                 )
             if not etag_matches(current.etag if current else None, if_match):
-                self.record_operation(scope, operation, "conflict", current.etag if current else None, None)
+                self.record_operation_best_effort(scope, operation, "conflict", current.etag if current else None, None)
                 raise PreconditionFailedError()
 
             with self._managed_connect() as connection:
@@ -430,7 +430,7 @@ class PayloadRepository:
                     (scope, scope),
                 )
 
-            self.record_operation(scope, operation, "success", next_etag, None)
+            self.record_operation_best_effort(scope, operation, "success", next_etag, None)
             return StoredPayload(
                 scope=scope,
                 etag=next_etag,
@@ -483,6 +483,21 @@ class PayloadRepository:
                 """,
                 (scope, scope, MAX_AUDIT_OPERATIONS_PER_SCOPE),
             )
+
+    def record_operation_best_effort(
+        self,
+        scope: str,
+        operation: str,
+        status: str,
+        etag: str | None,
+        version_id: int | None,
+    ) -> None:
+        try:
+            self.record_operation(scope, operation, status, etag, version_id)
+        except Exception:
+            # Payload/version writes are already committed. Audit persistence must
+            # not turn a successful sync into a client-visible 500 response.
+            LOGGER.exception("记录同步审计失败 scope=%s operation=%s", scope, operation)
 
     def list_operations(self, scope: str, limit: int = 100) -> list[StoredOperation]:
         safe_limit = min(max(int(limit), 1), 100)

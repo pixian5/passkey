@@ -13,6 +13,7 @@ const STORE_COLLECTIONS = "collections";
 const COLLECTION_ACCOUNTS = "accounts";
 const COLLECTION_PASSKEYS = "passkeys";
 const COLLECTION_FOLDERS = "folders";
+const COLLECTION_LAYOUT = "layout";
 const COLLECTION_HISTORY = "history";
 const COLLECTION_SYNC_SECRETS = "syncSecrets";
 const COLLECTION_SYNC_SAFETY_SNAPSHOTS = "syncSafetySnapshots";
@@ -145,6 +146,10 @@ async function readCollection(key) {
 }
 
 async function writeCollection(key, value) {
+  await writeCollectionRows([{ key, value }]);
+}
+
+async function encryptCollectionRow(key, value) {
   const cryptoKey = await loadOrCreateEncryptionKey();
   const nonce = crypto.getRandomValues(new Uint8Array(12));
   const plaintext = new TextEncoder().encode(JSON.stringify(Array.isArray(value) ? value : []));
@@ -153,15 +158,20 @@ async function writeCollection(key, value) {
     cryptoKey,
     plaintext
   );
-  const db = await openDatabase();
-  const tx = db.transaction(STORE_COLLECTIONS, "readwrite");
-  const store = tx.objectStore(STORE_COLLECTIONS);
-  store.put({
+  return {
     key,
     version: 1,
     nonceBase64: bytesToBase64(nonce),
     ciphertextBase64: bytesToBase64(new Uint8Array(ciphertext)),
-  });
+  };
+}
+
+async function writeCollectionRows(entries) {
+  const rows = await Promise.all(entries.map((entry) => encryptCollectionRow(entry.key, entry.value)));
+  const db = await openDatabase();
+  const tx = db.transaction(STORE_COLLECTIONS, "readwrite");
+  const store = tx.objectStore(STORE_COLLECTIONS);
+  for (const row of rows) store.put(row);
   await new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error || new Error("IndexedDB transaction failed"));
@@ -581,15 +591,39 @@ export async function setFolders(folders) {
 
 export async function getAllData() {
   await ensureDataStorageReady();
-  const [accounts, passkeys, folders] = await Promise.all([
+  const [accounts, passkeys, folders, layoutRows] = await Promise.all([
     readCollection(COLLECTION_ACCOUNTS),
     readCollection(COLLECTION_PASSKEYS),
     readCollection(COLLECTION_FOLDERS),
+    readCollection(COLLECTION_LAYOUT),
   ]);
-  return { accounts, passkeys, folders };
+  const layout = layoutRows[0] && typeof layoutRows[0] === "object" ? layoutRows[0] : {};
+  return {
+    accounts,
+    passkeys,
+    folders,
+    allRegularAccountIds: Array.isArray(layout.allRegularAccountIds) ? layout.allRegularAccountIds : [],
+    allRegularOrderUpdatedAtMs: Number(layout.allRegularOrderUpdatedAtMs) || 0,
+    allRegularOrderUpdatedDeviceName: String(layout.allRegularOrderUpdatedDeviceName || ""),
+    folderOrderIds: Array.isArray(layout.folderOrderIds) ? layout.folderOrderIds : [],
+    folderOrderUpdatedAtMs: Number(layout.folderOrderUpdatedAtMs) || 0,
+    folderOrderUpdatedDeviceName: String(layout.folderOrderUpdatedDeviceName || ""),
+    deviceName: String(layout.deviceName || ""),
+  };
 }
 
-export async function setAllData({ accounts, passkeys, folders }) {
+export async function setAllData({
+  accounts,
+  passkeys,
+  folders,
+  allRegularAccountIds = [],
+  allRegularOrderUpdatedAtMs = 0,
+  allRegularOrderUpdatedDeviceName = "",
+  folderOrderIds = [],
+  folderOrderUpdatedAtMs = 0,
+  folderOrderUpdatedDeviceName = "",
+  deviceName = "",
+}) {
   try {
     await ensureDataStorageReady();
   } catch (error) {
@@ -599,10 +633,22 @@ export async function setAllData({ accounts, passkeys, folders }) {
     // instead of blocking forever in the migration read path.
     if (String(error?.name || "") !== "OperationError") throw error;
   }
-  await Promise.all([
-    writeCollection(COLLECTION_ACCOUNTS, accounts),
-    writeCollection(COLLECTION_PASSKEYS, passkeys),
-    writeCollection(COLLECTION_FOLDERS, folders),
+  await writeCollectionRows([
+    { key: COLLECTION_ACCOUNTS, value: accounts },
+    { key: COLLECTION_PASSKEYS, value: passkeys },
+    { key: COLLECTION_FOLDERS, value: folders },
+    {
+      key: COLLECTION_LAYOUT,
+      value: [{
+        allRegularAccountIds: Array.isArray(allRegularAccountIds) ? allRegularAccountIds : [],
+        allRegularOrderUpdatedAtMs: Number(allRegularOrderUpdatedAtMs) || 0,
+        allRegularOrderUpdatedDeviceName: String(allRegularOrderUpdatedDeviceName || ""),
+        folderOrderIds: Array.isArray(folderOrderIds) ? folderOrderIds : [],
+        folderOrderUpdatedAtMs: Number(folderOrderUpdatedAtMs) || 0,
+        folderOrderUpdatedDeviceName: String(folderOrderUpdatedDeviceName || ""),
+        deviceName: String(deviceName || ""),
+      }],
+    },
   ]);
   await touchDataBump("all");
 }

@@ -98,6 +98,13 @@ fn missing_identities(
         .collect()
 }
 
+fn missing_summary_ids(
+    source: &std::collections::BTreeSet<String>,
+    target: &std::collections::BTreeSet<String>,
+) -> bool {
+    source.iter().any(|id| !id.is_empty() && !target.contains(id))
+}
+
 /// Validate a merged payload before it is written locally or uploaded.
 pub fn evaluate_sync_safety(
     local: &SyncPayload,
@@ -132,6 +139,17 @@ pub fn evaluate_sync_safety(
         }
         if !missing_identities(&local_passkey_ids, &merged_summary.passkey_ids).is_empty() {
             reasons.push("MERGED_MISSING_LOCAL_PASSKEY_IDS".to_string());
+        }
+        if let Some(remote_summary) = remote_summary.as_ref() {
+            if missing_summary_ids(&remote_summary.account_ids, &merged_summary.account_ids) {
+                reasons.push("REMOTE_ACCOUNTS_DROPPED".to_string());
+            }
+            if missing_summary_ids(&remote_summary.folder_ids, &merged_summary.folder_ids) {
+                reasons.push("REMOTE_FOLDERS_DROPPED".to_string());
+            }
+            if missing_summary_ids(&remote_summary.passkey_ids, &merged_summary.passkey_ids) {
+                reasons.push("REMOTE_PASSKEYS_DROPPED".to_string());
+            }
         }
     } else if mode == "remoteOverwriteLocal" {
         if local_non_empty && !remote_non_empty {

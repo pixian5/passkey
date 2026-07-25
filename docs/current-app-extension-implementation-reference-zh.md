@@ -1,12 +1,13 @@
 # Pass 当前实现参考
 
-> 状态：当前代码事实，随主分支更新。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.1.4`。
+> 状态：当前代码事实，随主分支更新。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.1.5`。
 
 ## 0. 关键实现文档
 
 - 写入耐久性 / 失败回滚 / 撤销一致性 / 同步版本历史：[local-write-durability-and-history-consistency-zh.md](./local-write-durability-and-history-consistency-zh.md)
 - 三端统一方案：[three-surface-unification-zh.md](./three-surface-unification-zh.md)
 - 同步协议：[sync-protocol-v2.md](./sync-protocol-v2.md)
+- 本轮复核与剩余差异：[audit-2026-07-26-zh.md](./audit-2026-07-26-zh.md)
 
 ## 1. 当前产品表面
 
@@ -51,7 +52,7 @@
 |---|---|
 | Tauri | 本地加密 vault/SQLite KV；同步秘密在启用应用锁时单独密封 |
 | Docker Web | `/data` 下加密 vault 文件与独立密钥文件 |
-| Chrome Web 扩展 | 独立 `chrome.storage.local` 加密工作区，并镜像到扩展 IndexedDB 供填充后台使用 |
+| Chrome Web 扩展 | 管理页加密工作区与后台 IndexedDB 双向镜像；后台账号、文件夹、Passkey、布局集合使用同一写事务 |
 | 扩展共享填充层 | IndexedDB `pass.local.db.v1`；账号、文件夹、passkey 集合使用同一数据密钥 |
 
 
@@ -83,7 +84,7 @@ Bearer Token 和同步加密密钥都允许留空：
 - 同步密钥留空：使用明文 `pass.sync.bundle.v2`，服务器必须允许明文。
 - 同步密钥非空：使用 AES-256-GCM 加密信封；所有客户端配置同一密钥。
 
-WebDAV 当前由 Tauri 和 Docker Web 支持；Chrome Web 扩展明确不支持。三端均支持自建服务器版本列表与恢复。
+WebDAV 当前由 Tauri 和 Docker Web 支持；Chrome Web 扩展明确不支持。三端均支持自建服务器版本列表，并通过当前 `ETag` 调用远端恢复接口后再刷新本地数据。
 
 ## 6. 平台能力边界
 
@@ -93,7 +94,7 @@ WebDAV 当前由 Tauri 和 Docker Web 支持；Chrome Web 扩展明确不支持�
 | 自建服务器同步 | 完整 | 完整 | 完整 |
 | WebDAV | 完整 | 完整 | 不支持，明确报错 |
 | SSH 创建服务 | 完整 | 只保存草稿/检测 | 只保存草稿 |
-| 服务器版本恢复 | 完整 | 完整 | 完整 |
+| 服务器版本列表/恢复 | 调用远端恢复接口 | 调用远端恢复接口 | 调用远端恢复接口 |
 | 原生文件选择器 | 完整 | 浏览器上传/下载 | 浏览器上传/下载 |
 | Touch ID | macOS 可用 | 不支持 | 不支持 |
 | 页面自动填充/WebAuthn | 不提供 | 不提供 | 扩展专属 |
@@ -119,7 +120,7 @@ cd apps/codex-tauri/src-tauri && cargo test --locked
 cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-当前自动化基线（1.1.4）：扩展 78 项、Docker Web 9 项、Tauri 22 项、同步服务器 33 项、脚本 17 项；命令矩阵覆盖 68 个 UI 命令；版本落点 45 个。
+当前自动化基线（1.1.5）：扩展 79 项、Docker Web 9 项、Tauri 22 项、同步服务器 33 项、脚本 17 项；命令矩阵覆盖 68 个 UI 命令；版本落点 45 个。
 
 ## 9. 当前限制
 

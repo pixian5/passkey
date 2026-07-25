@@ -33,10 +33,7 @@ impl SyncMode {
     }
 
     pub fn safety_mode(self) -> &'static str {
-        match self {
-            Self::RemoteOverwriteLocal => "remoteOverwriteLocal",
-            _ => "merge",
-        }
+        self.as_str()
     }
 }
 

@@ -20,8 +20,8 @@ Environment=PASS_SYNC_LOG_LEVEL=INFO
 Environment=PASS_SYNC_RATE_LIMIT_PER_MINUTE=120
 Environment=PASS_SYNC_CLIENT_TIMEOUT_SECONDS=15
 Environment=PASS_SYNC_MAX_CONCURRENT_REQUESTS=32
-Environment=PASS_SYNC_TLS_CERT=/etc/pass-sync/tls/server.crt
-Environment=PASS_SYNC_TLS_KEY=/etc/pass-sync/tls/server.key
+# TLS is optional. Configure PASS_SYNC_TLS_CERT and PASS_SYNC_TLS_KEY together
+# in /etc/pass-sync/pass-sync-server.env when terminating TLS in this process.
 ExecStart=/usr/bin/python3 /opt/pass-sync-server/pass_sync_server.py
 Restart=always
 RestartSec=2

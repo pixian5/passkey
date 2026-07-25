@@ -231,6 +231,40 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
+fn safe_export_target(root: &FsPath, requested: Option<&str>, default_name: &str) -> Result<PathBuf, String> {
+    let root = fs::canonicalize(root).map_err(|e| format!("解析导出目录失败：{e}"))?;
+    let value = requested.map(str::trim).filter(|value| !value.is_empty());
+    let candidate = match value {
+        None => root.join(default_name),
+        Some(raw) => {
+            let raw_path = FsPath::new(raw);
+            if raw_path.components().any(|component| matches!(component, std::path::Component::ParentDir)) {
+                return Err("导出路径不能包含 ..".into());
+            }
+            if raw_path.is_absolute() {
+                if !raw_path.starts_with(&root) {
+                    return Err("导出路径必须位于应用数据目录内".into());
+                }
+                raw_path.to_path_buf()
+            } else {
+                root.join(raw_path)
+            }
+        }
+    };
+    let target = if candidate.exists() && candidate.is_dir() {
+        candidate.join(default_name)
+    } else {
+        candidate
+    };
+    let parent = target.parent().ok_or_else(|| "导出路径缺少父目录".to_string())?;
+    fs::create_dir_all(parent).map_err(|e| format!("创建导出目录失败：{e}"))?;
+    let canonical_parent = fs::canonicalize(parent).map_err(|e| format!("解析导出目录失败：{e}"))?;
+    if !canonical_parent.starts_with(&root) {
+        return Err("导出路径必须位于应用数据目录内".into());
+    }
+    Ok(canonical_parent.join(target.file_name().ok_or_else(|| "导出文件名无效".to_string())?))
+}
+
 fn private_file(path: &FsPath) {
     #[cfg(unix)]
     {
@@ -957,7 +991,7 @@ fn self_hosted_versions(base: &str, token: &str) -> Result<Vec<Value>, String> {
         .collect())
 }
 
-fn self_hosted_version(
+fn self_hosted_restore_version(
     base: &str,
     token: &str,
     version_id: &str,
@@ -966,23 +1000,17 @@ fn self_hosted_version(
     if !version_id.chars().all(|c| c.is_ascii_digit()) {
         return Err("服务器快照编号无效".into());
     }
-    let url = format!("{}/v2/sync/versions/{version_id}", sync_base_url(base)?);
-    let response = http_client()?
-        .get(url)
-        .headers(auth_headers(token)?)
-        .send()
-        .map_err(|e| format!("下载服务器快照失败：{e}"))?;
+    let current = self_hosted_get(base, token)?;
+    let etag = current.etag.ok_or_else(|| "服务器当前状态没有 ETag，无法安全恢复".to_string())?;
+    let url = format!("{}/v2/sync/versions/{version_id}/restore", sync_base_url(base)?);
+    let mut headers = auth_headers(token)?;
+    headers.insert(IF_MATCH, HeaderValue::from_str(&etag).map_err(|_| "ETag 非法".to_string())?);
+    let response = http_client()?.post(url).headers(headers).send().map_err(|e| format!("恢复服务器快照失败：{e}"))?;
     if !response.status().is_success() {
-        return Err(format!(
-            "下载服务器快照失败 HTTP {}：{}",
-            response.status().as_u16(),
-            response.text().unwrap_or_default()
-        ));
+        return Err(format!("恢复服务器快照失败 HTTP {}：{}", response.status().as_u16(), response.text().unwrap_or_default()));
     }
-    let body = response
-        .bytes()
-        .map_err(|e| format!("读取服务器快照失败：{e}"))?;
-    extract_payload(decrypt_sync_document(&body, key)?)
+    let restored = self_hosted_get(base, token)?.body.ok_or_else(|| "服务器恢复后没有返回同步数据".to_string())?;
+    extract_payload(decrypt_sync_document(&restored, key)?)
 }
 
 fn webdav_resource_url(base: &str, remote_path: &str) -> Result<String, String> {
@@ -1158,11 +1186,7 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
         &local,
         remote.as_ref(),
         &merged,
-        if mode == SyncMode::RemoteOverwriteLocal {
-            "remoteOverwriteLocal"
-        } else {
-            "merge"
-        },
+        mode.as_str(),
     );
     let local_count = visible_accounts(&local);
     let remote_count = remote.as_ref().map(visible_accounts).unwrap_or(0);
@@ -1204,7 +1228,9 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
     let mut local_applied = false;
     for _attempt in 0..5 {
         if !local_applied || _attempt > 0 {
-            v.begin("WebDAV 同步写入本地前自动备份");
+            if !local_applied {
+                v.begin("WebDAV 同步写入本地前自动备份");
+            }
             v.apply_payload(to_store.clone());
             let previous_persist = v.persist_enabled;
             v.persist_enabled = true;
@@ -1261,11 +1287,7 @@ Err(error) if error == "PRECONDITION_FAILED" => {
                     &local,
                     remote.as_ref(),
                     &merged,
-                    if mode == SyncMode::RemoteOverwriteLocal {
-                        "remoteOverwriteLocal"
-                    } else {
-                        "merge"
-                    },
+                    mode.as_str(),
                 );
                 if !safety.safe {
                     return Ok(json!({"report": SyncReport {
@@ -1365,11 +1387,7 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
         &local,
         remote.as_ref(),
         &merged,
-        if mode == SyncMode::RemoteOverwriteLocal {
-            "remoteOverwriteLocal"
-        } else {
-            "merge"
-        },
+        mode.as_str(),
     );
     let local_count = visible_accounts(&local);
     let remote_count = remote.as_ref().map(visible_accounts).unwrap_or(0);
@@ -1418,7 +1436,9 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
     loop {
         attempt += 1;
         if !local_applied || attempt > 1 {
-            v.begin("同步写入本地前自动备份");
+            if !local_applied {
+                v.begin("同步写入本地前自动备份");
+            }
             v.apply_payload(to_store.clone());
             let previous_persist = v.persist_enabled;
             v.persist_enabled = true;
@@ -1470,11 +1490,7 @@ Err(error) if error == "PRECONDITION_FAILED" && attempt < 5 => {
                     &local,
                     remote.as_ref(),
                     &merged,
-                    if mode == SyncMode::RemoteOverwriteLocal {
-                        "remoteOverwriteLocal"
-                    } else {
-                        "merge"
-                    },
+                    mode.as_str(),
                 );
                 if !safety.safe {
                     return Ok(json!({"report": SyncReport {
@@ -3125,7 +3141,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 .get("encryptionKey")
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            let payload = self_hosted_version(base, token, &version_id, key)?;
+            let payload = self_hosted_restore_version(base, token, &version_id, key)?;
             v.begin("恢复服务器快照前自动备份");
             v.apply_payload(payload.clone());
             v.save()?;
@@ -3151,18 +3167,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
         "choose_export_directory" => Ok(json!(v.dir.to_string_lossy().to_string())),
         "export_sync_bundle" => {
             let path: Option<String> = arg(&args, "path").unwrap_or(None);
-            let base = path
-                .filter(|p| !p.trim().is_empty())
-                .unwrap_or_else(|| v.dir.to_string_lossy().to_string());
-            let target = FsPath::new(&base);
-            let out = if target.is_dir() {
-                target.join(format!("pass-sync-bundle-{}.json", now_ms()))
-            } else {
-                target.to_path_buf()
-            };
-            if let Some(parent) = out.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
+            let out = safe_export_target(&v.dir, path.as_deref(), &format!("pass-sync-bundle-{}.json", now_ms()))?;
             let key = v
                 .data
                 .sync_settings
@@ -3220,10 +3225,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 build_csv(&headers, &rows)
             };
             let path: Option<String> = arg(&args, "path").unwrap_or(None);
-            let out = path
-                .filter(|p| !p.trim().is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| v.dir.join(format!("pass-export-{}.csv", now_ms())));
+            let out = safe_export_target(&v.dir, path.as_deref(), &format!("pass-export-{}.csv", now_ms()))?;
             fs::write(&out, &csv).map_err(|e| format!("写入 CSV 失败：{e}"))?;
             let download_name = out
                 .file_name()
