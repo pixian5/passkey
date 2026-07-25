@@ -244,7 +244,7 @@ cd apps/pass-web && cargo test && cargo build --release
 
 旧 Chrome 壳和专用构建入口已移除；Chrome 只加载 `apps/extension_chrome_web`。
 
-## 8. 当前对齐结论（版本 1.0.4）
+## 8. 当前对齐结论（版本 1.0.5）
 
 结论：**高风险数据语义与 mutation 主干已对齐到位。** 剩余主要是平台边界（扩展 WebDAV、Touch ID、SSH 创建服务）以及命令返回形状完全对象化等工程项，不应为了表面一致而伪对齐。
 

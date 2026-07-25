@@ -30,6 +30,8 @@ class OptionalBearerScriptTests(unittest.TestCase):
         self.assertIn("PASS_SYNC_INSTALL_DIR:-/opt/pass-sync-server", deploy)
         self.assertIn("restore_previous_installation", deploy)
         self.assertIn("pass-sync-server-backup.timer", deploy)
+        self.assertIn('/proc/${main_pid}/environ', deploy)
+        self.assertIn('exit "${failure_status}"', deploy)
 
     def test_backup_service_uses_installed_script(self) -> None:
         service = (ROOT / "apps" / "sync_server_ubuntu" / "pass-sync-server-backup.service").read_text(
