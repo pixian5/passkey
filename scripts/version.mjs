@@ -246,7 +246,40 @@ function collectVersions() {
   return entries;
 }
 
+const embeddedSyncServerTargets = [
+  "apps/codex-tauri/src-tauri/resources/pass_sync_server.py",
+  "apps/app_macos/Resources/SyncServer/pass_sync_server.py",
+];
+
+function checkEmbeddedSyncServers() {
+  const canonicalRelative = "apps/sync_server_ubuntu/pass_sync_server.py";
+  const canonicalPath = absolute(canonicalRelative);
+  if (!fs.existsSync(canonicalPath)) {
+    throw new Error(`缺少规范同步服务器文件: ${canonicalRelative}`);
+  }
+  const canonical = fs.readFileSync(canonicalPath);
+  const mismatches = [];
+  for (const relativePath of embeddedSyncServerTargets) {
+    const targetPath = absolute(relativePath);
+    if (!fs.existsSync(targetPath)) {
+      mismatches.push(`${relativePath}（文件不存在）`);
+      continue;
+    }
+    const actual = fs.readFileSync(targetPath);
+    if (!actual.equals(canonical)) {
+      mismatches.push(relativePath);
+    }
+  }
+  if (mismatches.length > 0) {
+    throw new Error(
+      "内嵌 pass_sync_server.py 与 apps/sync_server_ubuntu/pass_sync_server.py 不一致，禁止带漂移副本发布：\n- " +
+        mismatches.join("\n- "),
+    );
+  }
+}
+
 function checkVersions() {
+  checkEmbeddedSyncServers();
   const expected = readCanonicalVersion();
   const expectedBuildNumber = platformBuildNumber(expected);
   const mismatches = collectVersions().filter(([source, value]) =>

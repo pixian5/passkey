@@ -23,6 +23,7 @@ from typing import Any
 
 
 LOGGER = logging.getLogger("pass_sync_server")
+MAX_AUDIT_OPERATIONS_PER_SCOPE = 5_000
 
 
 @dataclass(frozen=True)
@@ -355,24 +356,6 @@ class PayloadRepository:
                 raise PreconditionFailedError()
 
             with self._managed_connect() as connection:
-                if current is not None:
-                    connection.execute(
-                        """
-                        INSERT INTO payload_versions (
-                          scope, etag, payload_json, payload_sha256,
-                          exported_at_ms, updated_at_ms, saved_at_ms
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?);
-                        """,
-                        (
-                            current.scope,
-                            current.etag,
-                            current.payload_json,
-                            current.payload_sha256,
-                            current.exported_at_ms,
-                            current.updated_at_ms,
-                            now_ms,
-                        ),
-                    )
                 connection.execute(
                     """
                     INSERT INTO payloads (
@@ -486,6 +469,19 @@ class PayloadRepository:
                 ) VALUES (?, ?, ?, ?, ?, ?);
                 """,
                 (scope, operation, status, etag, version_id, current_time_ms()),
+            )
+            connection.execute(
+                """
+                DELETE FROM sync_operations
+                WHERE scope = ?
+                  AND operation_id NOT IN (
+                    SELECT operation_id FROM sync_operations
+                    WHERE scope = ?
+                    ORDER BY operation_id DESC
+                    LIMIT ?
+                  );
+                """,
+                (scope, scope, MAX_AUDIT_OPERATIONS_PER_SCOPE),
             )
 
     def list_operations(self, scope: str, limit: int = 100) -> list[StoredOperation]:
@@ -953,6 +949,11 @@ class PassSyncHTTPServer(ThreadingHTTPServer):
     def enforce_rate_limit(self, client: str) -> None:
         now = int(time.time() // 60)
         with self._rate_lock:
+            self._rate_windows = {
+                address: entry
+                for address, entry in self._rate_windows.items()
+                if entry[0] >= now - 1
+            }
             window, count = self._rate_windows.get(client, (now, 0))
             if window != now:
                 window, count = now, 0
@@ -1100,10 +1101,9 @@ def load_config() -> AppConfig:
                 raise RuntimeError(f"PASS_SYNC_BEARER_TOKENS_FILE 权限必须为 0600 或更严格: {token_path}")
             token_value = token_path.read_text(encoding="utf-8").strip()
         elif not token_value:
-            # Keep deployment backward-compatible when a service template is
-            # installed before its token file. Payload requests remain fail
-            # closed with AUTH_NOT_CONFIGURED until an operator adds tokens.
-            LOGGER.warning("令牌文件不存在，服务将以未配置认证状态启动: %s", token_path)
+            # A missing optional token file and an empty environment value mean
+            # explicit open mode; no token is generated implicitly.
+            LOGGER.warning("令牌文件不存在，服务将以开放模式启动: %s", token_path)
     token_scopes = parse_token_scopes(token_value)
     allowed_origins = tuple(
         sorted({origin.strip() for origin in os.environ.get("PASS_SYNC_ALLOWED_ORIGINS", "").split(",") if origin.strip()})

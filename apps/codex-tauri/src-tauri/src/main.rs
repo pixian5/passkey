@@ -312,19 +312,21 @@ fn get_app_state(app: AppHandle, state: tauri::State<AppLockState>) -> Result<Ap
     let (folders_changed, legacy_folder_ids) = ensure_fixed_new_account_folder(&mut folders);
     let accounts_changed =
         migrate_legacy_new_account_folder_ids(&mut accounts, &folders, &legacy_folder_ids);
-    if folders_changed {
-        save_folders(&conn, &folders)?;
-    }
-    if accounts_changed {
-        save_accounts(&conn, &accounts)?;
-    }
+    let mut folder_order_changed = false;
     if folder_order.folder_ids.is_empty() {
         folder_order.folder_ids = load_ui_prefs(&dir).folder_order;
-        save_folder_order(&conn, &folder_order)?;
+        folder_order_changed = true;
     }
-    if normalize_order_state(&accounts, &mut folders, &mut all_order) {
-        save_folders(&conn, &folders)?;
-        save_all_regular_order(&conn, &all_order)?;
+    let order_changed = normalize_order_state(&accounts, &mut folders, &mut all_order);
+    if folders_changed || accounts_changed || folder_order_changed || order_changed {
+        save_collections_atomic(
+            &conn,
+            accounts_changed.then_some(accounts.as_slice()),
+            (folders_changed || order_changed).then_some(folders.as_slice()),
+            order_changed.then_some(&all_order),
+            folder_order_changed.then_some(&folder_order),
+            None,
+        )?;
     }
     sort_accounts(&mut accounts);
     apply_folder_order(&mut folders, &folder_order.folder_ids);
@@ -383,11 +385,15 @@ fn create_account(
     let (folders_changed, legacy_folder_ids) = ensure_fixed_new_account_folder(&mut folders);
     let accounts_changed =
         migrate_legacy_new_account_folder_ids(&mut accounts, &folders, &legacy_folder_ids);
-    if folders_changed {
-        save_folders(&conn, &folders)?;
-    }
-    if accounts_changed {
-        save_accounts(&conn, &accounts)?;
+    if folders_changed || accounts_changed {
+        save_collections_atomic(
+            &conn,
+            accounts_changed.then_some(accounts.as_slice()),
+            folders_changed.then_some(folders.as_slice()),
+            None,
+            None,
+            None,
+        )?;
     }
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
@@ -427,7 +433,8 @@ fn create_account(
         last_operated_device_name: device_name.clone(),
         ..Default::default()
     };
-    snapshot_current_vault(&conn, &dir, "新建账号前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "新建账号前自动备份")?;
+    let undo_title = "新建账号前自动备份";
     add_account_to_folder(&mut account, pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID);
     apply_automatic_folder_rules(&mut account, &folders);
     accounts.push(account);
@@ -446,6 +453,7 @@ fn create_account(
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(created)
 }
 
@@ -472,7 +480,8 @@ fn update_account(
     if !accounts.iter().any(|item| account_matches_id(item, &id)) {
         return Err("未找到要更新的账号".into());
     }
-    snapshot_current_vault(&conn, &dir, "编辑账号前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "编辑账号前自动备份")?;
+    let undo_title = "编辑账号前自动备份";
     let mut found = false;
     let mut added_folder_ids = Vec::new();
     for item in &mut accounts {
@@ -531,6 +540,7 @@ fn update_account(
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(())
 }
 
@@ -548,13 +558,15 @@ fn soft_delete_account(
     if !accounts.iter().any(|item| account_matches_id(item, &id)) {
         return Err("未找到要删除的账号".into());
     }
-    snapshot_current_vault(&conn, &dir, "移入回收站前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "移入回收站前自动备份")?;
+    let undo_title = "移入回收站前自动备份";
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
     if let Some(item) = accounts.iter_mut().find(|a| account_matches_id(a, &id)) {
         let _ = soft_delete_account_mutation(item, now, &device_name);
     }
     save_accounts(&conn, &accounts)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(())
 }
 
@@ -595,7 +607,8 @@ fn add_accounts_to_folders(
         return Err("没有可添加的账号".into());
     }
 
-    snapshot_current_vault(&conn, &dir, "批量添加账号到文件夹前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "批量添加账号到文件夹前自动备份")?;
+    let undo_title = "批量添加账号到文件夹前自动备份";
     let device = load_device_name(&conn)?;
     let now = now_ms();
     let mut added_by_folder = vec![Vec::<String>::new(); normalized_folders.len()];
@@ -629,6 +642,7 @@ fn add_accounts_to_folders(
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(())
 }
 
@@ -666,7 +680,8 @@ fn set_accounts_folders(
         return Err("没有可编辑的账号".into());
     }
 
-    snapshot_current_vault(&conn, &dir, "批量设置账号文件夹前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "批量设置账号文件夹前自动备份")?;
+    let undo_title = "批量设置账号文件夹前自动备份";
     let device = load_device_name(&conn)?;
     let now = now_ms();
     let mut added_by_folder = vec![Vec::<String>::new(); normalized_folders.len()];
@@ -732,6 +747,7 @@ fn set_accounts_folders(
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(())
 }
 
@@ -764,7 +780,8 @@ fn set_accounts_pinned(
     if selected.is_empty() {
         return Err("没有可置顶的账号".into());
     }
-    snapshot_current_vault(&conn, &dir, "批量置顶状态变更前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "批量置顶状态变更前自动备份")?;
+    let undo_title = "批量置顶状态变更前自动备份";
     let device = load_device_name(&conn)?;
     let now = now_ms();
     let mut next_pin_order = accounts
@@ -792,6 +809,7 @@ fn set_accounts_pinned(
         }
     }
     save_accounts(&conn, &accounts)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(())
 }
 
@@ -823,7 +841,8 @@ fn soft_delete_accounts(
     if selected.is_empty() {
         return Err("没有可移入回收站的账号".into());
     }
-    snapshot_current_vault(&conn, &dir, "批量移入回收站前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "批量移入回收站前自动备份")?;
+    let undo_title = "批量移入回收站前自动备份";
     let device = load_device_name(&conn)?;
     let now = now_ms();
     let mut count = 0usize;
@@ -841,6 +860,7 @@ fn soft_delete_accounts(
     let mut all_order = load_all_regular_order(&conn)?;
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(count)
 }
 
@@ -867,7 +887,8 @@ fn restore_account(
     if !target.is_deleted {
         return Ok(());
     }
-    snapshot_current_vault(&conn, &dir, "恢复账号前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "恢复账号前自动备份")?;
+    let undo_title = "恢复账号前自动备份";
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
     let mut restored_folder_ids = Vec::new();
@@ -889,6 +910,7 @@ fn restore_account(
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(())
 }
 
@@ -908,7 +930,8 @@ fn hard_delete_account(
     if !accounts.iter().any(|item| account_matches_id(item, &id)) {
         return Err("未找到要彻底删除的账号".into());
     }
-    snapshot_current_vault(&conn, &dir, "彻底删除账号前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "彻底删除账号前自动备份")?;
+    let undo_title = "彻底删除账号前自动备份";
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
     let mut found = false;
@@ -922,6 +945,7 @@ fn hard_delete_account(
     debug_assert!(found);
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(())
 }
 
@@ -943,7 +967,8 @@ fn restore_all_deleted_accounts(
     if count == 0 {
         return Ok(0);
     }
-    snapshot_current_vault(&conn, &dir, "批量恢复回收站前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "批量恢复回收站前自动备份")?;
+    let undo_title = "批量恢复回收站前自动备份";
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
     let mut restored_ids = Vec::new();
@@ -975,6 +1000,7 @@ fn restore_all_deleted_accounts(
     all_order.updated_device_name = device_name.clone();
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(count)
 }
 
@@ -996,7 +1022,8 @@ fn hard_delete_all_deleted_accounts(
     if count == 0 {
         return Ok(0);
     }
-    snapshot_current_vault(&conn, &dir, "批量彻底删除回收站前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "批量彻底删除回收站前自动备份")?;
+    let undo_title = "批量彻底删除回收站前自动备份";
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
     for account in &mut accounts {
@@ -1006,6 +1033,7 @@ fn hard_delete_all_deleted_accounts(
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(count)
 }
 
@@ -1018,7 +1046,8 @@ fn generate_demo_accounts(app: AppHandle, state: tauri::State<AppLockState>) -> 
     let mut accounts = load_accounts(&conn)?;
     let mut folders = load_folders(&conn)?;
     let mut all_order = load_all_regular_order(&conn)?;
-    snapshot_current_vault(&conn, &dir, "生成演示账号前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "生成演示账号前自动备份")?;
+    let undo_title = "生成演示账号前自动备份";
     let device_name = load_device_name(&conn)?;
     let now = now_ms();
     let samples = [
@@ -1061,6 +1090,7 @@ fn generate_demo_accounts(app: AppHandle, state: tauri::State<AppLockState>) -> 
     all_order.updated_device_name = device_name;
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(())
 }
 
@@ -1520,10 +1550,12 @@ fn import_browser_csv(
     let imported = browser_entries_from_csv(&text)?;
     let device = load_device_name(&conn)?;
     let existing = load_accounts(&conn)?;
-    snapshot_current_vault(&conn, &dir, "导入浏览器密码前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "导入浏览器密码前自动备份")?;
+    let undo_title = "导入浏览器密码前自动备份";
     let before = existing.len();
     let merged = merge_imported_accounts(existing, imported.clone(), &device);
     save_accounts(&conn, &merged)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(ImportResult {
         format: "browser".into(),
         imported: imported.len(),
@@ -1547,10 +1579,12 @@ fn import_browser_csv_text(
     let imported = browser_entries_from_csv(&content)?;
     let device = load_device_name(&conn)?;
     let existing = load_accounts(&conn)?;
-    snapshot_current_vault(&conn, &dir, "导入浏览器密码前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "导入浏览器密码前自动备份")?;
+    let undo_title = "导入浏览器密码前自动备份";
     let before = existing.len();
     let merged = merge_imported_accounts(existing, imported.clone(), &device);
     save_accounts(&conn, &merged)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(ImportResult {
         format: "browser".into(),
         imported: imported.len(),
@@ -1594,7 +1628,8 @@ fn import_google_authenticator_totp(
             skipped: 0,
         });
     }
-    snapshot_current_vault(&conn, &dir, "导入谷歌验证器二维码前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "导入谷歌验证器二维码前自动备份")?;
+    let undo_title = "导入谷歌验证器二维码前自动备份";
     let device = load_device_name(&conn)?;
     let start = now_ms();
     let mut created = 0;
@@ -1648,6 +1683,7 @@ fn import_google_authenticator_totp(
     }
     sync_alias_sites(&mut accounts);
     save_accounts(&conn, &accounts)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(TotpImportResult {
         created,
         updated,
@@ -1744,11 +1780,19 @@ fn snapshot_current_vault(
     conn: &Connection,
     data_dir: &std::path::Path,
     reason: &str,
-) -> Result<(), String> {
+) -> Result<SyncPayload, String> {
     let device = load_device_name(conn)?;
     let payload = local_payload_from_conn(conn, &device)?;
     local_snapshots::create(data_dir, &payload, reason)?;
-    operation_history::push(&data_dir.to_path_buf(), reason, payload)
+    Ok(payload)
+}
+
+fn commit_undo_point(
+    data_dir: &std::path::Path,
+    reason: &str,
+    pre_payload: SyncPayload,
+) -> Result<(), String> {
+    operation_history::push(&data_dir.to_path_buf(), reason, pre_payload)
 }
 
 #[tauri::command]
@@ -2545,14 +2589,44 @@ fn save_account_folder_order_atomic(
     folders: &[Folder],
     all_order: &AllRegularOrder,
 ) -> Result<(), String> {
+    save_collections_atomic(
+        conn,
+        Some(accounts),
+        Some(folders),
+        Some(all_order),
+        None,
+        None,
+    )
+}
+
+fn save_collections_atomic(
+    conn: &Connection,
+    accounts: Option<&[PasswordAccount]>,
+    folders: Option<&[Folder]>,
+    all_order: Option<&AllRegularOrder>,
+    folder_order: Option<&FolderOrder>,
+    passkeys: Option<&[Passkey]>,
+) -> Result<(), String> {
     let tx = conn
         .unchecked_transaction()
-        .map_err(|e| format!("开始账号与文件夹写入事务失败: {e}"))?;
-    save_accounts(&tx, accounts)?;
-    save_folders(&tx, folders)?;
-    save_all_regular_order(&tx, all_order)?;
+        .map_err(|e| format!("开始多集合写入事务失败: {e}"))?;
+    if let Some(accounts) = accounts {
+        save_accounts(&tx, accounts)?;
+    }
+    if let Some(folders) = folders {
+        save_folders(&tx, folders)?;
+    }
+    if let Some(all_order) = all_order {
+        save_all_regular_order(&tx, all_order)?;
+    }
+    if let Some(folder_order) = folder_order {
+        save_folder_order(&tx, folder_order)?;
+    }
+    if let Some(passkeys) = passkeys {
+        save_passkeys(&tx, passkeys)?;
+    }
     tx.commit()
-        .map_err(|e| format!("提交账号与文件夹写入事务失败: {e}"))
+        .map_err(|e| format!("提交多集合写入事务失败: {e}"))
 }
 
 fn read_kv(conn: &Connection, key: &str) -> Result<Option<String>, String> {
@@ -2841,7 +2915,8 @@ fn toggle_account_pin(
     if target.is_deleted || target.is_permanently_deleted {
         return Err("回收站账号不支持置顶".into());
     }
-    snapshot_current_vault(&conn, &dir, "置顶状态变更前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "置顶状态变更前自动备份")?;
+    let undo_title = "置顶状态变更前自动备份";
     let next_pinned = !target.is_pinned;
     let next_pinned_order = if next_pinned {
         let max = accounts
@@ -2861,6 +2936,7 @@ fn toggle_account_pin(
         }
     }
     save_accounts(&conn, &accounts)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     accounts
         .into_iter()
         .find(|item| account_matches_id(item, &id))
@@ -2917,8 +2993,14 @@ fn reorder_accounts(
             folder.regular_order_updated_device_name = device_name;
         }
         normalize_order_state(&accounts, &mut folders, &mut all_order);
-        save_folders(&conn, &folders)?;
-        save_all_regular_order(&conn, &all_order)?;
+        save_collections_atomic(
+            &conn,
+            None,
+            Some(&folders),
+            Some(&all_order),
+            None,
+            None,
+        )?;
         return Ok(());
     }
 
@@ -3050,7 +3132,7 @@ fn create_folder(
     let mut folders = load_folders(&conn)?;
     let (folders_changed, _) = ensure_fixed_new_account_folder(&mut folders);
     if folders_changed {
-        save_folders(&conn, &folders)?;
+        save_collections_atomic(&conn, None, Some(&folders), None, None, None)?;
     }
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -3072,9 +3154,8 @@ fn create_folder(
         created_at_ms: now,
         updated_at_ms: now,
     };
-    snapshot_current_vault(&conn, &dir, "新建文件夹前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "新建文件夹前自动备份")?;
     folders.push(folder.clone());
-    save_folders(&conn, &folders)?;
     let mut folder_order = load_folder_order(&conn)?;
     folder_order
         .folder_ids
@@ -3082,7 +3163,15 @@ fn create_folder(
     folder_order.folder_ids.push(folder.id.clone());
     folder_order.updated_at_ms = now;
     folder_order.updated_device_name = load_device_name(&conn)?;
-    save_folder_order(&conn, &folder_order)?;
+    save_collections_atomic(
+        &conn,
+        None,
+        Some(&folders),
+        None,
+        Some(&folder_order),
+        None,
+    )?;
+    commit_undo_point(&dir, "新建文件夹前自动备份", pre_payload)?;
     Ok(folder)
 }
 
@@ -3115,11 +3204,13 @@ fn rename_folder(
     if target.name == trimmed {
         return Ok(target.clone());
     }
-    snapshot_current_vault(&conn, &dir, "重命名文件夹前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "重命名文件夹前自动备份")?;
+    let undo_title = "重命名文件夹前自动备份";
     target.name = trimmed.to_string();
     target.updated_at_ms = now_ms();
     let renamed = target.clone();
     save_folders(&conn, &folders)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(renamed)
 }
 
@@ -3139,12 +3230,14 @@ fn delete_folder(
         migrate_legacy_new_account_folder_ids(&mut accounts, &folders, &legacy_folder_ids);
     let id = id.trim().to_ascii_lowercase();
     if folders_changed || accounts_changed {
-        if folders_changed {
-            save_folders(&conn, &folders)?;
-        }
-        if accounts_changed {
-            save_accounts(&conn, &accounts)?;
-        }
+        save_collections_atomic(
+            &conn,
+            accounts_changed.then_some(accounts.as_slice()),
+            folders_changed.then_some(folders.as_slice()),
+            None,
+            None,
+            None,
+        )?;
     }
     let folder = folders
         .iter()
@@ -3159,7 +3252,8 @@ fn delete_folder(
     if folder.is_deleted || folder.is_permanently_deleted {
         return Err("文件夹已删除".into());
     }
-    snapshot_current_vault(&conn, &dir, "删除文件夹前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "删除文件夹前自动备份")?;
+    let undo_title = "删除文件夹前自动备份";
     let device = load_device_name(&conn)?;
     let now = now_ms();
     let folder = folders
@@ -3184,14 +3278,21 @@ fn delete_folder(
     }
     let mut all_order = load_all_regular_order(&conn)?;
     normalize_order_state(&accounts, &mut folders, &mut all_order);
-    save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     let mut folder_order = load_folder_order(&conn)?;
     folder_order
         .folder_ids
         .retain(|folder_id| !folder_id.eq_ignore_ascii_case(&id));
     folder_order.updated_at_ms = now;
     folder_order.updated_device_name = device;
-    save_folder_order(&conn, &folder_order)?;
+    save_collections_atomic(
+        &conn,
+        Some(&accounts),
+        Some(&folders),
+        Some(&all_order),
+        Some(&folder_order),
+        None,
+    )?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(())
 }
 
@@ -3244,7 +3345,8 @@ fn set_account_folders(
     let mut folders = load_folders(&conn)?;
     let mut all_order = load_all_regular_order(&conn)?;
     let normalized = canonical_active_folder_ids(&folders, &folder_ids)?;
-    snapshot_current_vault(&conn, &dir, "调整账号文件夹前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "调整账号文件夹前自动备份")?;
+    let undo_title = "调整账号文件夹前自动备份";
     let device = load_device_name(&conn)?;
     let now = now_ms();
     let mut found = false;
@@ -3286,6 +3388,7 @@ fn set_account_folders(
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(())
 }
 
@@ -3309,7 +3412,8 @@ fn configure_folder_site_rules(
     if existing.is_deleted || existing.is_permanently_deleted {
         return Err("目标文件夹已删除".into());
     }
-    snapshot_current_vault(&conn, &dir, "调整文件夹规则前自动备份")?;
+    let pre_payload = snapshot_current_vault(&conn, &dir, "调整文件夹规则前自动备份")?;
+    let undo_title = "调整文件夹规则前自动备份";
     let folder = folders
         .iter_mut()
         .find(|folder| folder.id.eq_ignore_ascii_case(&normalized_id))
@@ -3347,6 +3451,7 @@ fn configure_folder_site_rules(
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
+    commit_undo_point(&dir, undo_title, pre_payload)?;
     Ok(FolderRuleResult {
         folder: folder_snapshot,
         matched_count,
@@ -3453,8 +3558,8 @@ fn deduplicate_folder(
         _ => return Err("未知去重方式".into()),
     }
 
-    snapshot_current_vault(&conn, &dir, "文件夹去重前自动备份")?;
-
+    let pre_payload = snapshot_current_vault(&conn, &dir, "文件夹去重前自动备份")?;
+    let undo_title = "文件夹去重前自动备份";
     let duplicate_ids: BTreeSet<String> = groups
         .iter()
         .flat_map(|group| {
@@ -3478,6 +3583,7 @@ fn deduplicate_folder(
     }
     if deleted_count > 0 {
         save_accounts(&conn, &accounts)?;
+        commit_undo_point(&dir, undo_title, pre_payload)?;
     }
     Ok(DeduplicateResult {
         deleted_count,

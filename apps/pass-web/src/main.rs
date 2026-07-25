@@ -1210,7 +1210,11 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
             Ok(new_etag) => {
                 v.begin("WebDAV 同步写入本地前自动备份");
                 v.apply_payload(to_store.clone());
-                v.save()?;
+                if let Err(error) = v.save() {
+                    return Err(format!(
+                        "WebDAV 远端已更新，但本地保存失败，请立即重新同步以对齐两端状态：{error}"
+                    ));
+                }
                 return Ok(json!({"report": SyncReport {
                     ok: true,
                     dry_run: false,
@@ -1379,7 +1383,11 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
             Ok(new_etag) => {
                 v.begin("同步写入本地前自动备份");
                 v.apply_payload(to_store.clone());
-                v.save()?;
+                if let Err(error) = v.save() {
+                    return Err(format!(
+                        "远端已更新，但本地保存失败，请立即重新同步以对齐两端状态：{error}"
+                    ));
+                }
                 return Ok(json!({
                     "report": SyncReport {
                         ok: true,
@@ -2002,8 +2010,16 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             )))
         }
         "undo_last_operation" => {
-            let entry = v.data.undo.pop().ok_or("没有可撤销的本地操作")?;
             let current = v.payload();
+            while v
+                .data
+                .undo
+                .last()
+                .is_some_and(|entry| entry.payload == current)
+            {
+                v.data.undo.pop();
+            }
+            let entry = v.data.undo.pop().ok_or("没有可撤销的本地操作")?;
             v.data.redo.push(HistoryItem {
                 id: entry.id.clone(),
                 title: entry.title.clone(),
@@ -3394,7 +3410,9 @@ async fn invoke(
                 live.data = worker.data;
                 if let Err(error) = live.save() {
                     live.data = previous;
-                    return Err(error);
+                    return Err(format!(
+                        "联网同步结果未能写入本地，已保留同步前本地数据；若远端已更新请重新同步：{error}"
+                    ));
                 }
             }
             return Ok(result);

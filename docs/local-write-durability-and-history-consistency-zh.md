@@ -1,6 +1,6 @@
 # 本地写入耐久性与历史一致性
 
-> 状态：当前代码事实（版本 `1.1.1`）。开发测试版允许直接修正，不兼容旧坏历史。
+> 状态：当前代码事实（版本 `1.1.2`）。开发测试版允许直接修正，不兼容旧坏历史。
 
 ## 1. 背景
 
@@ -44,7 +44,8 @@
 
 ### 2.3 撤销与快照
 
-- 撤销栈忽略与当前 payload 完全相同的 no-op 条目（Tauri：`latest_distinct_undo`）。
+- 撤销栈忽略与当前 payload 完全相同的 no-op 条目（Tauri：`latest_distinct_undo`；Web：撤销时跳过相同 payload）。
+- 本地安全快照可在业务写入前创建；**撤销栈只在业务写入成功后提交**（Tauri：`commit_undo_point`）。
 - 同步写入本地前仍创建本地安全快照。
 - 操作历史只保留动作摘要；密码、TOTP、恢复码、备注不得进入历史。扩展读取旧历史时自动脱敏并重存；中英文旧格式都要识别。
 
@@ -66,6 +67,7 @@
 
 ### 2.6 同步服务器版本与运维边界
 
+- 桌面“创建服务”打包的内嵌 `pass_sync_server.py` 必须与 Ubuntu 规范副本完全一致。
 - 每次成功 PUT / restore 只新增 **1** 条 `payload_versions`。
 - 首次写入产生 revision 1；第二次成功写入产生 revision 2。不得先插旧快照再插新快照。
 - 每个 scope 最多保留 50 个版本。
@@ -78,7 +80,7 @@
 - 远端路径、证书路径、文件模式必须 shell quote，禁止直接拼进单引号字符串。
 - 部署后健康检查必须使用正常 TLS 校验，不能 `danger_accept_invalid_certs`。
 
-## 3. 回归基线（1.1.1）
+## 3. 回归基线（1.1.2）
 
 | 套件 | 数量 |
 |---|---|
@@ -99,8 +101,17 @@
 - 主密码首尾空格有效
 - 历史脱敏覆盖中英文旧格式
 
-## 4. 后续仍可改进
+## 4. 1.1.2 起的补强
+
+- Tauri / macOS 内嵌 `pass_sync_server.py` 必须与 `apps/sync_server_ubuntu/pass_sync_server.py` 字节级一致；`scripts/version.mjs check` 会拦截漂移，避免“创建服务”重新部署旧服务器。
+- Tauri 多集合边角路径（`get_app_state` 迁移、新建/删除文件夹、非置顶排序、导入等）统一走 `save_collections_atomic`。
+- Tauri 撤销点改为：先写本地安全快照，业务写入成功后再 `commit_undo_point`；失败操作不再提前污染撤销栈。
+- Web 撤销会跳过与当前 payload 完全相同的 no-op 条目。
+- Web 自建/WebDAV 若远端 PUT 成功但本地保存失败，返回明确错误，要求立即重新同步；不再把半成功状态伪装成同步完成。
+
+## 5. 后续仍可改进
 
 - 日常单字段写入也可继续统一事务包装与故障注入测试。
-- 撤销“先快照后业务写入”仍可改成“业务成功后再提交历史”。
-- CI 可再补 Clippy / fmt / 依赖审计；当前已覆盖 Tauri/Web 测试。
+- Swift 日常 CRUD 多步保存可继续收拢到 `saveCoreCollectionsAtomically`。
+- 远端已成功、本地失败时的自动补偿/回滚策略（当前只保证错误可见与提示重同步）。
+- CI 可再补 Clippy / fmt / 依赖审计；当前已覆盖 Tauri/Web 测试与内嵌服务器一致性检查。

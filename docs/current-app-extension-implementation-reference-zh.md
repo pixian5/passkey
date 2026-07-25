@@ -1,6 +1,6 @@
 # Pass 当前实现参考
 
-> 状态：当前代码事实，随主分支更新。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.1.1`。
+> 状态：当前代码事实，随主分支更新。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.1.2`。
 
 ## 0. 关键实现文档
 
@@ -119,7 +119,7 @@ cd apps/codex-tauri/src-tauri && cargo test --locked
 cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-当前自动化基线（1.1.1）：扩展 78 项、Docker Web 9 项、Tauri 22 项、同步服务器 33 项、脚本 17 项；命令矩阵覆盖 68 个 UI 命令；版本落点 45 个。
+当前自动化基线（1.1.2）：扩展 78 项、Docker Web 9 项、Tauri 22 项、同步服务器 33 项、脚本 17 项；命令矩阵覆盖 68 个 UI 命令；版本落点 45 个。
 
 ## 9. 当前限制
 
@@ -129,3 +129,4 @@ cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 
 - 软件 passkey 私钥仍属于可同步材料，不等同于硬件认证器安全模型。
 - 桌面 SSH 创建服务对远端路径采用 POSIX shell 安全引用；证书路径中的引号不能拼接为远端命令。
 - 同步服务器是哑存储：只做认证、ETag/revision、版本历史与审计，不解密账号内容。
+- 桌面内嵌 `pass_sync_server.py`（Tauri/macOS）必须与 `apps/sync_server_ubuntu/pass_sync_server.py` 一致；版本检查会拦截漂移。
