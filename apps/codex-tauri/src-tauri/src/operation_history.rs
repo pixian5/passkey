@@ -82,6 +82,25 @@ pub fn latest_undo(data_dir: &PathBuf) -> Option<HistoryEntry> {
     load(data_dir).undo.last().cloned()
 }
 
+pub fn latest_distinct_undo(
+    data_dir: &PathBuf,
+    current_payload: &SyncPayload,
+) -> Result<Option<HistoryEntry>, String> {
+    let mut file = load(data_dir);
+    let original_len = file.undo.len();
+    while file
+        .undo
+        .last()
+        .is_some_and(|entry| entry.payload == *current_payload)
+    {
+        file.undo.pop();
+    }
+    if file.undo.len() != original_len {
+        save(data_dir, &file)?;
+    }
+    Ok(file.undo.last().cloned())
+}
+
 pub fn latest_redo(data_dir: &PathBuf) -> Option<HistoryEntry> {
     load(data_dir).redo.last().cloned()
 }
@@ -121,4 +140,28 @@ pub fn move_redo_to_undo(
         save(data_dir, &file)?;
     }
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pass_merge::v2::SyncPayload;
+    use std::fs;
+    use uuid::Uuid;
+
+    #[test]
+    fn latest_distinct_undo_skips_no_op_entries() {
+        let dir = std::env::temp_dir().join(format!("pass-history-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let current = SyncPayload::default();
+        let mut older = SyncPayload::default();
+        older.all_regular_order_updated_at_ms = 7;
+        push(&dir, "真实修改", older.clone()).unwrap();
+        push(&dir, "失败操作残留", current.clone()).unwrap();
+        let entry = latest_distinct_undo(&dir, &current).unwrap().expect("should keep real change");
+        assert_eq!(entry.title, "真实修改");
+        assert_eq!(entry.payload, older);
+        let _ = fs::remove_dir_all(dir);
+    }
 }

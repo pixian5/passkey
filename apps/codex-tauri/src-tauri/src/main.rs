@@ -18,8 +18,8 @@ use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
 use pass_merge::v2::{
-    normalize_all_regular_order, normalize_folder_regular_order, normalize_folder_regular_orders,
-    mark_folder_membership as mark_folder_membership_mutation,
+    mark_folder_membership as mark_folder_membership_mutation, normalize_all_regular_order,
+    normalize_folder_regular_order, normalize_folder_regular_orders,
     permanently_delete_account as mark_account_permanently_deleted,
     permanently_delete_folder as permanently_delete_folder_mutation,
     restore_account_fields as restore_account_mutation,
@@ -207,8 +207,10 @@ fn get_undo_status(
 ) -> Result<Option<UndoStatus>, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
+    let conn = open_db(&app)?;
+    let current = local_payload_from_conn(&conn, &load_device_name(&conn)?)?;
     Ok(
-        operation_history::latest_undo(&dir).map(|entry| UndoStatus {
+        operation_history::latest_distinct_undo(&dir, &current)?.map(|entry| UndoStatus {
             title: entry.title,
             created_at_ms: entry.created_at_ms,
         }),
@@ -267,11 +269,11 @@ fn undo_last_operation(
 ) -> Result<String, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
-    let entry: HistoryEntry =
-        operation_history::latest_undo(&dir).ok_or_else(|| "没有可撤销的本地操作".to_string())?;
     let mut conn = open_db(&app)?;
     let current_device = load_device_name(&conn)?;
     let current = local_payload_from_conn(&conn, &current_device)?;
+    let entry: HistoryEntry = operation_history::latest_distinct_undo(&dir, &current)?
+        .ok_or_else(|| "没有可撤销的本地操作".to_string())?;
     local_snapshots::create(&dir, &current, "撤销本地操作前自动备份")?;
     save_payload_atomic(&mut conn, &entry.payload)?;
     operation_history::move_undo_to_redo(&dir, &entry.id, current)?;
@@ -443,9 +445,7 @@ fn create_account(
         move_account_to_folder_top(&mut folders, folder_id, &created_id, now, &device_name);
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
-    save_accounts(&conn, &accounts)?;
-    save_folders(&conn, &folders)?;
-    save_all_regular_order(&conn, &all_order)?;
+    save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     Ok(created)
 }
 
@@ -530,9 +530,7 @@ fn update_account(
         move_account_to_folder_top(&mut folders, &folder_id, &id, now, &device_name);
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
-    save_accounts(&conn, &accounts)?;
-    save_folders(&conn, &folders)?;
-    save_all_regular_order(&conn, &all_order)?;
+    save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     Ok(())
 }
 
@@ -630,9 +628,7 @@ fn add_accounts_to_folders(
         );
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
-    save_accounts(&conn, &accounts)?;
-    save_folders(&conn, &folders)?;
-    save_all_regular_order(&conn, &all_order)?;
+    save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     Ok(())
 }
 
@@ -706,7 +702,10 @@ fn set_accounts_folders(
             account.folder_ids = normalized_folders.clone();
             account.folder_id = normalized_folders.first().cloned();
             for folder_id in &normalized_folders {
-                if !previous.iter().any(|current| current.eq_ignore_ascii_case(folder_id)) {
+                if !previous
+                    .iter()
+                    .any(|current| current.eq_ignore_ascii_case(folder_id))
+                {
                     mark_folder_membership_mutation(account, folder_id, false, now, &device);
                 }
             }
@@ -732,9 +731,7 @@ fn set_accounts_folders(
         );
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
-    save_accounts(&conn, &accounts)?;
-    save_folders(&conn, &folders)?;
-    save_all_regular_order(&conn, &all_order)?;
+    save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     Ok(())
 }
 
@@ -843,9 +840,7 @@ fn soft_delete_accounts(
     let mut folders = load_folders(&conn)?;
     let mut all_order = load_all_regular_order(&conn)?;
     normalize_order_state(&accounts, &mut folders, &mut all_order);
-    save_accounts(&conn, &accounts)?;
-    save_folders(&conn, &folders)?;
-    save_all_regular_order(&conn, &all_order)?;
+    save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     Ok(count)
 }
 
@@ -893,9 +888,7 @@ fn restore_account(
         move_account_to_folder_top(&mut folders, &folder_id, &restored_id, now, &device_name);
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
-    save_accounts(&conn, &accounts)?;
-    save_folders(&conn, &folders)?;
-    save_all_regular_order(&conn, &all_order)?;
+    save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     Ok(())
 }
 
@@ -928,9 +921,7 @@ fn hard_delete_account(
     }
     debug_assert!(found);
     normalize_order_state(&accounts, &mut folders, &mut all_order);
-    save_accounts(&conn, &accounts)?;
-    save_folders(&conn, &folders)?;
-    save_all_regular_order(&conn, &all_order)?;
+    save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     Ok(())
 }
 
@@ -983,9 +974,7 @@ fn restore_all_deleted_accounts(
     all_order.updated_at_ms = now;
     all_order.updated_device_name = device_name.clone();
     normalize_order_state(&accounts, &mut folders, &mut all_order);
-    save_accounts(&conn, &accounts)?;
-    save_folders(&conn, &folders)?;
-    save_all_regular_order(&conn, &all_order)?;
+    save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     Ok(count)
 }
 
@@ -1016,9 +1005,7 @@ fn hard_delete_all_deleted_accounts(
         }
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
-    save_accounts(&conn, &accounts)?;
-    save_folders(&conn, &folders)?;
-    save_all_regular_order(&conn, &all_order)?;
+    save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     Ok(count)
 }
 
@@ -1073,9 +1060,7 @@ fn generate_demo_accounts(app: AppHandle, state: tauri::State<AppLockState>) -> 
     all_order.updated_at_ms = now;
     all_order.updated_device_name = device_name;
     normalize_order_state(&accounts, &mut folders, &mut all_order);
-    save_accounts(&conn, &accounts)?;
-    save_folders(&conn, &folders)?;
-    save_all_regular_order(&conn, &all_order)?;
+    save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     Ok(())
 }
 
@@ -2554,6 +2539,22 @@ fn save_payload_atomic(conn: &mut Connection, payload: &SyncPayload) -> Result<(
         .map_err(|e| format!("提交数据写入事务失败: {e}"))
 }
 
+fn save_account_folder_order_atomic(
+    conn: &Connection,
+    accounts: &[PasswordAccount],
+    folders: &[Folder],
+    all_order: &AllRegularOrder,
+) -> Result<(), String> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("开始账号与文件夹写入事务失败: {e}"))?;
+    save_accounts(&tx, accounts)?;
+    save_folders(&tx, folders)?;
+    save_all_regular_order(&tx, all_order)?;
+    tx.commit()
+        .map_err(|e| format!("提交账号与文件夹写入事务失败: {e}"))
+}
+
 fn read_kv(conn: &Connection, key: &str) -> Result<Option<String>, String> {
     let mut stmt = conn
         .prepare("SELECT value FROM kv WHERE key = ?1 LIMIT 1")
@@ -3183,9 +3184,7 @@ fn delete_folder(
     }
     let mut all_order = load_all_regular_order(&conn)?;
     normalize_order_state(&accounts, &mut folders, &mut all_order);
-    save_accounts(&conn, &accounts)?;
-    save_folders(&conn, &folders)?;
-    save_all_regular_order(&conn, &all_order)?;
+    save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     let mut folder_order = load_folder_order(&conn)?;
     folder_order
         .folder_ids
@@ -3286,9 +3285,7 @@ fn set_account_folders(
         move_account_to_folder_top(&mut folders, &folder_id, &id, now, &device);
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
-    save_accounts(&conn, &accounts)?;
-    save_folders(&conn, &folders)?;
-    save_all_regular_order(&conn, &all_order)?;
+    save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     Ok(())
 }
 
@@ -3349,9 +3346,7 @@ fn configure_folder_site_rules(
         move_account_to_folder_top(&mut folders, &normalized_id, &account_id, now, &device_name);
     }
     normalize_order_state(&accounts, &mut folders, &mut all_order);
-    save_accounts(&conn, &accounts)?;
-    save_folders(&conn, &folders)?;
-    save_all_regular_order(&conn, &all_order)?;
+    save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     Ok(FolderRuleResult {
         folder: folder_snapshot,
         matched_count,

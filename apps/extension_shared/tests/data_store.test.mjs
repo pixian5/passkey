@@ -48,6 +48,7 @@ const {
   setSafetySnapshots,
   setAllData,
   setSyncOutbox,
+  sanitizeHistoryAction,
   unlockDataEncryption,
 } = await import("../data_store.js");
 const {
@@ -131,6 +132,19 @@ beforeEach(async () => {
     request.onblocked = () => resolve();
   });
   await resetDataStoreRuntimeForTests();
+});
+
+test("操作历史不会保留密码、TOTP、恢复码或备注内容", () => {
+  assert.equal(sanitizeHistoryAction("example.com：密码改为secret-value"), "example.com：密码已修改");
+  assert.equal(sanitizeHistoryAction("example.com: password changed to secret-value"), "example.com：密码已修改");
+  assert.equal(sanitizeHistoryAction("example.com：TOTP 改为JBSWY3DPEHPK3PXP"), "example.com：TOTP 已修改");
+  assert.equal(sanitizeHistoryAction("example.com: totp changed to JBSWY3DPEHPK3PXP"), "example.com：TOTP 已修改");
+  assert.equal(sanitizeHistoryAction("example.com：恢复码改为123456"), "example.com：恢复码已修改");
+  assert.equal(sanitizeHistoryAction("example.com: recovery codes changed to 123456"), "example.com：恢复码已修改");
+  assert.equal(sanitizeHistoryAction("example.com：备注改为private note"), "example.com：备注已修改");
+  assert.equal(sanitizeHistoryAction("example.com: note changed to private note"), "example.com：备注已修改");
+  assert.equal(sanitizeHistoryAction("account：创建账号（用户名改为alice，密码改为secret-value）"), "新建账号");
+  assert.equal(sanitizeHistoryAction("account: created account (username changed to alice, password changed to secret-value)"), "新建账号");
 });
 
 test("v3 包装不能被主密码摘要直接解密，且锁定会清除会话密钥", async () => {

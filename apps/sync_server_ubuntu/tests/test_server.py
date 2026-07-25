@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import pass_sync_server as server_module
 from pass_sync_server import AppConfig, build_server, load_config, parse_ascii_decimal
 
 
@@ -58,6 +59,31 @@ class PassSyncServerTests(unittest.TestCase):
         self.assertEqual(parse_ascii_decimal("１２"), None)
         self.assertEqual(parse_ascii_decimal("+1"), None)
         self.assertEqual(parse_ascii_decimal(""), None)
+
+    def test_rate_limit_discards_expired_client_windows(self) -> None:
+        current_window = int(time.time() // 60)
+        self.server._rate_windows = {
+            "expired": (current_window - 2, 1),
+            "recent": (current_window - 1, 1),
+        }
+        self.server.enforce_rate_limit("current")
+        self.assertNotIn("expired", self.server._rate_windows)
+        self.assertIn("recent", self.server._rate_windows)
+        self.assertIn("current", self.server._rate_windows)
+
+    def test_audit_history_is_bounded_per_scope(self) -> None:
+        original_limit = server_module.MAX_AUDIT_OPERATIONS_PER_SCOPE
+        server_module.MAX_AUDIT_OPERATIONS_PER_SCOPE = 3
+        try:
+            for index in range(5):
+                self.server.repository.record_operation(
+                    "default", "put", "success", f"etag-{index}", None
+                )
+            operations = self.server.repository.list_operations("default", limit=100)
+            self.assertEqual(len(operations), 3)
+            self.assertEqual([item.etag for item in operations], ["etag-4", "etag-3", "etag-2"])
+        finally:
+            server_module.MAX_AUDIT_OPERATIONS_PER_SCOPE = original_limit
 
     def test_slow_connection_cannot_exhaust_bounded_workers(self) -> None:
         limited_dir = tempfile.TemporaryDirectory()
@@ -555,7 +581,8 @@ class PassSyncServerTests(unittest.TestCase):
 
         with self.request("GET", "/v1/sync/versions", headers=headers) as response:
             versions = json.loads(response.read().decode("utf-8"))["versions"]
-        self.assertGreaterEqual(len(versions), 2)
+        self.assertEqual(len(versions), 2)
+        self.assertEqual([item["versionId"] for item in reversed(versions)], [1, 2])
         self.assertNotEqual(versions[0]["payloadSha256"], versions[-1]["payloadSha256"])
 
         oldest_version_id = versions[-1]["versionId"]

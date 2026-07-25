@@ -1836,7 +1836,6 @@ final class AccountStore: ObservableObject {
     func importSyncBundle(from fileURL: URL) {
         do {
             loadSyncSecretsIfNeeded()
-            let previousAccounts = accounts
             let data = try Data(contentsOf: fileURL)
             let parsed = try decodeSyncBundle(data)
             let remoteAccounts = normalizeDecodedAccounts(parsed.accounts)
@@ -1853,13 +1852,21 @@ final class AccountStore: ObservableObject {
             mergedAccounts = reconcileAccountsWithValidFolderIds(mergedAccounts, validFolderIds: validFolderIds)
             let mergedPasskeys = mergePasskeyCollections(local: passkeys, remote: remotePasskeys)
 
+            let previousFolders = folders
+            let previousAccounts = accounts
+            let previousPasskeys = passkeys
             folders = mergedFolders
             accounts = mergedAccounts
             passkeys = mergedPasskeys
             syncAliasGroups()
-            saveFoldersToDefaults()
-            saveAccounts()
-            savePasskeysToLocalDisk()
+            do {
+                try saveCoreCollectionsAtomically()
+            } catch {
+                folders = previousFolders
+                accounts = previousAccounts
+                passkeys = previousPasskeys
+                throw error
+            }
 
             if let editingAccountId, !accounts.contains(where: { $0.id == editingAccountId }) {
                 cancelEditing()
@@ -1882,6 +1889,7 @@ final class AccountStore: ObservableObject {
 
     func mergeCredentialExchangeImport(_ result: CredentialExchangeImportResult) {
         let previousAccounts = accounts
+        let previousPasskeys = passkeys
         let localAccountCount = accounts.count
         let localPasskeyCount = passkeys.count
 
@@ -1894,8 +1902,14 @@ final class AccountStore: ObservableObject {
         accounts = mergedAccounts
         passkeys = mergedPasskeys
         syncAliasGroups()
-        saveAccounts()
-        savePasskeysToLocalDisk()
+        do {
+            try saveCoreCollectionsAtomically()
+        } catch {
+            accounts = previousAccounts
+            passkeys = previousPasskeys
+            statusMessage = "Apple Credential Exchange 导入保存失败：\(error.localizedDescription)"
+            return
+        }
 
         statusMessage =
             "Apple Credential Exchange 导入完成：账号 \(localAccountCount)+\(result.accounts.count)->\(accounts.count)，" +
@@ -3234,9 +3248,15 @@ final class AccountStore: ObservableObject {
         accounts = payload.accounts
         passkeys = payload.passkeys
         syncAliasGroups()
-        saveFoldersToDefaults()
-        saveAccounts()
-        savePasskeysToLocalDisk()
+        do {
+            try saveCoreCollectionsAtomically()
+        } catch {
+            folders = currentPayload.folders
+            accounts = currentPayload.accounts
+            passkeys = currentPayload.passkeys
+            statusMessage = "保存合并数据失败: \(error.localizedDescription)"
+            return false
+        }
         if let historyTitle {
             appendAccountHistoryBatch(
                 category: .sync,
@@ -3989,20 +4009,31 @@ final class AccountStore: ObservableObject {
         }
     }
 
-    private func saveAccounts() {
-        saveAccountsToLocalDisk()
-        if !suppressCloudPush && syncEnableICloud {
+    @discardableResult
+    private func saveAccounts() -> Bool {
+        let saved = saveAccountsToLocalDisk()
+        if saved && !suppressCloudPush && syncEnableICloud {
             pushSyncDataToICloud(trigger: "local_update")
         }
+        return saved
     }
 
-    private func saveAccountsToLocalDisk() {
+    @discardableResult
+    private func saveAccountsToLocalDisk() -> Bool {
         do {
             let data = try encoder.encode(accounts)
             try saveCollectionDataToLocalDatabase(data, for: LocalDatabaseKeys.accounts)
             CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
+            return true
         } catch {
             statusMessage = "保存失败: \(error.localizedDescription)"
+            if let persistedData = try? localSQLiteStore.readData(for: LocalDatabaseKeys.accounts),
+               let persisted = try? decoder.decode([PasswordAccount].self, from: persistedData)
+            {
+                accounts = normalizeDecodedAccounts(persisted)
+                CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
+            }
+            return false
         }
     }
 
@@ -4030,15 +4061,40 @@ final class AccountStore: ObservableObject {
         return normalized
     }
 
-    private func savePasskeysToLocalDisk() {
+    @discardableResult
+    private func savePasskeysToLocalDisk() -> Bool {
         do {
             let data = try encoder.encode(passkeys.map(normalizePasskeyRecord))
             try saveCollectionDataToLocalDatabase(data, for: LocalDatabaseKeys.passkeys)
             if !suppressCloudPush && syncEnableICloud {
                 pushSyncDataToICloud(trigger: "local_update")
             }
+            return true
         } catch {
             statusMessage = "保存通行密钥失败: \(error.localizedDescription)"
+            if let persistedData = try? localSQLiteStore.readData(for: LocalDatabaseKeys.passkeys),
+               let persisted = try? decoder.decode([PasskeyRecord].self, from: persistedData)
+            {
+                passkeys = persisted.map(normalizePasskeyRecord)
+            }
+            return false
+        }
+    }
+
+    private func saveCoreCollectionsAtomically() throws {
+        let accountsData = try encoder.encode(accounts)
+        let foldersData = try encoder.encode(folders)
+        let passkeysData = try encoder.encode(passkeys.map(normalizePasskeyRecord))
+        let timestamp = nowMs()
+        try localSQLiteStore.transaction {
+            try localSQLiteStore.writeData(accountsData, for: LocalDatabaseKeys.accounts, updatedAtMs: timestamp)
+            try localSQLiteStore.writeData(foldersData, for: LocalDatabaseKeys.folders, updatedAtMs: timestamp)
+            try localSQLiteStore.writeData(passkeysData, for: LocalDatabaseKeys.passkeys, updatedAtMs: timestamp)
+        }
+        UserDefaults.standard.set(foldersData, forKey: Keys.foldersData)
+        CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
+        if !suppressCloudPush && syncEnableICloud {
+            pushSyncDataToICloud(trigger: "local_update")
         }
     }
 
@@ -6712,20 +6768,28 @@ final class AccountStore: ObservableObject {
         )
     }
 
-    private func saveFoldersToDefaults() {
+    @discardableResult
+    private func saveFoldersToDefaults() -> Bool {
         guard let data = try? encoder.encode(folders) else {
-            return
+            statusMessage = "保存文件夹失败：无法编码文件夹数据"
+            return false
         }
         do {
             try saveCollectionDataToLocalDatabase(data, for: LocalDatabaseKeys.folders)
         } catch {
             statusMessage = "保存文件夹到 SQLite 失败: \(error.localizedDescription)"
-            return
+            if let persistedData = try? localSQLiteStore.readData(for: LocalDatabaseKeys.folders),
+               let persisted = try? decoder.decode([AccountFolder].self, from: persistedData)
+            {
+                folders = persisted
+            }
+            return false
         }
         UserDefaults.standard.set(data, forKey: Keys.foldersData)
         if !suppressCloudPush && syncEnableICloud {
             pushSyncDataToICloud(trigger: "local_update")
         }
+        return true
     }
 
     var uiFontFamilyOptions: [String] {

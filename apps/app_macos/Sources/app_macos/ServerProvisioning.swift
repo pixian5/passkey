@@ -481,7 +481,7 @@ enum ServerProvisioningService {
         func fileExists(_ path: String) throws -> Bool {
             _ = try execute(
                 executable: "/usr/bin/ssh",
-                arguments: sshArguments(command: "test -r '\(path)'"),
+                arguments: sshArguments(command: "test -r \(shellQuote(path))"),
                 input: nil
             )
             return true
@@ -490,7 +490,9 @@ enum ServerProvisioningService {
         func write(_ data: Data, to path: String, mode: String) throws {
             _ = try execute(
                 executable: "/usr/bin/ssh",
-                arguments: sshArguments(command: "umask 077; cat > '\(path)'; chmod \(mode) '\(path)'"),
+                arguments: sshArguments(
+                    command: "umask 077; cat > \(shellQuote(path)); chmod \(shellQuote(mode)) \(shellQuote(path))"
+                ),
                 input: data
             )
         }
@@ -514,8 +516,12 @@ enum ServerProvisioningService {
             if let index = arguments.firstIndex(of: "-p") {
                 arguments[index] = "-P"
             }
-            arguments += [localURL.path, "\(credential.username)@\(sshHost):\(remotePath)"]
+            arguments += [localURL.path, "\(credential.username)@\(sshHost):\(shellQuote(remotePath))"]
             return arguments
+        }
+
+        private func shellQuote(_ value: String) -> String {
+            "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
         }
 
         private var sshHost: String {

@@ -4266,7 +4266,7 @@ async function saveAccountEdit(accountId, draft) {
     target.passwordUpdatedAtMs = now;
     target.passwordUpdatedDeviceName = deviceName;
     changed = true;
-    historyMessages.push(`密码改为${historyValueSnippet(draft.password)}`);
+    historyMessages.push("密码已修改");
   }
 
   const nextTotpSecret = normalizeTotpSecret(String(draft.totpSecret || ""));
@@ -4280,7 +4280,7 @@ async function saveAccountEdit(accountId, draft) {
     target.totpUpdatedAtMs = now;
     target.totpUpdatedDeviceName = deviceName;
     changed = true;
-    historyMessages.push(`TOTP 改为${historyValueSnippet(nextTotpSecret)}`);
+    historyMessages.push("TOTP 已修改");
   }
 
   if (String(draft.recoveryCodes || "") !== String(target.recoveryCodes || "")) {
@@ -4288,7 +4288,7 @@ async function saveAccountEdit(accountId, draft) {
     target.recoveryCodesUpdatedAtMs = now;
     target.recoveryCodesUpdatedDeviceName = deviceName;
     changed = true;
-    historyMessages.push(`恢复码改为${historyValueSnippet(draft.recoveryCodes)}`);
+    historyMessages.push("恢复码已修改");
   }
 
   if (String(draft.note || "") !== String(target.note || "")) {
@@ -4296,7 +4296,7 @@ async function saveAccountEdit(accountId, draft) {
     target.noteUpdatedAtMs = now;
     target.noteUpdatedDeviceName = deviceName;
     changed = true;
-    historyMessages.push(`备注改为${historyValueSnippet(draft.note)}`);
+    historyMessages.push("备注已修改");
   }
 
   if (!changed) {

@@ -160,7 +160,16 @@ fn write_private_file_atomic(path: &PathBuf, bytes: &[u8]) -> Result<(), String>
         ".{file_name}.{:016x}.tmp",
         u64::from_le_bytes(random)
     ));
-    std::fs::write(&temp, bytes).map_err(|e| e.to_string())?;
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .map_err(|e| e.to_string())?;
+    file.write_all(bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|e| e.to_string())?;
+    drop(file);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -170,6 +179,11 @@ fn write_private_file_atomic(path: &PathBuf, bytes: &[u8]) -> Result<(), String>
     if let Err(error) = std::fs::rename(&temp, path) {
         let _ = std::fs::remove_file(&temp);
         return Err(error.to_string());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -299,8 +313,6 @@ impl AppLockState {
         if load_record(data_dir).is_some_and(|record| record.enabled) {
             return Err("应用锁已启用，请先关闭后再设置新的主密码".into());
         }
-        let password = password.trim();
-        let confirm = confirm.trim();
         if password.is_empty() {
             return Err("请输入主密码".into());
         }
@@ -355,7 +367,7 @@ impl AppLockState {
         let salt = STANDARD
             .decode(&record.salt_b64)
             .map_err(|_| "锁配置损坏".to_string())?;
-        let key = derive_key(password.trim(), &salt, record.iterations)?;
+        let key = derive_key(password, &salt, record.iterations)?;
         let expected = STANDARD
             .decode(&record.verifier_b64)
             .map_err(|_| "锁配置损坏".to_string())?;
@@ -526,8 +538,6 @@ impl AppLockState {
         if !record.enabled {
             return Err("应用锁未启用".into());
         }
-        let new_password = new_password.trim();
-        let confirm = confirm.trim();
         if new_password.is_empty() {
             return Err("请输入新的主密码".into());
         }
@@ -538,7 +548,7 @@ impl AppLockState {
         let old_salt = STANDARD
             .decode(&record.salt_b64)
             .map_err(|_| "锁配置损坏".to_string())?;
-        let old_key = derive_key(old_password.trim(), &old_salt, record.iterations)?;
+        let old_key = derive_key(old_password, &old_salt, record.iterations)?;
         let expected = STANDARD
             .decode(&record.verifier_b64)
             .map_err(|_| "锁配置损坏".to_string())?;

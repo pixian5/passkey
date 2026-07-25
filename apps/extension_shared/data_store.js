@@ -46,6 +46,33 @@ let unlockedEncryptionKey = null;
 // encrypt different collections with them.
 let encryptionKeyPromise = null;
 
+// History is intentionally descriptive, never a second copy of vault secrets.
+// This also migrates legacy entries when they are next read.
+export function sanitizeHistoryAction(value) {
+  const action = String(value || "").trim();
+  if (!action) return "";
+  // Normalize fullwidth and halfwidth colon separators used by older history text.
+  const normalized = action.replace(/:/g, "：");
+  if (/(创建账号|created account)\s*[（(][\s\S]*?(密码改为|password\s*(?:changed|to)|password was set to)[\s\S]*?[）)]/i.test(normalized)) {
+    return "新建账号";
+  }
+  const separator = normalized.indexOf("：");
+  const prefix = separator >= 0 ? `${normalized.slice(0, separator)}：` : "";
+  if (/(密码改为|password\s*(?:changed|to)|password was set to)/i.test(normalized)) {
+    return `${prefix}密码已修改`;
+  }
+  if (/(TOTP\s*改为|totp\s*(?:changed|to)|otp\s*(?:changed|to))/i.test(normalized)) {
+    return `${prefix}TOTP 已修改`;
+  }
+  if (/(恢复码改为|recovery(?:\s*codes?)?\s*(?:changed|to))/i.test(normalized)) {
+    return `${prefix}恢复码已修改`;
+  }
+  if (/(备注改为|note\s*(?:changed|to)|notes?\s*(?:changed|to))/i.test(normalized)) {
+    return `${prefix}备注已修改`;
+  }
+  return action;
+}
+
 function requestAsPromise(request) {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
@@ -702,19 +729,28 @@ export async function migrateLegacySyncSecrets() {
 
 export async function getHistory() {
   await ensureDataStorageReady();
-  const entries = await readCollection(COLLECTION_HISTORY);
-  return (Array.isArray(entries) ? entries : [])
+  const rawEntries = await readCollection(COLLECTION_HISTORY);
+  const entries = Array.isArray(rawEntries) ? rawEntries : [];
+  const normalized = entries
     .filter((item) => item && typeof item === "object")
     .map((item) => ({
       id: String(item.id || ""),
       timestampMs: Number(item.timestampMs || 0),
-      action: String(item.action || ""),
+      action: sanitizeHistoryAction(item.action),
     }))
     .filter((item) => item.timestampMs > 0 && item.action.trim().length > 0)
     .sort((lhs, rhs) => {
       if (lhs.timestampMs !== rhs.timestampMs) return rhs.timestampMs - lhs.timestampMs;
       return lhs.id.localeCompare(rhs.id);
     });
+  const needsMigration = entries.length !== normalized.length || entries.some((item, index) =>
+    String(item?.action || "").trim() !== normalized[index]?.action
+  );
+  if (needsMigration) {
+    await writeCollection(COLLECTION_HISTORY, normalized);
+    await touchDataBump(COLLECTION_HISTORY);
+  }
+  return normalized;
 }
 
 export async function setHistory(entries) {
@@ -724,7 +760,7 @@ export async function setHistory(entries) {
     .map((item) => ({
       id: String(item.id || ""),
       timestampMs: Number(item.timestampMs || 0),
-      action: String(item.action || "").trim(),
+      action: sanitizeHistoryAction(item.action),
     }))
     .filter((item) => item.timestampMs > 0 && item.action.length > 0)
     .sort((lhs, rhs) => {
@@ -737,7 +773,7 @@ export async function setHistory(entries) {
 }
 
 export async function appendHistoryEntry({ timestampMs, action }) {
-  const normalizedAction = String(action || "").trim();
+  const normalizedAction = sanitizeHistoryAction(action);
   if (!normalizedAction) return;
   const ts = Number(timestampMs || Date.now());
   const entry = {

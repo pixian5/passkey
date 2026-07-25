@@ -1,6 +1,6 @@
 # Pass 当前实现参考
 
-> 状态：当前代码事实，随主分支更新。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.0.7`。
+> 状态：当前代码事实，随主分支更新。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.1.1`。
 
 ## 1. 当前产品表面
 
@@ -48,6 +48,14 @@
 | Chrome Web 扩展 | 独立 `chrome.storage.local` 加密工作区，并镜像到扩展 IndexedDB 供填充后台使用 |
 | 扩展共享填充层 | IndexedDB `pass.local.db.v1`；账号、文件夹、passkey 集合使用同一数据密钥 |
 
+
+写入要求：
+
+- 账号、文件夹、全局排序和 Passkey 等多集合本地写入必须同事务提交；任一步失败时回滚内存到磁盘已持久化状态。
+- 加密 vault / 本地密钥文件采用“临时文件 + `fsync` + rename + 目录 `fsync`”落盘。
+- Web 同步网络 I/O 不得长期占用全局 Vault 锁；本地变更在保存失败时回滚内存。
+- 同步服务器每次成功 PUT 只新增 1 条版本，审计与限流窗口有保留上限。
+
 ## 5. 同步现状
 
 三端都支持自建服务器：
@@ -87,6 +95,7 @@ WebDAV 当前由 Tauri 和 Docker Web 支持；Chrome Web 扩展明确不支持�
 - 同步包：导出后显示摘要；导入先展示账号级差异与安全检查，用户确认后才写入。
 - 永久删除墓碑不计入可见账号数量，也不会在预览中显示为新增账号。
 - 本地快照、服务器版本、撤销、重做和可浏览历史窗口均已接入统一 UI。
+- 操作历史只保留动作摘要；密码、TOTP、恢复码和备注不会写入历史，读取旧记录时会自动脱敏并重存。
 
 ## 8. 验证入口
 
@@ -99,7 +108,7 @@ cd apps/codex-tauri/src-tauri && cargo test --locked
 cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-当前自动化基线：扩展 77 项、Docker Web 7 项、Tauri 20 项、同步服务器 31 项；命令矩阵覆盖 68 个 UI 命令。
+当前自动化基线：扩展 78 项、Docker Web 7 项、Tauri 21 项、同步服务器 31 项；命令矩阵覆盖 68 个 UI 命令。
 
 ## 9. 当前限制
 
@@ -107,3 +116,4 @@ cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 
 - Chrome 扩展不能直接执行 SSH 部署，也不直接实现 WebDAV。
 - Docker Web 当前是单用户 vault；多用户隔离、WebAuthn 登录和权限模型不在现有实现内。
 - 软件 passkey 私钥仍属于可同步材料，不等同于硬件认证器安全模型。
+- 桌面 SSH 创建服务对远端路径采用 POSIX shell 安全引用；证书路径中的引号不能拼接为远端命令。

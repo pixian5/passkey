@@ -382,6 +382,13 @@ fn remote_target(cred: &SshCredential, endpoint: &Endpoint) -> String {
     format!("{}@{}", cred.username.trim(), ssh_host(endpoint))
 }
 
+/// Quote one value for the POSIX shell executed by the remote OpenSSH server.
+/// Certificate paths originate from the settings form, so they must never be
+/// interpolated into a remote command without escaping embedded apostrophes.
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
 fn ssh_run(
     cred: &SshCredential,
     endpoint: &Endpoint,
@@ -422,7 +429,8 @@ fn ssh_write(
     data: &[u8],
     mode: &str,
 ) -> Result<(), String> {
-    let remote_cmd = format!("umask 077; cat > '{remote_path}'; chmod {mode} '{remote_path}'");
+    let remote_path = shell_quote(remote_path);
+    let remote_cmd = format!("umask 077; cat > {remote_path}; chmod {mode} {remote_path}");
     let mut args = base_ssh_args(cred, temp);
     args.push(remote_target(cred, endpoint));
     args.push(remote_cmd);
@@ -437,7 +445,12 @@ fn ssh_file_exists(
     temp: &TempSsh,
     path: &str,
 ) -> Result<bool, String> {
-    match ssh_run(cred, endpoint, temp, &format!("test -r '{path}'")) {
+    match ssh_run(
+        cred,
+        endpoint,
+        temp,
+        &format!("test -r {}", shell_quote(path)),
+    ) {
         Ok(_) => Ok(true),
         Err(_) => Ok(false),
     }
@@ -458,13 +471,9 @@ fn ssh_cp_remote(
     dst: &str,
     mode: &str,
 ) -> Result<(), String> {
-    let cmd = format!(
-        "cp -- '{}' '{}' && chmod {mode} '{dst}'",
-        src,
-        dst,
-        mode = mode,
-        dst = dst
-    );
+    let src = shell_quote(src);
+    let dst = shell_quote(dst);
+    let cmd = format!("cp -- {src} {dst} && chmod {mode} {dst}", mode = mode);
     ssh_run(cred, endpoint, temp, &cmd).map(|_| ())
 }
 
@@ -717,7 +726,6 @@ pub fn verify_public_endpoint(endpoint: &str) -> bool {
     let url = format!("{}/healthz", endpoint.trim().trim_end_matches('/'));
     let client = match reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
-        .danger_accept_invalid_certs(true)
         .build()
     {
         Ok(c) => c,
@@ -1160,4 +1168,21 @@ pub fn provision_server(
 
 pub fn host_from_server_url(raw: &str) -> Option<String> {
     parse_endpoint(raw).ok().map(|e| e.host)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shell_quote;
+
+    #[test]
+    fn shell_quote_preserves_paths_without_allowing_quote_escape() {
+        assert_eq!(
+            shell_quote("/etc/pass-sync/server.key"),
+            "'/etc/pass-sync/server.key'"
+        );
+        assert_eq!(
+            shell_quote("/tmp/it's-a-key; rm -rf /"),
+            "'/tmp/it'\"'\"'s-a-key; rm -rf /'"
+        );
+    }
 }

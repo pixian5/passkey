@@ -11,6 +11,7 @@ use aes_gcm::{
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::RngCore;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -44,10 +45,21 @@ fn write_private_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
         path.file_name().and_then(|n| n.to_str()).unwrap_or("pass"),
         Uuid::new_v4()
     ));
-    fs::write(&temp, bytes).map_err(|e| format!("写入本地临时文件失败: {e}"))?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .map_err(|e| format!("创建本地临时文件失败: {e}"))?;
+    file.write_all(bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|e| format!("持久化本地临时文件失败: {e}"))?;
+    drop(file);
     set_private_permissions(&temp, false);
     fs::rename(&temp, path).map_err(|e| format!("更新本地文件失败: {e}"))?;
     set_private_permissions(path, false);
+    fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|e| format!("持久化本地目录失败: {e}"))?;
     Ok(())
 }
 

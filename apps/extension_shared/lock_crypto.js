@@ -58,7 +58,7 @@ async function pbkdf2Digest(password, saltBytes, iterations) {
 }
 
 export async function createLockMasterCredential(password) {
-  const normalizedPassword = String(password || "").trim();
+  const normalizedPassword = String(password || "");
   if (!normalizedPassword) return null;
   const saltBytes = crypto.getRandomValues(new Uint8Array(16));
   const digest = await pbkdf2Digest(normalizedPassword, saltBytes, LOCK_PBKDF2_ITERATIONS);
@@ -75,8 +75,8 @@ export async function verifyLockMasterPassword(credential, password) {
   if (!normalized) return false;
   const saltBytes = base64ToBytes(normalized.saltBase64);
   const digest = normalized.version === 1
-    ? await legacyDigest(String(password || "").trim(), saltBytes)
-    : await pbkdf2Digest(String(password || "").trim(), saltBytes, normalized.iterations);
+    ? await legacyDigest(String(password || ""), saltBytes)
+    : await pbkdf2Digest(String(password || ""), saltBytes, normalized.iterations);
   return timingSafeEqual(digest, base64ToBytes(normalized.digestBase64));
 }
 

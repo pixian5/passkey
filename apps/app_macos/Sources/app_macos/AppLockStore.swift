@@ -75,8 +75,8 @@ final class AppLockStore: ObservableObject {
     }
 
     func enableUnlock(newPassword: String, confirmPassword: String) {
-        let password = newPassword.trimmingCharacters(in: .whitespacesAndNewlines)
-        let confirm = confirmPassword.trimmingCharacters(in: .whitespacesAndNewlines)
+        let password = newPassword
+        let confirm = confirmPassword
 
         guard !password.isEmpty else {
             settingsMessage = "主密码不能为空"

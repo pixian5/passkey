@@ -35,6 +35,18 @@ final class LocalSQLiteStore {
         close()
     }
 
+    func transaction(_ body: () throws -> Void) throws {
+        try openIfNeeded()
+        try execute("BEGIN IMMEDIATE;")
+        do {
+            try body()
+            try execute("COMMIT;")
+        } catch {
+            try? execute("ROLLBACK;")
+            throw error
+        }
+    }
+
     func readData(for key: String) throws -> Data? {
         try openIfNeeded()
         let sql = "SELECT value, updated_at_ms FROM kv WHERE key = ?1 LIMIT 1;"

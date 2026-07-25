@@ -253,7 +253,6 @@ pub fn merge_imported_accounts(
     merged
 }
 
-
 // --- Sync versions ---
 
 pub fn list_sync_versions(settings: &SyncSettings) -> Result<Vec<SyncVersionSummary>, String> {

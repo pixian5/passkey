@@ -45,6 +45,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
+    io::Write,
     path::{Path as FsPath, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -171,11 +172,13 @@ fn default_background_lock_delay() -> u32 {
     60
 }
 
+#[derive(Clone)]
 struct Vault {
     dir: PathBuf,
     data: VaultData,
     locked: bool,
     last_activity_ms: i64,
+    persist_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -300,10 +303,21 @@ fn save_data(dir: &FsPath, data: &VaultData) -> Result<(), String> {
     let encrypted = encrypt(dir, &raw)?;
     let path = dir.join(VAULT_FILE);
     let temp = dir.join(format!(".{VAULT_FILE}.{}.tmp", Uuid::new_v4()));
-    fs::write(&temp, encrypted).map_err(|e| format!("写入 Web vault 临时文件失败：{e}"))?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .map_err(|e| format!("创建 Web vault 临时文件失败：{e}"))?;
+    file.write_all(&encrypted)
+        .and_then(|_| file.sync_all())
+        .map_err(|e| format!("持久化 Web vault 临时文件失败：{e}"))?;
+    drop(file);
     private_file(&temp);
     fs::rename(&temp, &path).map_err(|e| format!("更新 Web vault 失败：{e}"))?;
     private_file(&path);
+    fs::File::open(dir)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|e| format!("持久化 Web vault 目录失败：{e}"))?;
     Ok(())
 }
 
@@ -405,6 +419,7 @@ impl Vault {
             data,
             locked: was_enabled,
             last_activity_ms: now_ms(),
+            persist_enabled: true,
         };
         ensure_fixed_folder(&mut vault.data);
         normalize_order_state(&mut vault.data);
@@ -414,6 +429,9 @@ impl Vault {
         Ok(vault)
     }
     fn save(&self) -> Result<(), String> {
+        if !self.persist_enabled {
+            return Ok(());
+        }
         save_data(&self.dir, &self.data)
     }
     fn payload(&self) -> SyncPayload {
@@ -1634,6 +1652,17 @@ fn duplicate_groups(accounts: &[PasswordAccount], folder_id: &str) -> Vec<Folder
         .collect()
 }
 
+fn run_local_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String> {
+    let previous = v.data.clone();
+    match do_command(v, command, args) {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            v.data = previous;
+            Err(error)
+        }
+    }
+}
+
 fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String> {
     v.maybe_lock();
     let lock_exempt = matches!(
@@ -1698,10 +1727,10 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             }
             let password: String = arg(&args, "password")?;
             let confirm: String = arg(&args, "confirm")?;
-            if password.trim().is_empty() {
+            if password.is_empty() {
                 return Err("请输入主密码".into());
             }
-            if password.trim() != confirm.trim() {
+            if password != confirm {
                 return Err("两次输入的主密码不一致".into());
             }
             let mut salt = [0u8; 16];
@@ -1727,10 +1756,10 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             let new_password: String = arg(&args, "newPassword")?;
             let confirm: String = arg(&args, "confirm")?;
             let _ = verify_web_lock_password(&v.data.lock, &old_password)?;
-            if new_password.trim().is_empty() {
+            if new_password.is_empty() {
                 return Err("请输入新主密码".into());
             }
-            if new_password.trim() != confirm.trim() {
+            if new_password != confirm {
                 return Err("两次输入的新主密码不一致".into());
             }
             let mut salt = [0u8; 16];
@@ -3289,7 +3318,7 @@ fn verify_web_lock_password(lock: &WebLockData, password: &str) -> Result<[u8; 3
     let expected = STANDARD
         .decode(lock.verifier_b64.trim())
         .map_err(|_| "应用锁配置损坏".to_string())?;
-    let actual = derive_web_lock_key(password.trim(), &salt, lock.iterations);
+    let actual = derive_web_lock_key(password, &salt, lock.iterations);
     if !constant_time_equal(&Sha256::digest(actual), &expected) {
         return Err("主密码错误".into());
     }
@@ -3303,7 +3332,12 @@ fn authorized(headers: &HeaderMap, token: &str) -> bool {
     headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .map(|v| v.strip_prefix("Bearer ").unwrap_or("") == token)
+        .map(|v| {
+            constant_time_equal(
+                v.strip_prefix("Bearer ").unwrap_or("").as_bytes(),
+                token.as_bytes(),
+            )
+        })
         .unwrap_or(false)
 }
 
@@ -3323,8 +3357,50 @@ async fn invoke(
     let vault = state.vault.clone();
     let command_for_worker = command.clone();
     let result = tokio::task::spawn_blocking(move || {
+        let network_command = matches!(
+            command_for_worker.as_str(),
+            "sync_preview"
+                | "sync_now"
+                | "sync_now_mode"
+                | "sync_webdav_now_mode"
+                | "list_server_versions"
+                | "restore_server_version"
+        );
+        if network_command {
+            let (mut worker, original_data) = {
+                let mut live = vault
+                    .lock()
+                    .map_err(|_| "Web vault 锁定失败".to_string())?;
+                live.maybe_lock();
+                let original_data = serde_json::to_vec(&live.data).map_err(|e| e.to_string())?;
+                let mut worker = live.clone();
+                worker.persist_enabled = false;
+                (worker, original_data)
+            };
+            let result = do_command(&mut worker, &command_for_worker, args)?;
+            let mutates_vault = matches!(
+                command_for_worker.as_str(),
+                "sync_now" | "sync_now_mode" | "sync_webdav_now_mode" | "restore_server_version"
+            );
+            if mutates_vault {
+                let mut live = vault
+                    .lock()
+                    .map_err(|_| "Web vault 锁定失败".to_string())?;
+                let current_data = serde_json::to_vec(&live.data).map_err(|e| e.to_string())?;
+                if current_data != original_data {
+                    return Err("联网期间本地数据已变化，已保留本地修改，请重新同步".into());
+                }
+                let previous = live.data.clone();
+                live.data = worker.data;
+                if let Err(error) = live.save() {
+                    live.data = previous;
+                    return Err(error);
+                }
+            }
+            return Ok(result);
+        }
         let mut v = vault.lock().map_err(|_| "Web vault 锁定失败".to_string())?;
-        do_command(&mut v, &command_for_worker, args)
+        run_local_command(&mut v, &command_for_worker, args)
     })
     .await
     .map_err(|error| format!("Web 命令任务异常：{error}"))
@@ -3498,6 +3574,50 @@ mod tests {
         assert_eq!(imported[1].canonical_site, "github.com");
         assert!(imported[1].username.is_empty());
         assert!(imported[1].password.is_empty());
+    }
+
+    #[test]
+    fn master_password_preserves_leading_and_trailing_spaces() {
+        let dir = std::env::temp_dir().join(format!("pass-web-lock-space-{}", Uuid::new_v4()));
+        let mut vault = Vault::open(dir.clone()).unwrap();
+        let password = "  secret-pass  ";
+        do_command(
+            &mut vault,
+            "lock_enable",
+            json!({
+                "password": password,
+                "confirm": password,
+                "idleLockMinutes": 5,
+                "lockPolicy": "onceUntilQuit",
+                "preferBiometrics": false,
+                "backgroundLockDelaySeconds": 0
+            }),
+        )
+        .unwrap();
+        vault.locked = true;
+        assert!(verify_web_lock_password(&vault.data.lock, password).is_ok());
+        assert!(verify_web_lock_password(&vault.data.lock, password.trim()).is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn failed_command_rolls_back_memory_state() {
+        let dir = std::env::temp_dir().join(format!("pass-web-rollback-{}", Uuid::new_v4()));
+        let mut vault = Vault::open(dir.clone()).unwrap();
+        let before = vault.data.device_name.clone();
+        // Point the vault at a regular file path so subsequent saves cannot create a data directory.
+        let blocked = dir.join("not-a-directory");
+        fs::write(&blocked, b"x").unwrap();
+        vault.dir = blocked;
+        let err = run_local_command(
+            &mut vault,
+            "set_device_name",
+            json!({"deviceName": "ShouldNotPersist"}),
+        )
+        .expect_err("save should fail");
+        assert!(!err.is_empty());
+        assert_eq!(vault.data.device_name, before);
+        let _ = fs::remove_dir_all(dir);
     }
 
 }
