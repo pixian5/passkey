@@ -682,10 +682,23 @@
     const keepPermanentlyDeleted = Boolean(left.isPermanentlyDeleted || right.isPermanentlyDeleted);
     const keepDeleted = keepPermanentlyDeleted || latestDeletedAt > 0 && latestDeletedAt >= Math.max(leftUpdatedAt, rightUpdatedAt);
     const deletedDeviceName = leftDeletedAt >= rightDeletedAt ? asString(left.deletedDeviceName).trim() : asString(right.deletedDeviceName).trim();
+    const orderFromRight = preferRemoteOrder(
+      left.regularOrderUpdatedAtMs,
+      left.regularOrderUpdatedDeviceName,
+      right.regularOrderUpdatedAtMs,
+      right.regularOrderUpdatedDeviceName
+    );
+    const orderSource = orderFromRight ? right : left;
+    const regularOrderFields = {
+      regularAccountIds: Array.isArray(orderSource.regularAccountIds) ? [...orderSource.regularAccountIds] : [],
+      regularOrderUpdatedAtMs: asNumber(orderSource.regularOrderUpdatedAtMs),
+      regularOrderUpdatedDeviceName: asString(orderSource.regularOrderUpdatedDeviceName).trim()
+    };
     if (id === h.fixedNewAccountFolderId) {
       return {
         id,
         name: h.fixedNewAccountFolderName,
+        ...regularOrderFields,
         matchedSites: rightUpdatedAt >= leftUpdatedAt ? right.matchedSites || [] : left.matchedSites || [],
         autoAddMatchingSites: rightUpdatedAt >= leftUpdatedAt ? Boolean(right.autoAddMatchingSites) : Boolean(left.autoAddMatchingSites),
         isDeleted: false,
@@ -707,6 +720,7 @@
     return {
       id,
       name,
+      ...regularOrderFields,
       matchedSites: rightUpdatedAt > leftUpdatedAt ? right.matchedSites || [] : left.matchedSites || [],
       autoAddMatchingSites: rightUpdatedAt > leftUpdatedAt ? Boolean(right.autoAddMatchingSites) : Boolean(left.autoAddMatchingSites),
       isDeleted: keepDeleted,
@@ -798,6 +812,9 @@
       );
     }
     return h.sortFoldersForDisplay(Array.from(merged.values()));
+  }
+  function preferRemoteOrder(localUpdatedAtMs, localDeviceName, remoteUpdatedAtMs, remoteDeviceName) {
+    return asNumber(remoteUpdatedAtMs) > asNumber(localUpdatedAtMs) || asNumber(remoteUpdatedAtMs) === asNumber(localUpdatedAtMs) && stableTieValue(remoteDeviceName) > stableTieValue(localDeviceName);
   }
   function reconcileAccountFolders(accounts, folders, helpers) {
     const h = resolveHelpers(helpers);

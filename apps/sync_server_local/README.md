@@ -8,7 +8,7 @@
 
 - 扩展/客户端用**同步加密密钥**对密码数据做端到端 AES-256-GCM 加密
 - 服务端只存储加密后的密文信封，无法读取账号、密码、Passkey 等内容
-- 通过 Bearer Token 做设备认证，ETag + If-Match 做并发冲突保护
+- 可选 Bearer Token 认证，ETag + If-Match 做并发冲突保护
 
 ## 快速启动（前台/手动）
 
@@ -19,9 +19,9 @@ cd /Users/x/code/pass/apps/sync_server_local
 
 脚本会自动：
 1. 检测本机局域网 IP
-2. 生成随机 Bearer Token（如果未自定义）
+2. 读取用户显式设置的 Bearer Token；留空时进入开放模式
 3. 监听 `0.0.0.0:53333`，让局域网内其他设备可访问
-4. 打印客户端需要的地址和令牌
+4. 打印客户端需要的地址和认证模式
 
 ### 停止
 
@@ -58,7 +58,7 @@ cd /Users/x/code/pass/apps/sync_server_local
 在 Chrome 扩展、Safari 扩展或 macOS App 的设置页：
 
 - **服务器地址**: `http://<你的局域网IP>:53333`
-- **访问令牌**: `install-launchd.sh` 或 `start.sh` 打印的 Token
+- **访问令牌**: 可留空；需要认证时在启动前显式设置 `PASS_SYNC_BEARER_TOKENS`
 - **同步加密密钥**: 在所有客户端填写同一枚 256 位密钥（各客户端独立生成后统一填写）
 
 > 注意：浏览器扩展要求同步地址必须是 HTTPS，但本机回环地址（`localhost`、`127.0.0.1`、`::1`）允许使用 HTTP。如果你需要从其他设备通过局域网访问，Chrome 扩展在 `http://局域网IP` 下会拒绝，建议在该局域网内使用 macOS App 或配置本地 HTTPS 反向代理（如 `mkcert` + `caddy`）。
@@ -69,7 +69,7 @@ cd /Users/x/code/pass/apps/sync_server_local
 |------|--------|------|
 | `PASS_SYNC_HOST` | `0.0.0.0` | 监听地址 |
 | `PASS_SYNC_PORT` | `53333` | 监听端口 |
-| `PASS_SYNC_BEARER_TOKENS` | 自动生成 | `default=TOKEN` 格式 |
+| `PASS_SYNC_BEARER_TOKENS` | 留空 | 可选，`default=TOKEN` 格式；项目不会自动生成 |
 | `PASS_SYNC_LOG_LEVEL` | `INFO` | 日志级别 |
 
 自定义示例：

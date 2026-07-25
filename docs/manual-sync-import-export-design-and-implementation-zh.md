@@ -1,160 +1,53 @@
-# 多设备 / APP / 扩展同步与手动导入导出（设计 + 已实施）
+# 同步包与手动导入导出（V2）
 
-> 当前实现已统一为 `pass.sync.bundle.v2`；本文早期的 `pass.sync.bundle.v1` 明文示例仅作为历史设计记录。远程同步和同步包导出可选用 256 位 AES-256-GCM 同步密钥；留空则使用明文 `pass.sync.bundle.v2`（需同步服务器允许明文）。
+> 当前代码事实：Tauri、Docker Web、Chrome Web 扩展均使用 `pass.sync.bundle.v2`；加密时外层是 `pass.sync.encrypted.v1`。本文不再把旧 Swift/旧扩展的 V1 流程描述为当前入口。
 
-## 1. 目标
-- 支持以下场景离线/半离线同步：
-  - 设备 A（mac APP）⇄ 设备 B（mac APP）
-  - 设备 A（mac APP）⇄ 设备 B（Chrome 扩展）
-  - 设备 A（Chrome 扩展）⇄ 设备 B（Chrome 扩展）
-- 合并原则：
-  - 按“真实发生时间”字段（`...UpdatedAtMs` / `deletedAtMs`）做冲突解决。
-  - 账号不覆盖写，采用字段级 LWW + 删除判定规则。
+## 1. 导出
 
-## 2. 已实现同步通道
+`export_sync_bundle` 从当前完整工作区生成同步包，包含账号、文件夹、Passkey、文件夹顺序、全部账号顺序、字段时间戳和墓碑。启用同步密钥时使用 AES-256-GCM，AAD 为 `pass.sync.encrypted.v1`；密钥为空时导出明文 V2 包。Tauri 使用原生保存目录，Web/扩展使用浏览器下载。
 
-### 2.1 自动同步（mac 内部）
-- 通道：`NSUbiquitousKeyValueStore`（iCloud KVS）
-- 范围：`accounts`（当前已实现）
-- 入口：`AccountStore.syncWithICloudNow()`
+导出完成后 UI 显示账号、文件夹和通行密钥摘要，不显示密码或私钥内容。
 
-### 2.2 手动同步（跨端）
-- 通道：同步包 JSON 文件（`pass.sync.bundle.v1`）
-- APP：
-  - 设置页支持“导出同步包”“导入并合并同步包”
-  - 实现文件：
-    - `/Users/x/code/pass/apps/app_macos/Sources/app_macos/SettingsView.swift`
-    - `/Users/x/code/pass/apps/app_macos/Sources/app_macos/AccountStore.swift`
-- 扩展（options 页）：
-  - 原始数据区支持“导出同步包”“导入并合并同步包”
-  - 实现文件：
-    - `/Users/x/code/pass/apps/extension_chrome/options.html`
-    - `/Users/x/code/pass/apps/extension_chrome/options.js`
+## 2. 导入与预览
 
-### 2.3 手动导出导入（非合并）
-- APP：导出全部账号 CSV
-- 扩展：导出/导入原始 JSON（可全量替换本地）
+`import_sync_bundle_text` 始终先解析和解密，再把远端包与本地工作区按字段级规则合并并执行安全检查：
 
-## 3. 同步包格式（v1）
+- 预览阶段 `apply=false`，只返回数量、具体账号差异、文件夹/顺序变化和安全原因，不写本地；
+- 用户确认后 `apply=true` 才创建本地快照并一次性写入合并结果；
+- 取消或校验失败不会改变本地数据；
+- 永久删除墓碑不计入可见账号数量，也不能作为新增账号显示；
+- 缺少稳定 ID、远端为空覆盖非空本地、密钥不匹配或结构非法时停止写入。
 
-```json
-{
-  "schema": "pass.sync.bundle.v1",
-  "exportedAtMs": 1777777777777,
-  "source": {
-    "app": "pass-mac | pass-extension",
-    "platform": "macos-app | chrome-extension",
-    "deviceName": "ChromeMac",
-    "formatVersion": 1
-  },
-  "payload": {
-    "accounts": [/* PasswordAccount[] */],
-    "passkeys": [/* extension 可选 */],
-    "folders": [/* AccountFolder[] */]
-  }
-}
-```
+同步包导入是“合并”，不是覆盖。覆盖模式只属于远程同步操作，并且有独立风险确认。
 
-兼容策略：
-- 若导入文件没有 `schema`，但根层有 `accounts/folders/passkeys`，按 legacy 解析。
-- APP 当前不消费 `passkeys`（仅扩展消费）。
+## 3. 合并规则
 
-## 4. 合并策略（已落地）
+- 账号内容按 `username/password/totpSecret/recoveryCodes/note` 等字段自己的更新时间和设备名做 LWW；
+- 站点别名、文件夹归属、Passkey 关联使用关系状态和墓碑；
+- 普通账号顺序使用顶层 `allRegularAccountIds` 和每个文件夹的 `regularAccountIds`，文件夹顺序使用 `folderOrderIds`；
+- 同时间戳按设备名和值做确定性裁决；
+- 合并后规范化列表，追加遗漏的活动实体，排除回收站和永久删除实体。
 
-## 4.1 账号集合合并
-- 主键：`accountId`
-- `accountId` 相同则做“同账号合并”，否则并入新账号。
+Rust `pass_merge::v2` 是 Tauri/Web 的权威；Chrome Web 使用同源 JS 合并实现并通过黄金向量对拍。
 
-## 4.2 同账号字段合并（字段级 LWW）
-- 参与 LWW 的字段：
-  - `username` ↔ `usernameUpdatedAtMs`
-  - `password` ↔ `passwordUpdatedAtMs`
-  - `totpSecret` ↔ `totpUpdatedAtMs`
-  - `recoveryCodes` ↔ `recoveryCodesUpdatedAtMs`
-  - `note` ↔ `noteUpdatedAtMs`
-- 平局策略：
-  - 先比字段更新时间
-  - 再比账号 `updatedAtMs`
-  - 再偏向非空值
+## 4. CSV 与验证器导入
 
-## 4.3 站点别名与 canonicalSite
-- `sites` 取并集并标准化（去重、排序、域名归一化）。
-- `canonicalSite` 优先从并集首项推导 eTLD+1，否则保留历史值。
-- 合并后执行“别名连通分量回填”（同站点交集或同 eTLD+1）。
+CSV 导入是账号字段导入，不是同步包合并协议；用户名和密码可以为空。导入前解析为草稿，确认后写入。Google Authenticator 导入只更新匹配账号的 TOTP，未匹配条目新建账号并显示结果摘要。
 
-## 4.4 删除冲突规则
-- 计算：
-  - `latestContentUpdatedAt = max(所有可编辑字段更新时间, passkeyUpdatedAtMs)`
-  - `latestDeletedAt = max(lhs.deletedAtMs, rhs.deletedAtMs)`（仅在 `isDeleted=true` 时参与）
-- 判定：
-  - 若 `latestDeletedAt >= latestContentUpdatedAt`，账号保持删除态
-  - 否则恢复为未删除
+## 5. 错误、恢复与安全
 
-## 4.5 置顶与排序
-- `isPinned / pinnedSortOrder / regularSortOrder` 取“较新账号快照”。
-- 组内拖拽顺序最终写回对应 sortOrder 字段。
+- JSON、Schema、加密信封、密钥 ID 任一校验失败：拒绝写入；
+- 每次同步/导入写入前自动创建加密本地安全快照；
+- 本地快照、服务器版本列表和服务器版本恢复都保留版本记录；
+- Token 和同步密钥可留空。空 Token 不发送 `Authorization`，空同步密钥才允许明文包；
+- 明文包可能包含密码和 Passkey 私钥，只应在可信链路使用。
 
-## 4.6 通行密钥引用（账号内）
-- `passkeyCredentialIds` 使用并集合并，去重排序。
-- `passkeyUpdatedAtMs` 取最大值。
+## 6. 当前入口
 
-## 4.7 文件夹合并
-- 主键：`folder.id`
-- 同 id 冲突：
-  - `createdAtMs` 取最小
-  - `name` 按固定规则（当前偏本地优先，固定“新账号”强制保留）
-- 固定文件夹始终存在：
-  - `id = F16A2C4E-4A2A-43D5-A670-3F1767D41001`
-  - `name = 新账号`
-- 合并后会清理账号 `folderIds`，移除不存在的 folder 引用。
+| 表面 | 导出/导入文件方式 | 合并实现 |
+|---|---|---|
+| Tauri | 原生文件选择器/保存目录 | Rust Core |
+| Docker Web | 浏览器下载/上传 | Rust Web 适配器 + Core |
+| Chrome Web | 浏览器下载/上传 | JS bridge + 黄金向量 |
 
-## 4.8 扩展通行密钥集合合并
-- 主键：`credentialIdB64u`
-- 合并规则：
-  - 主体元数据取较新 `updatedAtMs` 记录
-  - `signCount` 取最大
-  - `lastUsedAtMs` 取最大
-  - `createdAtMs` 取最小
-
-## 5. 实操流程
-
-### 5.1 APP → 扩展
-1. 在 APP 设置点击“导出同步包”得到 JSON。
-2. 打开扩展 options 页，点击“导入并合并同步包”。
-3. 扩展读取并合并后写入 `chrome.storage.local`。
-
-### 5.2 扩展 → APP
-1. 在扩展 options 点击“导出同步包”。
-2. 在 APP 设置点击“导入并合并同步包”选择该文件。
-3. APP 合并后保存本地并按现有机制推送 iCloud（如可用）。
-
-### 5.3 设备 A → 设备 B（同端）
-- 任意端导出同步包，目标设备导入并合并。
-
-## 6. 导入失败与回退
-- 文件非法/JSON 解析失败/结构不匹配：拒绝写入，保持本地原数据。
-- 导入过程为“读→合并→一次性写入”。
-- 建议操作前先导出一个本地同步包作为快照（人工回退）。
-
-## 7. 与“真实发生时间”的关系
-- 当前实现假设设备时间基本可信。
-- 若设备时钟偏差很大，LWW 可能出现“旧值压新值”。
-- 推荐后续升级：
-  - 引入 HLC（Hybrid Logical Clock）或 Lamport Clock
-  - 服务器时间锚点/签名事件日志
-  - 记录字段级操作日志（而非只存最终值时间戳）
-
-## 8. 安全说明（当前）
-- 同步包是明文 JSON，包含敏感字段（密码、TOTP、恢复码、备注、passkey 私钥）。
-- 当前仅适合本地受控传输。
-- 下一步建议：
-  - 同步包加密（`Argon2id + XChaCha20-Poly1305`）
-  - 加签防篡改
-  - 单次导入口令与过期时间
-
-## 9. 版本演进建议
-- v2 建议补充：
-  - `folders.updatedAtMs`
-  - 字段级操作日志
-  - 明确 tombstone 生命周期
-  - `sourceClock`（逻辑时钟）和 `deviceId`
+旧 V1 包只作为历史数据参考，不是当前三端的生成格式；不应在新代码中继续添加 V1 字段或独立的覆盖导入路径。

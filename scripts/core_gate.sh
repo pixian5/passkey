@@ -2,6 +2,7 @@
 # Gate for shared-core work: merge parity, domain FFI, unit tests, extension tests.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+node "${ROOT}/scripts/version.mjs" check
 cd "${ROOT}/core/pass_core"
 cargo test --workspace --quiet
 node js/check_merge_parity.mjs

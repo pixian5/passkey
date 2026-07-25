@@ -26,24 +26,12 @@ if [[ -z "${LOCAL_IP}" ]]; then
   LOCAL_IP="127.0.0.1"
 fi
 
-# 如果未设置 Token，自动生成一个 32 字节的随机 Token
-if [[ -z "${PASS_SYNC_BEARER_TOKENS:-}" ]]; then
-  TOKEN=$(openssl rand -base64 32 | tr -d '=+/')
-  export PASS_SYNC_BEARER_TOKENS="default=${TOKEN}"
-  GENERATED_TOKEN="${TOKEN}"
-else
-  GENERATED_TOKEN=""
-fi
-
 # 如果已经有进程在运行，则提示并退出
 if [[ -f "${PID_FILE}" ]]; then
   OLD_PID=$(cat "${PID_FILE}")
   if kill -0 "${OLD_PID}" 2>/dev/null; then
     echo "同步服务器已在运行 (PID: ${OLD_PID})"
     echo "访问地址: http://${LOCAL_IP}:${PORT}/v1/sync/payload"
-    if [[ -n "${GENERATED_TOKEN}" ]]; then
-      echo "访问令牌: ${GENERATED_TOKEN}"
-    fi
     exit 0
   else
     rm -f "${PID_FILE}"
@@ -80,15 +68,15 @@ echo ""
 echo "局域网访问地址:"
 echo "  http://${LOCAL_IP}:${PORT}/v1/sync/payload"
 echo ""
-if [[ -n "${GENERATED_TOKEN}" ]]; then
-  echo "访问令牌 (Bearer Token):"
-  echo "  ${GENERATED_TOKEN}"
-  echo ""
+if [[ -z "${PASS_SYNC_BEARER_TOKENS:-}" ]]; then
+  echo "认证模式 : 开放（未配置 Bearer Token）"
+else
+  echo "认证模式 : 已使用显式 Bearer Token 配置"
 fi
 echo "健康检查:"
 echo "  curl http://${LOCAL_IP}:${PORT}/healthz"
 echo ""
 echo "客户端配置示例:"
 echo "  服务器地址: http://${LOCAL_IP}:${PORT}"
-echo "  访问令牌:   ${GENERATED_TOKEN:-（环境变量 PASS_SYNC_BEARER_TOKENS 已自定义）}"
+echo "  访问令牌:   ${PASS_SYNC_BEARER_TOKENS:-（留空）}"
 echo "========================================"

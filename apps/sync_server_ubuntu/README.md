@@ -39,7 +39,7 @@ cd /Users/x/code/pass/apps/sync_server_ubuntu
 ./start.sh
 ```
 
-脚本会自动生成随机 Bearer Token、监听 `0.0.0.0:53333` 并打印配置信息。
+脚本监听 `0.0.0.0:53333` 并打印配置信息。未显式配置 Token 时进入开放模式，不会自动生成 Bearer Token；设置 `PASS_SYNC_BEARER_TOKENS` 或令牌文件后才启用认证。
 
 ```bash
 ./stop.sh    # 停止服务

@@ -1,6 +1,6 @@
 # pass
 
-跨平台密码管理器 Monorepo。包含 macOS、Windows、Linux（Ubuntu）、iOS、Android 客户端，以及 Chrome / Firefox / Safari 浏览器扩展。当前远程同步已在 macOS App、浏览器扩展和 Ubuntu 服务之间落地；macOS 与扩展的合并/别名语义以 Rust `pass_core` 为权威（FFI / JS 对拍），桌面 Tauri 骨架已接入 `pass-merge`/`pass-csvio`；完整五端产品化（尤其移动系统填充）仍在推进。
+跨平台密码管理器 Monorepo。当前产品管理面统一为 Tauri 桌面、Docker Web 和 Chrome Web 扩展，三端复用同一 UI、V2 数据契约和同步语义；Rust `pass_core` 是合并权威，扩展 JS 实现通过黄金向量对拍。SwiftUI、Safari/Firefox 和 Android 模块保留平台系统能力，移动端完整产品化仍在推进。
 
 > 完整设计文档见 [`docs/`](docs/README.md)。
 
@@ -13,8 +13,8 @@
 - [核心库（Rust）](#核心库rust)
 - [当前实现状态](#当前实现状态)
 - [本地验证](#本地验证)
-- [Windows 客户端技术选型分析](#windows-客户端技术选型分析)
-- [Ubuntu 客户端技术选型分析](#ubuntu-客户端技术选型分析)
+- [Windows 客户端历史选型分析](#windows-客户端历史选型分析)
+- [Ubuntu 客户端历史选型分析](#ubuntu-客户端历史选型分析)
 - [方案综合对比与推荐](#方案综合对比与推荐)
 
 ---
@@ -33,12 +33,11 @@ pass/
 │           ├── csvio/      # CSV 导入导出
 │           └── ffi/        # C ABI / UniFFI bindings
 ├── apps/
-│   ├── app_macos/          # macOS 原生应用（SwiftUI）✅ 可运行
+│   ├── app_macos/          # macOS AutoFill/Credential Exchange + 旧 SwiftUI 参考
 │   ├── codex-tauri/        # Tauri 2 桌面端（Win/Ubuntu/macOS）✅ 可运行
 │   ├── pass-web/           # Docker / Ubuntu 无 GUI Web 端 ✅ 可运行
 │   ├── android_credential_provider/ # Android Credential Provider
-│   ├── extension_chrome/   # Chrome 扩展（MV3）✅ 可构建
-│   ├── extension_chrome_web/ # 与 Web UI 统一的 Chrome 扩展
+│   ├── extension_chrome_web/ # 与 Web UI 统一的 Chrome 扩展（MV3）
 │   ├── extension_firefox/  # Firefox 扩展
 │   ├── extension_safari/   # Safari 扩展（Swift + Web Extension）
 │   ├── extension_shared/   # 扩展共享代码（popup/background/content）
@@ -52,9 +51,9 @@ pass/
 | 层级 | 职责 | 技术 |
 |------|------|------|
 | **Shared Core** | 数据模型、加密、op log、合并引擎、CSV | Rust |
-| **Shared UI** | 跨平台页面与交互状态 | Flutter（规划）|
+| **Shared UI** | Tauri / Docker Web / Chrome Web 扩展管理页面 | HTML / CSS / JavaScript 单源构建 |
 | **Platform Adapter** | 密钥库、生物识别、自动填充、系统托盘 | 各平台原生 |
-| **Sync Layer** | 局域网配对、加密通道、增量同步 | 桌面代理 + Python 服务 |
+| **Sync Layer** | V2 整包合并、端到端加密、ETag/CAS 与版本快照 | Tauri/Web/扩展适配器 + Python 服务/WebDAV |
 | **Browser Extension** | 网页域名识别、自动填充 UI | Chrome MV3 / WebExtension |
 
 ---
@@ -63,18 +62,17 @@ pass/
 
 | 模块 | 路径 | 状态 | 说明 |
 |------|------|------|------|
-| macOS 应用 | [`apps/app_macos`](apps/app_macos/README.md) | ✅ 可运行 | SwiftUI，支持账号管理、CSV 导出、回收站 |
+| macOS 系统集成/旧 UI | [`apps/app_macos`](apps/app_macos/README.md) | 🧩 平台模块 | AutoFill、Credential Exchange 与旧 SwiftUI 迁移参考；桌面主端是 Tauri |
 | Tauri 桌面应用 | [`apps/codex-tauri`](apps/codex-tauri/README.md) | ✅ 可构建 | 已接 `pass-merge` 别名/merge 预览与 `pass-csvio` CSV |
 | Docker Web | [`apps/pass-web`](apps/pass-web/README.md) | ✅ 可运行 | Ubuntu / Docker 无 GUI，浏览器访问统一管理界面 |
 | Android Provider | [`apps/android_credential_provider`](apps/android_credential_provider/README.md) | 🚧 开发中 | Android 14+ Credential Manager Provider |
-| Chrome 扩展 | [`apps/extension_chrome`](apps/extension_chrome/README.md) | ✅ 可构建 | MV3，自动填充 + 同步触发 |
-| Chrome Web UI 扩展 | [`apps/extension_chrome_web`](apps/extension_chrome_web/README.md) | ✅ 可构建 | 复用桌面/Web 管理界面，与旧扩展并行验证 |
+| Chrome 扩展 | [`apps/extension_chrome_web`](apps/extension_chrome_web/README.md) | ✅ 可构建 | MV3，复用桌面/Web 管理界面，支持自动填充、同步和 WebAuthn |
 | Firefox 扩展 | [`apps/extension_firefox`](apps/extension_firefox/README.md) | ✅ 可构建 | WebExtension |
 | Safari 扩展 | [`apps/extension_safari`](apps/extension_safari/README.md) | ✅ 可构建 | Swift + Web Extension |
 | 扩展共享代码 | [`apps/extension_shared`](apps/extension_shared/README.md) | ✅ 共享 | popup/background/content/options |
 | macOS 本地同步服务 | [`apps/sync_server_local`](apps/sync_server_local/README.md) | ✅ 可运行 | 复用 Ubuntu 同步服务的本地启动与 launchd 脚本 |
 | Ubuntu 同步服务 | [`apps/sync_server_ubuntu`](apps/sync_server_ubuntu/README.md) | ✅ 可部署 | Python，单文件，零依赖 |
-| Rust 核心库 | [`core/pass_core`](core/pass_core/README.md) | ✅ 初始化 | 6 个 crate，含 FFI |
+| Rust 核心库 | [`core/pass_core`](core/pass_core/README.md) | ✅ 使用中 | 6 个 crate，含合并、Schema、CSV 与 FFI |
 
 ---
 
@@ -101,14 +99,15 @@ pass/
 
 - ✅ **设计文档**：[`docs/`](docs/README.md) 覆盖架构、协议、数据模型、同步策略
 - ✅ **Rust Core workspace**：6 个 crate，已初始化
-- ✅ **macOS 原生应用**（SwiftUI）：账号 CRUD、域名别名、回收站、CSV 导出、SQLite WAL
-- ✅ **Copilot Claude Flutter 桌面应用**（Windows/Ubuntu/macOS）：桌面录入与列表演示工程
-- ✅ **Tauri 桌面应用**（Windows/Ubuntu/macOS）：设备名、账号 CRUD、域名别名同步、回收站、演示数据、CSV 导出
-- ✅ **Chrome 扩展**：MV3，自动填充、popup、options、background
+- 🧩 **macOS 平台模块**（SwiftUI）：保留 AutoFill、Credential Exchange、迁移与系统能力参考，不再作为跨桌面主端
+- ✅ **Tauri 桌面应用**（Windows/Ubuntu/macOS）：统一管理 UI、账号/文件夹/排序/历史/快照、CSV、同步包、自建服务器和 WebDAV 同步
+- ✅ **Docker Web**：复用 Tauri UI，提供无 GUI 浏览器管理、同步和导入导出
+- ✅ **Chrome Web 扩展**：复用统一管理 UI，增加自动填充、账号选择和 WebAuthn 能力
 - ✅ **Firefox / Safari 扩展**：基于共享代码构建
 - ✅ **Ubuntu 同步服务**：Python 单文件，GET/PUT `/v2/sync/state`（兼容 `/v1/sync/payload`），SQLite 版本快照、ETag/CAS、幂等重试和回滚，Bearer Token 认证；客户端配置密钥时存储 AES-256-GCM 信封，留空时可按配置存储明文同步包
-- 🚧 **Flutter 五端应用**：规划中，待接入 Rust FFI
-- 🚧 **桌面同步代理**：规划中，待实现配对与局域网同步
+- 🚧 **Android Credential Provider**：Android 14+ 查询与选择骨架，真实 vault 解锁/回填仍在开发
+
+版本以根目录 [`VERSION`](VERSION) 为唯一来源。`scripts/bump_version.sh` 按 `0.0.1` 递增并满十进一，`node scripts/version.mjs check` 检查所有端和锁文件一致。
 
 ---
 
@@ -136,14 +135,16 @@ python -m unittest discover -s tests -p 'test_*.py'
 
 > 注意：本机是 Apple Silicon macOS；Ubuntu 同步服务部署在 Linux 服务器。Python 虚拟环境、路径和 systemd 配置不要混用。
 >
-> 更完整的安全审查见根目录 [`代码审查grok.md`](代码审查grok.md)。
+> 当前代码事实与验证入口见 [`docs/current-app-extension-implementation-reference-zh.md`](docs/current-app-extension-implementation-reference-zh.md)。
 
 ---
 
-## Windows 客户端技术选型分析
+## Windows 客户端历史选型分析
+
+> 当前正式选择已经收敛为 `apps/codex-tauri`。以下 Flutter/Tauri 对比保留为历史决策依据，不代表仓库仍维护 Flutter 产品工程。
 
 > 背景：项目核心已使用 Rust，macOS 端使用 SwiftUI，浏览器扩展使用 JS。
-> Windows 客户端需要接入共享 Rust Core（通过 FFI），并与桌面同步代理协作。
+> 当前 Windows 客户端由 Tauri 直接接入共享 Rust Core 和同步协议，不依赖额外桌面同步代理。
 
 ### 方案 W1：Flutter（推荐默认方案）
 
@@ -262,7 +263,7 @@ pass-core-ffi (Rust)
 
 ---
 
-## Ubuntu 客户端技术选型分析
+## Ubuntu 客户端历史选型分析
 
 > Ubuntu（Linux）客户端需处理：libsecret（GNOME Keyring / KWallet）安全存储、Wayland/X11 兼容、AppImage/deb 打包、systemd 服务集成（同步代理）。
 
@@ -379,22 +380,22 @@ pass-domain / pass-merge / pass-storage / pass-transport
 
 ### 推荐组合
 
-#### 🥇 首选：Flutter（W1 + U1）— 最快覆盖 Windows + Linux + 移动端
+#### 🥇 当前方案：Tauri（W2 + U2）— 已落地的 Windows / macOS / Linux 统一桌面端
 
-若未来选择该路线，应以 `flutter_rust_bridge` 接入 Rust Core FFI，禁止恢复旧原型中的独立数据与合并实现。
-
-```
-适合：团队规模小、优先快速上线、希望移动与桌面共用一套 UI
-风险：Flutter Linux 桌面成熟度需持续关注 plugin 覆盖情况
-```
-
-#### 🥈 备选：Tauri（W2 + U2）— Rust Core 无摩擦集成 + 极致安全轻量
-
-Rust 后端直接引用 `pass_core` crate，Web 前端可借鉴浏览器扩展的 HTML/CSS 结构。对于密码管理器这类安全敏感应用，Tauri 的进程隔离模型更优。
+Rust 后端直接引用 `pass_core` crate，管理 UI 同时复用于 Docker Web 和 Chrome Web 扩展，避免维护第二套桌面业务实现。
 
 ```
-适合：团队 Rust 能力强、对安全要求极高、可接受 Web UI 风格
-风险：Tauri 2 仍在快速迭代，需关注 API 稳定性
+现状：账号/文件夹/排序/历史/快照、同步、导入导出和应用锁已落地
+边界：系统 AutoFill、Credential Provider 等能力仍由平台原生模块实现
+```
+
+#### 🥈 历史备选：Flutter（W1 + U1）
+
+仓库已删除旧 Flutter 实验工程。若未来重新评估该路线，必须新建接入 Rust Core 的正式工程，不能恢复独立数据和合并实现。
+
+```
+优势：移动与桌面可共享更多 UI
+代价：需要重新建设 UI、FFI 和平台插件，当前没有迁移收益
 ```
 
 #### 🥉 特定场景：GTK 4（U3）+ WinUI 3（W3）— 原生体验优先

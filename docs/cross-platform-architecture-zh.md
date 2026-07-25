@@ -1,269 +1,108 @@
-# 跨平台密码管理器实施方案（共享核心 + 共享UI + 平台适配层）
+# Pass 跨平台实施架构
 
-## 1. 文档目标
-- 支持平台：Windows、macOS、Linux、iOS、Android、浏览器扩展。
-- 核心策略：业务与安全逻辑最大化共享，平台能力按适配层隔离。
-- 输出目标：让团队可直接据此拆任务、建仓库、启动开发与发布。
+> 当前代码架构，不是早期技术选型蓝图。产品管理面已统一为 Tauri / Docker Web / Chrome Web 扩展；移动端继续使用平台原生系统集成。
 
-## 1.1 关联文档
-- 总体设计：[password-manager-design-zh.md](/Users/x/code/pass/docs/password-manager-design-zh.md)
-- 完整实施规范：[implementation-spec-full-zh.md](/Users/x/code/pass/docs/implementation-spec-full-zh.md)
-- 同步协议契约：[sync-protocol-contract-zh.md](/Users/x/code/pass/docs/sync-protocol-contract-zh.md)
-- 数据库 DDL：[sqlite-schema.sql](/Users/x/code/pass/docs/sqlite-schema.sql)
+## 1. 当前技术决策
 
-## 2. 结论与决策
+- **共享核心**：Rust `core/pass_core`，负责数据模型、域名规则、CSV 和权威合并语义。
+- **共享管理 UI**：`apps/codex-tauri` 的 HTML/CSS/JavaScript 是唯一源码，同时服务 Tauri、Docker Web 和 Chrome Web 扩展。
+- **平台适配**：Tauri Rust commands、Web HTTP RPC、Chrome extension bridge 分别接同名命令。
+- **同步服务**：Ubuntu Python 服务只负责认证、快照、版本、ETag/CAS 和审计，不做业务合并。
+- **系统能力**：浏览器填充/WebAuthn、macOS AutoFill/Credential Exchange、Android Credential Provider 留在平台层。
 
-### 2.1 推荐最终形态
-- **共享核心（强约束）**：一套核心库，负责模型、加密、同步、冲突合并、CSV。
-- **共享UI（建议）**：一套 UI 框架覆盖五端，减少页面重复实现。
-- **平台适配层（必须）**：仅保留系统 API 差异（密钥库、生物识别、自动填充、托盘、权限）。
+Flutter/Compose 和独立桌面 Sync Agent 不再是当前产品路线；旧技术对比只保留在根 README 的历史选型章节。
 
-### 2.2 UI 方案建议
-- 方案 A（默认）：`Flutter`
-  - 一套代码覆盖 iOS/Android/Windows/macOS/Linux。
-  - 优点：交付速度快、生态成熟、桌面/移动一致性高。
-- 方案 B（备选）：`Compose Multiplatform`
-  - Kotlin 技术栈统一度高，适合已有 Kotlin 团队。
-  - 缺点：相对 Flutter，部分周边生态和团队可用人力可能更窄。
-
-### 2.3 核心库语言建议
-- 推荐：`Rust` 作为共享核心（安全性、性能、跨平台编译与 FFI 稳定）。
-- 备选：`Kotlin Multiplatform` 作为共享核心（若团队 Kotlin 优势明显）。
-
-> 本文以下以“Flutter + Rust Core”作为默认落地方案描述；若选 Compose，仅替换 UI 层，不改核心分层与协议。
-
-## 3. 总体架构
+## 2. 运行架构
 
 ```mermaid
 flowchart LR
-  subgraph UI["Shared UI (Flutter or Compose)"]
-    A1["Account List"]
-    A2["Account Detail/Edit"]
-    A3["Sync Center"]
-    A4["Alias Group Manager"]
-  end
+  UI["统一管理 UI\napps/codex-tauri"]
+  T["Tauri Adapter\nRust commands"]
+  W["Docker Web Adapter\n/api/invoke/:command"]
+  E["Chrome Adapter\nextension-bridge.js"]
+  R["Rust Core\npass_merge / pass_csvio"]
+  J["JS 对拍 Core\nsync_merge_core"]
+  S["同步服务器\nETag / versions / audit"]
 
-  subgraph Core["Shared Core (Rust)"]
-    C1["Domain Model"]
-    C2["Crypto Engine"]
-    C3["Op Log + Merge Engine"]
-    C4["Storage Abstraction"]
-    C5["CSV Import/Export"]
-  end
-
-  subgraph Adapter["Platform Adapters"]
-    P1["Secure Key Store"]
-    P2["Biometric Auth"]
-    P3["Autofill Integration"]
-    P4["Local Network & Permissions"]
-    P5["Desktop Tray/IPC"]
-  end
-
-  subgraph Sync["Local Sync Agent + Browser Extension"]
-    S1["Sync Agent (Desktop)"]
-    S2["QR Pairing"]
-    S3["Extension Fill UI"]
-  end
-
-  UI --> Core
-  Core --> Adapter
-  UI --> Sync
-  Sync --> Core
+  UI --> T
+  UI --> W
+  UI --> E
+  T --> R
+  W --> R
+  E --> J
+  T --> S
+  W --> S
+  E --> S
+  J -.黄金向量对拍.-> R
 ```
 
-## 4. 代码仓结构（Monorepo）
+## 3. 仓库结构
 
-```txt
+```text
 pass/
+  VERSION                         # 全项目唯一版本源
   apps/
-    codex-tauri/                    # Win/macOS/Linux 统一桌面 UI
-    pass-web/                       # Docker/Ubuntu Web UI
-    android_credential_provider/    # Android 系统凭据接入
-    extension_chrome/               # 浏览器扩展（MV3）
-    sync_server_local/              # macOS 本地同步服务脚本
-    sync_server_ubuntu/             # Ubuntu 自建同步服务
-  core/
-    pass_core/                      # Rust workspace
-      crates/
-        domain/                     # 数据模型与规则
-        crypto/                     # Argon2id/AES-GCM/密钥轮换
-        merge/                      # op log + HLC + 冲突合并
-        storage/                    # SQLite/SQLCipher 适配
-        transport/                  # 同步协议编解码
-        csvio/                      # CSV 导入导出
-      ffi/                          # Uniffi 或 cbindgen bindings
-  adapters/
-    flutter_plugins/
-      secure_store/                 # Keychain/Keystore/DPAPI/libsecret
-      biometric/                    # FaceID/TouchID/BiometricPrompt
-      autofill/                     # iOS/Android 自动填充桥接
-      local_network/                # 权限与网络状态桥接
-  docs/
-    password-manager-design-zh.md
-    cross-platform-architecture-zh.md
+    codex-tauri/                  # 统一 UI + Win/macOS/Linux 桌面端
+    pass-web/                     # Docker/Ubuntu 无 GUI Web 后端
+    extension_chrome_web/         # 新版统一管理页扩展适配
+    extension_shared/             # popup/填充/passkey 共享实现
+    extension_firefox|safari/     # Firefox/Safari 平台壳
+    app_macos/                    # 旧 SwiftUI 与 macOS 系统能力
+    android_credential_provider/  # Android 14+ Provider 开发中
+    sync_server_local/            # macOS 本地启动/launchd 脚本
+    sync_server_ubuntu/           # 自建同步服务器
+  core/pass_core/                 # Rust workspace + JS 对拍实现
+  scripts/                        # 构建、版本、契约和测试门禁
 ```
 
-## 5. 分层职责与边界
+## 4. 分层边界
 
-### 5.1 Shared Core（不可下沉到 UI）
-- 账号模型、域名别名规则、eTLD+1 归一化。
-- 加密（主密钥派生、字段加解密、密钥封装）。
-- 离线同步（op log、向量时钟、HLC、真实时间区间比较）。
-- 冲突合并与删除判定。
-- CSV 导入导出与幂等处理。
+| 层 | 负责 | 不负责 |
+|---|---|---|
+| Rust Core | 领域模型、合并、墓碑、顺序、CSV | UI、平台权限、远端持久化 |
+| 统一 UI | 展示、交互、命令调用 | 复制业务合并规则 |
+| 平台 Adapter | 文件选择、生物识别、存储、HTTP/Chrome API | 私自改变同步语义 |
+| 扩展内容层 | 域名识别、填充、保存提示、WebAuthn | 暴露全库明文给页面 |
+| 同步服务器 | Token、ETag、版本、审计、持久化 | 字段级合并、解密用户数据 |
 
-### 5.2 Shared UI（可替换）
-- 页面渲染与交互状态。
-- 调用核心 API，不持有业务规则。
-- 展示冲突解释与审计记录。
+## 5. 数据与同步
 
-### 5.3 Platform Adapter（仅处理平台差异）
-- 密钥安全存储（系统密钥库）。
-- 生物识别解锁。
-- 自动填充接口。
-- 本地网络权限、后台任务、系统托盘。
+- 数据契约：`pass.data.v2` / `pass.sync.bundle.v2`。
+- 合并：字段级 LWW + 确定性并列裁决。
+- 删除：永久删除墓碑保留稳定 ID，清除敏感字段。
+- 关系：文件夹归属、站点别名、passkey 关联使用关系状态/墓碑。
+- 顺序：顶层 `allRegularAccountIds`、`folderOrderIds`，文件夹内 `regularAccountIds`。
+- 并发：客户端合并，服务器用 `ETag` / `If-Match` 阻止静默覆盖。
+- Token 与同步密钥均允许留空；项目不会自动生成 Bearer Token。
 
-## 6. 核心接口设计（示例）
+## 6. 平台能力
 
-### 6.1 核心 API（FFI 暴露）
-```ts
-interface CoreApi {
-  initDevice(input: { deviceName: string; platform: string }): DeviceInfo;
-  createAccount(input: CreateAccountInput): AccountView;
-  updateField(input: UpdateFieldInput): AccountView;
-  deleteAccount(input: { accountId: string }): AccountView;
-  undeleteAccount(input: { accountId: string }): AccountView;
-  mergeOps(input: { localOps: Op[]; remoteOps: Op[] }): MergeResult;
-  exportCsv(input: { path: string }): ExportResult;
-  importCsv(input: { path: string }): ImportResult;
-}
+| 能力 | Tauri | Docker Web | Chrome Web 扩展 |
+|---|---|---|---|
+| 统一管理 UI | 是 | 是 | 是 |
+| 自建服务器同步 | 是 | 是 | 是 |
+| WebDAV | 是 | 是 | 否 |
+| SSH 创建服务 | 是 | 草稿/检测 | 草稿 |
+| 本地快照/历史/撤销重做 | 是 | 是 | 是 |
+| Touch ID | macOS | 否 | 否 |
+| 页面填充/WebAuthn | 否 | 否 | 是 |
+
+## 7. 版本与验证
+
+根目录 `VERSION` 是唯一版本源。`scripts/bump_version.sh` 按 `0.0.1` 递增并满十进一；`scripts/version.mjs check` 检查代码、锁文件、工程文件和现行文档版本一致。
+
+主要门禁：
+
+```bash
+node scripts/version.mjs check
+bash scripts/core_gate.sh
+node scripts/check_command_matrix.mjs
+python -m unittest discover -s scripts/tests -p 'test_*.py'
 ```
 
-### 6.2 平台适配接口（UI 调用）
-```ts
-interface SecureStoreAdapter {
-  saveMasterKeyEnvelope(data: Uint8Array): Promise<void>;
-  loadMasterKeyEnvelope(): Promise<Uint8Array | null>;
-}
+## 8. 后续方向
 
-interface BiometricAdapter {
-  canAuthenticate(): Promise<boolean>;
-  authenticate(reason: string): Promise<boolean>;
-}
-
-interface AutofillAdapter {
-  isSupported(): Promise<boolean>;
-  openSystemAutofillSettings(): Promise<void>;
-}
-```
-
-## 7. 跨平台适配清单
-
-### 7.1 Windows
-- 安全存储：DPAPI（用户作用域）+ 可选 Windows Hello 解锁门槛。
-- 桌面能力：系统托盘、开机启动、单实例锁、日志路径规范。
-
-### 7.2 macOS
-- 安全存储：Keychain + Secure Enclave（可用时）。
-- 桌面能力：菜单栏托盘、Notarization、沙盒权限说明。
-
-### 7.3 Linux
-- 安全存储：`libsecret`（GNOME Keyring/KWallet 兼容层）。
-- 兼容策略：Wayland/X11 差异处理，发行版打包（AppImage/deb/rpm）。
-
-### 7.4 iOS
-- 安全存储：Keychain + 生物识别（Face ID/Touch ID）。
-- 自动填充：Credential Provider Extension（独立 extension target）。
-- 网络权限：本地网络访问用途说明（首次授权弹窗）。
-
-### 7.5 Android
-- 安全存储：Android Keystore + BiometricPrompt。
-- 自动填充：Autofill Service。
-- 权限：Android 13+ 附近设备/Wi-Fi 相关权限按需申请。
-
-## 8. 浏览器扩展与 APP 协同
-
-### 8.1 组件职责
-- 扩展：识别网页域名、自动填充 UI、发起配对扫码。
-- 桌面 Sync Agent：局域网监听、会话管理、加密通道、增量同步。
-- APP：核心数据源之一，离线编辑后与 Agent/其他设备合并。
-
-### 8.2 协议关键点
-- 配对：一次性 token + 短时过期 + 设备公钥绑定。
-- 同步：增量 op 交换（`version_vector`）+ 幂等去重（`op_id`）。
-- 安全：TLS/Noise + pin，防中间人与重放。
-
-## 9. 数据与同步模型（实施要点）
-
-### 9.1 主表与日志表
-- `accounts`：当前状态快照（便于查询）。
-- `op_logs`：变更事实（同步真源）。
-- `alias_groups`：域名别名组。
-- `version_vectors`：每设备已见进度。
-
-### 9.2 合并原则
-- 同字段：`因果关系 > 真实时间区间 > HLC > op_id`。
-- `sites`：OR-Set 收敛，防多端 add/remove 乱序。
-- 删除冲突：默认防误删，区间重叠进入 `conflict_review`。
-
-## 10. 安全设计
-
-### 10.1 密钥层级
-- `Master Password` -> Argon2id -> `KEK`。
-- 随机生成 `DEK` 加密字段（password/totp/recovery/note）。
-- `DEK` 由 `KEK` 包裹后存储；`KEK` 不落盘明文。
-
-### 10.2 强制策略
-- 主密码错误重试节流与锁定窗口。
-- 剪贴板敏感信息自动过期清除。
-- 日志脱敏（不记录明文账号、密码、TOTP）。
-- 导入导出文件二次确认与完整性校验。
-
-## 11. 工程与发布
-
-### 11.1 CI/CD（最低要求）
-- Core：单元测试 + 属性测试 + FFI ABI 兼容检查。
-- UI：快照测试 + 集成测试 + 多平台冒烟。
-- 安全：SAST、依赖漏洞扫描、签名工件校验。
-
-### 11.2 打包发布
-- Windows：MSIX/EXE 签名。
-- macOS：签名 + Notarization。
-- Linux：AppImage + deb/rpm（首发至少一种）。
-- iOS/Android：商店发布流水线与崩溃符号上传。
-
-## 12. 里程碑与交付定义
-
-### M1（4-6 周）
-- 完成 Rust Core 最小闭环：账号 CRUD、加密存储、CSV。
-- Flutter UI 完成登录、列表、详情编辑。
-- iOS/Android 生物识别与安全存储接入。
-
-### M2（4-6 周）
-- 完成离线 op log + 合并引擎（含删除冲突规则）。
-- 完成桌面 Sync Agent 与扫码配对。
-- 完成扩展最小自动填充与同步触发。
-
-### M3（3-5 周）
-- 完成五端联调、冲突可视化、导入导出回放。
-- 完成安全测试与发布流程。
-
-### Done 标准
-- 五平台可安装运行。
-- 任意两设备离线编辑后重连能收敛到一致结果。
-- 关键数据全程密文存储，且通过基础渗透与回归测试。
-
-## 13. 关键风险与应对
-- 风险：平台权限差异导致同步不可用。  
-  应对：权限前置检查 + 失败降级（手动导入导出）。
-- 风险：时钟漂移引发冲突误判。  
-  应对：TrueTime 区间 + HLC + 人工冲突审阅入口。
-- 风险：桌面分发复杂。  
-  应对：先定单一发行格式，再逐步扩展。
-
-## 14. 立即可执行的下一步
-1. 定版技术栈：Flutter + Rust（或 Compose + KMP）。
-2. 落库 DDL：`accounts/op_logs/alias_groups/version_vectors`。
-3. 搭建 `core/pass_core` workspace 与 FFI hello-world。
-4. 建立 Flutter 五端工程与 adapter 插件骨架。
-5. 建立 Sync Agent 原型（配对 + pull/push 最小接口）。
+1. 扩大命令返回 schema 契约测试，减少适配层返回形状差异。
+2. 将更多 JS 合并辅助逻辑继续下沉或与 Rust 使用黄金向量对拍。
+3. 完成 Android Provider 的真实 vault 解锁和凭据回填；再启动 iOS 原生 Provider。
+4. 完善多用户 Web 隔离、WebAuthn 登录、发布签名和多架构镜像。

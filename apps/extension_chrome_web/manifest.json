@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Pass Web 预览",
-  "description": "Pass 的独立 Chrome Web 风格管理页预览版，与旧插件并行测试。",
-  "version": "1.0.0",
+  "name": "Pass",
+  "description": "Pass Chrome 扩展：统一管理界面、自动填充、同步和 WebAuthn。",
+  "version": "1.0.1",
   "permissions": [
     "storage",
     "alarms",
@@ -21,7 +21,7 @@
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png"
     },
-    "default_title": "Pass Web 预览",
+    "default_title": "Pass",
     "default_popup": "popup.html"
   },
   "icons": {

@@ -1,5 +1,7 @@
 # 跨平台密码管理器完整实施规范（V1）
 
+> 历史目标规范：其中 Flutter 五端 UI、独立 Sync Agent 和 op-log 配对流程没有作为当前产品路线落地。当前运行架构见 [`current-app-extension-implementation-reference-zh.md`](./current-app-extension-implementation-reference-zh.md) 与 [`cross-platform-architecture-zh.md`](./cross-platform-architecture-zh.md)。
+
 ## 1. 范围与目标
 - 覆盖端：Windows、macOS、Linux、iOS、Android、Chrome 扩展。
 - 架构目标：共享核心 + 共享 UI + 平台适配层。

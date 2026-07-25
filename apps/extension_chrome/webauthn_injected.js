@@ -1,1 +1,0 @@
-../extension_shared/webauthn_injected.js

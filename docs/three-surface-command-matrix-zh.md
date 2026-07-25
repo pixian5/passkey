@@ -118,7 +118,7 @@
 | `sync_key_id` | ✅ | ✅ | ✅ |  |
 | `sync_now_mode` | ✅ | ✅ | ✅ | object(report,...) |
 | `sync_preview` | ✅ | ✅ | ✅ | object(report,...) |
-| `sync_webdav_now_mode` | ✅ | ✅ | ✅ | platform={"tauri": "full", "web": "full", "ext": "full"} |
+| `sync_webdav_now_mode` | ✅ | ✅ | ✅ | platform={"tauri": "full", "web": "full", "ext": "error"} |
 | `toggle_account_pin` | ✅ | ✅ | ✅ | account-object |
 | `undo_last_operation` | ✅ | ✅ | ✅ |  |
 | `update_account` | ✅ | ✅ | ✅ |  |

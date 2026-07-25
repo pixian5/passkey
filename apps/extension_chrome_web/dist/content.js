@@ -140,7 +140,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "0.2.6";
+  var PASS_EXTENSION_VERSION = "1.0.1";
 
   // content.js
   var PASS_LOGIN_COOLDOWN_MS = 5e3;
@@ -194,7 +194,7 @@
       const manifest = chrome.runtime.getManifest?.() || {};
       const name = String(manifest.name || "Pass").trim();
       const runtimeId = String(chrome.runtime.id || "").trim();
-      const priority = /web\s*预览/i.test(name) ? 20 : 10;
+      const priority = 10;
       return { key: `${runtimeId}|${name}`, priority };
     } catch {
       return { key: "pass-extension|unknown", priority: 10 };

@@ -1,6 +1,6 @@
 # 开发路线图：A + C + J + G
 
-> 状态：现行交付路线（2026-07-21）  
+> 状态：历史路线记录（2026-07-21 基线）。当前产品已收敛到 Tauri / Docker Web / Chrome Web 扩展三端统一，现状以 [`current-app-extension-implementation-reference-zh.md`](./current-app-extension-implementation-reference-zh.md) 为准。
 > 适用范围：在已排除「单 UI 框架打四端（模式 B）」之后，以共享 Rust 内核为目标的多端扩展。  
 > 关联：[`cross-platform-architecture-zh.md`](./cross-platform-architecture-zh.md)、[`current-app-extension-implementation-reference-zh.md`](./current-app-extension-implementation-reference-zh.md)、[`unified-data-sync-v2-design-and-plan-zh.md`](./unified-data-sync-v2-design-and-plan-zh.md)
 
@@ -26,7 +26,7 @@
 
 ---
 
-## 2. 现状判定（起点）
+## 2. 历史起点判定
 
 ### 2.1 已具备
 

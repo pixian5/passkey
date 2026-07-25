@@ -1,7 +1,9 @@
 # 本地同步协议与接口契约（V1）
 
+> 历史配对协议草案：当前实现不使用独立桌面 Sync Agent、Noise 配对或 op-log 传输。现行接口是 `/v2/sync/state` + ETag/If-Match，详见 [`cross-platform-sync-backends-v2-zh.md`](./cross-platform-sync-backends-v2-zh.md) 和 [`current-app-extension-implementation-reference-zh.md`](./current-app-extension-implementation-reference-zh.md)。
+
 ## 1. 协议目标
-- 支持桌面同步代理与移动 APP/扩展之间的安全配对与双向同步。
+- 支持桌面、Web、移动 APP 与扩展客户端之间的安全认证和双向同步。
 - 支持离线增量同步、断线重试、幂等重放。
 - 协议语义与 Core 合并规则保持一致。
 

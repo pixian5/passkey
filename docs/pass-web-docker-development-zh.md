@@ -135,7 +135,7 @@ pass-web-vault-key-v1
 发布至少使用以下标签：
 
 ```text
-ghcr.io/<owner>/pass-web:0.1.0
+ghcr.io/<owner>/pass-web:<version>
 ghcr.io/<owner>/pass-web:sha-<commit>
 ghcr.io/<owner>/pass-web:stable
 ```
@@ -143,7 +143,7 @@ ghcr.io/<owner>/pass-web:stable
 生产环境不得只依赖可变的 `latest`。Compose 应锁定版本标签，重要环境再锁定 digest：
 
 ```yaml
-image: ghcr.io/<owner>/pass-web:0.1.0@sha256:<digest>
+image: ghcr.io/<owner>/pass-web:<version>@sha256:<digest>
 ```
 
 ### 4.4 镜像内禁止保存秘密
@@ -386,7 +386,7 @@ docker buildx create --name pass-builder --use
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
   -f apps/pass-web/Dockerfile \
-  -t ghcr.io/<owner>/pass-web:0.1.0 \
+  -t ghcr.io/<owner>/pass-web:<version> \
   --push .
 ```
 

@@ -12,8 +12,9 @@ mkdir -p "${LAUNCHD_DIR}"
 mkdir -p "${DATA_DIR}"
 mkdir -p "${LOG_DIR}"
 
-# 生成随机 Token
-TOKEN=$(openssl rand -base64 32 | tr -d '=+/')
+# 留空即开放模式；只有用户显式设置时才启用 Bearer Token。
+TOKEN_CONFIG="${PASS_SYNC_BEARER_TOKENS:-}"
+TOKEN_CONFIG_XML=$(printf '%s' "${TOKEN_CONFIG}" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g")
 
 # 生成 plist 文件
 cat > "${LAUNCHD_DIR}/${LAUNCHD_PLIST}" <<EOF
@@ -37,7 +38,7 @@ cat > "${LAUNCHD_DIR}/${LAUNCHD_PLIST}" <<EOF
     <key>PASS_SYNC_DB_PATH</key>
     <string>${DATA_DIR}/pass_sync.sqlite3</string>
     <key>PASS_SYNC_BEARER_TOKENS</key>
-    <string>default=${TOKEN}</string>
+    <string>${TOKEN_CONFIG_XML}</string>
     <key>PASS_SYNC_LOG_LEVEL</key>
     <string>INFO</string>
   </dict>
@@ -73,10 +74,13 @@ echo ""
 echo "局域网访问地址:"
 echo "  http://${LOCAL_IP}:53333/v1/sync/payload"
 echo ""
-echo "访问令牌 (Bearer Token):"
-echo "  ${TOKEN}"
+if [[ -z "${TOKEN_CONFIG}" ]]; then
+  echo "认证模式 : 开放（未配置 Bearer Token）"
+else
+  echo "认证模式 : 已使用显式 Bearer Token 配置"
+fi
 echo ""
 echo "客户端配置:"
 echo "  服务器地址: http://${LOCAL_IP}:53333"
-echo "  访问令牌:   ${TOKEN}"
+echo "  访问令牌:   ${TOKEN_CONFIG:-（留空）}"
 echo "========================================"

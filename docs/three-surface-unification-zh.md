@@ -1,7 +1,7 @@
 # Pass 三端统一方案（Tauri / Docker Web / Chrome Web 扩展）
 
 > 范围：管理界面、命令契约、同步语义、平台能力边界。  
-> 不在本方案内：旧版 `apps/extension_chrome` / `apps/extension_shared` 遗留 options UI。旧插件继续并行保留，待新版确认后再删除。
+> Chrome 正式入口为 `apps/extension_chrome_web`；旧 `apps/extension_chrome` 壳已移除。`apps/extension_shared` 继续提供填充、popup、WebAuthn 和 Firefox/Safari 共用代码。
 
 ## 1. 目标
 
@@ -34,7 +34,7 @@
 
 ### 2.2 命令覆盖
 
-UI 调用约 66 个命令。  
+UI 当前调用 68 个命令。
 重叠能力：账号/文件夹 CRUD、排序、置顶、回收站、撤销重做、历史、同步设置、同步预览/合并、同步包导入导出、CSV、快照、主密码锁。
 
 | 能力 | Tauri | Docker Web | Chrome Web 扩展 |
@@ -242,9 +242,9 @@ cd apps/extension_shared && npm run build
 cd apps/pass-web && cargo test && cargo build --release
 ```
 
-旧扩展 `apps/extension_chrome` 继续保留，不在本方案替换范围内。
+旧 Chrome 壳和专用构建入口已移除；Chrome 只加载 `apps/extension_chrome_web`。
 
-## 8. 当前对齐结论（截至 4587b5b / 桌面 0.2.8）
+## 8. 当前对齐结论（版本 1.0.1）
 
 结论：**高风险数据语义与 mutation 主干已对齐到位。** 剩余主要是平台边界（扩展 WebDAV、Touch ID、SSH 创建服务）以及命令返回形状完全对象化等工程项，不应为了表面一致而伪对齐。
 
@@ -384,4 +384,3 @@ cd apps/extension_shared && npm test -- tests/command_matrix.test.mjs
 ## 15. 小修：去重/单删路径统一走 soft_delete_account
 
 桌面与 Docker Web 的去重删除、Web 单账号软删除均改为共享 `soft_delete_account`，避免漏写设备名/更新时间。
-

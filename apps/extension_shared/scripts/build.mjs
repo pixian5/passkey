@@ -19,12 +19,6 @@ const PLATFORM_MANIFESTS = [
       "Password manager extension with device name, domain alias groups, autofill, and encrypted local vault.",
   },
   {
-    path: path.join(appsDir, "extension_chrome", "manifest.json"),
-    name: "Pass - Chrome Extension",
-    description:
-      "Password manager extension for Chrome with device name, domain alias groups, autofill, and encrypted local vault.",
-  },
-  {
     path: path.join(appsDir, "extension_firefox", "manifest.json"),
     name: "Pass - Firefox Extension",
     description:

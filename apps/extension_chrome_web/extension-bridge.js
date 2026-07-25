@@ -7,9 +7,8 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
  * Chrome adapter for the Tauri/Web workspace.
  *
  * The workspace UI talks to a small command surface (`invoke`).  Tauri owns
- * that surface in the desktop build; this file owns it in the standalone test
- * extension.  Its storage key is deliberately unique, so loading this plugin
- * cannot read or mutate the old extension's vault.
+ * that surface in the desktop build; this file owns it in the Chrome extension.
+ * Storage remains isolated by the extension ID.
  */
 (() => {
   const STORAGE_KEY = "pass.web.workspace.bridge.v1";
@@ -181,7 +180,7 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
       let raw = base64ToBytesEarly(result?.[DATA_KEY]);
       if (raw.length !== 32) {
         if (!createIfMissing) {
-          throw new Error("Web 预览数据密钥缺失，原数据未覆盖；请重新加载原管理页或导入备份");
+          throw new Error("Chrome 扩展数据密钥缺失，原数据未覆盖；请重新加载扩展或导入备份");
         }
         raw = crypto.getRandomValues(new Uint8Array(32));
         await chrome.storage.local.set({ [DATA_KEY]: bytesToBase64Early(raw) });
@@ -608,7 +607,7 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
       case "lock_touch": { const current = await getLock(); if (current.enabled && !current.locked) { current.lastActivityAtMs = now(); await saveJsonKey(LOCK_KEY, current); } return true; }
       case "lock_now": return saveJsonKey(LOCK_KEY, { ...(await getLock()), locked: true });
       case "lock_unlock": { const current = await getLock(); if (!current.enabled) return current; await verifyLockPassword(current, args.password); current.locked = false; current.lastActivityAtMs = now(); return saveJsonKey(LOCK_KEY, current); }
-      case "lock_unlock_biometric": throw new Error("当前 Chrome 测试插件不提供系统指纹解锁");
+      case "lock_unlock_biometric": throw new Error("Chrome 扩展不提供系统指纹解锁");
       case "lock_enable": { const existing = await getLock(); if (existing.enabled) throw new Error("应用锁已启用，请先关闭后再设置新的主密码"); const password = String(args.password || ""); const confirm = String(args.confirm || ""); if (!password.trim()) throw new Error("请输入主密码"); if (password !== confirm) throw new Error("两次输入的主密码不一致"); const salt = crypto.getRandomValues(new Uint8Array(16)); const verifier = await deriveLockVerifier(password, bytesToBase64Early(salt)); const next = { ...existing, enabled: true, locked: false, lockPolicy: args.lockPolicy || "onceUntilQuit", idleLockMinutes: Number(args.idleLockMinutes || 5), preferBiometrics: false, biometricReady: false, saltBase64: bytesToBase64Early(salt), verifierBase64: bytesToBase64Early(verifier), iterations: LOCK_PBKDF2_ITERATIONS, lastActivityAtMs: now() }; return saveJsonKey(LOCK_KEY, next); }
       case "lock_disable": { const current = await getLock(); await verifyLockPassword(current, args.password); return saveJsonKey(LOCK_KEY, lockDefault()); }
       case "lock_save_preferences": { const current = await getLock(); if (!current.enabled) throw new Error("应用锁未启用"); return saveJsonKey(LOCK_KEY, { ...current, lockPolicy: args.lockPolicy || "onceUntilQuit", idleLockMinutes: Number(args.idleLockMinutes || 5), backgroundLockDelaySeconds: Number(args.backgroundLockDelaySeconds || 60), preferBiometrics: false, lastActivityAtMs: now() }); }
@@ -696,7 +695,6 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
         surface: "chrome-extension-web",
         mode: "chrome-extension-web",
         storage: "chrome.storage.local",
-        oldExtensionUntouched: true,
         sharedCore: ["pass-merge-js-local", "sync-alias-js", "sync-safety-js"],
         capabilities: {
           nativeFilePicker: false,
@@ -801,7 +799,7 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
       }
       case "list_local_snapshots": return store.snapshots.map((snapshot) => ({ id: snapshot.id, reason: snapshot.reason, createdAtMs: snapshot.createdAtMs, accounts: (snapshot.payload.accounts || []).filter((a) => !a.isPermanentlyDeleted).length, folders: (snapshot.payload.folders || []).filter((f) => !f.isPermanentlyDeleted).length, passkeys: (snapshot.payload.passkeys || []).filter((p) => !p.isPermanentlyDeleted).length }));
       case "restore_local_snapshot": { const snapshot = store.snapshots.find((item) => sameId(item.id, args.snapshotId)); if (!snapshot) throw new Error("本地快照不存在"); return mutate("恢复本地安全快照", (data) => { const restored = normalizePayload(snapshot.payload); Object.assign(data, restored); return true; }).then(() => "本地安全快照已恢复"); }
-      default: throw new Error(`Chrome 测试插件暂未实现命令：${command}`);
+      default: throw new Error(`Chrome 扩展暂未实现命令：${command}`);
     }
   };
 

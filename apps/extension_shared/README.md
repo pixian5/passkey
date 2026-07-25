@@ -16,13 +16,13 @@ Pass 浏览器扩展共享核心。
 - 关闭“本地数据保护”后，数据密钥只保留在当前浏览器会话，不会再写回 `chrome.storage.local` 明文。
 - 通行密钥选择器使用 closed Shadow DOM，降低页面脚本合成点击绕过的风险。软件 passkey 私钥仍可导出并参与同步，这是已知的产品模型限制，不是硬件认证器替代品。
 - 修改共享源码后必须执行 `npm run build`，平台壳层实际加载的是 `dist/`。
-  - 版本号以 `package.json` 为准；构建会生成 `extension_version.js` 并同步 `manifest.json`。
+  - 版本号以仓库根目录 `VERSION` 为准；`scripts/bump_version.sh` 更新各壳清单，构建会生成 `extension_version.js` 并同步共享 manifest。
   - `webauthn_injected.js` 源码也需打包为 `dist/webauthn_injected.js`（含版本常量）。
 
 ## 目录职责
 - 这里存放 Chrome / Firefox / Safari 三个平台共用的前端代码与构建脚本
 - 平台差异留在各自壳层目录中：
-  - Chrome: [`/Users/x/code/pass/apps/extension_chrome`](/Users/x/code/pass/apps/extension_chrome)
+  - Chrome: [`/Users/x/code/pass/apps/extension_chrome_web`](/Users/x/code/pass/apps/extension_chrome_web)
   - Firefox: [`/Users/x/code/pass/apps/extension_firefox`](/Users/x/code/pass/apps/extension_firefox)
   - Safari: [`/Users/x/code/pass/apps/extension_safari`](/Users/x/code/pass/apps/extension_safari)
 - 当前共享内容包括：
@@ -48,13 +48,13 @@ npm run build
 ## 一键构建
 仓库根目录提供三个一键命令：
 ```bash
-/Users/x/code/pass/scripts/build-extension-chrome.sh
+/Users/x/code/pass/scripts/build-extension-chrome-web.sh
 /Users/x/code/pass/scripts/build-extension-firefox.sh
 /Users/x/code/pass/scripts/build-extension-safari.sh
 ```
 
 ## 设计约束
 - 改共享目录的一处代码，Chrome / Firefox / Safari 三个平台壳层会一起生效
-- Chrome / Firefox 壳层通过符号链接引用共享文件
+- Chrome Web 构建把共享 bundle 同步到正式扩展，Firefox 壳层通过符号链接引用共享文件
 - Firefox 打包时会解引用符号链接，生成可分发的 `.xpi`
 - Safari 由 Xcode 工程直接引用共享源码并构建宿主 App

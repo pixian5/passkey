@@ -99,7 +99,6 @@ test("共享/壳层 manifest 名称与版本正确", () => {
 
   const expected = [
     ["apps/extension_shared/manifest.json", "Pass"],
-    ["apps/extension_chrome/manifest.json", "Pass - Chrome Extension"],
     ["apps/extension_firefox/manifest.json", "Pass - Firefox Extension"],
   ];
 

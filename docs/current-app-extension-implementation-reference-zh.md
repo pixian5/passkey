@@ -1,248 +1,109 @@
-# Pass 当前实现参考（APP + 扩展）
+# Pass 当前实现参考
 
-## 1. 目的与范围
-- 本文档描述 `/Users/x/code/pass` 当前已实现行为（不是目标蓝图）。
-- 目标读者：接手重构/重设计的工程师，需快速理解“现在到底做了什么”。
-- 覆盖：
-  - macOS 客户端（`apps/app_macos`）
-  - Chrome 扩展（`apps/extension_chrome`）
-  - 共享数据模型、关键交互、当前限制。
+> 状态：当前代码事实，随主分支更新。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.0.1`。
 
-## 2. 代码入口
-- macOS
-  - `/Users/x/code/pass/apps/app_macos/Sources/app_macos/PassMacApp.swift`
-  - `/Users/x/code/pass/apps/app_macos/Sources/app_macos/ContentView.swift`
-  - `/Users/x/code/pass/apps/app_macos/Sources/app_macos/AccountStore.swift`
-  - `/Users/x/code/pass/apps/app_macos/Sources/app_macos/SettingsView.swift`
-- Chrome 扩展
-  - `/Users/x/code/pass/apps/extension_chrome/manifest.json`
-  - `/Users/x/code/pass/apps/extension_chrome/popup.html`
-  - `/Users/x/code/pass/apps/extension_chrome/popup.js`
-  - `/Users/x/code/pass/apps/extension_chrome/options.html`
-  - `/Users/x/code/pass/apps/extension_chrome/options.js`
-  - `/Users/x/code/pass/apps/extension_chrome/background.js`
-  - `/Users/x/code/pass/apps/extension_chrome/content.js`
-  - `/Users/x/code/pass/apps/extension_chrome/passkey_store.js`
+## 1. 当前产品表面
 
-## 3. 数据模型（当前真实字段）
+| 表面 | 前端 | 后端/适配 | 当前定位 |
+|---|---|---|---|
+| Tauri 桌面 | `apps/codex-tauri/src` | `apps/codex-tauri/src-tauri` | Win/macOS/Linux 统一桌面客户端；macOS 包名 `PassDesktop.app` |
+| Docker Web | Tauri 构建生成的同一套 `dist` | `apps/pass-web` | Ubuntu/Docker 无 GUI，浏览器访问 |
+| Chrome Web 扩展 | Tauri UI 构建同步生成 | `apps/extension_chrome_web/extension-bridge.js` | 完整管理页加浏览器填充/WebAuthn 能力 |
 
-### 3.1 账号 `PasswordAccount`
-- 主键语义：`网站(eTLD+1)-第一次创建时间(yymmddHHMMSS)-用户名`
-- 字段（mac 与扩展均兼容）：
-  - `accountId: string`
-  - `canonicalSite: string`
-  - `usernameAtCreate: string`
-  - `isPinned: bool`
-  - `pinnedSortOrder: int|null`
-  - `regularSortOrder: int|null`
-  - `folderId: string|null`（兼容旧字段）
-  - `folderIds: string[]`（当前主字段）
-  - `sites: string[]`（站点别名，升序）
-  - `username: string`
-  - `password: string`
-  - `totpSecret: string`
-  - `recoveryCodes: string`（多行）
-  - `note: string`（多行）
-  - `passkeyCredentialIds: string[]`
-  - `usernameUpdatedAtMs: int64`
-  - `passwordUpdatedAtMs: int64`
-  - `totpUpdatedAtMs: int64`
-  - `recoveryCodesUpdatedAtMs: int64`
-  - `noteUpdatedAtMs: int64`
-  - `passkeyUpdatedAtMs: int64`（扩展侧已使用）
-  - `isDeleted: bool`
-  - `deletedAtMs: int64|null`
-  - `lastOperatedDeviceName: string`
-  - `createdAtMs: int64`
-  - `updatedAtMs: int64`
+仍保留但不属于三端统一管理面的代码：
 
-### 3.2 文件夹 `AccountFolder`
-- 字段：
-  - `id: UUID/string`
-  - `name: string`
-  - `createdAtMs: int64`
-  - `updatedAtMs: int64`
-- 固定文件夹：
-  - `id = F16A2C4E-4A2A-43D5-A670-3F1767D41001`（扩展显示时用小写）
-  - `name = 新账号`
-- 语义：从“新建账号”面板创建的账号会自动进入该文件夹（mac）。
+- `apps/app_macos`：旧 SwiftUI 原生客户端及 macOS AutoFill/Credential Exchange 参考实现。
+- `apps/extension_shared` + Firefox/Safari 壳：共享填充、popup、passkey 和平台扩展实现；Chrome 正式壳是 `extension_chrome_web`。
+- `apps/android_credential_provider`：Android 14+ Credential Provider 开发中模块。
 
-### 3.3 通行密钥记录（扩展侧）
-- 存储于扩展 IndexedDB（`pass.local.db.v1` / `collections.passkeys`），核心字段：
-  - `credentialIdB64u`
-  - `rpId`
-  - `userName`, `displayName`, `userHandleB64u`
-  - `alg`, `signCount`
-  - `privateJwk`, `publicJwk`（扩展当前为本地自托管方案）
-  - `createdAtMs`, `updatedAtMs`, `lastUsedAtMs`
-  - `mode`
+## 2. 单一 UI 与命令契约
 
-## 4. 存储位置（当前）
+- 管理 UI 唯一源码：`apps/codex-tauri/index.html`、`apps/codex-tauri/src/main.js`、`apps/codex-tauri/src/styles.css`。
+- `npm run prepare:dist` 生成桌面/Web 使用的 `dist`，并同步新版扩展的 `web-options.html`、`web-main.js`、`web-options.css`。
+- UI 当前使用 68 个命令；`scripts/check_command_matrix.mjs` 检查 Tauri、Web、扩展是否全部覆盖。
+- 各表面通过 `health_check.capabilities` 声明平台能力；不支持的功能必须隐藏、降级或明确报错，不能伪成功。
 
-### 4.1 macOS APP
-- 本地主库存储（SQLite + WAL）：
-  - `~/Library/Application Support/pass-mac/pass.db`
-  - 表：`kv(key, value, updated_at_ms)`，当前键：
-    - `accounts`
-    - `folders`
-    - `passkeys`
-- UserDefaults：
-  - `pass.deviceName`
-  - `pass.export.directoryPath`
-  - `pass.sync.deviceId.v1`
-  - `pass.folders.data`（兼容镜像，主数据仍以 SQLite 为准）
-  - `pass.ui.font.family`
-  - `pass.ui.font.textSize`
-  - `pass.ui.font.buttonSize`
-  - `pass.ui.toast.duration`
-- iCloud（`NSUbiquitousKeyValueStore`）：
-  - `pass.sync.payload.blob.v2`
-  - `pass.sync.payload.updatedAtMs.v2`
-- 兼容迁移来源（首次加载会迁移到 SQLite）：
-  - `~/Library/Application Support/pass-mac/accounts.json`
-  - `~/Library/Application Support/pass-mac/passkeys.json`
+## 3. 当前数据与合并语义
 
-### 4.2 Chrome 扩展
-- 业务数据（账号/通行密钥/文件夹）：
-  - IndexedDB：`pass.local.db.v1`
-  - object store：`collections`
-  - key：`accounts` / `passkeys` / `folders`
-- `chrome.storage.local`（仅设置 + 迁移/变更信号）：
-  - `pass.deviceName`
-  - `pass.sync.*`（同步配置）
-  - `pass.lock.*`（主密码和自动锁策略）
-  - `pass.sync.deviceId.v1`
-  - `pass.data.migratedToIndexedDb.v1`
-  - `pass.data.bump.v1`
+同步数据使用 `pass.data.v2` / `pass.sync.bundle.v2`，顶层包含：
 
-### 4.3 Chrome Web 测试插件
-- 管理页工作区单独使用 `pass.web.workspace.bridge.v1`（`chrome.storage.local` 加密保存），以便与旧扩展并行测试。
-- 内容脚本和后台填充仍使用 `pass.local.db.v1`，两者不是同一个数据源。
-- `extension-bridge.js` 首次加载和每次持久化都通过 `PASS_WEB_BRIDGE_SYNC_DATA` 将账号、文件夹、通行密钥镜像到后台 IndexedDB；扩展重载时后台还会给已有 HTTP/HTTPS 标签页重新注入内容脚本。
+- `accounts`
+- `folders`
+- `passkeys`
+- `allRegularAccountIds` 及更新时间/设备名
+- `folderOrderIds` 及更新时间/设备名
 
-## 5. 关键业务规则（当前实现）
+文件夹自身保存 `regularAccountIds` 及更新时间/设备名；数组位置就是普通账号顺序。账号在全部账号和每个文件夹中拥有独立顺序，新加入或恢复的账号插入对应普通列表顶部，但不会越过置顶账号。
 
-### 5.1 域名与站点别名
-- 域名标准化：小写、去协议、去尾部点。
-- eTLD+1 规则内置后缀：`com.cn/net.cn/org.cn/gov.cn/edu.cn/co.uk/org.uk`。
-- 账号别名组同步：
-  - 若两个账号 `sites` 有交集，或任一站点 eTLD+1 相同，则视为连通。
-  - 连通分量内 `sites` 取并集并回填到每个账号。
+账号、文件夹、通行密钥使用稳定 ID 和字段级更新时间。合并采用字段级 LWW，并在时间相同的情况下使用设备名和值做确定性裁决。永久删除不会物理移除实体，而是保留墓碑、稳定 ID 和删除元数据，同时清除账号密码、TOTP、恢复码等敏感字段。
 
-### 5.2 删除与回收站
-- 删除不是立刻物理删除，而是：
-  - `isDeleted = true`
-  - `deletedAtMs = now`
-- 回收站支持恢复与永久删除。
-- “删除全部账号”是把未删除账号全部移入回收站。
+文件夹归属使用 `folderIds + folderMembershipStates`；移出文件夹会写关系墓碑，防止离线旧设备重新加入。站点别名和 passkey 关联也有相同的关系删除语义。
 
-### 5.3 排序与置顶
-- 列表规则：置顶组在前，普通组在后。
-- 组内排序优先级（APP 与扩展已对齐）：
-  - 先按 `updatedAtMs`（新到旧）
-  - 若相同再按手动排序号：
-    - 置顶组：`pinnedSortOrder`
-    - 普通组：`regularSortOrder`
-- 支持拖拽同组重排（跨组不允许）。
+## 4. 各端存储
 
-### 5.4 时间格式显示
-- UI 显示格式：`yy-M-d H:m:s`，例如 `26-3-14 9:2:8`。
-- 同步与冲突判断使用毫秒时间戳（`...AtMs`）。
+| 表面 | 存储 |
+|---|---|
+| Tauri | 本地加密 vault/SQLite KV；同步秘密在启用应用锁时单独密封 |
+| Docker Web | `/data` 下加密 vault 文件与独立密钥文件 |
+| Chrome Web 扩展 | 独立 `chrome.storage.local` 加密工作区，并镜像到扩展 IndexedDB 供填充后台使用 |
+| 扩展共享填充层 | IndexedDB `pass.local.db.v1`；账号、文件夹、passkey 集合使用同一数据密钥 |
 
-### 5.5 同步包与冲突内核
-- 同步包 schema：`pass.sync.bundle.v2`。
-- `source` 元信息包含：
-  - `app`
-  - `platform`
-  - `deviceName`
-  - `deviceId`
-  - `logicalClockMs`
-  - `formatVersion`
-- 扩展端同步冲突/合并已集中到共享内核：
-  - `/Users/x/code/pass/core/pass_core/js/sync_merge_core.js`
-  - `options.js` 通过该内核合并账号/文件夹/通行密钥，避免再次在多页面复制实现。
+## 5. 同步现状
 
-## 6. macOS 客户端 UI（当前）
+三端都支持自建服务器：
 
-### 6.1 主界面
-- 左侧导航：
-  - 全部 / 通行密钥 / 验证码 / 回收站 / 文件夹列表
-- 支持：
-  - 单选、Shift 连选、Cmd 多选、Cmd+A 全选
-  - 右键菜单（编辑、删除、置顶、放入文件夹）
-  - 拖拽账号到文件夹
-  - `Cmd+Z` 撤销最近一次“文件夹移动”
-- 顶部按钮：新建账号、生成演示账号、删除全部账号、回收站。
+- 主接口：`GET/PUT /v2/sync/state`
+- 兼容接口：`GET/PUT /v1/sync/payload`
+- 版本：`/v2/sync/versions`
+- 并发保护：`ETag`、`If-Match`、`428/412` 冲突处理
+- 模式：预览合并、合并、云端覆盖本地、本地覆盖云端
+- 同步前安全评估和本地快照
 
-### 6.2 新建与编辑
-- 新建账号为独立弹窗（非模态，可操作主界面）。
-- 字段：
-  - 站点别名（多行，每行一个）
-  - 用户名 / 密码 / TOTP / 恢复码（多行）/ 备注（多行）
-- 编辑为独立弹窗，点击面板外（但在 APP 内）关闭且不保存。
+Bearer Token 和同步加密密钥都允许留空：
 
-### 6.3 复制与提示
-- 可复制：用户名、站点、验证码等。
-- Toast 规范（桌面 Tauri `codex-tauri` 已落地，见 `apps/codex-tauri/docs/toast-spec-zh.md`）：
-  - **成功 → 绿**、**失败 → 红**、**警告 → 黄**
-  - 默认展示时长可在设置中改（`toastDurationSeconds` / 历史键 `pass.ui.toast.duration`）
-- macOS PassMac 历史实现以成功绿条 + 可配置时长为主；跨端新增提示时按上述三色约定对齐。
+- Token 留空：服务器进入显式开放模式，客户端不发送 `Authorization`。
+- Token 非空：使用用户提供的 Bearer Token；项目不会自动生成 Token。
+- 同步密钥留空：使用明文 `pass.sync.bundle.v2`，服务器必须允许明文。
+- 同步密钥非空：使用 AES-256-GCM 加密信封；所有客户端配置同一密钥。
 
-### 6.4 设置
-- 设备名称
-- UI 字体族、文本字号、按钮字号、Toast 时长
-- iCloud 手动同步按钮
-- CSV 导出（目录规则）
-- 同步包导出/导入合并（本次新增）
-- 应用解锁（主密码、策略、生物识别优先）
+WebDAV 当前由 Tauri 和 Docker Web 支持；Chrome Web 扩展明确不支持。三端均支持自建服务器版本列表与恢复。
 
-## 7. 扩展 UI（当前）
+## 6. 平台能力边界
 
-### 7.1 左击弹窗 `popup`
-- 顶部模式：当前网站 / 全部 / 回收站 / 通行密钥
-- 搜索：输入即搜；筛选字段可选（全部、用户名、站点别名、备注、密码）
-- 账号卡片支持：
-  - 加入当前域名
-  - 复制密码
-  - 填充当前页
-  - 编辑
-  - 删除账号
-  - 若有 TOTP，显示并可点击复制验证码
+| 能力 | Tauri | Docker Web | Chrome Web 扩展 |
+|---|---|---|---|
+| 账号/文件夹/排序/回收站 | 完整 | 完整 | 完整 |
+| 自建服务器同步 | 完整 | 完整 | 完整 |
+| WebDAV | 完整 | 完整 | 不支持，明确报错 |
+| SSH 创建服务 | 完整 | 只保存草稿/检测 | 只保存草稿 |
+| 服务器版本恢复 | 完整 | 完整 | 完整 |
+| 原生文件选择器 | 完整 | 浏览器上传/下载 | 浏览器上传/下载 |
+| Touch ID | macOS 可用 | 不支持 | 不支持 |
+| 页面自动填充/WebAuthn | 不提供 | 不提供 | 扩展专属 |
 
-### 7.2 右击扩展图标菜单（action context menu）
-- 当前只有一个项目：`pass设置`，跳转 options 页。
+## 7. 导入导出与历史
 
-### 7.3 选项页 `options`
-- 顶部：设备名称
-- 中部：APP 风格侧边栏（全部/通行密钥/验证码/回收站/文件夹）+ 右侧账号列表
-- 支持编辑、删除、恢复、永久删除、置顶、拖拽同组排序、搜索筛选。
-- 原始数据区（可折叠）支持：
-  - 导出同步包（本次实现）
-  - 导入并合并同步包（本次实现）
-  - 导出 JSON / 导入 JSON / 清空账号
+- CSV：通用 CSV 和 Chrome/Firefox/Safari 方言导入导出；用户名、密码均允许为空。
+- 同步包：导出后显示摘要；导入先展示账号级差异与安全检查，用户确认后才写入。
+- 永久删除墓碑不计入可见账号数量，也不会在预览中显示为新增账号。
+- 本地快照、服务器版本、撤销、重做和可浏览历史窗口均已接入统一 UI。
 
-## 8. 扩展后台能力（当前）
-- `content.js` 检测登录行为，提示保存/更新密码。
-- `background.js` 接收消息并：
-  - 执行填充
-  - 执行登录保存逻辑
-  - 对接通行密钥桥接
-  - 注册 passkey 后自动补齐/合并账号
-- `passkey_store.js` 实现托管 passkey 创建/断言与本地存储。
+## 8. 验证入口
 
-## 9. 演示数据
-- mac 端支持生成 20 条演示账号（含：
-  - 站点别名
-  - TOTP
-  - 恢复码
-  - 多行备注）
+```bash
+node scripts/version.mjs check
+bash scripts/core_gate.sh
+node scripts/check_command_matrix.mjs
+cd apps/pass-web && cargo test --locked
+cd apps/codex-tauri/src-tauri && cargo test --locked
+cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+```
 
-## 10. 当前限制与重设计提示
-- 新旧扩展可以并行加载进行验收。页面内容脚本通过 `data-pass-ui-owner` 选出唯一填充/通行密钥提示所有者，`Pass Web 预览` 优先于旧版，避免同一输入框出现两个选择框或两组错误提示。
-- 扩展 IndexedDB 的账号、文件夹、通行密钥集合共用一个 AES-GCM 数据密钥。首次并行写入必须串行初始化密钥；否则不同集合会被不同随机密钥加密，表现为 `OperationError`、弹窗初始化失败和账号列表为空。新版 Web 管理页镜像数据可用完整快照覆盖旧集合以完成修复，原数据不会在密钥缺失时自动覆盖。
-- 当前同步实现仍是“整包（payload）级”同步，不是操作日志级（op-log）同步。
-- 逻辑主库建议放在同步层（云端对象/记录版本）；本地库作为离线可写副本已落地（APP=SQLite，扩展=IndexedDB），但服务端版本治理仍需继续完善。
-- 通行密钥私钥目前在扩展本地存储，安全模型仍需加强（见独立同步文档）。
-- 冲突解决仍依赖设备时间准确性，建议后续把 HLC/向量时钟正式落到同步协议与服务端裁决。
-- 当前真正接入远程同步的是 macOS App、浏览器扩展和 Python 同步服务器；Flutter、Tauri、Android Credential Provider 尚未接入该协议，不能宣称已完成全平台同步。
-- 同步服务默认允许明文 `pass.sync.bundle.v2`（`PASS_SYNC_ALLOW_PLAINTEXT` 默认开启）；客户端可留空同步密钥走明文，配置 256 位密钥则使用 AES-256-GCM。生产若需强制加密，将服务器设为 `PASS_SYNC_ALLOW_PLAINTEXT=0` 且客户端全部配置同一密钥。
+当前自动化基线：扩展 77 项、Docker Web 7 项、Tauri 20 项、同步服务器 31 项；命令矩阵覆盖 68 个 UI 命令。
+
+## 9. 当前限制
+
+- 同步仍是整包 payload 合并，不是服务端 op-log 合并；服务端保持哑存储。
+- Chrome 扩展不能直接执行 SSH 部署，也不直接实现 WebDAV。
+- Docker Web 当前是单用户 vault；多用户隔离、WebAuthn 登录和权限模型不在现有实现内。
+- 软件 passkey 私钥仍属于可同步材料，不等同于硬件认证器安全模型。

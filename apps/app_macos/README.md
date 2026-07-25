@@ -1,6 +1,8 @@
-# app_macos
+# app_macos（平台系统能力与旧 SwiftUI 参考）
 
-Runnable macOS desktop app (SwiftUI) for local password management demo.
+This module remains buildable for macOS AutoFill, Credential Exchange, migration,
+and compatibility verification. The current cross-platform desktop product is
+`apps/codex-tauri`; new shared management features should not be added here.
 
 Remote sync may use AES-256-GCM with an independent local sync key, or plaintext `pass.sync.bundle.v2` when the key is left empty. Secrets are stored as 0600 files in the shared app-group directory, so normal launches do not access or prompt for the macOS Keychain. A legacy Keychain item, when present, is read once without UI and migrated to the file store. The sync key is never sent to the server; when encryption is used, browser extensions and other platforms must share the same key. Leaving the key empty enables plaintext sync/export (passwords may be exposed on the wire or in files—only use on trusted paths). The self-hosted server is the default primary source; WebDAV/iCloud can be selected as mirrors or the primary source, and preview never writes data.
 

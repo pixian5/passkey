@@ -30,4 +30,4 @@ cp -p "${ROOT_DIR}/core/pass_core/js/sync_alias_core.js" "${TARGET_DIR}/sync_ali
 cp -p "${ROOT_DIR}/core/pass_core/js/csv_core.js" "${TARGET_DIR}/csv_core.js"
 cp -p "${ROOT_DIR}/core/pass_core/js/vault_mutate_core.js" "${TARGET_DIR}/vault_mutate_core.js"
 
-echo "Pass Web 预览扩展已刷新：${TARGET_DIR}"
+echo "Pass Chrome 扩展已刷新：${TARGET_DIR}"

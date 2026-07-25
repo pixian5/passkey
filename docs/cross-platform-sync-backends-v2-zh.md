@@ -1,63 +1,59 @@
 # 跨平台同步后端契约（V2）
 
-## 1. 目标
-- 所有平台（macOS、Android、Windows、Linux、Chrome/Firefox 扩展）使用同一同步载荷：`pass.sync.bundle.v2`。
-- 自建服务器默认作为主同步源；iCloud/WebDAV 作为可选镜像源。客户端可切换主源；“云端覆盖本地”只读取主源，普通合并仍按统一时间戳/设备名规则裁决，合并后先回写主源。
-- iCloud 仅作为 Apple 平台专用通道，不作为跨平台协议基线。
+> 当前实现参考：Tauri、Docker Web、Chrome Web 扩展。SwiftUI、Firefox、Safari 和 Android 仍是平台能力/迁移模块，不宣称已经具备三端管理面全部能力。
 
-## 2. 统一数据格式
-- 顶层必须是同步包：
-  - `schema: "pass.sync.bundle.v2"`
-  - `source.formatVersion: 2`
-  - `payload.accounts`
-  - `payload.passkeys`
-  - `payload.folders`
-- `payload.passkeys` 需完整保留托管字段（含 `privateJwk/publicJwk/mode/createCompatMethod`），避免跨端丢字段。
-- 不再兼容 v1/legacy。
+## 1. 数据与服务器边界
 
-## 3. WebDAV 后端协议
-- 远端对象：一个 JSON 文件（例如 `pass-sync-bundle-v2.json`）。
-- 拉取：`GET <webdav-resource-url>`
-  - `200`：返回 `pass.sync.bundle.v2`
-  - `404`：视为远端无数据
-- 推送：`PUT <webdav-resource-url>`
-  - Body：完整 `pass.sync.bundle.v2` JSON
-  - `2xx` 视为成功
-- 认证：可选 Basic Auth。
+- 客户端交换 `pass.sync.bundle.v2`；启用同步密钥时，远端实际保存 `pass.sync.encrypted.v1` AES-256-GCM 信封，服务端不解密业务字段。
+- 服务端是哑存储，只负责认证、版本快照、审计、ETag/If-Match、幂等写入和恢复，不做字段级合并。
+- Token 和同步密钥均可为空。Token 为空是显式开放模式；同步密钥为空时保存明文 V2 包，必须只在可信链路使用。
+- 永久删除记录保留墓碑和稳定 ID，不能被旧设备的活动记录复活。
 
-## 4. 自建服务器后端协议
-- 主接口：`/v2/sync/state`
-- 兼容接口：`/v1/sync/payload`
-- 拉取：`GET /v2/sync/state`
-  - `200`：返回 `pass.sync.bundle.v2`
-  - `404`：视为远端无数据
-- 推送：`PUT /v2/sync/state`
-  - Body：完整 `pass.sync.bundle.v2` JSON
-  - `2xx` 视为成功
-- 认证：可选 `Authorization: Bearer <token>`。
+## 2. 自建服务器
 
-## 5. 客户端同步流程（所有平台一致）
-1. 读取主同步源并保存本地同步前快照。
-2. 拉取主同步源及已启用镜像源的远端同步包（404 则按空远端处理）。
-3. 用统一合并规则合并本地与主远端：
-   - 账号：字段级时间戳优先 + 删除墓碑规则
-   - 永久删除：保留 `isPermanentlyDeleted` 墓碑，待后续版本压缩，不立即从同步载荷移除
-   - 文件夹：`updatedAtMs` 新者优先
-   - 通行密钥：按 `credentialIdB64u` 去重并取最新字段
-4. 本地落盘合并结果。
-5. 将合并结果作为完整 `pass.sync.bundle.v2` 先回写主同步源，再写入已启用镜像源；主源为空或冲突时停止覆盖并保留本地快照。
+主接口：
 
-安全闸门：远端为空时不得清空非空本地；合并结果缺少本地稳定 ID、解密失败或版本冲突时，必须停止写入并保留同步前快照。
+- `GET /v2/sync/state`
+- `PUT /v2/sync/state`
+- `GET /v2/sync/versions`
+- `GET /v2/sync/versions/{versionId}`
+- `POST /v2/sync/versions/{versionId}/restore`
 
-## 6. 新平台接入清单
-- 实现 `GET/PUT` WebDAV 文件同步（可选）。
-- 实现 `GET/PUT /v2/sync/state`（可选），旧客户端可继续使用 `/v1/sync/payload`。
-- 复用同一 JSON schema：
-  - `docs/schemas/pass-sync-bundle-v2.schema.json`
-  - `docs/schemas/pass-data-v2.schema.json`
-- 复用同一合并规则。
+兼容接口：`GET/PUT /v1/sync/payload`。
 
-## 7. 当前状态
-- mac App：支持 iCloud / WebDAV / 自建服务器，默认以自建服务器为主同步源。
-- Chrome 扩展：支持 WebDAV / 自建服务器，默认以自建服务器为主同步源。
-- iCloud：仅 Apple 设备使用，不影响跨平台互通。
+请求写入现有状态时必须携带 `If-Match`；服务器返回 `ETag`、`X-Sync-Revision` 和版本信息。`412`/`428` 表示并发条件失败，客户端重新拉取、合并并重试；每次逻辑写入使用 `Idempotency-Key`。Bearer 认证可选，服务器没有配置令牌时不应要求客户端发送 `Authorization`。
+
+## 3. WebDAV
+
+Tauri 和 Docker Web 支持通过 HTTPS WebDAV 读写一个 JSON 资源，Basic Auth 可选，并使用 ETag/If-Match 做并发保护。Chrome Web 扩展明确不支持 WebDAV：桥接命令会返回中文错误，能力声明为 `webdavSync: false`，不能写成伪成功。
+
+## 4. 客户端流程
+
+1. 同步写入前创建本地安全快照。
+2. 从主源拉取远端包；启用的其它源作为镜像，仅接收主源合并后的结果。
+3. 客户端按字段时间戳、设备名和值做确定性 LWW；文件夹归属、别名、Passkey 关联和永久删除使用关系墓碑。
+4. 合并结果通过安全闸门：空远端不能清空非空本地；稳定 ID 缺失、解密失败、版本冲突时停止写入。
+5. 主源写入成功后再写镜像源；失败源记录报告，不掩盖已完成/未完成来源。
+
+同步模式：
+
+- `merge`：字段级合并并写回。
+- `remoteOverwriteLocal`：主源覆盖本地，要求远端非空且先确认风险。
+- `localOverwriteRemote`：本地覆盖主源，要求先确认风险。
+- `preview`：只计算报告，不落盘、不推送。
+
+## 5. 统一载荷字段
+
+`payload` 至少包含 `accounts`、`folders`、`passkeys`、顶层 `allRegularAccountIds`、`folderOrderIds` 及其排序时间戳/设备名。每个文件夹保存 `regularAccountIds`；数组位置就是该作用域的普通账号顺序。账号字段和顺序字段分开合并。
+
+## 6. 当前能力矩阵
+
+| 能力 | Tauri | Docker Web | Chrome Web |
+|---|---|---|---|
+| 自建服务器 | 完整 | 完整 | 完整 |
+| WebDAV | 完整 | 完整 | 不支持，明确报错 |
+| 版本列表/恢复 | 完整 | 完整 | 完整 |
+| SSH 创建服务 | 完整 | 只保存草稿/检测 | 只保存草稿 |
+| 本地快照/导入预览 | 完整 | 完整 | 完整 |
+
+详细命令覆盖以 [`three-surface-command-matrix-zh.md`](./three-surface-command-matrix-zh.md) 和代码门禁为准。

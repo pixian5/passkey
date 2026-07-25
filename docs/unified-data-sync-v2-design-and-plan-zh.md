@@ -1,5 +1,7 @@
 # APP / 扩展统一数据格式与同步实施计划（V2）
 
+> 本文保留 2026-03-06 的迁移基线和实施过程。V2 数据、字段级合并、关系墓碑、文件夹/账号顺序和三端同步现已落地；当前事实见 [`current-app-extension-implementation-reference-zh.md`](./current-app-extension-implementation-reference-zh.md)。
+
 ## 1. 目标与范围
 - 目标：在当前仓库实现基础上，统一 mac APP 与 Chrome 扩展的数据格式、导入导出协议与合并语义。
 - 覆盖场景：
@@ -8,7 +10,7 @@
   - APP ⇄ 扩展
 - 本文聚焦“可落地的 V2 手动同步统一”，自动增量同步（Sync Agent）作为下一阶段。
 
-## 2. 当前状态与问题清单（截至 2026-03-06）
+## 2. 历史状态与问题清单（截至 2026-03-06）
 - APP 与扩展使用同名 schema `pass.sync.bundle.v1`，但 payload 字段集合不一致。
   - APP: `accounts + folders`
   - 扩展: `accounts + folders + passkeys`

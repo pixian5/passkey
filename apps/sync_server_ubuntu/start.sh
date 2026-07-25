@@ -11,24 +11,12 @@ HOST="${PASS_SYNC_HOST:-0.0.0.0}"
 
 mkdir -p "${DATA_DIR}"
 
-# 如果未设置 Token，自动生成；已有令牌文件时沿用文件配置。
-if [[ -z "${PASS_SYNC_BEARER_TOKENS:-}" && -z "${PASS_SYNC_BEARER_TOKENS_FILE:-}" ]]; then
-  TOKEN=$(openssl rand -base64 32 | tr -d '=+/')
-  export PASS_SYNC_BEARER_TOKENS="default=${TOKEN}"
-  GENERATED_TOKEN="${TOKEN}"
-else
-  GENERATED_TOKEN=""
-fi
-
 # 检查是否已在运行
 if [[ -f "${PID_FILE}" ]]; then
   OLD_PID=$(cat "${PID_FILE}")
   if kill -0 "${OLD_PID}" 2>/dev/null; then
     echo "同步服务器已在运行 (PID: ${OLD_PID})"
     echo "访问地址: http://${HOST}:${PORT}/v1/sync/payload"
-    if [[ -n "${GENERATED_TOKEN}" ]]; then
-      echo "访问令牌: ${GENERATED_TOKEN}"
-    fi
     exit 0
   else
     rm -f "${PID_FILE}"
@@ -59,10 +47,10 @@ echo "监听地址 : ${HOST}:${PORT}"
 echo "数据库   : ${DATA_DIR}/pass_sync.sqlite3"
 echo "日志文件 : ${LOG_FILE}"
 echo ""
-if [[ -n "${GENERATED_TOKEN}" ]]; then
-  echo "访问令牌 (Bearer Token):"
-  echo "  ${GENERATED_TOKEN}"
-  echo ""
+if [[ -z "${PASS_SYNC_BEARER_TOKENS:-}" && -z "${PASS_SYNC_BEARER_TOKENS_FILE:-}" ]]; then
+  echo "认证模式 : 开放（未配置 Bearer Token）"
+else
+  echo "认证模式 : 已使用显式 Bearer Token 配置"
 fi
 echo "健康检查:"
 echo "  curl http://127.0.0.1:${PORT}/healthz"

@@ -65,7 +65,7 @@ function getPageUiOwnerIdentity() {
     const runtimeId = String(chrome.runtime.id || "").trim();
     // The separately loaded Web preview must win over the legacy extension
     // while both are installed for side-by-side testing.
-    const priority = /web\s*预览/i.test(name) ? 20 : 10;
+    const priority = 10;
     return { key: `${runtimeId}|${name}`, priority };
   } catch {
     return { key: "pass-extension|unknown", priority: 10 };

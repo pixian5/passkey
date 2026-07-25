@@ -1,1 +1,0 @@
-../extension_shared/account_core.js

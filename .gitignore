@@ -8,15 +8,97 @@ apps/extension_safari/PassSafari/build_apple/
 apps/app_macos/Vendor/pass_core_ffi/
 apps/app_macos/dist/
 apps/app_macos/build/
+DerivedData/
+*.app/
+*.dmg
+*.xpi
+*.xcarchive/
+*.xcresult/
+*.ipa
+*.pkg
 
 # Gradle build cache
 .gradle/
+apps/android_credential_provider/build/
+
+# Language dependencies and local environments
+node_modules/
+.venv/
+venv/
+.swiftpm/
+.npm/
+.pnpm-store/
+
+# Xcode per-user state and generated bundles
+xcuserdata/
+*.xcuserstate
 
 # OS noise
 .DS_Store
+.AppleDouble
+Thumbs.db
 
 # Python test/runtime caches
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+# Test and coverage outputs
+.coverage
+coverage/
+htmlcov/
+test-results/
+playwright-report/
+*.profraw
+*.profdata
+
+# Runtime data and process files
+apps/pass-web/data/
+apps/sync_server_ubuntu/data/
+*.log
+*.pid
+*.enc
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+
+# Local configuration, credentials, certificates, and signing material
+.env
+.env.*
+!.env.example
+!.env.*.example
+.envrc
+.direnv/
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.mobileprovision
+local.properties
+
+# Editor and temporary files
+.idea/
+.fleet/
+*.iml
+*.swp
+*.swo
+*.tmp
+*.temp
+*.bak
+*.orig
+*~
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
 apps/codex-tauri/dist/

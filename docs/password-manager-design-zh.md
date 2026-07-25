@@ -1,6 +1,8 @@
 # 跨平台密码管理器设计（浏览器插件 + 手机 APP）
 
 > 跨平台实施细节请见：[cross-platform-architecture-zh.md](/Users/x/code/pass/docs/cross-platform-architecture-zh.md)
+>
+> 本文保留早期“本地 Native Host / Flutter”方案作为产品设计背景，不代表当前运行架构。当前客户端直接使用 V2 自建服务器/WebDAV，同步事实见 [`current-app-extension-implementation-reference-zh.md`](./current-app-extension-implementation-reference-zh.md)。
 
 ## 1. 目标与范围
 - 目标：实现浏览器插件与手机 APP 的本地双向同步，支持账号密码、TOTP、恢复码、备注与域名别名管理。

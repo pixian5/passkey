@@ -1,5 +1,7 @@
 # 浏览器插件与客户端完整设计（含通行密钥）
 
+> 目标蓝图与历史设计：文中的独立 Sync Agent/通用 UI Shell 是早期方案，当前产品已收敛为 Tauri / Docker Web / Chrome Web 扩展三端管理面。当前实现与平台边界见 [`current-app-extension-implementation-reference-zh.md`](./current-app-extension-implementation-reference-zh.md)。
+
 ## 1. 目标与范围
 - 目标：设计一套可落地的「浏览器插件 + 客户端（桌面/移动）」方案，统一支持密码、TOTP、恢复码、备注、通行密钥（Passkey）。
 - 范围：
@@ -372,7 +374,7 @@ sequenceDiagram
   - 模式 B：私钥不明文落盘，跨设备同步后可用（按策略）。
 
 ## 14. 与当前仓库模块映射
-- 插件目录：`apps/extension_chrome`
+- Chrome 插件目录：`apps/extension_chrome_web`
 - mac 客户端目录：`apps/app_macos`
 - 统一桌面客户端目录：`apps/codex-tauri`
 - Docker Web 目录：`apps/pass-web`

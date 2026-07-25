@@ -20,11 +20,10 @@
 
 ## 3. 端优先级
 
-1. macOS App（主端，已有）
-2. 浏览器扩展
-3. Win + Linux（**一套**桌面壳）
-4. iOS / Android 原生 App
-5. 系统自动填充（移动 / 桌面 Provider）
+1. Tauri / Docker Web / Chrome Web 扩展统一管理面
+2. 浏览器填充、WebAuthn 与 macOS AutoFill/Credential Exchange 系统集成
+3. iOS / Android 原生 App 与系统 Credential Provider
+4. 旧 SwiftUI 客户端及 Firefox/Safari 平台壳仅作系统能力与迁移参考
 
 ## 4. 禁止事项
 
@@ -42,8 +41,8 @@
 | P1 macOS→Rust merge | 完成 | 默认同步合并调 FFI，可回退；null bool 兼容 |
 | P2 Core 变厚 | 完成（本阶段） | 别名并集、域名/UUID、CSV 导出进 Core；macOS/Tauri 已接 |
 | P3 扩展同源 | 完成（本阶段） | merge parity 入 CI；JS alias 模块 + 测试；扩展 test:core-parity |
-| P4 桌面壳 | 进行中 | **双壳**：macOS=SwiftUI 主端；Win/macOS/Linux=codex-tauri（自建同步已接 Core） |
-| P4b 桌面同步 | 基本完成 | codex-tauri 自建同步+应用锁；管道冒烟通过；GUI 对拍见 scripts/desktop_sync_checklist.md |
+| P4 桌面壳 | 完成 | Win/macOS/Linux 统一为 `codex-tauri`；Docker Web 与 Chrome Web 扩展复用同一管理 UI |
+| P4b 桌面同步 | 完成 | Tauri/Web/扩展均接自建服务器；Tauri/Web 支持 WebDAV；命令矩阵与合并对拍进入测试门禁 |
 | P5 移动 | 延后 | 本阶段只做桌面；Android demo 保留不扩展 |
 
 ## 6. 回退开关
