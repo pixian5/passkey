@@ -1270,11 +1270,18 @@ async fn sync_now(app: AppHandle, state: tauri::State<'_, AppLockState>) -> Resu
     let worker_dir = dir.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let mut conn = open_db(&worker_app)?;
-        let (report, applied) = run_sync(&settings, local.clone(), &device, &platform)?;
-        if report.applied {
-            local_snapshots::create(&worker_dir, &local, "同步写入本地前自动备份")?;
-            save_payload_atomic(&mut conn, &applied)?;
-        }
+        let local_for_apply = local.clone();
+        let worker_dir_for_apply = worker_dir.clone();
+        let (report, _applied) = run_sync(
+            &settings,
+            local.clone(),
+            &device,
+            &platform,
+            |payload| {
+                local_snapshots::create(&worker_dir_for_apply, &local_for_apply, "同步写入本地前自动备份")?;
+                save_payload_atomic(&mut conn, payload)
+            },
+        )?;
         serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
     })
     .await
@@ -1316,12 +1323,19 @@ async fn sync_now_mode(
     let worker_dir = dir.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let mut conn = open_db(&worker_app)?;
-        let (report, applied) =
-            run_sync_with_mode(&settings, local.clone(), &device, &platform, mode)?;
-        if report.applied {
-            local_snapshots::create(&worker_dir, &local, "同步写入本地前自动备份")?;
-            save_payload_atomic(&mut conn, &applied)?;
-        }
+        let local_for_apply = local.clone();
+        let worker_dir_for_apply = worker_dir.clone();
+        let (report, _applied) = run_sync_with_mode(
+            &settings,
+            local.clone(),
+            &device,
+            &platform,
+            mode,
+            |payload| {
+                local_snapshots::create(&worker_dir_for_apply, &local_for_apply, "同步写入本地前自动备份")?;
+                save_payload_atomic(&mut conn, payload)
+            },
+        )?;
         serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
     })
     .await
@@ -1353,18 +1367,24 @@ async fn sync_webdav_now_mode(
     let worker_dir = dir.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let mut conn = open_db(&worker_app)?;
-        let (report, applied) = webdav::run_sync(
+        let local_for_apply = local.clone();
+        let worker_dir_for_apply = worker_dir.clone();
+        let (report, _applied) = webdav::run_sync(
             &webdav_settings,
             parsed_mode,
             local.clone(),
             &device,
             &platform,
             &encryption_key,
+            |payload| {
+                local_snapshots::create(
+                    &worker_dir_for_apply,
+                    &local_for_apply,
+                    "WebDAV 同步写入本地前自动备份",
+                )?;
+                save_payload_atomic(&mut conn, payload)
+            },
         )?;
-        if report.applied {
-            local_snapshots::create(&worker_dir, &local, "WebDAV 同步写入本地前自动备份")?;
-            save_payload_atomic(&mut conn, &applied)?;
-        }
         serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
     })
     .await

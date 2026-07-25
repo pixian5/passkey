@@ -159,14 +159,18 @@ pub fn put(
         .to_string())
 }
 
-pub fn run_sync(
+pub fn run_sync<A>(
     settings: &WebDavSettings,
     mode: SyncMode,
     local: SyncPayload,
     device_name: &str,
     platform: &str,
     encryption_key: &str,
-) -> Result<(pipeline::SyncReport, SyncPayload), String> {
+    apply_local: A,
+) -> Result<(pipeline::SyncReport, SyncPayload), String>
+where
+    A: FnMut(&pass_merge::v2::SyncPayload) -> Result<(), String>,
+{
     if !settings.enabled {
         return Err("WebDAV 同步未启用".into());
     }
@@ -200,6 +204,7 @@ pub fn run_sync(
             };
             Ok((payload, etag))
         },
+        apply_local,
         |wire, etag| {
             put(
                 &settings.base_url,

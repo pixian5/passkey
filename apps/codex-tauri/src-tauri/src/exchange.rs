@@ -381,14 +381,18 @@ pub fn restore_sync_version(
     Ok((payload, Some(new_etag)))
 }
 
-pub fn run_sync_with_mode(
+pub fn run_sync_with_mode<A>(
     settings: &SyncSettings,
     local: SyncPayload,
     device_name: &str,
     platform: &str,
     mode: SyncMode,
-) -> Result<(crate::sync::pipeline::SyncReport, SyncPayload), String> {
+    apply_local: A,
+) -> Result<(crate::sync::pipeline::SyncReport, SyncPayload), String>
+where
+    A: FnMut(&SyncPayload) -> Result<(), String>,
+{
     let mut s = settings.clone();
     s.mode = mode.as_str().to_string();
-    crate::sync::pipeline::run_sync(&s, local, device_name, platform)
+    crate::sync::pipeline::run_sync(&s, local, device_name, platform, apply_local)
 }

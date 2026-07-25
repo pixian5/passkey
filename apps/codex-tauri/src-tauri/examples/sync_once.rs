@@ -117,7 +117,7 @@ fn main() {
         "linux"
     };
 
-    match run_sync(&settings, local, &device, platform) {
+    match run_sync(&settings, local, &device, platform, |_payload| Ok(())) {
         Ok((report, applied)) => {
             eprintln!(
                 "report ok={} applied={} pushed={} msg={} local={} remote={} merged={}",

@@ -260,17 +260,19 @@ fn pull_remote(settings: &SyncSettings) -> Result<(Option<SyncPayload>, Option<S
 /// Shared merge/safety/write loop for non-server transports such as WebDAV.
 /// The transport owns conditional reads/writes; this layer remains the only
 /// authority for merge, encryption envelope and safety decisions.
-pub(crate) fn run_sync_with_transport<P, U>(
+pub(crate) fn run_sync_with_transport<P, U, A>(
     mode: SyncMode,
     local: SyncPayload,
     device_name: &str,
     platform: &str,
     encryption_key: &str,
     mut pull: P,
+    mut apply_local: A,
     mut push: U,
 ) -> Result<(SyncReport, SyncPayload), String>
 where
     P: FnMut() -> Result<(Option<SyncPayload>, Option<String>), String>,
+    A: FnMut(&SyncPayload) -> Result<(), String>,
     U: FnMut(&[u8], Option<&str>) -> Result<String, String>,
 {
     let mut attempt = 0;
@@ -306,6 +308,10 @@ where
         };
         ensure_field_clocks(&mut to_store, device_name);
         let _ = sync_alias_groups(&mut to_store.accounts, now_ms(), device_name);
+        // Apply locally before remote push so a failed push never creates
+        // "remote updated / local stale" split-brain. A failed push leaves the
+        // merged local vault intact for the next retry.
+        apply_local(&to_store)?;
         let wire = encrypt_bundle_document(
             &build_bundle_document(&to_store, device_name, platform),
             encryption_key,
@@ -335,97 +341,60 @@ where
                 ));
             }
             Err(e) if e == "PRECONDITION_FAILED" && attempt < MAX_CONFLICT_RETRIES => continue,
-            Err(e) => return Err(e),
-        }
-    }
-}
-
-/// Full sync: pull → merge → safety → apply local (via callback data) → push.
-/// Returns report + payload to apply locally (caller writes vault).
-pub fn run_sync(
-    settings: &SyncSettings,
-    local: SyncPayload,
-    device_name: &str,
-    platform: &str,
-) -> Result<(SyncReport, SyncPayload), String> {
-    if !settings.enabled {
-        return Err("同步未启用".into());
-    }
-    let mode = SyncMode::parse(&settings.mode);
-    let mut attempt = 0;
-    loop {
-        attempt += 1;
-        let (remote_opt, etag) = pull_remote(settings)?;
-        let local_count = visible_account_count(&local);
-        let remote_count = remote_opt.as_ref().map(visible_account_count).unwrap_or(0);
-        let (merged, report) = decide_merged(mode, local.clone(), remote_opt);
-        let merged_count = visible_account_count(&merged);
-        if !report.safe {
-            return Ok((
-                SyncReport {
-                    ok: false,
-                    dry_run: false,
-                    mode: mode.as_str().into(),
-                    message: format!("同步停止：安全检查未通过（{}）", report.reasons.join(", ")),
-                    safe: false,
-                    reasons: report.reasons,
-                    local_accounts: local_count,
-                    remote_accounts: remote_count,
-                    merged_accounts: merged_count,
-                    applied: false,
-                    pushed: false,
-                    etag,
-                },
-                local,
-            ));
-        }
-
-        // Push decided payload (for merge/remoteOverwrite: merged; for localOverwrite: local)
-        let to_store = match mode {
-            SyncMode::LocalOverwriteRemote => local.clone(),
-            _ => merged.clone(),
-        };
-        let mut to_store = to_store;
-        ensure_field_clocks(&mut to_store, device_name);
-        let _ = sync_alias_groups(&mut to_store.accounts, now_ms(), device_name);
-
-        let doc = build_bundle_document(&to_store, device_name, platform);
-        let wire = encrypt_bundle_document(&doc, &settings.encryption_key)?;
-        match put_sync_state(
-            &settings.base_url,
-            &settings.auth_token,
-            &wire,
-            etag.as_deref(),
-        ) {
-            Ok(new_etag) => {
+            Err(e) => {
                 return Ok((
                     SyncReport {
-                        ok: true,
+                        ok: false,
                         dry_run: false,
                         mode: mode.as_str().into(),
                         message: format!(
-                            "同步完成：账号 {}->{}（已写入本地并推送）",
-                            local_count,
-                            visible_account_count(&to_store)
+                            "本地已更新为合并结果，但推送远端失败，请重试同步：{e}"
                         ),
                         safe: true,
-                        reasons: vec![],
+                        reasons: vec![e],
                         local_accounts: local_count,
                         remote_accounts: remote_count,
                         merged_accounts: visible_account_count(&to_store),
                         applied: true,
-                        pushed: true,
-                        etag: Some(new_etag),
+                        pushed: false,
+                        etag,
                     },
                     to_store,
                 ));
             }
-            Err(e) if e == "PRECONDITION_FAILED" && attempt < MAX_CONFLICT_RETRIES => {
-                continue;
-            }
-            Err(e) => return Err(e),
         }
     }
+}
+
+/// Full sync: pull → merge → safety → apply local → push.
+/// `apply_local` must persist the merged payload before the remote PUT.
+pub fn run_sync<A>(
+    settings: &SyncSettings,
+    local: SyncPayload,
+    device_name: &str,
+    platform: &str,
+    apply_local: A,
+) -> Result<(SyncReport, SyncPayload), String>
+where
+    A: FnMut(&SyncPayload) -> Result<(), String>,
+{
+    if !settings.enabled {
+        return Err("同步未启用".into());
+    }
+    let mode = SyncMode::parse(&settings.mode);
+    let encryption_key = settings.encryption_key.clone();
+    let base_url = settings.base_url.clone();
+    let auth_token = settings.auth_token.clone();
+    run_sync_with_transport(
+        mode,
+        local,
+        device_name,
+        platform,
+        &encryption_key,
+        || pull_remote(settings),
+        apply_local,
+        |wire, etag| put_sync_state(&base_url, &auth_token, wire, etag),
+    )
 }
 
 #[cfg(test)]

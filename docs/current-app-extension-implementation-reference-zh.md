@@ -1,6 +1,6 @@
 # Pass 当前实现参考
 
-> 状态：当前代码事实，随主分支更新。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.1.3`。
+> 状态：当前代码事实，随主分支更新。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.1.4`。
 
 ## 0. 关键实现文档
 
@@ -119,7 +119,7 @@ cd apps/codex-tauri/src-tauri && cargo test --locked
 cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-当前自动化基线（1.1.3）：扩展 78 项、Docker Web 9 项、Tauri 22 项、同步服务器 33 项、脚本 17 项；命令矩阵覆盖 68 个 UI 命令；版本落点 45 个。
+当前自动化基线（1.1.4）：扩展 78 项、Docker Web 9 项、Tauri 22 项、同步服务器 33 项、脚本 17 项；命令矩阵覆盖 68 个 UI 命令；版本落点 45 个。
 
 ## 9. 当前限制
 
@@ -130,3 +130,5 @@ cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 
 - 桌面 SSH 创建服务对远端路径采用 POSIX shell 安全引用；证书路径中的引号不能拼接为远端命令。
 - 同步服务器是哑存储：只做认证、ETag/revision、版本历史与审计，不解密账号内容。
 - 桌面内嵌 `pass_sync_server.py`（Tauri/macOS）必须与 `apps/sync_server_ubuntu/pass_sync_server.py` 一致；版本检查会拦截漂移。
+- CI `quality-gates`：版本/内嵌服务器漂移与 Clippy correctness 为硬门禁；rustfmt 与 cargo-audit 先作 informational。
+- 同步采用先本地后远端：本地合并写入成功后再推送，推送失败保留本地合并结果并提示重试。

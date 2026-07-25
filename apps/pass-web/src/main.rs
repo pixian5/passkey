@@ -1137,13 +1137,14 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
         .sync_settings
         .get("encryptionKey")
         .and_then(Value::as_str)
-        .unwrap_or("");
+        .unwrap_or("")
+        .to_string();
     let local = v.payload();
     let fetched = webdav_get(base, path, username, password)?;
     let mut remote = fetched
         .body
         .as_deref()
-        .map(|body| decrypt_sync_document(body, key))
+        .map(|body| decrypt_sync_document(body, &key))
         .transpose()?
         .map(extract_payload)
         .transpose()?;
@@ -1195,10 +1196,25 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
     } else {
         merged.clone()
     };
-    let mut wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), key)?;
+    let mut wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), &key)?;
     let mut current_etag = fetched.etag;
     let mut remote_count = remote.as_ref().map(visible_accounts).unwrap_or(0);
+    // Local-first: persist merged vault before remote PUT to avoid
+    // remote-updated/local-stale split-brain on local save failure.
+    let mut local_applied = false;
     for _attempt in 0..5 {
+        if !local_applied || _attempt > 0 {
+            v.begin("WebDAV 同步写入本地前自动备份");
+            v.apply_payload(to_store.clone());
+            let previous_persist = v.persist_enabled;
+            v.persist_enabled = true;
+            let save_result = v.save();
+            v.persist_enabled = previous_persist;
+            save_result.map_err(|error| {
+                format!("WebDAV 合并结果写入本地失败，未推送远端：{error}")
+            })?;
+            local_applied = true;
+        }
         match webdav_put(
             base,
             path,
@@ -1208,13 +1224,6 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
             current_etag.as_deref(),
         ) {
             Ok(new_etag) => {
-                v.begin("WebDAV 同步写入本地前自动备份");
-                v.apply_payload(to_store.clone());
-                if let Err(error) = v.save() {
-                    return Err(format!(
-                        "WebDAV 远端已更新，但本地保存失败，请立即重新同步以对齐两端状态：{error}"
-                    ));
-                }
                 return Ok(json!({"report": SyncReport {
                     ok: true,
                     dry_run: false,
@@ -1230,13 +1239,13 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
                     etag: Some(new_etag),
                 }}));
             }
-            Err(error) if error == "PRECONDITION_FAILED" => {
+Err(error) if error == "PRECONDITION_FAILED" => {
                 let latest = webdav_get(base, path, username, password)?;
                 current_etag = latest.etag;
                 remote = latest
                     .body
                     .as_deref()
-                    .map(|body| decrypt_sync_document(body, key))
+                    .map(|body| decrypt_sync_document(body, &key))
                     .transpose()?
                     .map(extract_payload)
                     .transpose()?;
@@ -1280,12 +1289,40 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
                     merged
                 };
                 remote_count = remote.as_ref().map(visible_accounts).unwrap_or(0);
-                wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), key)?;
+                wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), &key)?;
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                return Ok(json!({"report": SyncReport {
+                    ok: false,
+                    dry_run: false,
+                    mode: mode.as_str().into(),
+                    message: format!("本地已更新为合并结果，但 WebDAV 推送失败，请重试同步：{error}"),
+                    safe: true,
+                    reasons: vec![error],
+                    local_accounts: local_count,
+                    remote_accounts: remote_count,
+                    merged_accounts: visible_accounts(&to_store),
+                    applied: true,
+                    pushed: false,
+                    etag: current_etag.clone(),
+                }}));
+            }
         }
     }
-    Err("WebDAV 同步冲突重试次数已用尽".into())
+    Ok(json!({"report": SyncReport {
+        ok: false,
+        dry_run: false,
+        mode: mode.as_str().into(),
+        message: "本地已更新为合并结果，但 WebDAV 同步冲突重试次数已用尽，请重试同步".into(),
+        safe: true,
+        reasons: vec!["PRECONDITION_FAILED".into()],
+        local_accounts: local_count,
+        remote_accounts: remote_count,
+        merged_accounts: visible_accounts(&to_store),
+        applied: local_applied,
+        pushed: false,
+        etag: current_etag.clone(),
+    }}))
 }
 
 fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value, String> {
@@ -1310,11 +1347,11 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
         .and_then(Value::as_str)
         .unwrap_or("");
     let local = v.payload();
-    let fetched = self_hosted_get(base, token)?;
+    let fetched = self_hosted_get(&base, &token)?;
     let mut remote = fetched
         .body
         .as_deref()
-        .map(|body| decrypt_sync_document(body, key))
+        .map(|body| decrypt_sync_document(body, &key))
         .transpose()?
         .map(extract_payload)
         .transpose()?;
@@ -1374,20 +1411,26 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
         }
     }
     let _ = sync_alias_groups(&mut to_store.accounts, now_ms(), &device);
-    let mut wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), key)?;
+    let mut wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), &key)?;
     let mut attempt = 0;
     let mut current_etag = fetched.etag;
+    let mut local_applied = false;
     loop {
         attempt += 1;
-        match self_hosted_put(base, token, &wire, current_etag.as_deref()) {
+        if !local_applied || attempt > 1 {
+            v.begin("同步写入本地前自动备份");
+            v.apply_payload(to_store.clone());
+            let previous_persist = v.persist_enabled;
+            v.persist_enabled = true;
+            let save_result = v.save();
+            v.persist_enabled = previous_persist;
+            save_result.map_err(|error| {
+                format!("合并结果写入本地失败，未推送远端：{error}")
+            })?;
+            local_applied = true;
+        }
+        match self_hosted_put(&base, &token, &wire, current_etag.as_deref()) {
             Ok(new_etag) => {
-                v.begin("同步写入本地前自动备份");
-                v.apply_payload(to_store.clone());
-                if let Err(error) = v.save() {
-                    return Err(format!(
-                        "远端已更新，但本地保存失败，请立即重新同步以对齐两端状态：{error}"
-                    ));
-                }
                 return Ok(json!({
                     "report": SyncReport {
                         ok: true,
@@ -1405,13 +1448,13 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
                     }
                 }));
             }
-            Err(error) if error == "PRECONDITION_FAILED" && attempt < 5 => {
-                let latest = self_hosted_get(base, token)?;
+Err(error) if error == "PRECONDITION_FAILED" && attempt < 5 => {
+                let latest = self_hosted_get(&base, &token)?;
                 current_etag = latest.etag;
                 remote = latest
                     .body
                     .as_deref()
-                    .map(|body| decrypt_sync_document(body, key))
+                    .map(|body| decrypt_sync_document(body, &key))
                     .transpose()?
                     .map(extract_payload)
                     .transpose()?;
@@ -1461,9 +1504,26 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
                     }
                 }
                 let _ = sync_alias_groups(&mut to_store.accounts, now_ms(), &device);
-                wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), key)?;
+                wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), &key)?;
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                return Ok(json!({
+                    "report": SyncReport {
+                        ok: false,
+                        dry_run: false,
+                        mode: mode.as_str().into(),
+                        message: format!("本地已更新为合并结果，但推送远端失败，请重试同步：{error}"),
+                        safe: true,
+                        reasons: vec![error],
+                        local_accounts: local_count,
+                        remote_accounts: remote_count,
+                        merged_accounts: visible_accounts(&to_store),
+                        applied: true,
+                        pushed: false,
+                        etag: current_etag.clone(),
+                    }
+                }));
+            }
         }
     }
 }

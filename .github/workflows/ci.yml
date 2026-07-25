@@ -92,3 +92,34 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --manifest-path apps/pass-web/Cargo.toml
+
+  quality-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Version and embedded sync server drift
+        run: node scripts/version.mjs check
+      - name: Rustfmt (informational until fully normalized)
+        continue-on-error: true
+        run: |
+          cargo fmt --manifest-path core/pass_core/Cargo.toml --check
+          cargo fmt --manifest-path apps/pass-web/Cargo.toml --check
+          cargo fmt --manifest-path apps/codex-tauri/src-tauri/Cargo.toml --check
+      - name: Clippy correctness (core/web/tauri)
+        run: |
+          cargo clippy --manifest-path core/pass_core/Cargo.toml --workspace --all-targets -- -D clippy::correctness -A warnings
+          cargo clippy --manifest-path apps/pass-web/Cargo.toml --all-targets -- -D clippy::correctness -A warnings
+          cargo clippy --manifest-path apps/codex-tauri/src-tauri/Cargo.toml --all-targets -- -D clippy::correctness -A warnings
+      - name: Dependency advisories (informational)
+        continue-on-error: true
+        run: |
+          cargo install cargo-audit --locked || true
+          cargo audit --manifest-path core/pass_core/Cargo.toml || true
+          cargo audit --manifest-path apps/pass-web/Cargo.toml || true
+          cargo audit --manifest-path apps/codex-tauri/src-tauri/Cargo.toml || true

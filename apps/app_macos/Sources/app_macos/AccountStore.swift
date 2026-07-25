@@ -4016,23 +4016,24 @@ final class AccountStore: ObservableObject {
         }
     }
 
-    @discardableResult
+        @discardableResult
     private func saveAccounts() -> Bool {
-        let saved = saveAccountsToLocalDisk()
-        if saved && !suppressCloudPush && syncEnableICloud {
-            pushSyncDataToICloud(trigger: "local_update")
-        }
-        return saved
+        saveAccountsToLocalDisk(pushICloud: true)
     }
 
     @discardableResult
-    private func saveAccountsToLocalDisk() -> Bool {
+    private func saveAccountsToLocalDisk(pushICloud: Bool = false) -> Bool {
+        let previousAccounts = accounts
         do {
-            let data = try encoder.encode(accounts)
-            try saveCollectionDataToLocalDatabase(data, for: LocalDatabaseKeys.accounts)
-            CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
+            try writeCollectionsAtomically(
+                includeAccounts: true,
+                includeFolders: false,
+                includePasskeys: false,
+                pushICloud: pushICloud
+            )
             return true
         } catch {
+            accounts = previousAccounts
             statusMessage = "保存失败: \(error.localizedDescription)"
             if let persistedData = try? localSQLiteStore.readData(for: LocalDatabaseKeys.accounts),
                let persisted = try? decoder.decode([PasswordAccount].self, from: persistedData)
@@ -4043,6 +4044,7 @@ final class AccountStore: ObservableObject {
             return false
         }
     }
+
 
     private func loadPasskeysFromLocalDisk() -> [PasskeyRecord] {
         if let data = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.passkeys),
@@ -6826,15 +6828,19 @@ final class AccountStore: ObservableObject {
         )
     }
 
-    @discardableResult
+        @discardableResult
     private func saveFoldersToDefaults() -> Bool {
-        guard let data = try? encoder.encode(folders) else {
-            statusMessage = "保存文件夹失败：无法编码文件夹数据"
-            return false
-        }
+        let previousFolders = folders
         do {
-            try saveCollectionDataToLocalDatabase(data, for: LocalDatabaseKeys.folders)
+            try writeCollectionsAtomically(
+                includeAccounts: false,
+                includeFolders: true,
+                includePasskeys: false,
+                pushICloud: true
+            )
+            return true
         } catch {
+            folders = previousFolders
             statusMessage = "保存文件夹到 SQLite 失败: \(error.localizedDescription)"
             if let persistedData = try? localSQLiteStore.readData(for: LocalDatabaseKeys.folders),
                let persisted = try? decoder.decode([AccountFolder].self, from: persistedData)
@@ -6843,12 +6849,8 @@ final class AccountStore: ObservableObject {
             }
             return false
         }
-        UserDefaults.standard.set(data, forKey: Keys.foldersData)
-        if !suppressCloudPush && syncEnableICloud {
-            pushSyncDataToICloud(trigger: "local_update")
-        }
-        return true
     }
+
 
     var uiFontFamilyOptions: [String] {
         [Self.systemDefaultFontFamily] + NSFontManager.shared.availableFontFamilies.sorted()
