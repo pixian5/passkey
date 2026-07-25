@@ -32,6 +32,8 @@ class OptionalBearerScriptTests(unittest.TestCase):
         self.assertIn("pass-sync-server-backup.timer", deploy)
         self.assertIn('/proc/${main_pid}/environ', deploy)
         self.assertIn('exit "${failure_status}"', deploy)
+        self.assertIn("persist_runtime_setting PASS_SYNC_PORT", deploy)
+        self.assertIn("migrated_legacy_env=1", deploy)
 
     def test_backup_service_uses_installed_script(self) -> None:
         service = (ROOT / "apps" / "sync_server_ubuntu" / "pass-sync-server-backup.service").read_text(
@@ -44,6 +46,7 @@ class OptionalBearerScriptTests(unittest.TestCase):
         service = (ROOT / "apps" / "sync_server_ubuntu" / "pass-sync-server.service").read_text(encoding="utf-8")
         self.assertIn("PASS_SYNC_TLS_CERT=/etc/pass-sync/tls/server.crt", service)
         self.assertIn("PASS_SYNC_TLS_KEY=/etc/pass-sync/tls/server.key", service)
+        self.assertNotIn("EnvironmentFile=-/etc/pass-sync-server.env", service)
 
 
 if __name__ == "__main__":

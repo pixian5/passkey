@@ -50,6 +50,13 @@ service_was_active=0
 timer_was_enabled=0
 systemctl is-active --quiet pass-sync-server && service_was_active=1 || true
 systemctl is-enabled --quiet pass-sync-server-backup.timer && timer_was_enabled=1 || true
+current_runtime_environment=""
+if [[ "${service_was_active}" -eq 1 ]]; then
+  current_main_pid="$(systemctl show pass-sync-server -p MainPID --value)"
+  if [[ -n "${current_main_pid}" && "${current_main_pid}" != "0" && -r "/proc/${current_main_pid}/environ" ]]; then
+    current_runtime_environment="$(tr '\0' '\n' < "/proc/${current_main_pid}/environ" | sed -n '/^PASS_SYNC_\(HOST\|PORT\)=/p')"
+  fi
+fi
 
 restore_previous_installation() {
   failure_status="${1:-1}"
@@ -103,9 +110,40 @@ print(f"pre-deploy backup integrity: {result}")
 PY
 fi
 
+migrated_legacy_env=0
 if [[ -f /etc/pass-sync-server.env && ! -f "${CONFIG_DIR}/pass-sync-server.env" ]]; then
   install -m 0600 /etc/pass-sync-server.env "${CONFIG_DIR}/pass-sync-server.env"
+  migrated_legacy_env=1
 fi
+
+persist_runtime_setting() {
+  setting_name="$1"
+  settings_path="${CONFIG_DIR}/pass-sync-server.env"
+  if [[ -z "${current_runtime_environment}" ]]; then
+    return 0
+  fi
+  setting_value="$(printf '%s\n' "${current_runtime_environment}" | sed -n "s/^${setting_name}=//p" | tail -n 1)"
+  if [[ -z "${setting_value}" ]]; then
+    return 0
+  fi
+  if grep -q "^${setting_name}=" "${settings_path}" 2>/dev/null; then
+    if [[ "${migrated_legacy_env}" -ne 1 ]]; then
+      return 0
+    fi
+    sed -i "s#^${setting_name}=.*#${setting_name}=${setting_value}#" "${settings_path}"
+  else
+    printf '%s=%s\n' "${setting_name}" "${setting_value}" >> "${settings_path}"
+  fi
+}
+
+# Preserve customized listen settings that older service units stored inline.
+persist_runtime_setting PASS_SYNC_HOST
+persist_runtime_setting PASS_SYNC_PORT
+if [[ -f "${CONFIG_DIR}/pass-sync-server.env" ]]; then
+  chown pass:pass "${CONFIG_DIR}/pass-sync-server.env"
+  chmod 0600 "${CONFIG_DIR}/pass-sync-server.env"
+fi
+
 if [[ -f /etc/bz/certs/server.crt && -f /etc/bz/certs/server.key ]]; then
   install -d -m 0750 -o pass -g pass "${CONFIG_DIR}/tls"
   install -m 0644 -o pass -g pass /etc/bz/certs/server.crt "${CONFIG_DIR}/tls/server.crt"
