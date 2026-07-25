@@ -1524,7 +1524,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.0.1";
+  var PASS_EXTENSION_VERSION = "1.0.2";
 
   // ../../core/pass_core/js/sync_alias_core.js
   function syncAliasGroups(accounts, helpers, options = {}) {

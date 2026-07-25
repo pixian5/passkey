@@ -22,7 +22,6 @@ jobs:
       - run: node ../../scripts/version.mjs check
       - run: npm ci
       - run: npm test
-      - run: node ../../core/pass_core/js/check_merge_parity.mjs
       - run: npm run build
 
   sync-server:
@@ -50,6 +49,7 @@ jobs:
         with:
           node-version: 22
       - run: cargo test --workspace
+      - run: cargo build -p pass-merge --bin pass-merge-cli
       - run: node js/check_merge_parity.mjs
       - run: cargo build -p pass-core-ffi --release
       - run: ../../scripts/check_domain_ffi.sh
