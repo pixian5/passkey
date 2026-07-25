@@ -19,6 +19,9 @@
 - 单文件 Python 服务，零第三方依赖
 - SQLite 持久化，默认启用 WAL
 - 自动保留每个同步 scope 最近 50 个快照版本，便于误覆盖后的人工恢复
+- 每次成功 PUT/restore 只新增 1 个版本；revision 与成功写入次数一致，不会重复插入旧快照
+- 每个 scope 审计最多保留 5000 条操作记录
+- 限流按客户端 IP 计数，并清理过期窗口，避免内存无限增长
 - 可选 Bearer Token 认证
 - 返回 `ETag`，并支持 `If-Match` 并发保护
 - `GET /healthz` 健康检查
@@ -123,7 +126,8 @@ https://your-domain.example/v2/sync/state
 - 通过 `systemd` 管理进程
 - 定期备份 `pass_sync.sqlite3`
 - 备份脚本会执行 SQLite `integrity_check`，校验失败时以非零状态退出
-- `payload_versions` 表保存最近 50 个密文快照；备份时应同时保留整个 SQLite 文件
+- `payload_versions` 表保存最近 50 个快照；每次成功写入只追加当前新状态，备份时应同时保留整个 SQLite 文件
+- `sync_operations` 审计按 scope 最多保留 5000 条，只含操作类型/状态/ETag/version/时间
 
 仓库的 `Deploy Sync Server` 工作流会在服务器维护两个目录：
 

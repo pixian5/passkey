@@ -246,50 +246,19 @@ cd apps/pass-web && cargo test && cargo build --release
 
 ## 8. 当前对齐结论（版本 1.1.1）
 
-结论：**高风险数据语义与 mutation 主干已对齐到位。** 剩余主要是平台边界（扩展 WebDAV、Touch ID、SSH 创建服务）以及命令返回形状完全对象化等工程项，不应为了表面一致而伪对齐。
+已对齐并必须保持：
 
-### 8.1 已对齐、必须保持
+1. UI 单源、命令同名、同步同核。
+2. 多集合本地写入同事务；保存失败回滚内存。
+3. vault 原子落盘带 `fsync`。
+4. Web 同步网络 I/O 不长期占用全局 vault 锁。
+5. 主密码不 `trim`。
+6. 操作历史脱敏；撤销忽略 no-op。
+7. 同步服务器每次成功写入只产生 1 个新版本；审计/限流有上限。
+8. SSH 远端路径 shell quote；部署健康检查正常 TLS 校验。
 
-- 账号/文件夹/通行密钥字段级 LWW
-- 三类顺序字段：`allRegularAccountIds`、`folderOrderIds`、`Folder.regularAccountIds`
-- 永久删除墓碑：保留稳定 ID，清空敏感字段，不物理删除
-- 软删除/恢复的时间戳与设备名
-- 文件夹关系墓碑 `folderMembershipStates`、站点别名关系
-- 同步安全评估、空远端保护、合并 Core 一致性
-- UI 单源 + `health_check.capabilities` 降级
-- 扩展本地敏感配置加密（vault / 同步设置 / UI 偏好 / 创建服务草稿）
+详细规则见 [local-write-durability-and-history-consistency-zh.md](./local-write-durability-and-history-consistency-zh.md) 与 [current-app-extension-implementation-reference-zh.md](./current-app-extension-implementation-reference-zh.md)。
 
-### 8.2 明确停止线：平台边界，不再伪对齐
-
-以下能力**不要**为了表面一致而绕过平台限制：
-
-| 能力 | Tauri | Docker Web | Chrome 扩展 | 处理方式 |
-|---|---|---|---|---|
-| Touch ID | macOS 有 | 无 | 无 | capability 隐藏 |
-| SSH 创建服务 | 有 | 草稿 only | 草稿 only | 桌面专属；其他端明确报错/只存草稿 |
-| 原生文件选择器 | 有 | 无 | 无 | 下载/上传替代 |
-| WebDAV | 有 | 有 | 无 | 扩展明确报错；需代理方案才可做 |
-| 服务器版本列表/恢复 | 有 | 有 | 有 | 三端均走 `/v2/sync/versions`；WebDAV 仍桌面/Web 专属 |
-| 页面自动填充 / WebAuthn | 无 | 无 | 有 | 扩展专属 |
-
-### 8.3 下一阶段再做的工程项（非本轮）
-
-这些不是“漏做的小修”，而是独立阶段/边界项：
-
-1. 命令返回形状完全对象化 + 契约测试
-2. 命令矩阵完整返回 schema
-3. 扩展 WebDAV（需明确 CORS/代理方案后）
-4. 更多 CSV 方言样例
-5. 更深共享领域层（排序/撤销/快照等仍表面化）
-
-已完成：共享 CSV Core、命令矩阵初版、vault mutation 主干、扩展服务器版本、文件夹关系墓碑。
-
-### 8.4 本地辅助字段说明
-
-- 扩展本地可保留 `deletedFromFolderIds` 作为恢复辅助。
-- Tauri / Docker Web 软删除时保留 `folderIds`，恢复时直接使用。
-- 同步载荷以 `folderIds + folderMembershipStates` 为准；`deletedFromFolderIds` 不是跨端必需字段。
-- 任一表面恢复时都必须过滤已删除/永久删除文件夹，并把账号插到对应活动顺序顶部。
 
 ## 9. 阶段 D：命令契约与矩阵
 

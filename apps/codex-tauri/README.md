@@ -70,6 +70,17 @@ npm run tauri build
 - Apple Credential Exchange 导出
 - 谷歌验证器导出二维码批量图片识别（可用粘贴 TOTP 路径）
 
+
+
+## 本地写入与历史（1.1.1）
+
+- 账号、文件夹、全部账号顺序同事务写入；同步整体写回使用 `save_payload_atomic`。
+- 加密 vault / 操作历史 / app lock 文件：临时文件 + `fsync` + rename + 目录 `fsync`。
+- 撤销使用 `latest_distinct_undo`，忽略与当前状态相同的 no-op 历史。
+- 主密码不 `trim`。
+- SSH 部署远端路径 shell quote；部署后 `/healthz` 使用正常 TLS 校验。
+- 详细规则：[`docs/local-write-durability-and-history-consistency-zh.md`](../../docs/local-write-durability-and-history-consistency-zh.md)
+
 ## 说明
 
 - 开发测试向；本地 vault 使用逐记录 AES-256-GCM 加密，尚未切换到 SQLCipher。

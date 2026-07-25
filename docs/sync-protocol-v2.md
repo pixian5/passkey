@@ -34,7 +34,11 @@ extensions, and self-hosted sync server.
 - `PUT /v2/sync/state` must send `If-Match` when updating an existing state.
 - Clients send a unique `Idempotency-Key` for every logical write.
 - HTTP `412` means the client must pull, merge, and retry from the new ETag.
-- Server snapshots and audit records are append-only recovery metadata.
+- Each successful PUT or restore appends **exactly one** new `payload_versions` row for the new state. Do not re-insert the previous snapshot before the new one.
+- `X-Sync-Revision` equals `MAX(version_id)` for the scope; two successful writes produce revisions `1` then `2`.
+- Version history retains at most 50 entries per scope.
+- Audit history retains at most 5000 entries per scope and never stores ciphertext bodies.
+- Rate-limit windows are keyed by client IP and expire after about one minute.
 
 ## Safety and recovery
 

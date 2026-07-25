@@ -53,6 +53,16 @@ swift build
 - 加载或调用失败时自动回退 Swift 实现，并写 `NSLog`。
 - 架构说明见 [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md)。
 
+
+
+## 本地写入一致性（1.1.1）
+
+- 账号 / 文件夹 / Passkey 核心合并导入走 `saveCoreCollectionsAtomically`（SQLite 事务）。
+- 单集合保存失败会从磁盘恢复内存，避免界面显示未落盘数据。
+- 主密码启用/校验不 `trim`。
+- SSH 部署路径使用 shell quote。
+- 该模块是旧 Swift 参考与系统能力实现；共享管理功能以 Tauri 为准。
+
 ## 安全说明（开发测试版）
 - 主窗口、设置、新建账号、历史窗口都套了 AppLock 门禁。
 - AutoFill 扩展不再无交互直接出密，会要求用户确认。
