@@ -49,3 +49,9 @@
 
 - 环境变量 `PASS_USE_SWIFT_MERGE=1`：macOS 强制使用旧 Swift 合并（仅排障）。
 - 默认：优先 Rust FFI；加载/调用失败时回退 Swift 并记日志。
+
+## 7. CI 的干净环境原则
+
+- JS↔Rust 合并对拍前必须显式构建 `pass-merge-cli`，不得依赖开发机遗留的 `target/` 二进制。
+- FFI 验证须加载当前平台的原生库：macOS 验证打包会使用的 `.dylib`，Linux CI 直接验证 `.so`。
+- Tauri 的 Rust 检查前必须生成 `frontendDist`；CI 先安装桌面前端依赖并执行 `prepare:dist`。

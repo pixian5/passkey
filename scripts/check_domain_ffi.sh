@@ -2,8 +2,20 @@
 # Parity: Swift DomainUtils vs Rust pass_merge::v2::normalize (via FFI).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DYLIB="${ROOT}/apps/app_macos/Vendor/pass_core_ffi/libpass_core_ffi.dylib"
-"${ROOT}/apps/app_macos/scripts/build_pass_core_ffi.sh" >/dev/null
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  # The macOS app consumes the staged dylib, so test that exact packaging input.
+  DYLIB="${ROOT}/apps/app_macos/Vendor/pass_core_ffi/libpass_core_ffi.dylib"
+  "${ROOT}/apps/app_macos/scripts/build_pass_core_ffi.sh" >/dev/null
+else
+  # Linux CI has no Mach-O dylib. Test the native cdylib directly instead.
+  cargo build --manifest-path "${ROOT}/core/pass_core/Cargo.toml" -p pass-core-ffi --release --quiet
+  DYLIB="${ROOT}/core/pass_core/target/release/libpass_core_ffi.so"
+fi
+
+if [[ ! -f "${DYLIB}" ]]; then
+  echo "missing built FFI library: ${DYLIB}" >&2
+  exit 1
+fi
 
 python3 - "${DYLIB}" <<'PY'
 import ctypes, json, subprocess, tempfile, textwrap
