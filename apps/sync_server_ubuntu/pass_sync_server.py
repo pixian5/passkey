@@ -1100,10 +1100,9 @@ def load_config() -> AppConfig:
                 raise RuntimeError(f"PASS_SYNC_BEARER_TOKENS_FILE 权限必须为 0600 或更严格: {token_path}")
             token_value = token_path.read_text(encoding="utf-8").strip()
         elif not token_value:
-            # Keep deployment backward-compatible when a service template is
-            # installed before its token file. Payload requests remain fail
-            # closed with AUTH_NOT_CONFIGURED until an operator adds tokens.
-            LOGGER.warning("令牌文件不存在，服务将以未配置认证状态启动: %s", token_path)
+            # A missing optional token file and an empty environment value mean
+            # explicit open mode; no token is generated implicitly.
+            LOGGER.warning("令牌文件不存在，服务将以开放模式启动: %s", token_path)
     token_scopes = parse_token_scopes(token_value)
     allowed_origins = tuple(
         sorted({origin.strip() for origin in os.environ.get("PASS_SYNC_ALLOWED_ORIGINS", "").split(",") if origin.strip()})

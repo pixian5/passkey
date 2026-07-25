@@ -55,3 +55,4 @@
 - JS↔Rust 合并对拍前必须显式构建 `pass-merge-cli`，不得依赖开发机遗留的 `target/` 二进制。
 - FFI 验证须加载当前平台的原生库：macOS 验证打包会使用的 `.dylib`，Linux CI 直接验证 `.so`。
 - Tauri 的 Rust 检查前必须生成 `frontendDist`；CI 先安装桌面前端依赖并执行 `prepare:dist`。
+- 服务器部署必须分离源码目录与安装目录；健康失败时恢复实际安装文件、systemd 单元和部署前数据库，不能只切换 Git HEAD。

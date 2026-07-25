@@ -54,6 +54,10 @@ function validateVersion(value, source = "version") {
   if (!semverPattern.test(version)) {
     throw new Error(`${source} 必须是 major.minor.patch，实际为 ${JSON.stringify(value)}`);
   }
+  const [, minor, patch] = version.split(".").map(Number);
+  if (minor > 9 || patch > 9) {
+    throw new Error(`${source} 的 minor 和 patch 必须在 0..9，满十必须进位，实际为 ${version}`);
+  }
   return version;
 }
 
@@ -75,12 +79,13 @@ function nextVersion(version) {
   return `${major}.${minor}.${patch}`;
 }
 
-function androidVersionCode(version) {
+function platformBuildNumber(version) {
   const [major, minor, patch] = validateVersion(version).split(".").map(Number);
-  if (major > 21_474_836) {
-    throw new Error(`版本 ${version} 超出 Android versionCode 可表示范围`);
+  const buildNumber = major * 100 + minor * 10 + patch;
+  if (buildNumber > 2_147_483_647) {
+    throw new Error(`版本 ${version} 超出平台构建号可表示范围`);
   }
-  return major * 100 + minor * 10 + patch;
+  return buildNumber;
 }
 
 function writeText(relativePath, content) {
@@ -140,14 +145,26 @@ function setVersion(version) {
   }
   for (const target of marketingYamlTargets) {
     replaceExactly(target, /(MARKETING_VERSION:\s*")[^"]+("\s*$)/gm, `$1${version}$2`, "MARKETING_VERSION");
+    replaceExactly(
+      target,
+      /(CURRENT_PROJECT_VERSION:\s*")[^"]+("\s*$)/gm,
+      `$1${platformBuildNumber(version)}$2`,
+      "CURRENT_PROJECT_VERSION",
+    );
   }
   for (const target of marketingProjectTargets) {
     replaceExactly(target, /(MARKETING_VERSION\s*=\s*)[^;]+(;)/g, `$1${version}$2`, "MARKETING_VERSION");
+    replaceExactly(
+      target,
+      /(CURRENT_PROJECT_VERSION\s*=\s*)[^;]+(;)/g,
+      `$1${platformBuildNumber(version)}$2`,
+      "CURRENT_PROJECT_VERSION",
+    );
   }
   replaceExactly(
     androidGradleTarget,
     /(versionCode\s*=\s*)\d+/,
-    `$1${androidVersionCode(version)}`,
+    `$1${platformBuildNumber(version)}`,
     "Android versionCode",
   );
   replaceExactly(
@@ -161,6 +178,12 @@ function setVersion(version) {
     /(<key>CFBundleShortVersionString<\/key>\s*<string>)[^<]+(<\/string>)/,
     `$1${version}$2`,
     "CFBundleShortVersionString",
+  );
+  replaceExactly(
+    "apps/app_macos/AutofillExtension/AutoFillExtension-Info.plist",
+    /(<key>CFBundleVersion<\/key>\s*<string>)[^<]+(<\/string>)/,
+    `$1${platformBuildNumber(version)}$2`,
+    "CFBundleVersion",
   );
   replaceExactly(
     "apps/extension_shared/extension_version.js",
@@ -194,10 +217,14 @@ function collectVersions() {
   for (const target of marketingYamlTargets) {
     const values = [...fs.readFileSync(absolute(target), "utf8").matchAll(/MARKETING_VERSION:\s*"([^"]+)"/g)];
     values.forEach((match, index) => entries.push([`${target}:MARKETING_VERSION[${index}]`, match[1]]));
+    const buildValues = [...fs.readFileSync(absolute(target), "utf8").matchAll(/CURRENT_PROJECT_VERSION:\s*"([^"]+)"/g)];
+    buildValues.forEach((match, index) => entries.push([`${target}:buildNumber[${index}]`, Number(match[1])]));
   }
   for (const target of marketingProjectTargets) {
     const values = [...fs.readFileSync(absolute(target), "utf8").matchAll(/MARKETING_VERSION\s*=\s*([^;]+);/g)];
     values.forEach((match, index) => entries.push([`${target}:MARKETING_VERSION[${index}]`, match[1].trim()]));
+    const buildValues = [...fs.readFileSync(absolute(target), "utf8").matchAll(/CURRENT_PROJECT_VERSION\s*=\s*([^;]+);/g)];
+    buildValues.forEach((match, index) => entries.push([`${target}:buildNumber[${index}]`, Number(match[1].trim())]));
   }
   const androidGradle = fs.readFileSync(absolute(androidGradleTarget), "utf8");
   entries.push([`${androidGradleTarget}:versionName`, androidGradle.match(/versionName\s*=\s*"([^"]+)"/)?.[1]]);
@@ -206,6 +233,10 @@ function collectVersions() {
   entries.push([
     "apps/app_macos/AutofillExtension/AutoFillExtension-Info.plist:CFBundleShortVersionString",
     plist.match(/<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/)?.[1],
+  ]);
+  entries.push([
+    "apps/app_macos/AutofillExtension/AutoFillExtension-Info.plist:buildNumber",
+    Number(plist.match(/<key>CFBundleVersion<\/key>\s*<string>([^<]+)<\/string>/)?.[1]),
   ]);
   const extensionVersion = fs.readFileSync(absolute("apps/extension_shared/extension_version.js"), "utf8");
   entries.push(["apps/extension_shared/extension_version.js", extensionVersion.match(/PASS_EXTENSION_VERSION\s*=\s*["']([^"']+)["']/)?.[1]]);
@@ -217,10 +248,10 @@ function collectVersions() {
 
 function checkVersions() {
   const expected = readCanonicalVersion();
-  const expectedAndroidVersionCode = androidVersionCode(expected);
+  const expectedBuildNumber = platformBuildNumber(expected);
   const mismatches = collectVersions().filter(([source, value]) =>
-    source === `${androidGradleTarget}:versionCode`
-      ? value !== expectedAndroidVersionCode
+    source === `${androidGradleTarget}:versionCode` || source.includes(":buildNumber")
+      ? value !== expectedBuildNumber
       : value !== expected,
   );
   if (mismatches.length) {

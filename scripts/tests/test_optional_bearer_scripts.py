@@ -8,6 +8,7 @@ SCRIPTS = [
     ROOT / "apps" / "sync_server_ubuntu" / "start.sh",
     ROOT / "apps" / "sync_server_local" / "start.sh",
     ROOT / "apps" / "sync_server_local" / "install-launchd.sh",
+    ROOT / "apps" / "sync_server_ubuntu" / "deploy.sh",
 ]
 
 
@@ -21,6 +22,26 @@ class OptionalBearerScriptTests(unittest.TestCase):
     def test_scripts_have_valid_shell_syntax(self) -> None:
         for script in SCRIPTS:
             subprocess.run(["bash", "-n", str(script)], check=True, cwd=ROOT)
+
+    def test_deployment_separates_source_and_install_paths(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "deploy-sync-server.yml").read_text(encoding="utf-8")
+        deploy = (ROOT / "apps" / "sync_server_ubuntu" / "deploy.sh").read_text(encoding="utf-8")
+        self.assertIn("source_dir=/opt/pass-sync-source", workflow)
+        self.assertIn("PASS_SYNC_INSTALL_DIR:-/opt/pass-sync-server", deploy)
+        self.assertIn("restore_previous_installation", deploy)
+        self.assertIn("pass-sync-server-backup.timer", deploy)
+
+    def test_backup_service_uses_installed_script(self) -> None:
+        service = (ROOT / "apps" / "sync_server_ubuntu" / "pass-sync-server-backup.service").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("ExecStart=/opt/pass-sync-server/backup_sync_db.sh", service)
+        self.assertNotIn("/apps/sync_server_ubuntu/", service)
+
+    def test_service_uses_saved_tls_certificate(self) -> None:
+        service = (ROOT / "apps" / "sync_server_ubuntu" / "pass-sync-server.service").read_text(encoding="utf-8")
+        self.assertIn("PASS_SYNC_TLS_CERT=/etc/pass-sync/tls/server.crt", service)
+        self.assertIn("PASS_SYNC_TLS_KEY=/etc/pass-sync/tls/server.key", service)
 
 
 if __name__ == "__main__":

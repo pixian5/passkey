@@ -5,4 +5,4 @@ After=pass-sync-server.service
 [Service]
 Type=oneshot
 User=root
-ExecStart=/opt/pass-sync-server/apps/sync_server_ubuntu/backup_sync_db.sh
+ExecStart=/opt/pass-sync-server/backup_sync_db.sh

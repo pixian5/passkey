@@ -30,7 +30,9 @@
 - 已有 state 的 `PUT` **必须**携带 `If-Match`；缺失返回 `428/412`
 - 启动时若发现未知 schema 的 payload，会先写入 `purged_payloads_*.jsonl` 隔离文件；默认拒绝启动，需显式设置 `PASS_SYNC_PURGE_LEGACY=1` 才删除
 - 幂等重放若发现远端 etag 已被推进，返回 `409 IDEMPOTENCY_STALE`
-- GitHub Actions 部署后会访问 `/healthz`；健康检查失败会自动回滚到部署前提交并重启服务
+- GitHub Actions 使用 `/opt/pass-sync-source` 保存源码、`/opt/pass-sync-server` 保存安装文件；两者不混用
+- 部署前暂停服务并备份当前程序、systemd 单元和 SQLite；`/healthz` 失败时恢复这些实际安装文件和数据库后重启旧服务
+- 部署会安装并启用 `pass-sync-server-backup.timer`，每日备份脚本固定从 `/opt/pass-sync-server/backup_sync_db.sh` 运行
 
 ## 快速启动
 
@@ -120,6 +122,14 @@ https://your-domain.example/v2/sync/state
 - 定期备份 `pass_sync.sqlite3`
 - 备份脚本会执行 SQLite `integrity_check`，校验失败时以非零状态退出
 - `payload_versions` 表保存最近 50 个密文快照；备份时应同时保留整个 SQLite 文件
+
+仓库的 `Deploy Sync Server` 工作流会在服务器维护两个目录：
+
+- `/opt/pass-sync-source`：GitHub Actions 专用源码检出目录。
+- `/opt/pass-sync-server`：systemd 实际运行的稳定安装目录，不是 Git 仓库。
+- `/etc/pass-sync/tls`：部署时保存的服务证书副本；systemd 从这里读取证书和私钥。
+
+不要把安装目录当作 Git 仓库，也不要通过切换源码提交冒充程序回滚。回滚必须恢复安装目录、systemd 单元和部署前 SQLite 备份。
 
 ## systemd 部署（生产推荐）
 
