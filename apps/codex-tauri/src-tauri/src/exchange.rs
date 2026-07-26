@@ -284,7 +284,13 @@ pub fn list_sync_versions(settings: &SyncSettings) -> Result<Vec<SyncVersionSumm
     for item in arr {
         let id_value = item.get("id").or_else(|| item.get("versionId"));
         let id = id_value
-            .and_then(|value| value.as_str().map(str::to_owned).or_else(|| value.as_i64().map(|number| number.to_string())).or_else(|| value.as_u64().map(|number| number.to_string())))
+            .and_then(|value| {
+                value
+                    .as_str()
+                    .map(str::to_owned)
+                    .or_else(|| value.as_i64().map(|number| number.to_string()))
+                    .or_else(|| value.as_u64().map(|number| number.to_string()))
+            })
             .unwrap_or_default();
         if id.is_empty() {
             continue;

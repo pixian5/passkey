@@ -5,11 +5,7 @@ use super::policy::FIXED_NEW_ACCOUNT_FOLDER_ID;
 use super::types::{AccountFolderMembershipState, Folder, PasswordAccount};
 
 /// Soft-delete an account into recycle bin. Returns false if already deleted/permanent.
-pub fn soft_delete_account(
-    account: &mut PasswordAccount,
-    now_ms: i64,
-    device_name: &str,
-) -> bool {
+pub fn soft_delete_account(account: &mut PasswordAccount, now_ms: i64, device_name: &str) -> bool {
     if account.is_deleted || account.is_permanently_deleted {
         return false;
     }
@@ -87,7 +83,6 @@ pub fn set_account_pinned(
     Ok(())
 }
 
-
 /// Write a folder membership relation tombstone/state for one account.
 /// Does not mutate `folder_ids` itself; callers own membership list edits.
 pub fn mark_folder_membership(
@@ -119,10 +114,7 @@ pub fn permanently_delete_folder(
     now_ms: i64,
     device_name: &str,
 ) -> Result<bool, String> {
-    if folder
-        .id
-        .eq_ignore_ascii_case(FIXED_NEW_ACCOUNT_FOLDER_ID)
-    {
+    if folder.id.eq_ignore_ascii_case(FIXED_NEW_ACCOUNT_FOLDER_ID) {
         return Err("固定文件夹不可删除".into());
     }
     if folder.is_deleted || folder.is_permanently_deleted {
@@ -198,12 +190,18 @@ mod tests {
             name: "工作".into(),
             ..Default::default()
         };
-        assert_eq!(permanently_delete_folder(&mut folder, 40, "D").unwrap(), true);
+        assert_eq!(
+            permanently_delete_folder(&mut folder, 40, "D").unwrap(),
+            true
+        );
         assert!(folder.is_deleted);
         assert!(folder.is_permanently_deleted);
         assert_eq!(folder.deleted_at_ms, Some(40));
         assert_eq!(folder.deleted_device_name, "D");
-        assert_eq!(permanently_delete_folder(&mut folder, 41, "D").unwrap(), false);
+        assert_eq!(
+            permanently_delete_folder(&mut folder, 41, "D").unwrap(),
+            false
+        );
 
         let mut fixed = Folder {
             id: FIXED_NEW_ACCOUNT_FOLDER_ID.into(),

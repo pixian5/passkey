@@ -102,7 +102,9 @@ fn missing_summary_ids(
     source: &std::collections::BTreeSet<String>,
     target: &std::collections::BTreeSet<String>,
 ) -> bool {
-    source.iter().any(|id| !id.is_empty() && !target.contains(id))
+    source
+        .iter()
+        .any(|id| !id.is_empty() && !target.contains(id))
 }
 
 /// Validate a merged payload before it is written locally or uploaded.

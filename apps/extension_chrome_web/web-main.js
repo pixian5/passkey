@@ -4162,8 +4162,8 @@ els.btnUnlockBiometric?.addEventListener("click", async () => {
 els.btnLockEnable?.addEventListener("click", async () => {
   const restore = setButtonBusy(els.btnLockEnable, "正在启用…");
   try {
-    const password = (els.lockPassword?.value || "").trim();
-    const confirm = (els.lockPassword2?.value || "").trim();
+    const password = els.lockPassword?.value || "";
+    const confirm = els.lockPassword2?.value || "";
     if (!password) {
       toastError("请输入主密码");
       return;

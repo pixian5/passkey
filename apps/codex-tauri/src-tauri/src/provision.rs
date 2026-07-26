@@ -611,6 +611,7 @@ fi
 fn install_command(stage: &str, endpoint: &Endpoint, custom_tls: bool) -> String {
     let tls = if endpoint.uses_tls { "1" } else { "0" };
     let port = endpoint.backend_port;
+    let health_host = endpoint.host.as_str();
     let tls_resolve = if custom_tls {
         format!(
             "CERT_SRC='{stage}/fullchain.cer'\nKEY_SRC='{stage}/sbbz.tech.key'",
@@ -661,7 +662,7 @@ if [ "{tls}" = "1" ]; then
   fi
   healthy=0
   for attempt in $(seq 1 30); do
-    if curl --fail --silent --show-error --insecure --max-time 15 https://127.0.0.1:{port}/healthz >/dev/null; then
+    if curl --fail --silent --show-error --max-time 15 --resolve '{health_host}:{port}:127.0.0.1' https://{health_host}:{port}/healthz >/dev/null; then
       healthy=1
       break
     fi
@@ -686,6 +687,7 @@ rm -rf '{stage}'
         stage = stage,
         tls = tls,
         port = port,
+        health_host = health_host,
         tls_resolve = tls_resolve,
     )
 }

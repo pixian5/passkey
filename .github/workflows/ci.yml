@@ -115,8 +115,7 @@ jobs:
           npm --prefix apps/codex-tauri run prepare:dist
       - name: Version and embedded sync server drift
         run: node scripts/version.mjs check
-      - name: Rustfmt (informational until fully normalized)
-        continue-on-error: true
+      - name: Rustfmt
         run: |
           fmt_failed=0
           cargo fmt --manifest-path core/pass_core/Cargo.toml --all --check || fmt_failed=1

@@ -180,7 +180,7 @@ systemctl enable --now pass-sync-server-backup.timer
 
 resolve_health_url() {
   if [[ -n "${HEALTH_URL}" ]]; then
-    printf '%s\n' "${HEALTH_URL}"
+    printf '%s\t\n' "${HEALTH_URL}"
     return 0
   fi
   main_pid="$(systemctl show pass-sync-server -p MainPID --value)"
@@ -193,17 +193,33 @@ resolve_health_url() {
   tls_key="$(printf '%s\n' "${process_environment}" | sed -n 's/^PASS_SYNC_TLS_KEY=//p' | tail -n 1)"
   actual_port="${actual_port:-53333}"
   if [[ -n "${tls_cert}" && -n "${tls_key}" ]]; then
-    printf 'https://127.0.0.1:%s/healthz\n' "${actual_port}"
+    # A certificate normally names a DNS host, not 127.0.0.1. Select an
+    # explicit override or the first DNS SAN, then resolve that name to the
+    # local listener while retaining normal certificate verification.
+    health_host="${PASS_SYNC_HEALTH_HOST:-}"
+    if [[ -z "${health_host}" ]]; then
+      health_host="$(openssl x509 -in "${tls_cert}" -noout -ext subjectAltName 2>/dev/null | grep -oE 'DNS:[A-Za-z0-9.-]+' | head -n 1 | sed 's/^DNS://' || true)"
+    fi
+    if [[ ! "${health_host}" =~ ^[A-Za-z0-9.-]+$ ]]; then
+      echo "TLS 已启用但无法从证书读取 DNS SAN；请设置 PASS_SYNC_HEALTH_URL 或 PASS_SYNC_HEALTH_HOST" >&2
+      return 1
+    fi
+    printf 'https://%s:%s/healthz\t%s:%s:127.0.0.1\n' "${health_host}" "${actual_port}" "${health_host}" "${actual_port}"
   else
-    printf 'http://127.0.0.1:%s/healthz\n' "${actual_port}"
+    printf 'http://127.0.0.1:%s/healthz\t\n' "${actual_port}"
   fi
 }
 
 healthy=0
 checked_health_url=""
 for _attempt in $(seq 1 30); do
-  checked_health_url="$(resolve_health_url || true)"
-  if [[ -n "${checked_health_url}" ]] && curl --fail --silent --show-error --insecure "${checked_health_url}" >/dev/null; then
+  health_target="$(resolve_health_url || true)"
+  IFS=$'\t' read -r checked_health_url health_resolve <<< "${health_target}"
+  curl_args=(--fail --silent --show-error)
+  if [[ -n "${health_resolve:-}" ]]; then
+    curl_args+=(--resolve "${health_resolve}")
+  fi
+  if [[ -n "${checked_health_url}" ]] && curl "${curl_args[@]}" "${checked_health_url}" >/dev/null; then
     healthy=1
     break
   fi

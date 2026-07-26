@@ -153,4 +153,3 @@ mod tests {
         assert!(matches!(result, Err(ContractError::InvalidLimit(0))));
     }
 }
-

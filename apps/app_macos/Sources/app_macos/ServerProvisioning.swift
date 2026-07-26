@@ -441,7 +441,7 @@ enum ServerProvisioningService {
           fi
           healthy=0
           for attempt in $(seq 1 30); do
-            if curl --fail --silent --show-error --insecure --max-time 15 https://127.0.0.1:\(endpoint.backendPort)/healthz >/dev/null; then
+            if curl --fail --silent --show-error --max-time 15 --resolve '\(endpoint.host):\(endpoint.backendPort):127.0.0.1' https://\(endpoint.host):\(endpoint.backendPort)/healthz >/dev/null; then
               healthy=1
               break
             fi

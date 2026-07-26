@@ -142,7 +142,6 @@ pub fn move_redo_to_undo(
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,7 +158,9 @@ mod tests {
         older.all_regular_order_updated_at_ms = 7;
         push(&dir, "真实修改", older.clone()).unwrap();
         push(&dir, "失败操作残留", current.clone()).unwrap();
-        let entry = latest_distinct_undo(&dir, &current).unwrap().expect("should keep real change");
+        let entry = latest_distinct_undo(&dir, &current)
+            .unwrap()
+            .expect("should keep real change");
         assert_eq!(entry.title, "真实修改");
         assert_eq!(entry.payload, older);
         let _ = fs::remove_dir_all(dir);

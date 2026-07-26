@@ -5,7 +5,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-static VERSION_STR: &[u8] = b"0.1.0\0";
+static VERSION_STR: &[u8] = b"1.2.2\0";
 static HEALTH_STR_OK: &[u8] = b"ok\0";
 static HEALTH_STR_NOT_READY: &[u8] = b"not_initialized\0";
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -405,16 +405,17 @@ pub extern "C" fn pass_core_export_macos_csv_json(accounts_json: *const c_char) 
                     a.recovery_codes_updated_at_ms.to_string(),
                     a.note_updated_at_ms.to_string(),
                     if a.is_deleted { "true" } else { "false" }.to_string(),
-                    a.deleted_at_ms
-                        .map(|v| v.to_string())
-                        .unwrap_or_default(),
+                    a.deleted_at_ms.map(|v| v.to_string()).unwrap_or_default(),
                     a.last_operated_device_name.clone(),
                     a.created_at_ms.to_string(),
                     a.updated_at_ms.to_string(),
                 ]
             })
             .collect();
-        Ok(pass_csvio::build_csv(pass_csvio::MACOS_EXPORT_HEADERS, &rows))
+        Ok(pass_csvio::build_csv(
+            pass_csvio::MACOS_EXPORT_HEADERS,
+            &rows,
+        ))
     })();
     wrap_result(result)
 }
@@ -483,7 +484,8 @@ pub extern "C" fn pass_core_sync_alias_groups_json(
 ) -> *mut c_char {
     let result = (|| {
         let accounts_json = cstr_to_str(accounts_json, "accounts_json")?;
-        let device_name = cstr_to_str(device_name, "device_name").unwrap_or_else(|_| "".to_string());
+        let device_name =
+            cstr_to_str(device_name, "device_name").unwrap_or_else(|_| "".to_string());
         let mut accounts: Vec<pass_merge::v2::PasswordAccount> =
             if let Ok(wrapper) = serde_json::from_str::<serde_json::Value>(&accounts_json) {
                 if let Some(arr) = wrapper.get("accounts") {
@@ -498,8 +500,7 @@ pub extern "C" fn pass_core_sync_alias_groups_json(
             } else {
                 return Err("invalid accounts json".into());
             };
-        let changed =
-            pass_merge::v2::sync_alias_groups(&mut accounts, now_ms, &device_name);
+        let changed = pass_merge::v2::sync_alias_groups(&mut accounts, now_ms, &device_name);
         serde_json::to_string(&serde_json::json!({
             "accounts": accounts,
             "changed": changed,
@@ -569,8 +570,7 @@ pub extern "C" fn pass_core_evaluate_sync_safety_json(
                 )
             }
         };
-        let report =
-            pass_merge::v2::evaluate_sync_safety(&local, remote.as_ref(), &merged, &mode);
+        let report = pass_merge::v2::evaluate_sync_safety(&local, remote.as_ref(), &merged, &mode);
         serde_json::to_string(&serde_json::json!({
             "safe": report.safe,
             "reasons": report.reasons,

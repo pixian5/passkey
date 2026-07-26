@@ -804,7 +804,7 @@ async function getBackgroundLockStatus() {
 }
 
 async function unlockBackground(rawPassword) {
-  const password = String(rawPassword || "").trim();
+  const password = String(rawPassword || "");
   const stored = await chrome.storage.local.get([
     STORAGE_KEY_LOCK_ENABLED,
     STORAGE_KEY_LOCK_MASTER_CREDENTIAL,
@@ -846,7 +846,7 @@ async function lockBackground() {
 }
 
 async function configureDataEncryption(payload) {
-  const password = String(payload?.password || "").trim();
+  const password = String(payload?.password || "");
   const stored = await chrome.storage.local.get([STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
   const credential = normalizeLockMasterCredential(stored[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
   if (!password || !credential || !(await verifyLockMasterPassword(credential, password))) {
@@ -866,7 +866,7 @@ async function configureDataEncryption(payload) {
 }
 
 async function disableBackgroundDataEncryption(payload) {
-  const password = String(payload?.password || "").trim();
+  const password = String(payload?.password || "");
   const stored = await chrome.storage.local.get([STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
   const credential = normalizeLockMasterCredential(stored[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
   if (!password || !credential || !(await verifyLockMasterPassword(credential, password))) {
@@ -881,8 +881,8 @@ async function disableBackgroundDataEncryption(payload) {
 }
 
 async function rewrapBackgroundDataEncryption(payload) {
-  const currentPassword = String(payload?.currentPassword || "").trim();
-  const nextPassword = String(payload?.nextPassword || "").trim();
+  const currentPassword = String(payload?.currentPassword || "");
+  const nextPassword = String(payload?.nextPassword || "");
   const stored = await chrome.storage.local.get([STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
   const currentCredential = normalizeLockMasterCredential(stored[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
   const nextCredential = normalizeLockMasterCredential(payload?.nextCredential);

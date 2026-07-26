@@ -33,8 +33,9 @@ const LEGACY_STORAGE_KEY_SYNC_SERVER_TOKEN = "pass.sync.server.token.v2";
 const LEGACY_STORAGE_KEY_SYNC_ENCRYPTION_KEY = "pass.sync.encryptionKey.v1";
 const LEGACY_STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS = "pass.localSafetySnapshots.v1";
 const LEGACY_DATA_KEY_WRAP_AAD = "pass.data.encryptionKey.v2";
-const DATA_KEY_WRAP_AAD = "pass.data.encryptionKey.v3";
-const DATA_KEY_WRAP_VERSION = 3;
+const LEGACY_DATA_KEY_WRAP_AAD_V3 = "pass.data.encryptionKey.v3";
+const DATA_KEY_WRAP_AAD = "pass.data.encryptionKey.v4";
+const DATA_KEY_WRAP_VERSION = 4;
 const DATA_KEY_WRAP_KDF = "PBKDF2-SHA-256";
 const DATA_KEY_WRAP_SALT_BYTES = 16;
 export const STORAGE_KEY_DATA_BUMP = "pass.data.bump.v1";
@@ -285,8 +286,11 @@ export async function unlockDataEncryption(password, rawCredential) {
   if (wrapped) {
     if (Number(wrapped.version) === DATA_KEY_WRAP_VERSION) {
       rawKey = await unwrapDataKey(password, wrapped);
+    } else if (Number(wrapped.version) === 3) {
+      rawKey = await unwrapV3DataKey(password, wrapped);
+      await storeWrappedDataKey(password, rawKey);
     } else if (Number(wrapped.version) === 2) {
-      const legacyWrappingKey = await deriveWrappingKey(
+      const legacyWrappingKey = await deriveLegacyWrappingKey(
         password,
         base64ToBytes(credential.saltBase64),
         credential.iterations
@@ -343,7 +347,7 @@ export async function disableDataEncryption(password, rawCredential) {
 async function deriveWrappingKey(password, saltBytes, iterations) {
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
-    new TextEncoder().encode(String(password || "").trim()),
+    new TextEncoder().encode(String(password || "")),
     "PBKDF2",
     false,
     ["deriveKey"]
@@ -362,6 +366,12 @@ async function deriveWrappingKey(password, saltBytes, iterations) {
   );
 }
 
+// v2/v3 used a trimmed password for the data-key wrapper. Keep this only for
+// one-way compatibility migration; all new v4 wrappers preserve every byte.
+async function deriveLegacyWrappingKey(password, saltBytes, iterations) {
+  return deriveWrappingKey(String(password || "").trim(), saltBytes, iterations);
+}
+
 function normalizeCredential(value) {
   const credential = normalizeLockMasterCredential(value);
   if (!credential) throw new Error("主密码凭据无效");
@@ -378,6 +388,29 @@ async function unwrapLegacyDataKey(wrappingKey, wrapped) {
     },
     wrappingKey,
     base64ToBytes(wrapped.ciphertextBase64)
+  );
+  const rawKey = new Uint8Array(plaintext);
+  if (rawKey.length !== 32) throw new Error("本地数据密钥长度无效");
+  return rawKey;
+}
+
+async function unwrapV3DataKey(password, wrapped) {
+  if (!wrapped || Number(wrapped.version) !== 3 ||
+      String(wrapped.kdf || "") !== DATA_KEY_WRAP_KDF ||
+      Number(wrapped.iterations) !== LOCK_PBKDF2_ITERATIONS) {
+    throw new Error("本地数据密钥格式无效");
+  }
+  const saltBytes = base64ToBytes(wrapped.wrapSaltBase64);
+  const nonce = base64ToBytes(wrapped.nonceBase64);
+  const ciphertext = base64ToBytes(wrapped.ciphertextBase64);
+  if (saltBytes.length !== DATA_KEY_WRAP_SALT_BYTES || nonce.length !== 12 || ciphertext.length !== 48) {
+    throw new Error("本地数据密钥格式无效");
+  }
+  const wrappingKey = await deriveLegacyWrappingKey(password, saltBytes, LOCK_PBKDF2_ITERATIONS);
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: nonce, additionalData: new TextEncoder().encode(LEGACY_DATA_KEY_WRAP_AAD_V3) },
+    wrappingKey,
+    ciphertext
   );
   const rawKey = new Uint8Array(plaintext);
   if (rawKey.length !== 32) throw new Error("本地数据密钥长度无效");

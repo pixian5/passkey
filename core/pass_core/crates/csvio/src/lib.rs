@@ -215,14 +215,7 @@ pub fn browser_csv_to_account_drafts(text: &str) -> Result<Vec<BrowserAccountDra
         let site_raw = map_get(
             &map,
             &[
-                "url",
-                "origin",
-                "website",
-                "hostname",
-                "loginuri",
-                "loginurl",
-                "sites",
-                "name",
+                "url", "origin", "website", "hostname", "loginuri", "loginurl", "sites", "name",
             ],
         )
         .cloned()

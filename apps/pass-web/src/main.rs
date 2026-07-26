@@ -16,21 +16,10 @@ use base64::{
 };
 use pass_csvio::{browser_csv_to_account_drafts, build_csv, host_from_site_value};
 use pass_merge::v2::{
-    evaluate_sync_safety,
-    normalize_all_regular_order,
-    normalize_folder_regular_order,
-    normalize_folder_regular_orders,
-    sync_alias_groups,
-    Folder,
-    Passkey,
-    PasswordAccount,
-    SyncPayload,
-    soft_delete_account,
-    permanently_delete_account,
-    permanently_delete_folder,
-    mark_folder_membership,
-    restore_account_fields,
-    set_account_pinned,
+    evaluate_sync_safety, mark_folder_membership, normalize_all_regular_order,
+    normalize_folder_regular_order, normalize_folder_regular_orders, permanently_delete_account,
+    permanently_delete_folder, restore_account_fields, set_account_pinned, soft_delete_account,
+    sync_alias_groups, Folder, Passkey, PasswordAccount, SyncPayload,
 };
 use pbkdf2::pbkdf2_hmac;
 use rand::RngCore;
@@ -56,7 +45,10 @@ use url::Url;
 use uuid::Uuid;
 
 const KEY_FILE: &str = "pass-web-vault-key-v1";
+const KEY_WRAPPER_FILE: &str = "pass-web-vault-key-wrapper-v1.json";
+const INSTANCE_LOCK_FILE: &str = "pass-web-instance.lock";
 const VAULT_FILE: &str = "pass-web-vault-v1.enc";
+const VAULT_KEY_WRAP_AAD: &[u8] = b"pass.web.vault-key-wrapper.v1";
 const FIXED_FOLDER_ID: &str = pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID;
 const FIXED_FOLDER_NAME: &str = pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_NAME;
 const LOCK_PBKDF2_ITERS: u32 = 310_000;
@@ -66,6 +58,20 @@ struct AppState {
     vault: Arc<Mutex<Vault>>,
     auth_token: String,
     static_dir: PathBuf,
+    _instance_guard: Arc<InstanceGuard>,
+}
+
+struct InstanceGuard {
+    path: PathBuf,
+    contents: String,
+}
+
+impl Drop for InstanceGuard {
+    fn drop(&mut self) {
+        if fs::read_to_string(&self.path).ok().as_deref() == Some(self.contents.as_str()) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -147,6 +153,20 @@ struct WebLockData {
     background_lock_delay_seconds: u32,
 }
 
+/// Bootstrap metadata intentionally contains no vault data or raw vault key.
+/// It lets a restarted process authenticate and unwrap the vault key before
+/// reading the encrypted vault file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VaultKeyWrapper {
+    version: u8,
+    salt_b64: String,
+    verifier_b64: String,
+    nonce_b64: String,
+    ciphertext_b64: String,
+    iterations: u32,
+}
+
 impl Default for WebLockData {
     fn default() -> Self {
         Self {
@@ -176,6 +196,8 @@ fn default_background_lock_delay() -> u32 {
 struct Vault {
     dir: PathBuf,
     data: VaultData,
+    key: Option<[u8; 32]>,
+    key_wrapper: Option<VaultKeyWrapper>,
     locked: bool,
     last_activity_ms: i64,
     persist_enabled: bool,
@@ -231,14 +253,21 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
-fn safe_export_target(root: &FsPath, requested: Option<&str>, default_name: &str) -> Result<PathBuf, String> {
+fn safe_export_target(
+    root: &FsPath,
+    requested: Option<&str>,
+    default_name: &str,
+) -> Result<PathBuf, String> {
     let root = fs::canonicalize(root).map_err(|e| format!("解析导出目录失败：{e}"))?;
     let value = requested.map(str::trim).filter(|value| !value.is_empty());
     let candidate = match value {
         None => root.join(default_name),
         Some(raw) => {
             let raw_path = FsPath::new(raw);
-            if raw_path.components().any(|component| matches!(component, std::path::Component::ParentDir)) {
+            if raw_path
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+            {
                 return Err("导出路径不能包含 ..".into());
             }
             if raw_path.is_absolute() {
@@ -256,13 +285,20 @@ fn safe_export_target(root: &FsPath, requested: Option<&str>, default_name: &str
     } else {
         candidate
     };
-    let parent = target.parent().ok_or_else(|| "导出路径缺少父目录".to_string())?;
+    let parent = target
+        .parent()
+        .ok_or_else(|| "导出路径缺少父目录".to_string())?;
     fs::create_dir_all(parent).map_err(|e| format!("创建导出目录失败：{e}"))?;
-    let canonical_parent = fs::canonicalize(parent).map_err(|e| format!("解析导出目录失败：{e}"))?;
+    let canonical_parent =
+        fs::canonicalize(parent).map_err(|e| format!("解析导出目录失败：{e}"))?;
     if !canonical_parent.starts_with(&root) {
         return Err("导出路径必须位于应用数据目录内".into());
     }
-    Ok(canonical_parent.join(target.file_name().ok_or_else(|| "导出文件名无效".to_string())?))
+    Ok(canonical_parent.join(
+        target
+            .file_name()
+            .ok_or_else(|| "导出文件名无效".to_string())?,
+    ))
 }
 
 fn private_file(path: &FsPath) {
@@ -287,7 +323,28 @@ fn private_dir_result(path: &FsPath) -> Result<(), String> {
     private_dir(path)
 }
 
-fn load_key(dir: &FsPath) -> Result<[u8; 32], String> {
+fn acquire_instance_guard(dir: &FsPath) -> Result<InstanceGuard, String> {
+    private_dir_result(dir)?;
+    let path = dir.join(INSTANCE_LOCK_FILE);
+    let contents = format!("pid={} nonce={}\n", std::process::id(), Uuid::new_v4());
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|_| {
+            format!(
+                "数据目录已被另一 Pass Web 实例占用：{}。确认旧进程已停止后再删除该锁文件。",
+                path.display()
+            )
+        })?;
+    file.write_all(contents.as_bytes())
+        .and_then(|_| file.sync_all())
+        .map_err(|e| format!("写入 Web 单实例锁失败：{e}"))?;
+    private_file(&path);
+    Ok(InstanceGuard { path, contents })
+}
+
+fn load_or_create_raw_key(dir: &FsPath) -> Result<[u8; 32], String> {
     private_dir_result(dir)?;
     let path = dir.join(KEY_FILE);
     if let Ok(bytes) = fs::read(&path) {
@@ -306,9 +363,116 @@ fn load_key(dir: &FsPath) -> Result<[u8; 32], String> {
     Ok(key)
 }
 
-fn encrypt(dir: &FsPath, plain: &[u8]) -> Result<Vec<u8>, String> {
-    let key = load_key(dir)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
+fn write_private_atomic(dir: &FsPath, name: &str, bytes: &[u8]) -> Result<(), String> {
+    private_dir_result(dir)?;
+    let path = dir.join(name);
+    let temp = dir.join(format!(".{name}.{}.tmp", Uuid::new_v4()));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .map_err(|e| format!("创建 {name} 临时文件失败：{e}"))?;
+    file.write_all(bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|e| format!("持久化 {name} 临时文件失败：{e}"))?;
+    drop(file);
+    private_file(&temp);
+    fs::rename(&temp, &path).map_err(|e| format!("更新 {name} 失败：{e}"))?;
+    private_file(&path);
+    fs::File::open(dir)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|e| format!("持久化 Web vault 目录失败：{e}"))
+}
+
+fn read_key_wrapper(dir: &FsPath) -> Result<Option<VaultKeyWrapper>, String> {
+    let path = dir.join(KEY_WRAPPER_FILE);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read(&path).map_err(|e| format!("读取 Web vault 密钥包装失败：{e}"))?;
+    let wrapper: VaultKeyWrapper =
+        serde_json::from_slice(&raw).map_err(|_| "Web vault 密钥包装格式无效".to_string())?;
+    if wrapper.version != 1 || wrapper.iterations < 1 {
+        return Err("Web vault 密钥包装版本无效".into());
+    }
+    Ok(Some(wrapper))
+}
+
+fn write_key_wrapper(dir: &FsPath, wrapper: &VaultKeyWrapper) -> Result<(), String> {
+    let encoded =
+        serde_json::to_vec(wrapper).map_err(|e| format!("序列化 Web vault 密钥包装失败：{e}"))?;
+    write_private_atomic(dir, KEY_WRAPPER_FILE, &encoded)
+}
+
+fn wrap_vault_key(password: &str, key: &[u8; 32]) -> Result<VaultKeyWrapper, String> {
+    if password.is_empty() {
+        return Err("主密码不能为空".into());
+    }
+    let mut salt = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut salt);
+    let wrapping_key = derive_web_lock_key(password, &salt, LOCK_PBKDF2_ITERS);
+    let mut nonce = [0u8; 12];
+    rand::thread_rng().fill_bytes(&mut nonce);
+    let cipher = Aes256Gcm::new_from_slice(&wrapping_key).map_err(|e| e.to_string())?;
+    let ciphertext = cipher
+        .encrypt(
+            Nonce::from_slice(&nonce),
+            aes_gcm::aead::Payload {
+                msg: key,
+                aad: VAULT_KEY_WRAP_AAD,
+            },
+        )
+        .map_err(|_| "包装 Web vault 密钥失败".to_string())?;
+    Ok(VaultKeyWrapper {
+        version: 1,
+        salt_b64: STANDARD.encode(salt),
+        verifier_b64: STANDARD.encode(Sha256::digest(wrapping_key)),
+        nonce_b64: STANDARD.encode(nonce),
+        ciphertext_b64: STANDARD.encode(ciphertext),
+        iterations: LOCK_PBKDF2_ITERS,
+    })
+}
+
+fn unwrap_vault_key(password: &str, wrapper: &VaultKeyWrapper) -> Result<[u8; 32], String> {
+    let salt = STANDARD
+        .decode(&wrapper.salt_b64)
+        .map_err(|_| "Web vault 密钥包装 salt 无效".to_string())?;
+    let nonce = STANDARD
+        .decode(&wrapper.nonce_b64)
+        .map_err(|_| "Web vault 密钥包装 nonce 无效".to_string())?;
+    let ciphertext = STANDARD
+        .decode(&wrapper.ciphertext_b64)
+        .map_err(|_| "Web vault 密钥包装密文无效".to_string())?;
+    if salt.len() != 16 || nonce.len() != 12 || ciphertext.len() != 48 {
+        return Err("Web vault 密钥包装格式无效".into());
+    }
+    let wrapping_key = derive_web_lock_key(password, &salt, wrapper.iterations);
+    let expected = STANDARD
+        .decode(&wrapper.verifier_b64)
+        .map_err(|_| "Web vault 密钥包装验证值无效".to_string())?;
+    if !constant_time_equal(&Sha256::digest(wrapping_key), &expected) {
+        return Err("主密码错误".into());
+    }
+    let cipher = Aes256Gcm::new_from_slice(&wrapping_key).map_err(|e| e.to_string())?;
+    let plain = cipher
+        .decrypt(
+            Nonce::from_slice(&nonce),
+            aes_gcm::aead::Payload {
+                msg: &ciphertext,
+                aad: VAULT_KEY_WRAP_AAD,
+            },
+        )
+        .map_err(|_| "Web vault 密钥解包失败".to_string())?;
+    if plain.len() != 32 {
+        return Err("Web vault 密钥长度无效".into());
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&plain);
+    Ok(key)
+}
+
+fn encrypt(key: &[u8; 32], plain: &[u8]) -> Result<Vec<u8>, String> {
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| e.to_string())?;
     let mut nonce = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce);
     let mut out = nonce.to_vec();
@@ -320,21 +484,29 @@ fn encrypt(dir: &FsPath, plain: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-fn decrypt(dir: &FsPath, raw: &[u8]) -> Result<Vec<u8>, String> {
+fn decrypt(key: &[u8; 32], raw: &[u8]) -> Result<Vec<u8>, String> {
     if raw.len() < 28 {
         return Err("Web vault 数据损坏".into());
     }
-    let key = load_key(dir)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| e.to_string())?;
     cipher
         .decrypt(Nonce::from_slice(&raw[..12]), &raw[12..])
         .map_err(|_| "Web vault 解密失败".to_string())
 }
 
-fn save_data(dir: &FsPath, data: &VaultData) -> Result<(), String> {
+fn load_data(dir: &FsPath, key: &[u8; 32]) -> Result<VaultData, String> {
+    let path = dir.join(VAULT_FILE);
+    serde_json::from_slice(&decrypt(
+        key,
+        &fs::read(&path).map_err(|e| format!("读取 Web vault 失败：{e}"))?,
+    )?)
+    .map_err(|e| format!("解析 Web vault 失败：{e}"))
+}
+
+fn save_data(dir: &FsPath, key: &[u8; 32], data: &VaultData) -> Result<(), String> {
     private_dir_result(dir)?;
     let raw = serde_json::to_vec(data).map_err(|e| format!("序列化 Web vault 失败：{e}"))?;
-    let encrypted = encrypt(dir, &raw)?;
+    let encrypted = encrypt(key, &raw)?;
     let path = dir.join(VAULT_FILE);
     let temp = dir.join(format!(".{VAULT_FILE}.{}.tmp", Uuid::new_v4()));
     let mut file = fs::OpenOptions::new()
@@ -438,12 +610,23 @@ impl Vault {
     fn open(dir: PathBuf) -> Result<Self, String> {
         private_dir_result(&dir)?;
         let path = dir.join(VAULT_FILE);
+        if let Some(wrapper) = read_key_wrapper(&dir)? {
+            if !path.exists() {
+                return Err("Web vault 密钥已包装但密文文件不存在".into());
+            }
+            return Ok(Self {
+                dir,
+                data: VaultData::default(),
+                key: None,
+                key_wrapper: Some(wrapper),
+                locked: true,
+                last_activity_ms: now_ms(),
+                persist_enabled: true,
+            });
+        }
+        let key = load_or_create_raw_key(&dir)?;
         let data = if path.exists() {
-            serde_json::from_slice(&decrypt(
-                &dir,
-                &fs::read(&path).map_err(|e| format!("读取 Web vault 失败：{e}"))?,
-            )?)
-            .map_err(|e| format!("解析 Web vault 失败：{e}"))?
+            load_data(&dir, &key)?
         } else {
             VaultData::default()
         };
@@ -451,6 +634,8 @@ impl Vault {
         let mut vault = Self {
             dir,
             data,
+            key: Some(key),
+            key_wrapper: None,
             locked: was_enabled,
             last_activity_ms: now_ms(),
             persist_enabled: true,
@@ -466,7 +651,62 @@ impl Vault {
         if !self.persist_enabled {
             return Ok(());
         }
-        save_data(&self.dir, &self.data)
+        let key = self
+            .key
+            .as_ref()
+            .ok_or_else(|| "应用已锁定，无法写入 Web vault".to_string())?;
+        save_data(&self.dir, key, &self.data)
+    }
+    fn is_locked(&self) -> bool {
+        self.key.is_none() || (self.data.lock.enabled && self.locked)
+    }
+    fn protect_key(&mut self, password: &str) -> Result<(), String> {
+        let key = self
+            .key
+            .ok_or_else(|| "应用已锁定，无法保护 Web vault 密钥".to_string())?;
+        let wrapper = wrap_vault_key(password, &key)?;
+        write_key_wrapper(&self.dir, &wrapper)?;
+        let raw_path = self.dir.join(KEY_FILE);
+        if raw_path.exists() {
+            fs::remove_file(&raw_path).map_err(|e| format!("删除明文 Web vault 密钥失败：{e}"))?;
+            fs::File::open(&self.dir)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|e| format!("持久化 Web vault 密钥迁移失败：{e}"))?;
+        }
+        self.key_wrapper = Some(wrapper);
+        Ok(())
+    }
+    fn unprotect_key(&mut self) -> Result<(), String> {
+        let key = self
+            .key
+            .ok_or_else(|| "应用已锁定，无法关闭 Web vault 密钥保护".to_string())?;
+        write_private_atomic(&self.dir, KEY_FILE, &key)?;
+        let wrapper_path = self.dir.join(KEY_WRAPPER_FILE);
+        if wrapper_path.exists() {
+            fs::remove_file(&wrapper_path)
+                .map_err(|e| format!("删除 Web vault 密钥包装失败：{e}"))?;
+            fs::File::open(&self.dir)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|e| format!("持久化 Web vault 密钥状态失败：{e}"))?;
+        }
+        self.key_wrapper = None;
+        Ok(())
+    }
+    fn unlock_with_password(&mut self, password: &str) -> Result<(), String> {
+        if let Some(wrapper) = self.key_wrapper.clone() {
+            let key = unwrap_vault_key(password, &wrapper)?;
+            let data = load_data(&self.dir, &key)?;
+            self.key = Some(key);
+            self.data = data;
+            self.locked = false;
+            self.touch();
+            return Ok(());
+        }
+        let _ = verify_web_lock_password(&self.data.lock, password)?;
+        self.protect_key(password)?;
+        self.locked = false;
+        self.touch();
+        Ok(())
     }
     fn payload(&self) -> SyncPayload {
         SyncPayload {
@@ -517,6 +757,18 @@ impl Vault {
         }
     }
     fn lock_public_state(&mut self) -> Value {
+        if self.key.is_none() {
+            return json!({
+                "enabled": true,
+                "locked": true,
+                "idleLockMinutes": 5,
+                "hasPassword": true,
+                "lockPolicy": "onceUntilQuit",
+                "preferBiometrics": false,
+                "backgroundLockDelaySeconds": 60,
+                "biometricReady": false
+            });
+        }
         self.maybe_lock();
         json!({
             "enabled": self.data.lock.enabled,
@@ -1001,15 +1253,33 @@ fn self_hosted_restore_version(
         return Err("服务器快照编号无效".into());
     }
     let current = self_hosted_get(base, token)?;
-    let etag = current.etag.ok_or_else(|| "服务器当前状态没有 ETag，无法安全恢复".to_string())?;
-    let url = format!("{}/v2/sync/versions/{version_id}/restore", sync_base_url(base)?);
+    let etag = current
+        .etag
+        .ok_or_else(|| "服务器当前状态没有 ETag，无法安全恢复".to_string())?;
+    let url = format!(
+        "{}/v2/sync/versions/{version_id}/restore",
+        sync_base_url(base)?
+    );
     let mut headers = auth_headers(token)?;
-    headers.insert(IF_MATCH, HeaderValue::from_str(&etag).map_err(|_| "ETag 非法".to_string())?);
-    let response = http_client()?.post(url).headers(headers).send().map_err(|e| format!("恢复服务器快照失败：{e}"))?;
+    headers.insert(
+        IF_MATCH,
+        HeaderValue::from_str(&etag).map_err(|_| "ETag 非法".to_string())?,
+    );
+    let response = http_client()?
+        .post(url)
+        .headers(headers)
+        .send()
+        .map_err(|e| format!("恢复服务器快照失败：{e}"))?;
     if !response.status().is_success() {
-        return Err(format!("恢复服务器快照失败 HTTP {}：{}", response.status().as_u16(), response.text().unwrap_or_default()));
+        return Err(format!(
+            "恢复服务器快照失败 HTTP {}：{}",
+            response.status().as_u16(),
+            response.text().unwrap_or_default()
+        ));
     }
-    let restored = self_hosted_get(base, token)?.body.ok_or_else(|| "服务器恢复后没有返回同步数据".to_string())?;
+    let restored = self_hosted_get(base, token)?
+        .body
+        .ok_or_else(|| "服务器恢复后没有返回同步数据".to_string())?;
     extract_payload(decrypt_sync_document(&restored, key)?)
 }
 
@@ -1182,12 +1452,7 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
         SyncMode::RemoteOverwriteLocal => remote_for_mode,
         SyncMode::LocalOverwriteRemote => local.clone(),
     };
-    let safety = evaluate_sync_safety(
-        &local,
-        remote.as_ref(),
-        &merged,
-        mode.as_str(),
-    );
+    let safety = evaluate_sync_safety(&local, remote.as_ref(), &merged, mode.as_str());
     let local_count = visible_accounts(&local);
     let remote_count = remote.as_ref().map(visible_accounts).unwrap_or(0);
     let merged_count = visible_accounts(&merged);
@@ -1236,9 +1501,8 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
             v.persist_enabled = true;
             let save_result = v.save();
             v.persist_enabled = previous_persist;
-            save_result.map_err(|error| {
-                format!("WebDAV 合并结果写入本地失败，未推送远端：{error}")
-            })?;
+            save_result
+                .map_err(|error| format!("WebDAV 合并结果写入本地失败，未推送远端：{error}"))?;
             local_applied = true;
         }
         match webdav_put(
@@ -1265,7 +1529,7 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
                     etag: Some(new_etag),
                 }}));
             }
-Err(error) if error == "PRECONDITION_FAILED" => {
+            Err(error) if error == "PRECONDITION_FAILED" => {
                 let latest = webdav_get(base, path, username, password)?;
                 current_etag = latest.etag;
                 remote = latest
@@ -1283,12 +1547,7 @@ Err(error) if error == "PRECONDITION_FAILED" => {
                     SyncMode::RemoteOverwriteLocal => remote_for_mode,
                     SyncMode::LocalOverwriteRemote => local.clone(),
                 };
-                let safety = evaluate_sync_safety(
-                    &local,
-                    remote.as_ref(),
-                    &merged,
-                    mode.as_str(),
-                );
+                let safety = evaluate_sync_safety(&local, remote.as_ref(), &merged, mode.as_str());
                 if !safety.safe {
                     return Ok(json!({"report": SyncReport {
                         ok: false,
@@ -1383,12 +1642,7 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
         SyncMode::RemoteOverwriteLocal => remote_for_mode,
         SyncMode::LocalOverwriteRemote => local.clone(),
     };
-    let safety = evaluate_sync_safety(
-        &local,
-        remote.as_ref(),
-        &merged,
-        mode.as_str(),
-    );
+    let safety = evaluate_sync_safety(&local, remote.as_ref(), &merged, mode.as_str());
     let local_count = visible_accounts(&local);
     let remote_count = remote.as_ref().map(visible_accounts).unwrap_or(0);
     let merged_count = visible_accounts(&merged);
@@ -1444,9 +1698,7 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
             v.persist_enabled = true;
             let save_result = v.save();
             v.persist_enabled = previous_persist;
-            save_result.map_err(|error| {
-                format!("合并结果写入本地失败，未推送远端：{error}")
-            })?;
+            save_result.map_err(|error| format!("合并结果写入本地失败，未推送远端：{error}"))?;
             local_applied = true;
         }
         match self_hosted_put(&base, &token, &wire, current_etag.as_deref()) {
@@ -1468,7 +1720,7 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
                     }
                 }));
             }
-Err(error) if error == "PRECONDITION_FAILED" && attempt < 5 => {
+            Err(error) if error == "PRECONDITION_FAILED" && attempt < 5 => {
                 let latest = self_hosted_get(&base, &token)?;
                 current_etag = latest.etag;
                 remote = latest
@@ -1486,12 +1738,7 @@ Err(error) if error == "PRECONDITION_FAILED" && attempt < 5 => {
                     SyncMode::RemoteOverwriteLocal => remote_for_mode,
                     SyncMode::LocalOverwriteRemote => local.clone(),
                 };
-                let safety = evaluate_sync_safety(
-                    &local,
-                    remote.as_ref(),
-                    &merged,
-                    mode.as_str(),
-                );
+                let safety = evaluate_sync_safety(&local, remote.as_ref(), &merged, mode.as_str());
                 if !safety.safe {
                     return Ok(json!({"report": SyncReport {
                         ok: false,
@@ -1759,7 +2006,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             | "lock_biometric_available"
             | "lock_touch"
     );
-    if v.data.lock.enabled && v.locked && !lock_exempt {
+    if v.is_locked() && !lock_exempt {
         return Err("应用已锁定，请先解锁".into());
     }
     if !lock_exempt {
@@ -1806,6 +2053,9 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
         "lock_biometric_available" => Ok(json!(false)),
         "lock_unlock_biometric" => Err("Web 版不支持 Touch ID/指纹解锁，请使用主密码".into()),
         "lock_enable" => {
+            if v.key.is_none() {
+                return Err("应用已锁定，请先解锁".into());
+            }
             if v.data.lock.enabled {
                 return Err("应用锁已启用，请先关闭后再设置新的主密码".into());
             }
@@ -1833,6 +2083,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             v.locked = false;
             v.touch();
             v.save()?;
+            v.protect_key(&password)?;
             Ok(v.lock_public_state())
         }
         "lock_change_password" => {
@@ -1854,6 +2105,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             v.data.lock.iterations = LOCK_PBKDF2_ITERS;
             v.locked = false;
             v.touch();
+            v.protect_key(&new_password)?;
             v.save()?;
             Ok(v.lock_public_state())
         }
@@ -1864,13 +2116,12 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             v.locked = false;
             v.touch();
             v.save()?;
+            v.unprotect_key()?;
             Ok(v.lock_public_state())
         }
         "lock_unlock" => {
             let password: String = arg(&args, "password")?;
-            let _ = verify_web_lock_password(&v.data.lock, &password)?;
-            v.locked = false;
-            v.touch();
+            v.unlock_with_password(&password)?;
             Ok(v.lock_public_state())
         }
         "lock_now" => {
@@ -3537,10 +3788,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|x| x.parse().ok())
         .unwrap_or(53335);
     let token = env::var("PASS_WEB_AUTH_TOKEN").unwrap_or_default();
+    let instance_guard = Arc::new(acquire_instance_guard(&data_dir)?);
     let state = AppState {
         vault: Arc::new(Mutex::new(Vault::open(data_dir)?)),
         auth_token: token,
         static_dir,
+        _instance_guard: instance_guard,
     };
     let app = Router::new()
         .route("/healthz", get(health))
@@ -3568,8 +3821,9 @@ mod tests {
     fn encrypt_round_trip() {
         let dir = std::env::temp_dir().join(format!("pass-web-crypto-{}", Uuid::new_v4()));
         let raw = b"secret";
-        let enc = encrypt(&dir, raw).unwrap();
-        assert_eq!(decrypt(&dir, &enc).unwrap(), raw);
+        let key = load_or_create_raw_key(&dir).unwrap();
+        let enc = encrypt(&key, raw).unwrap();
+        assert_eq!(decrypt(&key, &enc).unwrap(), raw);
         let _ = fs::remove_dir_all(dir);
     }
     #[test]
@@ -3681,6 +3935,34 @@ mod tests {
     }
 
     #[test]
+    fn locked_web_vault_removes_raw_key_and_requires_password_after_restart() {
+        let dir = std::env::temp_dir().join(format!("pass-web-wrapped-key-{}", Uuid::new_v4()));
+        let password = "  secret-pass  ";
+        let mut vault = Vault::open(dir.clone()).unwrap();
+        do_command(
+            &mut vault,
+            "lock_enable",
+            json!({"password": password, "confirm": password}),
+        )
+        .unwrap();
+        assert!(!dir.join(KEY_FILE).exists());
+        assert!(dir.join(KEY_WRAPPER_FILE).exists());
+
+        let mut restarted = Vault::open(dir.clone()).unwrap();
+        assert!(restarted.is_locked());
+        assert!(do_command(&mut restarted, "get_app_state", json!({})).is_err());
+        assert!(do_command(
+            &mut restarted,
+            "lock_unlock",
+            json!({"password": password.trim()})
+        )
+        .is_err());
+        do_command(&mut restarted, "lock_unlock", json!({"password": password})).unwrap();
+        assert!(!restarted.is_locked());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn failed_command_rolls_back_memory_state() {
         let dir = std::env::temp_dir().join(format!("pass-web-rollback-{}", Uuid::new_v4()));
         let mut vault = Vault::open(dir.clone()).unwrap();
@@ -3699,5 +3981,4 @@ mod tests {
         assert_eq!(vault.data.device_name, before);
         let _ = fs::remove_dir_all(dir);
     }
-
 }

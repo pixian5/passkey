@@ -457,7 +457,7 @@ async function init() {
 async function ensureOptionsUnlocked() {
   const status = await chrome.runtime.sendMessage({ type: "PASS_LOCK_STATUS" });
   if (!status?.enabled || !status?.locked) return;
-  const password = String(window.prompt("请输入主密码以打开 Pass 设置", "") || "").trim();
+  const password = String(window.prompt("请输入主密码以打开 Pass 设置", "") || "");
   if (!password) throw new Error("扩展已锁定，未加载账号数据");
   const result = await chrome.runtime.sendMessage({
     type: "PASS_LOCK_UNLOCK",
@@ -831,8 +831,8 @@ async function saveLockSettings({ showStatus = true } = {}) {
   const lockEnabled = Boolean(dom.lockEnabled.checked);
   const policy = getSelectedLockPolicy();
   const idleMinutes = clampLockIdleMinutes(dom.lockIdleMinutes.value);
-  const password = String(dom.lockMasterPassword.value || "").trim();
-  const confirm = String(dom.lockMasterPasswordConfirm.value || "").trim();
+  const password = String(dom.lockMasterPassword.value || "");
+  const confirm = String(dom.lockMasterPasswordConfirm.value || "");
 
   const result = await chrome.storage.local.get([
     STORAGE_KEY_LOCK_ENABLED,
@@ -860,7 +860,7 @@ async function saveLockSettings({ showStatus = true } = {}) {
       }
       if (existingCredential) {
         const promptResult = window.prompt("请输入当前主密码以更新主密码", "");
-        currentPasswordForRewrap = String(promptResult || "").trim();
+        currentPasswordForRewrap = String(promptResult || "");
         if (!currentPasswordForRewrap) {
           if (showStatus) setDeviceStatus("未输入当前主密码，已取消更新");
           return;
@@ -878,7 +878,7 @@ async function saveLockSettings({ showStatus = true } = {}) {
     let disablePassword = password;
     if (!disablePassword) {
       const promptResult = window.prompt("请输入当前主密码以关闭主密码锁", "");
-      disablePassword = String(promptResult || "").trim();
+      disablePassword = String(promptResult || "");
     }
     if (!disablePassword) {
       dom.lockEnabled.checked = true;
@@ -925,7 +925,7 @@ async function saveLockSettings({ showStatus = true } = {}) {
 
   if (lockEnabled && existingCredential && !wasLockEnabled && !(password || confirm)) {
     const promptResult = window.prompt("请输入当前主密码以启用本地数据保护", "");
-    const currentPassword = String(promptResult || "").trim();
+    const currentPassword = String(promptResult || "");
     if (!currentPassword) {
       dom.lockEnabled.checked = false;
       renderLockSettingsFields();

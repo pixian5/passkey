@@ -1273,19 +1273,18 @@ async fn sync_now(app: AppHandle, state: tauri::State<'_, AppLockState>) -> Resu
         let local_for_apply = local.clone();
         let worker_dir_for_apply = worker_dir.clone();
         let mut snapshot_created = false;
-        let (report, _applied) = run_sync(
-            &settings,
-            local.clone(),
-            &device,
-            &platform,
-            |payload| {
+        let (report, _applied) =
+            run_sync(&settings, local.clone(), &device, &platform, |payload| {
                 if !snapshot_created {
-                    local_snapshots::create(&worker_dir_for_apply, &local_for_apply, "同步写入本地前自动备份")?;
+                    local_snapshots::create(
+                        &worker_dir_for_apply,
+                        &local_for_apply,
+                        "同步写入本地前自动备份",
+                    )?;
                     snapshot_created = true;
                 }
                 save_payload_atomic(&mut conn, payload)
-            },
-        )?;
+            })?;
         serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
     })
     .await
@@ -1338,7 +1337,11 @@ async fn sync_now_mode(
             mode,
             |payload| {
                 if !snapshot_created {
-                    local_snapshots::create(&worker_dir_for_apply, &local_for_apply, "同步写入本地前自动备份")?;
+                    local_snapshots::create(
+                        &worker_dir_for_apply,
+                        &local_for_apply,
+                        "同步写入本地前自动备份",
+                    )?;
                     snapshot_created = true;
                 }
                 save_payload_atomic(&mut conn, payload)
@@ -3054,14 +3057,7 @@ fn reorder_accounts(
             folder.regular_order_updated_device_name = device_name;
         }
         normalize_order_state(&accounts, &mut folders, &mut all_order);
-        save_collections_atomic(
-            &conn,
-            None,
-            Some(&folders),
-            Some(&all_order),
-            None,
-            None,
-        )?;
+        save_collections_atomic(&conn, None, Some(&folders), Some(&all_order), None, None)?;
         return Ok(());
     }
 
@@ -3224,14 +3220,7 @@ fn create_folder(
     folder_order.folder_ids.push(folder.id.clone());
     folder_order.updated_at_ms = now;
     folder_order.updated_device_name = load_device_name(&conn)?;
-    save_collections_atomic(
-        &conn,
-        None,
-        Some(&folders),
-        None,
-        Some(&folder_order),
-        None,
-    )?;
+    save_collections_atomic(&conn, None, Some(&folders), None, Some(&folder_order), None)?;
     commit_undo_point(&dir, "新建文件夹前自动备份", pre_payload)?;
     Ok(folder)
 }

@@ -35,8 +35,7 @@ class VersionToolTests(unittest.TestCase):
 
     def test_repository_versions_are_aligned(self) -> None:
         output = self.run_tool("check")
-        self.assertIn("VERSION_CHECK_OK", output)
-        self.assertIn("45 entries", output)
+        self.assertIn(f"VERSION_CHECK_OK {(ROOT / 'VERSION').read_text().strip()} (", output)
 
 
 if __name__ == "__main__":

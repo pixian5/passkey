@@ -8,7 +8,7 @@
 - TOTP/同步设置的基础数据保存
 - AES-256-GCM 加密的数据文件和独立密钥文件
 
-当前版本定位为单用户、单进程网页保险库。`PASS_WEB_AUTH_TOKEN` 是网页访问令牌，不等同于同步 Bearer Token。同一个 `/data` 目录不得同时挂给多个写实例；当前没有跨进程 revision/CAS，多个实例会有最后写入者覆盖风险。
+当前版本定位为单用户网页保险库。`PASS_WEB_AUTH_TOKEN` 是网页访问令牌，不等同于同步 Bearer Token。启动时会在 `/data/pass-web-instance.lock` 建立原子单实例锁，拒绝同一数据目录的第二个写实例；它仍没有多实例 revision/CAS。异常终止遗留锁文件时，必须确认旧进程已停止再人工删除。
 
 ## 本机运行
 
@@ -38,7 +38,7 @@ docker compose up -d --build
 
 默认只绑定宿主机 `127.0.0.1:53335`，空 `PASS_WEB_AUTH_TOKEN` 允许本机开发和可信内网测试；生产环境应在外部 `.env` 或 Docker secret 中配置已有的 Web 访问令牌，并通过 Caddy/Nginx 提供 HTTPS。程序不会自动生成新的 Bearer Token。
 
-容器数据在 Docker volume `pass_web_data` 中，必须同时保留 `pass-web-vault-v1.enc` 和 `pass-web-vault-key-v1`。丢失密钥文件将无法解密保险库。
+容器数据在 Docker volume `pass_web_data` 中。未启用应用锁时保留 `pass-web-vault-v1.enc` 和 `pass-web-vault-key-v1`；启用后必须保留 `pass-web-vault-v1.enc` 和 `pass-web-vault-key-wrapper-v1.json`。后者由主密码派生密钥包装 vault key，重启后必须解锁；丢失相应密钥材料将无法解密保险库。
 
 生产环境建议用 Caddy/Nginx 反向代理 HTTPS，只开放 443，不要把 53335 直接暴露到公网；同时定期备份 `/data`。
 

@@ -344,9 +344,7 @@ where
                         ok: false,
                         dry_run: false,
                         mode: mode.as_str().into(),
-                        message: format!(
-                            "本地已更新为合并结果，但推送远端失败，请重试同步：{e}"
-                        ),
+                        message: format!("本地已更新为合并结果，但推送远端失败，请重试同步：{e}"),
                         safe: true,
                         reasons: vec![e],
                         local_accounts: local_count,

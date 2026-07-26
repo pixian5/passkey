@@ -28,6 +28,9 @@ const cargoTargets = [
   ["apps/pass-web/Cargo.toml", "apps/pass-web/Cargo.lock", "pass-web"],
 ];
 
+const coreWorkspaceCargoTarget = "core/pass_core/Cargo.toml";
+const coreFfiVersionTarget = "core/pass_core/crates/ffi/src/lib.rs";
+
 const marketingYamlTargets = [
   "apps/app_macos/project.yml",
   "apps/app_macos/project.autofill.yml",
@@ -124,6 +127,15 @@ function updateCargoToml(relativePath, version) {
   );
 }
 
+function updateWorkspaceCargoToml(relativePath, version) {
+  replaceExactly(
+    relativePath,
+    /(\[workspace\.package\][\s\S]*?^version\s*=\s*")[^"]+("\s*$)/m,
+    `$1${version}$2`,
+    "[workspace.package] version",
+  );
+}
+
 function updateCargoLock(relativePath, packageName, version) {
   const escapedName = packageName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   replaceExactly(
@@ -143,6 +155,13 @@ function setVersion(version) {
     updateCargoToml(toml, version);
     updateCargoLock(lock, packageName, version);
   }
+  updateWorkspaceCargoToml(coreWorkspaceCargoTarget, version);
+  replaceExactly(
+    coreFfiVersionTarget,
+    /(static VERSION_STR: &\[u8\] = b")[^"]+(\\0";)/,
+    `$1${version}$2`,
+    "pass_core_version",
+  );
   for (const target of marketingYamlTargets) {
     replaceExactly(target, /(MARKETING_VERSION:\s*")[^"]+("\s*$)/gm, `$1${version}$2`, "MARKETING_VERSION");
     replaceExactly(
@@ -214,6 +233,16 @@ function collectVersions() {
     const escapedName = packageName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     entries.push([lock, lockText.match(new RegExp(`\\[\\[package\\]\\]\\nname = "${escapedName}"\\nversion = "([^"]+)"`))?.[1]]);
   }
+  const coreWorkspaceCargo = fs.readFileSync(absolute(coreWorkspaceCargoTarget), "utf8");
+  entries.push([
+    coreWorkspaceCargoTarget,
+    coreWorkspaceCargo.match(/\[workspace\.package\][\s\S]*?^version\s*=\s*"([^"]+)"/m)?.[1],
+  ]);
+  const coreFfi = fs.readFileSync(absolute(coreFfiVersionTarget), "utf8");
+  entries.push([
+    coreFfiVersionTarget,
+    coreFfi.match(/static VERSION_STR: &\[u8\] = b"([^\\"]+)\\0";/)?.[1],
+  ]);
   for (const target of marketingYamlTargets) {
     const values = [...fs.readFileSync(absolute(target), "utf8").matchAll(/MARKETING_VERSION:\s*"([^"]+)"/g)];
     values.forEach((match, index) => entries.push([`${target}:MARKETING_VERSION[${index}]`, match[1]]));

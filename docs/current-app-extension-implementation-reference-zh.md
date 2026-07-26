@@ -1,6 +1,6 @@
 # Pass 当前实现与设计决策基准
 
-> 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.2.1`。
+> 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.2.2`。
 >
 > 使用规则：当历史设计稿、路线图、旧 Swift 代码或界面文字与本文冲突时，先以本文和自动化门禁为准，再回到代码核对。没有测试或代码依据时，不得写“完整”“完全一致”“所有端均支持”。
 
@@ -117,7 +117,7 @@
 | 表面 | 业务数据 | 设置/密钥 | 当前原子性和并发边界 |
 |---|---|---|---|
 | Tauri | 本地 SQLite KV 中的加密 vault 集合 | 同步设置文件；启用应用锁时 Token/同步密钥单独密封 | 同一进程内多集合事务；本地加密文件使用临时文件、文件 `fsync`、rename、目录 `fsync` |
-| Docker Web | `/data/pass-web-vault-v1.enc` | `/data/pass-web-vault-key-v1` 与 vault 内设置 | 进程内 `Mutex` 串行；原子文件替换带 `fsync`；**没有跨进程 revision/CAS** |
+| Docker Web | `/data/pass-web-vault-v1.enc` | 未启用应用锁时为 `pass-web-vault-key-v1`；启用后为主密码派生密钥包装的 `pass-web-vault-key-wrapper-v1.json` | 进程内 `Mutex` 串行；原子文件替换带 `fsync`；数据目录单实例锁拒绝第二写实例，**仍没有跨进程 revision/CAS** |
 | Chrome Web | `chrome.storage.local` 中的加密管理工作区 | 本地 AES-GCM 加密设置、UI 偏好和创建服务草稿 | 管理页写入后镜像后台；单次后台 IndexedDB 写事务覆盖账号/文件夹/Passkey/布局集合 |
 | Chrome 后台填充层 | IndexedDB `pass.local.db.v1` 业务集合镜像 | 数据密钥由扩展本地保存 | 填充/WebAuthn/后台同步写入后广播回管理页 |
 
@@ -252,7 +252,10 @@ Bearer Token 和同步加密密钥都允许留空，项目不会自动生成 Bea
 8. 软件 Passkey 私钥是可同步材料，不具备硬件认证器不可导出的安全属性。
 9. 同步服务器限流按 TCP 对端 IP，反向代理部署必须额外设计可信代理策略。
 10. `pass.data.v2` 机器 Schema 需要与 Rust/JS 当前字段同步维护；新增顺序或墓碑字段时必须同时改两份 Schema 和黄金向量。
-11. `cargo fmt --check` 目前仍会发现仓库既有 Rust 格式差异；CI 中格式检查是 informational，不代表代码逻辑失败，也不代表可以继续扩大格式漂移。
+11. Docker Web 数据目录只能由一个实例持有；异常终止留下的 `pass-web-instance.lock` 必须先确认旧进程已停止才能人工删除，不能通过多实例共享 volume 规避。
+12. Chrome 主密码与数据密钥包装当前为 v4：主密码字节不做 `trim`；旧 v2/v3 包装仅在成功解锁时兼容读取并立即重包为 v4。
+13. 同步服务的 TLS 健康检查必须以证书域名请求，并用 `--resolve` 连接本机监听地址；禁止用 `--insecure` 绕过证书校验。
+14. `cargo fmt --check` 是 CI 阻断门禁，任何 Rust 格式漂移都必须在提交前清理。
 
 ## 13. 验证入口和当前基线
 

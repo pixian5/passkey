@@ -150,4 +150,3 @@ mod tests {
         assert!(matches!(op, Err(ModelError::EmptyField("op_id"))));
     }
 }
-

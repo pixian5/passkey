@@ -107,7 +107,7 @@ pass/
 - ✅ **Ubuntu 同步服务**：Python 单文件，GET/PUT `/v2/sync/state`（兼容 `/v1/sync/payload`），SQLite 版本快照、ETag/CAS、幂等重试和回滚，Bearer Token 认证；客户端配置密钥时存储 AES-256-GCM 信封，留空时可按配置存储明文同步包
 - 🚧 **Android Credential Provider**：Android 14+ 查询与选择骨架，真实 vault 解锁/回填仍在开发
 
-当前限制：Docker Web 是单用户、单进程 vault；Web/Tauri 尚无跨进程文件 revision/CAS；Chrome 管理页和后台仍有两套锁运行时；Firefox/Safari/Android 没有纳入三端 68 命令矩阵。详细事实与排障边界见 [`docs/current-app-extension-implementation-reference-zh.md`](docs/current-app-extension-implementation-reference-zh.md)。
+当前限制：Docker Web 是单用户 vault，并用数据目录单实例锁拒绝第二个写实例；它仍没有多实例 revision/CAS。Chrome 管理页和后台仍有两套锁运行时；Firefox/Safari/Android 没有纳入三端 68 命令矩阵。详细事实与排障边界见 [`docs/current-app-extension-implementation-reference-zh.md`](docs/current-app-extension-implementation-reference-zh.md)。
 
 版本以根目录 [`VERSION`](VERSION) 为唯一来源。`scripts/bump_version.sh` 按 `0.0.1` 递增并满十进一，`node scripts/version.mjs check` 检查所有端和锁文件一致。
 

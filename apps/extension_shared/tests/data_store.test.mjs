@@ -67,6 +67,7 @@ const SYNC_ENCRYPTION_KEY = "pass.sync.encryptionKey.v1";
 const LEGACY_SNAPSHOTS_KEY = "pass.localSafetySnapshots.v1";
 const V2_AAD = new TextEncoder().encode("pass.data.encryptionKey.v2");
 const V3_AAD = new TextEncoder().encode("pass.data.encryptionKey.v3");
+const V4_AAD = new TextEncoder().encode("pass.data.encryptionKey.v4");
 
 async function createV2Envelope(password, credential, rawKey) {
   const material = await crypto.subtle.importKey(
@@ -96,6 +97,38 @@ async function createV2Envelope(password, credential, rawKey) {
   );
   return {
     version: 2,
+    nonceBase64: bytesToBase64(nonce),
+    ciphertextBase64: bytesToBase64(new Uint8Array(ciphertext)),
+  };
+}
+
+async function createV3Envelope(password, rawKey) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const material = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password.trim()),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+  const wrappingKey = await crypto.subtle.deriveKey(
+    { name: "PBKDF2", hash: "SHA-256", salt, iterations: 310000 },
+    material,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt"]
+  );
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: nonce, additionalData: V3_AAD },
+    wrappingKey,
+    rawKey
+  );
+  return {
+    version: 3,
+    kdf: "PBKDF2-SHA-256",
+    iterations: 310000,
+    wrapSaltBase64: bytesToBase64(salt),
     nonceBase64: bytesToBase64(nonce),
     ciphertextBase64: bytesToBase64(new Uint8Array(ciphertext)),
   };
@@ -148,7 +181,7 @@ test("操作历史不会保留密码、TOTP、恢复码或备注内容", () => {
   assert.equal(sanitizeHistoryAction("account: created account (username changed to alice, password changed to secret-value)"), "新建账号");
 });
 
-test("v3 包装不能被主密码摘要直接解密，且锁定会清除会话密钥", async () => {
+test("v4 包装不能被主密码摘要直接解密，且锁定会清除会话密钥", async () => {
   const password = "correct horse battery staple";
   const credential = await createLockMasterCredential(password);
   const rawKey = crypto.getRandomValues(new Uint8Array(32));
@@ -158,7 +191,7 @@ test("v3 包装不能被主密码摘要直接解密，且锁定会清除会话�
 
   const stored = await local.get([WRAPPED_KEY, LEGACY_KEY]);
   const wrapped = stored[WRAPPED_KEY];
-  assert.equal(wrapped.version, 3);
+  assert.equal(wrapped.version, 4);
   assert.equal(wrapped.kdf, "PBKDF2-SHA-256");
   assert.notEqual(wrapped.wrapSaltBase64, credential.saltBase64);
   assert.equal(stored[LEGACY_KEY], undefined);
@@ -174,7 +207,7 @@ test("v3 包装不能被主密码摘要直接解密，且锁定会清除会话�
     {
       name: "AES-GCM",
       iv: base64ToBytes(wrapped.nonceBase64),
-      additionalData: V3_AAD,
+      additionalData: V4_AAD,
     },
     leakedDigestKey,
     base64ToBytes(wrapped.ciphertextBase64)
@@ -222,7 +255,7 @@ test("完整写入会在同一快照中保存全局与文件夹顺序", async ()
   assert.equal(data.folderOrderUpdatedAtMs, 11);
 });
 
-test("正确主密码解开 v2 后会立即迁移并重包为 v3", async () => {
+test("正确主密码解开 v2 后会立即迁移并重包为 v4", async () => {
   const password = "migration password";
   const credential = await createLockMasterCredential(password);
   const rawKey = crypto.getRandomValues(new Uint8Array(32));
@@ -232,7 +265,7 @@ test("正确主密码解开 v2 后会立即迁移并重包为 v3", async () => {
   await unlockDataEncryption(password, credential);
 
   const migrated = (await local.get([WRAPPED_KEY]))[WRAPPED_KEY];
-  assert.equal(migrated.version, 3);
+  assert.equal(migrated.version, 4);
   assert.equal(migrated.kdf, "PBKDF2-SHA-256");
   assert.notEqual(migrated.wrapSaltBase64, credential.saltBase64);
   assert.deepEqual(
@@ -241,7 +274,22 @@ test("正确主密码解开 v2 后会立即迁移并重包为 v3", async () => {
   );
 });
 
-test("更新主密码、关闭保护和重新启用都会保持 v3 包装可用", async () => {
+test("带首尾空格的主密码保持原样，旧 v3 包装会迁移到 v4", async () => {
+  const password = "  migration password  ";
+  const credential = await createLockMasterCredential(password);
+  const rawKey = crypto.getRandomValues(new Uint8Array(32));
+  await local.set({ [WRAPPED_KEY]: await createV3Envelope(password, rawKey) });
+
+  await unlockDataEncryption(password, credential);
+  const migrated = (await local.get([WRAPPED_KEY]))[WRAPPED_KEY];
+  assert.equal(migrated.version, 4);
+  await lockDataEncryption();
+  await assert.rejects(() => unlockDataEncryption(password.trim(), credential));
+  await unlockDataEncryption(password, credential);
+  assert.deepEqual(base64ToBytes((await session.get([SESSION_KEY]))[SESSION_KEY]), rawKey);
+});
+
+test("更新主密码、关闭保护和重新启用都会保持 v4 包装可用", async () => {
   const currentPassword = "current password";
   const nextPassword = "next password";
   const currentCredential = await createLockMasterCredential(currentPassword);
@@ -277,7 +325,7 @@ test("更新主密码、关闭保护和重新启用都会保持 v3 包装可用"
   // Re-enable wraps the still-session key without minting a replacement.
   await unlockDataEncryption(nextPassword, nextCredential);
   stored = await local.get([WRAPPED_KEY, LEGACY_KEY]);
-  assert.equal(stored[WRAPPED_KEY].version, 3);
+  assert.equal(stored[WRAPPED_KEY].version, 4);
   assert.equal(stored[LEGACY_KEY], undefined);
   assert.deepEqual(
     base64ToBytes((await session.get([SESSION_KEY]))[SESSION_KEY]),

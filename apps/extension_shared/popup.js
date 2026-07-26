@@ -457,7 +457,7 @@ async function unlockPopupWithPassword() {
     return;
   }
   if (lockOperationInFlight) return;
-  const password = String(dom.unlockPasswordInput.value || "").trim();
+  const password = String(dom.unlockPasswordInput.value || "");
   if (!password) {
     setStatus("请输入主密码");
     return;
