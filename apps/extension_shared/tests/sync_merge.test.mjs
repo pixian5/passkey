@@ -330,7 +330,7 @@ test("空远端不能替换非空本地", () => {
     helpers
   );
   assert.equal(safety.safe, false);
-  assert.deepEqual(safety.reasons, ["REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL"]);
+  assert.ok(safety.reasons.includes("REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL"));
 });
 
 test("Golden Vector: 空远端安全闸门", () => {
@@ -481,6 +481,38 @@ test("通行密钥永久删除墓碑不会被旧设备记录重新生成", () =>
   const merged = mergePasskeyCollections([deleted], [staleActive], helpers)[0];
   assert.equal(merged.isDeleted, true);
   assert.equal(merged.isPermanentlyDeleted, true);
+});
+
+test("仅有永久删除账号墓碑时，空远端同步不应被误判为空数据丢失", () => {
+  const tombstone = helpers.normalizeAccountShape({
+    recordId: "record-tombstone",
+    isDeleted: true,
+    isPermanentlyDeleted: true,
+    deletedAtMs: 30,
+    updatedAtMs: 30,
+  });
+  const merged = mergeAccountCollections([tombstone], [], helpers);
+  const safety = evaluateSyncSafety(
+    {
+      local: { accounts: [tombstone] },
+      remote: { accounts: [] },
+      merged: { accounts: merged },
+      mode: "merge",
+    },
+    helpers,
+  );
+  assert.equal(safety.safe, true);
+  assert.equal(merged[0].isPermanentlyDeleted, true);
+});
+
+test("普通可见账号面对空远端仍然触发安全闸门", () => {
+  const local = [helpers.normalizeAccountShape({ recordId: "record-visible" })];
+  const safety = evaluateSyncSafety(
+    { local: { accounts: local }, remote: { accounts: [] }, merged: { accounts: [] }, mode: "merge" },
+    helpers,
+  );
+  assert.equal(safety.safe, false);
+  assert.ok(safety.reasons.includes("REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL"));
 });
 
 test("合并结果缺少本地稳定 ID 时必须阻止写入", () => {

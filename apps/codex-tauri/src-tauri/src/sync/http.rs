@@ -121,6 +121,7 @@ pub fn put_sync_state(
     token: &str,
     body: &[u8],
     if_match: Option<&str>,
+    idempotency_key: Option<&str>,
 ) -> Result<String, String> {
     let url = state_url(base_url)?;
     let client = build_client()?;
@@ -135,7 +136,10 @@ pub fn put_sync_state(
             );
         }
     }
-    let idem = Uuid::new_v4().to_string();
+    let idem = idempotency_key
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     headers.insert(
         "Idempotency-Key",
         HeaderValue::from_str(&idem).unwrap_or(HeaderValue::from_static("idem")),
@@ -147,7 +151,7 @@ pub fn put_sync_state(
         .send()
         .map_err(|e| format!("推送同步状态失败: {e}"))?;
     let status = resp.status();
-    if status == StatusCode::PRECONDITION_FAILED {
+    if status == StatusCode::PRECONDITION_FAILED || status == StatusCode::PRECONDITION_REQUIRED {
         return Err("PRECONDITION_FAILED".into());
     }
     if !status.is_success() {

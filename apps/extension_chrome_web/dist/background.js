@@ -52,7 +52,7 @@
     return new Uint8Array(bits);
   }
   async function createLockMasterCredential(password) {
-    const normalizedPassword = String(password || "").trim();
+    const normalizedPassword = String(password || "");
     if (!normalizedPassword) return null;
     const saltBytes = crypto.getRandomValues(new Uint8Array(16));
     const digest = await pbkdf2Digest(normalizedPassword, saltBytes, LOCK_PBKDF2_ITERATIONS);
@@ -67,7 +67,7 @@
     const normalized = normalizeLockMasterCredential(credential);
     if (!normalized) return false;
     const saltBytes = base64ToBytes(normalized.saltBase64);
-    const digest = normalized.version === 1 ? await legacyDigest(String(password || "").trim(), saltBytes) : await pbkdf2Digest(String(password || "").trim(), saltBytes, normalized.iterations);
+    const digest = normalized.version === 1 ? await legacyDigest(String(password || ""), saltBytes) : await pbkdf2Digest(String(password || ""), saltBytes, normalized.iterations);
     return timingSafeEqual(digest, base64ToBytes(normalized.digestBase64));
   }
   function timingSafeEqual(lhs, rhs) {
@@ -181,6 +181,7 @@
   var COLLECTION_ACCOUNTS = "accounts";
   var COLLECTION_PASSKEYS = "passkeys";
   var COLLECTION_FOLDERS = "folders";
+  var COLLECTION_LAYOUT = "layout";
   var COLLECTION_HISTORY = "history";
   var COLLECTION_SYNC_SECRETS = "syncSecrets";
   var COLLECTION_SYNC_SAFETY_SNAPSHOTS = "syncSafetySnapshots";
@@ -199,8 +200,9 @@
   var LEGACY_STORAGE_KEY_SYNC_ENCRYPTION_KEY = "pass.sync.encryptionKey.v1";
   var LEGACY_STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS = "pass.localSafetySnapshots.v1";
   var LEGACY_DATA_KEY_WRAP_AAD = "pass.data.encryptionKey.v2";
-  var DATA_KEY_WRAP_AAD = "pass.data.encryptionKey.v3";
-  var DATA_KEY_WRAP_VERSION = 3;
+  var LEGACY_DATA_KEY_WRAP_AAD_V3 = "pass.data.encryptionKey.v3";
+  var DATA_KEY_WRAP_AAD = "pass.data.encryptionKey.v4";
+  var DATA_KEY_WRAP_VERSION = 4;
   var DATA_KEY_WRAP_KDF = "PBKDF2-SHA-256";
   var DATA_KEY_WRAP_SALT_BYTES = 16;
   var STORAGE_KEY_DATA_BUMP = "pass.data.bump.v1";
@@ -208,6 +210,29 @@
   var readyPromise = null;
   var unlockedEncryptionKey = null;
   var encryptionKeyPromise = null;
+  function sanitizeHistoryAction(value) {
+    const action = String(value || "").trim();
+    if (!action) return "";
+    const normalized = action.replace(/:/g, "\uFF1A");
+    if (/(创建账号|created account)\s*[（(][\s\S]*?(密码改为|password\s*(?:changed|to)|password was set to)[\s\S]*?[）)]/i.test(normalized)) {
+      return "\u65B0\u5EFA\u8D26\u53F7";
+    }
+    const separator = normalized.indexOf("\uFF1A");
+    const prefix = separator >= 0 ? `${normalized.slice(0, separator)}\uFF1A` : "";
+    if (/(密码改为|password\s*(?:changed|to)|password was set to)/i.test(normalized)) {
+      return `${prefix}\u5BC6\u7801\u5DF2\u4FEE\u6539`;
+    }
+    if (/(TOTP\s*改为|totp\s*(?:changed|to)|otp\s*(?:changed|to))/i.test(normalized)) {
+      return `${prefix}TOTP \u5DF2\u4FEE\u6539`;
+    }
+    if (/(恢复码改为|recovery(?:\s*codes?)?\s*(?:changed|to))/i.test(normalized)) {
+      return `${prefix}\u6062\u590D\u7801\u5DF2\u4FEE\u6539`;
+    }
+    if (/(备注改为|note\s*(?:changed|to)|notes?\s*(?:changed|to))/i.test(normalized)) {
+      return `${prefix}\u5907\u6CE8\u5DF2\u4FEE\u6539`;
+    }
+    return action;
+  }
   function requestAsPromise(request) {
     return new Promise((resolve, reject) => {
       request.onsuccess = () => resolve(request.result);
@@ -275,6 +300,9 @@
     return Array.isArray(decoded) ? decoded : [];
   }
   async function writeCollection(key, value) {
+    await writeCollectionRows([{ key, value }]);
+  }
+  async function encryptCollectionRow(key, value) {
     const cryptoKey = await loadOrCreateEncryptionKey();
     const nonce = crypto.getRandomValues(new Uint8Array(12));
     const plaintext = new TextEncoder().encode(JSON.stringify(Array.isArray(value) ? value : []));
@@ -283,15 +311,19 @@
       cryptoKey,
       plaintext
     );
-    const db = await openDatabase();
-    const tx = db.transaction(STORE_COLLECTIONS, "readwrite");
-    const store = tx.objectStore(STORE_COLLECTIONS);
-    store.put({
+    return {
       key,
       version: 1,
       nonceBase64: bytesToBase64(nonce),
       ciphertextBase64: bytesToBase64(new Uint8Array(ciphertext))
-    });
+    };
+  }
+  async function writeCollectionRows(entries) {
+    const rows = await Promise.all(entries.map((entry) => encryptCollectionRow(entry.key, entry.value)));
+    const db = await openDatabase();
+    const tx = db.transaction(STORE_COLLECTIONS, "readwrite");
+    const store = tx.objectStore(STORE_COLLECTIONS);
+    for (const row of rows) store.put(row);
     await new Promise((resolve, reject) => {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error || new Error("IndexedDB transaction failed"));
@@ -381,8 +413,11 @@
     if (wrapped) {
       if (Number(wrapped.version) === DATA_KEY_WRAP_VERSION) {
         rawKey = await unwrapDataKey(password, wrapped);
+      } else if (Number(wrapped.version) === 3) {
+        rawKey = await unwrapV3DataKey(password, wrapped);
+        await storeWrappedDataKey(password, rawKey);
       } else if (Number(wrapped.version) === 2) {
-        const legacyWrappingKey = await deriveWrappingKey(
+        const legacyWrappingKey = await deriveLegacyWrappingKey(
           password,
           base64ToBytes(credential.saltBase64),
           credential.iterations
@@ -431,7 +466,7 @@
   async function deriveWrappingKey(password, saltBytes, iterations) {
     const keyMaterial = await crypto.subtle.importKey(
       "raw",
-      new TextEncoder().encode(String(password || "").trim()),
+      new TextEncoder().encode(String(password || "")),
       "PBKDF2",
       false,
       ["deriveKey"]
@@ -449,6 +484,9 @@
       ["encrypt", "decrypt"]
     );
   }
+  async function deriveLegacyWrappingKey(password, saltBytes, iterations) {
+    return deriveWrappingKey(String(password || "").trim(), saltBytes, iterations);
+  }
   function normalizeCredential(value) {
     const credential = normalizeLockMasterCredential(value);
     if (!credential) throw new Error("\u4E3B\u5BC6\u7801\u51ED\u636E\u65E0\u6548");
@@ -464,6 +502,26 @@
       },
       wrappingKey,
       base64ToBytes(wrapped.ciphertextBase64)
+    );
+    const rawKey = new Uint8Array(plaintext);
+    if (rawKey.length !== 32) throw new Error("\u672C\u5730\u6570\u636E\u5BC6\u94A5\u957F\u5EA6\u65E0\u6548");
+    return rawKey;
+  }
+  async function unwrapV3DataKey(password, wrapped) {
+    if (!wrapped || Number(wrapped.version) !== 3 || String(wrapped.kdf || "") !== DATA_KEY_WRAP_KDF || Number(wrapped.iterations) !== LOCK_PBKDF2_ITERATIONS) {
+      throw new Error("\u672C\u5730\u6570\u636E\u5BC6\u94A5\u683C\u5F0F\u65E0\u6548");
+    }
+    const saltBytes = base64ToBytes(wrapped.wrapSaltBase64);
+    const nonce = base64ToBytes(wrapped.nonceBase64);
+    const ciphertext = base64ToBytes(wrapped.ciphertextBase64);
+    if (saltBytes.length !== DATA_KEY_WRAP_SALT_BYTES || nonce.length !== 12 || ciphertext.length !== 48) {
+      throw new Error("\u672C\u5730\u6570\u636E\u5BC6\u94A5\u683C\u5F0F\u65E0\u6548");
+    }
+    const wrappingKey = await deriveLegacyWrappingKey(password, saltBytes, LOCK_PBKDF2_ITERATIONS);
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: nonce, additionalData: new TextEncoder().encode(LEGACY_DATA_KEY_WRAP_AAD_V3) },
+      wrappingKey,
+      ciphertext
     );
     const rawKey = new Uint8Array(plaintext);
     if (rawKey.length !== 32) throw new Error("\u672C\u5730\u6570\u636E\u5BC6\u94A5\u957F\u5EA6\u65E0\u6548");
@@ -621,11 +679,6 @@
     await ensureDataStorageReady();
     return await readCollection(COLLECTION_ACCOUNTS);
   }
-  async function setAccounts(accounts) {
-    await ensureDataStorageReady();
-    await writeCollection(COLLECTION_ACCOUNTS, accounts);
-    await touchDataBump(COLLECTION_ACCOUNTS);
-  }
   async function getPasskeys() {
     await ensureDataStorageReady();
     return await readCollection(COLLECTION_PASSKEYS);
@@ -637,23 +690,59 @@
   }
   async function getAllData() {
     await ensureDataStorageReady();
-    const [accounts, passkeys, folders] = await Promise.all([
+    const [accounts, passkeys, folders, layoutRows] = await Promise.all([
       readCollection(COLLECTION_ACCOUNTS),
       readCollection(COLLECTION_PASSKEYS),
-      readCollection(COLLECTION_FOLDERS)
+      readCollection(COLLECTION_FOLDERS),
+      readCollection(COLLECTION_LAYOUT)
     ]);
-    return { accounts, passkeys, folders };
+    const layout = layoutRows[0] && typeof layoutRows[0] === "object" ? layoutRows[0] : {};
+    return {
+      accounts,
+      passkeys,
+      folders,
+      allRegularAccountIds: Array.isArray(layout.allRegularAccountIds) ? layout.allRegularAccountIds : [],
+      allRegularOrderUpdatedAtMs: Number(layout.allRegularOrderUpdatedAtMs) || 0,
+      allRegularOrderUpdatedDeviceName: String(layout.allRegularOrderUpdatedDeviceName || ""),
+      folderOrderIds: Array.isArray(layout.folderOrderIds) ? layout.folderOrderIds : [],
+      folderOrderUpdatedAtMs: Number(layout.folderOrderUpdatedAtMs) || 0,
+      folderOrderUpdatedDeviceName: String(layout.folderOrderUpdatedDeviceName || ""),
+      deviceName: String(layout.deviceName || "")
+    };
   }
-  async function setAllData({ accounts, passkeys, folders }) {
+  async function setAllData({
+    accounts,
+    passkeys,
+    folders,
+    allRegularAccountIds = [],
+    allRegularOrderUpdatedAtMs = 0,
+    allRegularOrderUpdatedDeviceName = "",
+    folderOrderIds = [],
+    folderOrderUpdatedAtMs = 0,
+    folderOrderUpdatedDeviceName = "",
+    deviceName = ""
+  }) {
     try {
       await ensureDataStorageReady();
     } catch (error) {
       if (String(error?.name || "") !== "OperationError") throw error;
     }
-    await Promise.all([
-      writeCollection(COLLECTION_ACCOUNTS, accounts),
-      writeCollection(COLLECTION_PASSKEYS, passkeys),
-      writeCollection(COLLECTION_FOLDERS, folders)
+    await writeCollectionRows([
+      { key: COLLECTION_ACCOUNTS, value: accounts },
+      { key: COLLECTION_PASSKEYS, value: passkeys },
+      { key: COLLECTION_FOLDERS, value: folders },
+      {
+        key: COLLECTION_LAYOUT,
+        value: [{
+          allRegularAccountIds: Array.isArray(allRegularAccountIds) ? allRegularAccountIds : [],
+          allRegularOrderUpdatedAtMs: Number(allRegularOrderUpdatedAtMs) || 0,
+          allRegularOrderUpdatedDeviceName: String(allRegularOrderUpdatedDeviceName || ""),
+          folderOrderIds: Array.isArray(folderOrderIds) ? folderOrderIds : [],
+          folderOrderUpdatedAtMs: Number(folderOrderUpdatedAtMs) || 0,
+          folderOrderUpdatedDeviceName: String(folderOrderUpdatedDeviceName || ""),
+          deviceName: String(deviceName || "")
+        }]
+      }
     ]);
     await touchDataBump("all");
   }
@@ -761,22 +850,31 @@
   }
   async function getHistory() {
     await ensureDataStorageReady();
-    const entries = await readCollection(COLLECTION_HISTORY);
-    return (Array.isArray(entries) ? entries : []).filter((item) => item && typeof item === "object").map((item) => ({
+    const rawEntries = await readCollection(COLLECTION_HISTORY);
+    const entries = Array.isArray(rawEntries) ? rawEntries : [];
+    const normalized = entries.filter((item) => item && typeof item === "object").map((item) => ({
       id: String(item.id || ""),
       timestampMs: Number(item.timestampMs || 0),
-      action: String(item.action || "")
+      action: sanitizeHistoryAction(item.action)
     })).filter((item) => item.timestampMs > 0 && item.action.trim().length > 0).sort((lhs, rhs) => {
       if (lhs.timestampMs !== rhs.timestampMs) return rhs.timestampMs - lhs.timestampMs;
       return lhs.id.localeCompare(rhs.id);
     });
+    const needsMigration = entries.length !== normalized.length || entries.some(
+      (item, index) => String(item?.action || "").trim() !== normalized[index]?.action
+    );
+    if (needsMigration) {
+      await writeCollection(COLLECTION_HISTORY, normalized);
+      await touchDataBump(COLLECTION_HISTORY);
+    }
+    return normalized;
   }
   async function setHistory(entries) {
     await ensureDataStorageReady();
     const normalized = (Array.isArray(entries) ? entries : []).filter((item) => item && typeof item === "object").map((item) => ({
       id: String(item.id || ""),
       timestampMs: Number(item.timestampMs || 0),
-      action: String(item.action || "").trim()
+      action: sanitizeHistoryAction(item.action)
     })).filter((item) => item.timestampMs > 0 && item.action.length > 0).sort((lhs, rhs) => {
       if (lhs.timestampMs !== rhs.timestampMs) return rhs.timestampMs - lhs.timestampMs;
       return lhs.id.localeCompare(rhs.id);
@@ -785,7 +883,7 @@
     await touchDataBump(COLLECTION_HISTORY);
   }
   async function appendHistoryEntry({ timestampMs, action }) {
-    const normalizedAction = String(action || "").trim();
+    const normalizedAction = sanitizeHistoryAction(action);
     if (!normalizedAction) return;
     const ts = Number(timestampMs || Date.now());
     const entry = {
@@ -1524,7 +1622,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.0.7";
+  var PASS_EXTENSION_VERSION = "1.2.3";
 
   // ../../core/pass_core/js/sync_alias_core.js
   function syncAliasGroups(accounts, helpers, options = {}) {
@@ -2296,6 +2394,139 @@
   function preferRemoteOrder(localUpdatedAtMs, localDeviceName, remoteUpdatedAtMs, remoteDeviceName) {
     return asNumber(remoteUpdatedAtMs) > asNumber(localUpdatedAtMs) || asNumber(remoteUpdatedAtMs) === asNumber(localUpdatedAtMs) && stableTieValue(remoteDeviceName) > stableTieValue(localDeviceName);
   }
+  function mergeOrderIds(local, remote, localUpdatedAtMs, localDeviceName, remoteUpdatedAtMs, remoteDeviceName) {
+    const remoteWins = preferRemoteOrder(
+      localUpdatedAtMs,
+      localDeviceName,
+      remoteUpdatedAtMs,
+      remoteDeviceName
+    );
+    const winner = remoteWins ? remote : local;
+    const loser = remoteWins ? local : remote;
+    const seen = /* @__PURE__ */ new Set();
+    return [...Array.isArray(winner) ? winner : [], ...Array.isArray(loser) ? loser : []].map((id) => asString(id).trim().toLowerCase()).filter((id) => id && !seen.has(id) && seen.add(id));
+  }
+  function normalizeRegularOrder(savedIds, accounts, folderId, helpers) {
+    const normalizedFolderId = folderId == null ? null : helpers.normalizeFolderId(folderId);
+    const eligible = (account) => {
+      if (account?.isDeleted || account?.isPermanentlyDeleted) return false;
+      if (normalizedFolderId == null) return true;
+      return helpers.extractAccountFolderIds(account).some((id) => helpers.normalizeFolderId(id) === normalizedFolderId);
+    };
+    const valid = /* @__PURE__ */ new Map();
+    for (const account of accounts) {
+      const id = asString(account?.recordId || account?.id).trim().toLowerCase();
+      if (id && eligible(account)) valid.set(id, account);
+    }
+    const result = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const rawId of Array.isArray(savedIds) ? savedIds : []) {
+      const id = asString(rawId).trim().toLowerCase();
+      if (id && valid.has(id) && !seen.has(id)) {
+        seen.add(id);
+        result.push(id);
+      }
+    }
+    const missing = [...valid.entries()].filter(([id]) => !seen.has(id)).sort(([, left], [, right]) => asNumber(left?.regularSortOrder) - asNumber(right?.regularSortOrder) || asNumber(right?.updatedAtMs) - asNumber(left?.updatedAtMs) || asString(left?.recordId || left?.id).localeCompare(asString(right?.recordId || right?.id)));
+    result.push(...missing.map(([id]) => id));
+    return result;
+  }
+  function normalizeFolderRegularOrders(folders, accounts, helpers) {
+    const h = resolveHelpers(helpers);
+    return (Array.isArray(folders) ? folders : []).map((folder) => {
+      const next = { ...folder };
+      next.regularAccountIds = next.isDeleted || next.isPermanentlyDeleted ? [] : normalizeRegularOrder(next.regularAccountIds, accounts, next.id, h);
+      return next;
+    });
+  }
+  function applyFolderOrder(folders, savedIds, helpers) {
+    const h = resolveHelpers(helpers);
+    const byId = new Map((Array.isArray(folders) ? folders : []).map((folder) => [h.normalizeFolderId(folder?.id), folder]).filter(([id]) => id));
+    const order = [];
+    const seen = /* @__PURE__ */ new Set();
+    const fixedId = h.fixedNewAccountFolderId;
+    if (byId.get(fixedId) && !byId.get(fixedId).isDeleted && !byId.get(fixedId).isPermanentlyDeleted) {
+      order.push(fixedId);
+      seen.add(fixedId);
+    }
+    for (const rawId of Array.isArray(savedIds) ? savedIds : []) {
+      const id = h.normalizeFolderId(rawId);
+      const folder = byId.get(id);
+      if (folder && !folder.isDeleted && !folder.isPermanentlyDeleted && !seen.has(id)) {
+        order.push(id);
+        seen.add(id);
+      }
+    }
+    for (const [id, folder] of byId) {
+      if (!folder.isDeleted && !folder.isPermanentlyDeleted && !seen.has(id)) {
+        order.push(id);
+        seen.add(id);
+      }
+    }
+    const ordered = [];
+    for (const id of order) {
+      if (byId.has(id)) ordered.push(byId.get(id));
+    }
+    for (const [id, folder] of byId) {
+      if (!seen.has(id)) ordered.push(folder);
+    }
+    return { folders: ordered, folderOrderIds: order };
+  }
+  function mergeSyncPayloads(localInput, remoteInput, helpers) {
+    const h = resolveHelpers(helpers);
+    const local = localInput && typeof localInput === "object" ? localInput : {};
+    const remote = remoteInput && typeof remoteInput === "object" ? remoteInput : {};
+    let accounts = mergeAccountCollections(local.accounts, remote.accounts, h);
+    let folders = mergeFolderCollections(local.folders, remote.folders, h);
+    const passkeys = mergePasskeyCollections(local.passkeys, remote.passkeys, h);
+    accounts = reconcileAccountFolders(accounts, folders, h);
+    const allOrderFromRemote = preferRemoteOrder(
+      local.allRegularOrderUpdatedAtMs,
+      local.allRegularOrderUpdatedDeviceName,
+      remote.allRegularOrderUpdatedAtMs,
+      remote.allRegularOrderUpdatedDeviceName
+    );
+    const folderOrderFromRemote = preferRemoteOrder(
+      local.folderOrderUpdatedAtMs,
+      local.folderOrderUpdatedDeviceName,
+      remote.folderOrderUpdatedAtMs,
+      remote.folderOrderUpdatedDeviceName
+    );
+    const allRegularAccountIds = normalizeRegularOrder(
+      mergeOrderIds(
+        local.allRegularAccountIds,
+        remote.allRegularAccountIds,
+        local.allRegularOrderUpdatedAtMs,
+        local.allRegularOrderUpdatedDeviceName,
+        remote.allRegularOrderUpdatedAtMs,
+        remote.allRegularOrderUpdatedDeviceName
+      ),
+      accounts,
+      null,
+      h
+    );
+    folders = normalizeFolderRegularOrders(folders, accounts, h);
+    const folderOrderIds = mergeOrderIds(
+      local.folderOrderIds,
+      remote.folderOrderIds,
+      local.folderOrderUpdatedAtMs,
+      local.folderOrderUpdatedDeviceName,
+      remote.folderOrderUpdatedAtMs,
+      remote.folderOrderUpdatedDeviceName
+    );
+    const folderResult = applyFolderOrder(folders, folderOrderIds, h);
+    return {
+      accounts,
+      folders: folderResult.folders,
+      passkeys,
+      allRegularAccountIds,
+      allRegularOrderUpdatedAtMs: allOrderFromRemote ? asNumber(remote.allRegularOrderUpdatedAtMs) : asNumber(local.allRegularOrderUpdatedAtMs),
+      allRegularOrderUpdatedDeviceName: allOrderFromRemote ? asString(remote.allRegularOrderUpdatedDeviceName) : asString(local.allRegularOrderUpdatedDeviceName),
+      folderOrderIds: folderResult.folderOrderIds,
+      folderOrderUpdatedAtMs: folderOrderFromRemote ? asNumber(remote.folderOrderUpdatedAtMs) : asNumber(local.folderOrderUpdatedAtMs),
+      folderOrderUpdatedDeviceName: folderOrderFromRemote ? asString(remote.folderOrderUpdatedDeviceName) : asString(local.folderOrderUpdatedDeviceName)
+    };
+  }
   function reconcileAccountFolders(accounts, folders, helpers) {
     const h = resolveHelpers(helpers);
     const validIds = new Set((Array.isArray(folders) ? folders : []).filter((folder) => !folder?.isDeleted).map((folder) => h.normalizeFolderId(folder?.id)));
@@ -2364,11 +2595,11 @@
     const folders = Array.isArray(payload?.folders) ? payload.folders.map(h.normalizeFolderShape) : [];
     const passkeys = Array.isArray(payload?.passkeys) ? payload.passkeys.map(h.normalizePasskeyShape) : [];
     return {
-      accounts: accounts.length,
+      accounts: accounts.filter((item) => !item?.isPermanentlyDeleted).length,
       activeAccounts: accounts.filter((item) => !item?.isDeleted).length,
       deletedAccounts: accounts.filter((item) => Boolean(item?.isDeleted)).length,
-      folders: folders.length,
-      passkeys: passkeys.length,
+      folders: folders.filter((item) => !item?.isPermanentlyDeleted).length,
+      passkeys: passkeys.filter((item) => !item?.isPermanentlyDeleted).length,
       accountIds: identitySet(accounts, (item) => asString(item?.recordId || item?.id || item?.accountId).trim().toLowerCase()),
       folderIds: identitySet(folders, (item) => h.normalizeFolderId(item?.id)),
       passkeyIds: identitySet(passkeys, (item) => asString(item?.credentialIdB64u || item?.id).trim())
@@ -2598,6 +2829,8 @@
   var STORAGE_KEY_SYNC_PRIMARY_SOURCE = "pass.sync.primarySource.v1";
   var STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
   var STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
+  var STORAGE_KEY_SYNC_OPERATION_LOCK = "pass.sync.operationLock.v1";
+  var SYNC_OPERATION_LOCK_TTL_MS = 10 * 60 * 1e3;
   var CONTEXT_MENU_ID_ALL_ACCOUNTS = "pass.context.all_accounts";
   var DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "https://uk.sbbz.tech:5443";
   var SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
@@ -2605,6 +2838,28 @@
   var SYNC_PRIMARY_SERVER = "server";
   var SYNC_PRIMARY_WEBDAV = "webdav";
   var AUTO_SYNC_ALARM_NAME = "pass.sync.auto";
+  var autoSyncInFlight = false;
+  async function acquireSyncOperationLock(owner) {
+    const storage = chrome.storage?.session;
+    if (!storage) return owner;
+    const now = Date.now();
+    const current = await storage.get([STORAGE_KEY_SYNC_OPERATION_LOCK]);
+    const lock = current[STORAGE_KEY_SYNC_OPERATION_LOCK];
+    if (lock && Number(lock.expiresAtMs) > now && lock.owner !== owner) return null;
+    await storage.set({
+      [STORAGE_KEY_SYNC_OPERATION_LOCK]: { owner, expiresAtMs: now + SYNC_OPERATION_LOCK_TTL_MS }
+    });
+    const verified = await storage.get([STORAGE_KEY_SYNC_OPERATION_LOCK]);
+    return verified[STORAGE_KEY_SYNC_OPERATION_LOCK]?.owner === owner ? owner : null;
+  }
+  async function releaseSyncOperationLock(owner) {
+    const storage = chrome.storage?.session;
+    if (!storage) return;
+    const current = await storage.get([STORAGE_KEY_SYNC_OPERATION_LOCK]);
+    if (current[STORAGE_KEY_SYNC_OPERATION_LOCK]?.owner === owner) {
+      await storage.remove(STORAGE_KEY_SYNC_OPERATION_LOCK);
+    }
+  }
   var STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
   var STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
   var STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
@@ -2797,6 +3052,24 @@
     });
   }
   async function runAutoSync() {
+    if (autoSyncInFlight) {
+      logSyncFlow("auto-sync-skipped-in-flight");
+      return;
+    }
+    autoSyncInFlight = true;
+    const lockOwner = createSyncIdempotencyKey();
+    try {
+      if (!await acquireSyncOperationLock(lockOwner)) {
+        logSyncFlow("auto-sync-skipped-in-flight");
+        return;
+      }
+      return await runAutoSyncInternal();
+    } finally {
+      await releaseSyncOperationLock(lockOwner);
+      autoSyncInFlight = false;
+    }
+  }
+  async function runAutoSyncInternal() {
     const lockStatus = await getBackgroundLockStatus();
     if (lockStatus.locked) {
       logSyncFlow("auto-sync-skipped-locked");
@@ -2825,7 +3098,8 @@
     let mergedAccounts = localAccounts;
     let mergedPasskeys = localPasskeys;
     let mergedFolders = localFolders;
-    let remoteAggregate = null;
+    let finalPayload = null;
+    let primaryRemotePayload = null;
     for (const target of targets) {
       logSyncFlow("pull-start", {
         label: target.label,
@@ -2852,36 +3126,31 @@
       target.remotePayload = remoteResponse.payload;
       target.remoteEncrypted = remoteResponse.encrypted;
       const remotePayload = remoteResponse.payload;
-      const remoteAccounts = remotePayload ? remotePayload.accounts.map(normalizeAccountShape) : [];
-      const remotePasskeys = remotePayload ? buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys) : [];
-      const remoteFolders = remotePayload ? remotePayload.folders.map(normalizeFolderShape) : [];
-      if (!remoteAggregate) {
-        remoteAggregate = {
-          accounts: remoteAccounts,
-          passkeys: remotePasskeys,
-          folders: remoteFolders
-        };
-        continue;
+      if (target.isPrimary) {
+        primaryRemotePayload = remotePayload ? normalizeSyncPayloadShape(remotePayload) : null;
       }
-      remoteAggregate.folders = mergeFolderCollections2(remoteAggregate.folders, remoteFolders);
-      remoteAggregate.accounts = mergeAccountCollections2(remoteAggregate.accounts, remoteAccounts);
-      remoteAggregate.accounts = syncAliasGroups2(remoteAggregate.accounts);
-      remoteAggregate.accounts = reconcileAccountFolders2(remoteAggregate.accounts, remoteAggregate.folders);
-      remoteAggregate.passkeys = mergePasskeyCollections2(remoteAggregate.passkeys, remotePasskeys);
-      remoteAggregate.passkeys = buildUnifiedPasskeys(remoteAggregate.accounts, remoteAggregate.passkeys);
     }
-    if (remoteAggregate) {
-      mergedFolders = mergeFolderCollections2(localFolders, remoteAggregate.folders);
-      mergedAccounts = mergeAccountCollections2(localAccounts, remoteAggregate.accounts);
-      mergedAccounts = syncAliasGroups2(mergedAccounts);
-      mergedAccounts = reconcileAccountFolders2(mergedAccounts, mergedFolders);
-      mergedPasskeys = mergePasskeyCollections2(localPasskeys, remoteAggregate.passkeys);
-      mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
+    const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+    if (primaryRemotePayload) {
+      const mergedPayload = mergeSyncPayloads(
+        {
+          ...currentPayload,
+          accounts: localAccounts,
+          folders: localFolders,
+          passkeys: localPasskeys
+        },
+        primaryRemotePayload,
+        syncMergeHelpers()
+      );
+      ({ accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys } = mergedPayload);
+      finalPayload = mergedPayload;
+    } else {
+      finalPayload = currentPayload;
     }
-    if (remoteAggregate) {
+    if (primaryRemotePayload) {
       const safety = validateSyncSafety(
         { accounts: localAccounts, folders: localFolders, passkeys: localPasskeys },
-        remoteAggregate,
+        primaryRemotePayload,
         { accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys },
         SYNC_MODE_MERGE
       );
@@ -2896,6 +3165,7 @@
       }
     }
     await writeBusinessDataToStore({
+      ...finalPayload,
       accounts: mergedAccounts,
       passkeys: mergedPasskeys,
       folders: mergedFolders
@@ -2927,6 +3197,7 @@
       let result;
       try {
         result = await pushRemotePayloadWithMode(target, {
+          ...finalPayload,
           accounts: mergedAccounts,
           passkeys: mergedPasskeys,
           folders: mergedFolders
@@ -2935,7 +3206,7 @@
         pushErrors.push(`${target.label}: ${error?.message || String(error || "")}`);
         const nextOutbox = upsertSyncOutbox([...outboxByTarget.values()], {
           targetKey,
-          payload: { accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders },
+          payload: { ...finalPayload, accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders },
           error
         });
         outboxByTarget.clear();
@@ -2962,6 +3233,7 @@
     }
     await setSyncOutbox([...outboxByTarget.values()]);
     await writeBusinessDataToStore({
+      ...finalPayload,
       accounts: mergedAccounts,
       passkeys: mergedPasskeys,
       folders: mergedFolders
@@ -2980,7 +3252,14 @@
     return {
       accounts: Array.isArray(stored.accounts) ? stored.accounts : [],
       passkeys: Array.isArray(stored.passkeys) ? stored.passkeys : [],
-      folders: Array.isArray(stored.folders) ? stored.folders : []
+      folders: Array.isArray(stored.folders) ? stored.folders : [],
+      allRegularAccountIds: Array.isArray(stored.allRegularAccountIds) ? stored.allRegularAccountIds : [],
+      allRegularOrderUpdatedAtMs: Number(stored.allRegularOrderUpdatedAtMs) || 0,
+      allRegularOrderUpdatedDeviceName: String(stored.allRegularOrderUpdatedDeviceName || ""),
+      folderOrderIds: Array.isArray(stored.folderOrderIds) ? stored.folderOrderIds : [],
+      folderOrderUpdatedAtMs: Number(stored.folderOrderUpdatedAtMs) || 0,
+      folderOrderUpdatedDeviceName: String(stored.folderOrderUpdatedDeviceName || ""),
+      deviceName: String(stored.deviceName || "")
     };
   }
   async function saveLocalSafetySnapshot(reason) {
@@ -2996,7 +3275,14 @@
     return {
       accounts,
       passkeys: buildUnifiedPasskeys(accounts, rawPasskeys),
-      folders
+      folders,
+      allRegularAccountIds: Array.isArray(payload?.allRegularAccountIds) ? payload.allRegularAccountIds.map(String).filter(Boolean) : [],
+      allRegularOrderUpdatedAtMs: Number(payload?.allRegularOrderUpdatedAtMs) || 0,
+      allRegularOrderUpdatedDeviceName: String(payload?.allRegularOrderUpdatedDeviceName || ""),
+      folderOrderIds: Array.isArray(payload?.folderOrderIds) ? payload.folderOrderIds.map(String).filter(Boolean) : [],
+      folderOrderUpdatedAtMs: Number(payload?.folderOrderUpdatedAtMs) || 0,
+      folderOrderUpdatedDeviceName: String(payload?.folderOrderUpdatedDeviceName || ""),
+      deviceName: String(payload?.deviceName || "")
     };
   }
   function syncPayloadEquals(lhs, rhs) {
@@ -3016,16 +3302,28 @@
       ...payload,
       accounts: [...payload?.accounts || []].sort((lhs, rhs) => compare(lhs, rhs, ["recordId", "accountId"])),
       passkeys: [...payload?.passkeys || []].sort((lhs, rhs) => compare(lhs, rhs, ["credentialIdB64u"])),
-      folders: [...payload?.folders || []].sort((lhs, rhs) => compare(lhs, rhs, ["id"]))
+      folders: [...payload?.folders || []].sort((lhs, rhs) => compare(lhs, rhs, ["id"])),
+      allRegularAccountIds: [...payload?.allRegularAccountIds || []],
+      folderOrderIds: [...payload?.folderOrderIds || []]
     };
   }
-  async function writeBusinessDataToStore({ accounts, passkeys, folders }) {
-    const nextPayload = normalizeSyncPayloadShape({ accounts, passkeys, folders });
+  async function broadcastWebBridgeData(data) {
+    try {
+      await chrome.runtime.sendMessage({
+        type: "PASS_WEB_BRIDGE_DATA_CHANGED",
+        payload: normalizeSyncPayloadShape(data)
+      });
+    } catch {
+    }
+  }
+  async function writeBusinessDataToStore(payload) {
     const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+    const nextPayload = normalizeSyncPayloadShape({ ...currentPayload, ...payload || {} });
     if (syncPayloadEquals(currentPayload, nextPayload)) {
       return false;
     }
     await setAllData(nextPayload);
+    await broadcastWebBridgeData(nextPayload);
     return true;
   }
   async function buildRemoteSyncTargetsFromStorage() {
@@ -3186,7 +3484,7 @@
     return { ok: true, enabled: true, locked };
   }
   async function unlockBackground(rawPassword) {
-    const password = String(rawPassword || "").trim();
+    const password = String(rawPassword || "");
     const stored = await chrome.storage.local.get([
       STORAGE_KEY_LOCK_ENABLED,
       STORAGE_KEY_LOCK_MASTER_CREDENTIAL
@@ -3226,7 +3524,7 @@
     await broadcastLockState(true);
   }
   async function configureDataEncryption(payload) {
-    const password = String(payload?.password || "").trim();
+    const password = String(payload?.password || "");
     const stored = await chrome.storage.local.get([STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
     const credential = normalizeLockMasterCredential(stored[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
     if (!password || !credential || !await verifyLockMasterPassword(credential, password)) {
@@ -3245,7 +3543,7 @@
     }
   }
   async function disableBackgroundDataEncryption(payload) {
-    const password = String(payload?.password || "").trim();
+    const password = String(payload?.password || "");
     const stored = await chrome.storage.local.get([STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
     const credential = normalizeLockMasterCredential(stored[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
     if (!password || !credential || !await verifyLockMasterPassword(credential, password)) {
@@ -3259,8 +3557,8 @@
     }
   }
   async function rewrapBackgroundDataEncryption(payload) {
-    const currentPassword = String(payload?.currentPassword || "").trim();
-    const nextPassword = String(payload?.nextPassword || "").trim();
+    const currentPassword = String(payload?.currentPassword || "");
+    const nextPassword = String(payload?.nextPassword || "");
     const stored = await chrome.storage.local.get([STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
     const currentCredential = normalizeLockMasterCredential(stored[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
     const nextCredential = normalizeLockMasterCredential(payload?.nextCredential);
@@ -3418,7 +3716,18 @@
         accounts,
         Array.isArray(source.passkeys) ? source.passkeys.map(normalizePasskeyShape) : []
       );
-      await setAllData({ accounts, folders, passkeys });
+      await setAllData({
+        accounts,
+        folders,
+        passkeys,
+        allRegularAccountIds: source.allRegularAccountIds,
+        allRegularOrderUpdatedAtMs: source.allRegularOrderUpdatedAtMs,
+        allRegularOrderUpdatedDeviceName: source.allRegularOrderUpdatedDeviceName,
+        folderOrderIds: source.folderOrderIds,
+        folderOrderUpdatedAtMs: source.folderOrderUpdatedAtMs,
+        folderOrderUpdatedDeviceName: source.folderOrderUpdatedDeviceName,
+        deviceName: source.deviceName
+      });
       return {
         ok: true,
         accounts: accounts.length,
@@ -3442,8 +3751,18 @@
     if (!allowedProtocol) {
       return { ok: false, error: "\u4EC5\u5141\u8BB8\u5728 HTTPS \u9875\u9762\uFF08\u6216\u672C\u673A HTTP\uFF09\u5217\u51FA\u53EF\u586B\u5145\u8D26\u53F7", accounts: [] };
     }
-    const accounts = await getAccounts2();
+    const stored = await getAllData();
+    const accounts = Array.isArray(stored.accounts) ? stored.accounts.map(normalizeAccountShape) : [];
+    const order = Array.isArray(stored.allRegularAccountIds) ? stored.allRegularAccountIds : [];
+    const orderRank = new Map(order.map((accountId, index) => [String(accountId).toLowerCase(), index]));
     const matched = accounts.filter((item) => !item?.isDeleted && !item?.isPermanentlyDeleted && accountMatchesDomain(item, tabHost)).sort((left, right) => {
+      const leftRank = orderRank.get(String(left?.recordId || left?.accountId || "").toLowerCase());
+      const rightRank = orderRank.get(String(right?.recordId || right?.accountId || "").toLowerCase());
+      if (leftRank != null || rightRank != null) {
+        if (leftRank == null) return 1;
+        if (rightRank == null) return -1;
+        if (leftRank !== rightRank) return leftRank - rightRank;
+      }
       const leftUpdated = Number(left?.updatedAtMs || left?.createdAtMs || 0);
       const rightUpdated = Number(right?.updatedAtMs || right?.createdAtMs || 0);
       if (leftUpdated !== rightUpdated) return rightUpdated - leftUpdated;
@@ -3533,7 +3852,7 @@
         existing.updatedAtMs = now;
         existing.lastOperatedDeviceName = deviceName;
         const synced2 = syncAliasGroups2(next);
-        await setAccounts2(synced2);
+        await setAccounts(synced2);
         return { ok: true, mode: "updated" };
       }
       return { ok: true, mode: "noop" };
@@ -3548,7 +3867,7 @@
       })
     );
     const synced = syncAliasGroups2(next);
-    await setAccounts2(synced);
+    await setAccounts(synced);
     return { ok: true, mode: "created" };
   }
   async function handleContentGetAccounts() {
@@ -3589,9 +3908,11 @@
     const raw = await getAccounts();
     return raw.map(normalizeAccountShape);
   }
-  async function setAccounts2(accounts) {
+  async function setAccounts(accounts) {
     const normalized = (Array.isArray(accounts) ? accounts : []).map(normalizeAccountShape);
-    await setAccounts(normalized);
+    const current = await readBusinessDataFromStore();
+    await setAllData({ ...current, accounts: normalized });
+    await broadcastWebBridgeData({ ...current, accounts: normalized });
   }
   async function upsertAccountForPasskey(accountHint) {
     const domain = normalizeDomain(accountHint?.rpId || "");
@@ -3644,7 +3965,7 @@
         created.passkeyUpdatedAtMs = now;
       }
       allAccounts.push(created);
-      await setAccounts2(syncAliasGroups2(allAccounts));
+      await setAccounts(syncAliasGroups2(allAccounts));
       logPasskeyFlow("upsert-created-new-account", {
         domain,
         username,
@@ -3667,7 +3988,7 @@
     const removeIndexSet = new Set(matchIndexes);
     const next = allAccounts.filter((_, index) => !removeIndexSet.has(index));
     next.push(mergedAccount);
-    await setAccounts2(syncAliasGroups2(next));
+    await setAccounts(syncAliasGroups2(next));
     logPasskeyFlow("upsert-merged-into-existing-account", {
       domain,
       username,
@@ -4039,17 +4360,8 @@
     const linkedPasskeys = Array.from(linkedById.values()).filter((item) => String(item.rpId || "").trim().length > 0);
     return mergePasskeyCollections2(storedPasskeys, linkedPasskeys);
   }
-  function mergeAccountCollections2(local, remote) {
-    return mergeAccountCollections(local, remote, syncMergeHelpers());
-  }
   function mergePasskeyCollections2(local, remote) {
     return mergePasskeyCollections(local, remote, syncMergeHelpers());
-  }
-  function mergeFolderCollections2(local, remote) {
-    return mergeFolderCollections(local, remote, syncMergeHelpers());
-  }
-  function reconcileAccountFolders2(accounts, folders) {
-    return reconcileAccountFolders(accounts, folders, syncMergeHelpers());
   }
   function syncMergeHelpers() {
     return {
@@ -4083,7 +4395,14 @@
     return {
       accounts: Array.isArray(rawPayload.accounts) ? rawPayload.accounts : [],
       passkeys: Array.isArray(rawPayload.passkeys) ? rawPayload.passkeys : [],
-      folders: Array.isArray(rawPayload.folders) ? rawPayload.folders : []
+      folders: Array.isArray(rawPayload.folders) ? rawPayload.folders : [],
+      allRegularAccountIds: Array.isArray(rawPayload.allRegularAccountIds) ? rawPayload.allRegularAccountIds : [],
+      allRegularOrderUpdatedAtMs: Number(rawPayload.allRegularOrderUpdatedAtMs) || 0,
+      allRegularOrderUpdatedDeviceName: String(rawPayload.allRegularOrderUpdatedDeviceName || ""),
+      folderOrderIds: Array.isArray(rawPayload.folderOrderIds) ? rawPayload.folderOrderIds : [],
+      folderOrderUpdatedAtMs: Number(rawPayload.folderOrderUpdatedAtMs) || 0,
+      folderOrderUpdatedDeviceName: String(rawPayload.folderOrderUpdatedDeviceName || ""),
+      deviceName: String(rawPayload.deviceName || "")
     };
   }
   async function getDeviceName() {
@@ -4115,7 +4434,18 @@
         logicalClockMs: Date.now(),
         formatVersion: 2
       },
-      payload: sortSyncPayloadCollections({ accounts, passkeys, folders })
+      payload: sortSyncPayloadCollections({
+        accounts,
+        passkeys,
+        folders,
+        allRegularAccountIds: payload?.allRegularAccountIds,
+        allRegularOrderUpdatedAtMs: payload?.allRegularOrderUpdatedAtMs,
+        allRegularOrderUpdatedDeviceName: payload?.allRegularOrderUpdatedDeviceName,
+        folderOrderIds: payload?.folderOrderIds,
+        folderOrderUpdatedAtMs: payload?.folderOrderUpdatedAtMs,
+        folderOrderUpdatedDeviceName: payload?.folderOrderUpdatedDeviceName,
+        deviceName: payload?.deviceName
+      })
     };
   }
   function base64EncodeUtf8(input) {
@@ -4201,6 +4531,7 @@
     };
     if (target.authHeader) headers.Authorization = target.authHeader;
     if (ifMatch) headers["If-Match"] = ifMatch;
+    else if (target.kind === "webdav") headers["If-None-Match"] = "*";
     if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
     let response;
     try {
@@ -4258,7 +4589,8 @@
         target.remoteEncrypted = true;
         return { payload: candidate };
       } catch (error) {
-        if (!target.supportsEtag || error?.status !== 412 || attempt === 2) throw error;
+        if (error?.status !== 412 && error?.status !== 428) throw error;
+        if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw error;
       }
       const latestResponse = await pullRemotePayload(target);
       updateRemoteConcurrencyState(target, latestResponse.etag);
@@ -4271,15 +4603,13 @@
       const remoteAccounts = remotePayload.accounts.map(normalizeAccountShape);
       const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys);
       const remoteFolders = remotePayload.folders.map(normalizeFolderShape);
-      let mergedFolders = mergeFolderCollections2(localFolders, remoteFolders);
-      let mergedAccounts = mergeAccountCollections2(localAccounts, remoteAccounts);
-      mergedAccounts = syncAliasGroups2(mergedAccounts);
-      mergedAccounts = reconcileAccountFolders2(mergedAccounts, mergedFolders);
-      let mergedPasskeys = mergePasskeyCollections2(localPasskeys, remotePasskeys);
-      mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
-      candidate = { accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders };
+      candidate = mergeSyncPayloads(
+        { ...candidate, accounts: localAccounts, passkeys: localPasskeys, folders: localFolders },
+        { ...remotePayload, accounts: remoteAccounts, passkeys: remotePasskeys, folders: remoteFolders },
+        syncMergeHelpers()
+      );
       const safety = validateSyncSafety(
-        { accounts: localAccounts, folders: localFolders, passkeys: localPasskeys },
+        { ...candidate, accounts: localAccounts, folders: localFolders, passkeys: localPasskeys },
         remotePayload,
         candidate,
         SYNC_MODE_MERGE
@@ -4294,7 +4624,7 @@
   }
   async function pushRemotePayloadWithMode(target, payload, syncMode) {
     if (syncMode !== SYNC_MODE_MERGE) {
-      const pushResult = await pushRemotePayload(target, payload, null, createSyncIdempotencyKey());
+      const pushResult = await pushRemotePayload(target, payload, target.remoteEtag, createSyncIdempotencyKey());
       updateRemoteConcurrencyState(target, pushResult.etag);
       target.remotePayload = payload;
       target.remoteEncrypted = true;

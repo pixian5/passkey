@@ -5,7 +5,9 @@ use pass_merge::v2::{evaluate_sync_safety, merge_sync_payloads, PasswordAccount,
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::sync::crypto::{decrypt_wire_body, encrypt_bundle_document, PLAINTEXT_SCHEMA};
+use crate::sync::crypto::{
+    decrypt_wire_body, decrypt_wire_body_with_fallback, encrypt_bundle_document, PLAINTEXT_SCHEMA,
+};
 use crate::sync::http::{get_sync_state, put_sync_state, validate_base_url};
 use crate::sync::pipeline::{visible_account_count, SyncMode};
 use crate::sync::settings::SyncSettings;
@@ -345,7 +347,11 @@ pub fn restore_sync_version(
         // Re-pull state after restore
         let after = get_sync_state(&settings.base_url, &settings.auth_token)?;
         if let Some(body) = after.body {
-            let doc = decrypt_wire_body(&body, &settings.encryption_key)?;
+            let doc = decrypt_wire_body_with_fallback(
+                &body,
+                &settings.encryption_key,
+                &settings.previous_encryption_key,
+            )?;
             let payload = extract_payload(&doc)?;
             return Ok((payload, after.etag));
         }
@@ -365,7 +371,11 @@ pub fn restore_sync_version(
         return Err(format!("下载快照失败 HTTP {code}: {text}"));
     }
     let body = resp.bytes().map_err(|e| e.to_string())?.to_vec();
-    let doc = decrypt_wire_body(&body, &settings.encryption_key)?;
+    let doc = decrypt_wire_body_with_fallback(
+        &body,
+        &settings.encryption_key,
+        &settings.previous_encryption_key,
+    )?;
     let payload = extract_payload(&doc)?;
     let wire = encrypt_bundle_document(
         &json!({
@@ -381,6 +391,7 @@ pub fn restore_sync_version(
         &settings.auth_token,
         &wire,
         etag.as_deref(),
+        None,
     )?;
     Ok((payload, Some(new_etag)))
 }

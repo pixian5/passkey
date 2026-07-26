@@ -26,6 +26,7 @@ use rand::RngCore;
 use reqwest::blocking::Client;
 use reqwest::header::{
     HeaderMap as ReqwestHeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, ETAG, IF_MATCH,
+    IF_NONE_MATCH,
 };
 use reqwest::StatusCode as ReqwestStatusCode;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -1034,6 +1035,14 @@ fn encrypt_sync_document(doc: &Value, key_text: &str) -> Result<Vec<u8>, String>
 }
 
 fn decrypt_sync_document(raw: &[u8], key_text: &str) -> Result<Value, String> {
+    decrypt_sync_document_with_fallback(raw, key_text, "")
+}
+
+fn decrypt_sync_document_with_fallback(
+    raw: &[u8],
+    key_text: &str,
+    fallback_key_text: &str,
+) -> Result<Value, String> {
     let value: Value =
         serde_json::from_slice(raw).map_err(|e| format!("同步响应不是 JSON：{e}"))?;
     let schema = value.get("schema").and_then(Value::as_str).unwrap_or("");
@@ -1046,8 +1055,15 @@ fn decrypt_sync_document(raw: &[u8], key_text: &str) -> Result<Value, String> {
     if schema != "pass.sync.encrypted.v1" {
         return Err("不支持的同步包格式".into());
     }
-    let key = decode_sync_key(key_text)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
+    let keys: Vec<&str> = [key_text, fallback_key_text]
+        .into_iter()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect();
+    if keys.is_empty() {
+        return Err("该同步包为加密信封，但当前未配置同步加密密钥".into());
+    }
+    let declared_key_id = value.get("keyId").and_then(Value::as_str).unwrap_or("");
     let nonce = STANDARD
         .decode(
             value
@@ -1067,16 +1083,34 @@ fn decrypt_sync_document(raw: &[u8], key_text: &str) -> Result<Value, String> {
     if nonce.len() != 12 {
         return Err("同步 nonce 长度无效".into());
     }
-    let plain = cipher
-        .decrypt(
+    for candidate in keys {
+        let Ok(key) = decode_sync_key(candidate) else {
+            continue;
+        };
+        let digest = Sha256::digest(key);
+        let candidate_key_id = format!(
+            "k1-{}",
+            digest
+                .iter()
+                .take(8)
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        );
+        if !declared_key_id.is_empty() && declared_key_id != candidate_key_id {
+            continue;
+        }
+        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
+        if let Ok(plain) = cipher.decrypt(
             Nonce::from_slice(&nonce),
             aes_gcm::aead::Payload {
                 msg: &ciphertext,
                 aad: b"pass.sync.encrypted.v1",
             },
-        )
-        .map_err(|_| "同步包解密失败，请确认同步密钥一致".to_string())?;
-    serde_json::from_slice(&plain).map_err(|e| format!("解密后不是合法 JSON：{e}"))
+        ) {
+            return serde_json::from_slice(&plain).map_err(|e| format!("解密后不是合法 JSON：{e}"));
+        }
+    }
+    Err("同步包解密失败，请确认同步密钥一致".into())
 }
 
 fn sync_base_url(raw: &str) -> Result<String, String> {
@@ -1183,7 +1217,9 @@ fn self_hosted_put(
         .body(body.to_vec())
         .send()
         .map_err(|e| format!("推送同步状态失败：{e}"))?;
-    if response.status() == ReqwestStatusCode::PRECONDITION_FAILED {
+    if response.status() == ReqwestStatusCode::PRECONDITION_FAILED
+        || response.status() == ReqwestStatusCode::PRECONDITION_REQUIRED
+    {
         return Err("PRECONDITION_FAILED".into());
     }
     if !response.status().is_success() {
@@ -1248,6 +1284,7 @@ fn self_hosted_restore_version(
     token: &str,
     version_id: &str,
     key: &str,
+    previous_key: &str,
 ) -> Result<SyncPayload, String> {
     if !version_id.chars().all(|c| c.is_ascii_digit()) {
         return Err("服务器快照编号无效".into());
@@ -1280,7 +1317,11 @@ fn self_hosted_restore_version(
     let restored = self_hosted_get(base, token)?
         .body
         .ok_or_else(|| "服务器恢复后没有返回同步数据".to_string())?;
-    extract_payload(decrypt_sync_document(&restored, key)?)
+    extract_payload(decrypt_sync_document_with_fallback(
+        &restored,
+        key,
+        previous_key,
+    )?)
 }
 
 fn webdav_resource_url(base: &str, remote_path: &str) -> Result<String, String> {
@@ -1380,6 +1421,8 @@ fn webdav_put(
             IF_MATCH,
             HeaderValue::from_str(tag.trim()).map_err(|_| "WebDAV ETag 非法".to_string())?,
         );
+    } else {
+        headers.insert(IF_NONE_MATCH, HeaderValue::from_static("*"));
     }
     let response = http_client()?
         .put(webdav_resource_url(base, path)?)
@@ -1437,12 +1480,17 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
+    let previous_key = prefs
+        .get("previousEncryptionKey")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     let local = v.payload();
     let fetched = webdav_get(base, path, username, password)?;
     let mut remote = fetched
         .body
         .as_deref()
-        .map(|body| decrypt_sync_document(body, &key))
+        .map(|body| decrypt_sync_document_with_fallback(body, &key, &previous_key))
         .transpose()?
         .map(extract_payload)
         .transpose()?;
@@ -1535,7 +1583,7 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
                 remote = latest
                     .body
                     .as_deref()
-                    .map(|body| decrypt_sync_document(body, &key))
+                    .map(|body| decrypt_sync_document_with_fallback(body, &key, &previous_key))
                     .transpose()?
                     .map(extract_payload)
                     .transpose()?;
@@ -1559,7 +1607,7 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
                         local_accounts: visible_accounts(&local),
                         remote_accounts: remote.as_ref().map(visible_accounts).unwrap_or(0),
                         merged_accounts: visible_accounts(&merged),
-                        applied: false,
+                        applied: local_applied,
                         pushed: false,
                         etag: current_etag.clone(),
                     }}));
@@ -1627,12 +1675,19 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
         .get("encryptionKey")
         .and_then(Value::as_str)
         .unwrap_or("");
+    let previous_key = v
+        .data
+        .ui_prefs
+        .get("previousEncryptionKey")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     let local = v.payload();
     let fetched = self_hosted_get(&base, &token)?;
     let mut remote = fetched
         .body
         .as_deref()
-        .map(|body| decrypt_sync_document(body, &key))
+        .map(|body| decrypt_sync_document_with_fallback(body, &key, &previous_key))
         .transpose()?
         .map(extract_payload)
         .transpose()?;
@@ -1726,7 +1781,7 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
                 remote = latest
                     .body
                     .as_deref()
-                    .map(|body| decrypt_sync_document(body, &key))
+                    .map(|body| decrypt_sync_document_with_fallback(body, &key, &previous_key))
                     .transpose()?
                     .map(extract_payload)
                     .transpose()?;
@@ -1750,7 +1805,7 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
                         local_accounts: visible_accounts(&local),
                         remote_accounts: remote.as_ref().map(visible_accounts).unwrap_or(0),
                         merged_accounts: visible_accounts(&merged),
-                        applied: false,
+                        applied: local_applied,
                         pushed: false,
                         etag: current_etag.clone(),
                     }}));
@@ -3336,7 +3391,28 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                     .and_then(Value::as_str)
                     .unwrap_or("merge"),
             );
-            if v.data
+            let primary_source = v
+                .data
+                .ui_prefs
+                .get("syncPrimarySource")
+                .and_then(Value::as_str)
+                .unwrap_or("selfHosted");
+            let use_webdav = v
+                .data
+                .ui_prefs
+                .get("webdavEnabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                && (primary_source == "webdav"
+                    || !v
+                        .data
+                        .sync_settings
+                        .get("enabled")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false));
+            if use_webdav {
+                run_webdav_sync(v, mode, true)
+            } else if v.data
                 .sync_settings
                 .get("enabled")
                 .and_then(Value::as_bool)
@@ -3392,7 +3468,13 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 .get("encryptionKey")
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            let payload = self_hosted_restore_version(base, token, &version_id, key)?;
+            let previous_key = v
+                .data
+                .ui_prefs
+                .get("previousEncryptionKey")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let payload = self_hosted_restore_version(base, token, &version_id, key, previous_key)?;
             v.begin("恢复服务器快照前自动备份");
             v.apply_payload(payload.clone());
             v.save()?;
@@ -3589,7 +3671,17 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 .get("encryptionKey")
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            let remote = extract_payload(decrypt_sync_document(content.as_bytes(), key)?)?;
+            let previous_key = v
+                .data
+                .ui_prefs
+                .get("previousEncryptionKey")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let remote = extract_payload(decrypt_sync_document_with_fallback(
+                content.as_bytes(),
+                key,
+                previous_key,
+            )?)?;
             let local = v.payload();
             let merged = pass_merge::v2::merge_sync_payloads(local.clone(), remote.clone());
             let safety = evaluate_sync_safety(&local, Some(&remote), &merged, "merge");
@@ -3839,6 +3931,28 @@ mod tests {
         let plain = encrypt_sync_document(&document, "").unwrap();
         assert_eq!(decrypt_sync_document(&plain, "").unwrap(), document);
         assert!(decrypt_sync_document(&plain, key).is_err());
+    }
+
+    #[test]
+    fn sync_document_accepts_previous_key_during_rotation() {
+        let document = json!({
+            "schema": "pass.sync.bundle.v2",
+            "exportedAtMs": 1,
+            "payload": SyncPayload::default()
+        });
+        let previous = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let current = URL_SAFE_NO_PAD.encode([1u8; 32]);
+        let encrypted = encrypt_sync_document(&document, previous).unwrap();
+        assert_eq!(
+            decrypt_sync_document_with_fallback(&encrypted, &current, previous).unwrap(),
+            document
+        );
+        assert_eq!(
+            decrypt_sync_document_with_fallback(&encrypted, "invalid-current-key", previous)
+                .unwrap(),
+            document
+        );
+        assert!(decrypt_sync_document_with_fallback(&encrypted, &current, &current).is_err());
     }
     #[test]
     fn web_lock_blocks_vault_commands_until_password_unlock() {

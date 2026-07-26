@@ -12,6 +12,7 @@ import {
 } from "./account_core.js";
 import {
   evaluateSyncSafety,
+  mergeSyncPayloads as mergeSyncPayloadsCore,
   mergeAccountCollections as mergeAccountCollectionsCore,
   mergeFolderCollections as mergeFolderCollectionsCore,
   mergePasskeyCollections as mergePasskeyCollectionsCore,
@@ -69,6 +70,8 @@ const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
 const STORAGE_KEY_SYNC_PRIMARY_SOURCE = "pass.sync.primarySource.v1";
 const STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
+const STORAGE_KEY_SYNC_OPERATION_LOCK = "pass.sync.operationLock.v1";
+const SYNC_OPERATION_LOCK_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "https://uk.sbbz.tech:5443";
 const SYNC_MODE_MERGE = "merge";
 const SYNC_MODE_REMOTE_OVERWRITE_LOCAL = "remoteOverwriteLocal";
@@ -243,6 +246,29 @@ let deviceNameSaveTimer = null;
 let syncSettingsSaveTimer = null;
 let lockSettingsSaveTimer = null;
 let syncInFlight = false;
+
+async function acquireSyncOperationLock(owner) {
+  const storage = chrome.storage?.session;
+  if (!storage) return owner;
+  const now = Date.now();
+  const current = await storage.get([STORAGE_KEY_SYNC_OPERATION_LOCK]);
+  const lock = current[STORAGE_KEY_SYNC_OPERATION_LOCK];
+  if (lock && Number(lock.expiresAtMs) > now && lock.owner !== owner) return null;
+  await storage.set({
+    [STORAGE_KEY_SYNC_OPERATION_LOCK]: { owner, expiresAtMs: now + SYNC_OPERATION_LOCK_TTL_MS },
+  });
+  const verified = await storage.get([STORAGE_KEY_SYNC_OPERATION_LOCK]);
+  return verified[STORAGE_KEY_SYNC_OPERATION_LOCK]?.owner === owner ? owner : null;
+}
+
+async function releaseSyncOperationLock(owner) {
+  const storage = chrome.storage?.session;
+  if (!storage) return;
+  const current = await storage.get([STORAGE_KEY_SYNC_OPERATION_LOCK]);
+  if (current[STORAGE_KEY_SYNC_OPERATION_LOCK]?.owner === owner) {
+    await storage.remove(STORAGE_KEY_SYNC_OPERATION_LOCK);
+  }
+}
 
 const AUTO_SYNC_INTERVAL_OPTIONS = new Set(["0", "1", "3", "5", "10", "15", "30", "60"]);
 
@@ -512,6 +538,13 @@ async function readBusinessDataFromStore() {
     accounts: Array.isArray(stored?.accounts) ? stored.accounts : [],
     passkeys: Array.isArray(stored?.passkeys) ? stored.passkeys : [],
     folders: Array.isArray(stored?.folders) ? stored.folders : [],
+    allRegularAccountIds: Array.isArray(stored?.allRegularAccountIds) ? stored.allRegularAccountIds : [],
+    allRegularOrderUpdatedAtMs: Number(stored?.allRegularOrderUpdatedAtMs) || 0,
+    allRegularOrderUpdatedDeviceName: String(stored?.allRegularOrderUpdatedDeviceName || ""),
+    folderOrderIds: Array.isArray(stored?.folderOrderIds) ? stored.folderOrderIds : [],
+    folderOrderUpdatedAtMs: Number(stored?.folderOrderUpdatedAtMs) || 0,
+    folderOrderUpdatedDeviceName: String(stored?.folderOrderUpdatedDeviceName || ""),
+    deviceName: String(stored?.deviceName || ""),
   };
 }
 
@@ -529,6 +562,17 @@ function normalizeSyncPayloadShape(payload) {
     accounts,
     passkeys: buildUnifiedPasskeys(accounts, rawPasskeys),
     folders,
+    allRegularAccountIds: Array.isArray(payload?.allRegularAccountIds)
+      ? payload.allRegularAccountIds.map(String).filter(Boolean)
+      : [],
+    allRegularOrderUpdatedAtMs: Number(payload?.allRegularOrderUpdatedAtMs) || 0,
+    allRegularOrderUpdatedDeviceName: String(payload?.allRegularOrderUpdatedDeviceName || ""),
+    folderOrderIds: Array.isArray(payload?.folderOrderIds)
+      ? payload.folderOrderIds.map(String).filter(Boolean)
+      : [],
+    folderOrderUpdatedAtMs: Number(payload?.folderOrderUpdatedAtMs) || 0,
+    folderOrderUpdatedDeviceName: String(payload?.folderOrderUpdatedDeviceName || ""),
+    deviceName: String(payload?.deviceName || ""),
   };
 }
 
@@ -572,9 +616,9 @@ function countSyncAccountConflicts(localAccounts, remoteAccounts) {
   return count;
 }
 
-async function writeBusinessDataToStore({ accounts, passkeys, folders }) {
-  const nextPayload = normalizeSyncPayloadShape({ accounts, passkeys, folders });
+async function writeBusinessDataToStore(payload = {}) {
   const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+  const nextPayload = normalizeSyncPayloadShape({ ...currentPayload, ...(payload || {}) });
   if (syncPayloadEquals(currentPayload, nextPayload)) {
     return false;
   }
@@ -1161,43 +1205,43 @@ async function importSyncBundleAndMerge() {
   }
 
   const localStored = await readBusinessDataFromStore();
-  const localAccounts = Array.isArray(localStored.accounts)
-    ? localStored.accounts.map(normalizeAccountShape)
-    : [];
-  const localStoredPasskeys = Array.isArray(localStored.passkeys)
-    ? localStored.passkeys.map(normalizePasskeyShape)
-    : [];
-  const localPasskeys = buildUnifiedPasskeys(localAccounts, localStoredPasskeys);
-  const localFolders = Array.isArray(localStored.folders)
-    ? localStored.folders.map(normalizeFolderShape)
-    : [];
+  const localPayload = normalizeSyncPayloadShape(localStored);
+  const localAccounts = localPayload.accounts;
+  const localPasskeys = localPayload.passkeys;
+  const localFolders = localPayload.folders;
 
-  const remoteAccounts = incomingPayload.accounts.map(normalizeAccountShape);
-  const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, incomingPayload.passkeys);
-  const remoteFolders = incomingPayload.folders.map(normalizeFolderShape);
+  const remotePayload = normalizeSyncPayloadShape(incomingPayload);
+  let mergedPayload = mergeSyncPayloadsCore(localPayload, remotePayload, syncMergeHelpers());
+  mergedPayload.accounts = syncAliasGroups(mergedPayload.accounts);
+  mergedPayload.passkeys = buildUnifiedPasskeys(mergedPayload.accounts, mergedPayload.passkeys);
+  const safety = validateSyncSafety(localPayload, remotePayload, mergedPayload, SYNC_MODE_MERGE);
+  if (!safety.safe) {
+    setStatus(`同步包导入停止，安全检查未通过：${safety.reasons.join("、")}`);
+    return;
+  }
 
-  const mergedFolders = mergeFolderCollections(localFolders, remoteFolders);
-  let mergedAccounts = mergeAccountCollections(localAccounts, remoteAccounts);
-  mergedAccounts = syncAliasGroups(mergedAccounts);
-  mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
-  let mergedPasskeys = mergePasskeyCollections(localPasskeys, remotePasskeys);
-  mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
-
-  await writeBusinessDataToStore({
-    accounts: mergedAccounts,
-    passkeys: mergedPasskeys,
-    folders: mergedFolders,
-  });
+  const confirmed = window.confirm(
+    `同步包合并预览：账号 ${localAccounts.length} → ${mergedPayload.accounts.length}，` +
+      `通行密钥 ${localPasskeys.length} → ${mergedPayload.passkeys.length}，` +
+      `文件夹 ${localFolders.length} → ${mergedPayload.folders.length}\n\n` +
+      "确认写入本地吗？"
+  );
+  if (!confirmed) {
+    setStatus("已取消导入同步包");
+    return;
+  }
+  await saveLocalSafetySnapshot("导入同步包前自动备份");
+  await writeBusinessDataToStore(mergedPayload);
   await appendHistory(
-    `导入同步包并合并：账号 ${localAccounts.length}->${mergedAccounts.length}，通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}`
+    `导入同步包并合并：账号 ${localAccounts.length}->${mergedPayload.accounts.length}，通行密钥 ${localPasskeys.length}->${mergedPayload.passkeys.length}`
   );
 
   editingAccountId = null;
   await refresh({ silent: true });
   setStatus(
-    `同步包合并完成：账号 ${localAccounts.length}+${remoteAccounts.length}->${mergedAccounts.length}，` +
-      `通行密钥 ${localPasskeys.length}+${remotePasskeys.length}->${mergedPasskeys.length}，` +
-      `文件夹 ${localFolders.length}+${remoteFolders.length}->${mergedFolders.length}`
+    `同步包合并完成：账号 ${localAccounts.length}+${remotePayload.accounts.length}->${mergedPayload.accounts.length}，` +
+      `通行密钥 ${localPasskeys.length}+${remotePayload.passkeys.length}->${mergedPayload.passkeys.length}，` +
+      `文件夹 ${localFolders.length}+${remotePayload.folders.length}->${mergedPayload.folders.length}`
   );
 }
 
@@ -1490,48 +1534,27 @@ async function previewSyncWithRemote() {
     const targets = buildRemoteSyncTargetsFromDom();
     if (!targets || targets.length === 0) throw new Error("请先启用同步源");
     const localStored = await readBusinessDataFromStore();
-    const localAccounts = Array.isArray(localStored.accounts) ? localStored.accounts.map(normalizeAccountShape) : [];
-    const localPasskeys = buildUnifiedPasskeys(localAccounts, Array.isArray(localStored.passkeys) ? localStored.passkeys : []);
-    const localFolders = Array.isArray(localStored.folders) ? localStored.folders.map(normalizeFolderShape) : [];
-    let remoteAggregate = null;
+    const localPayload = normalizeSyncPayloadShape(localStored);
+    let primaryRemotePayload = null;
     for (const target of targets) {
       const response = await pullRemotePayload(target);
       target.remotePayload = response.payload;
       target.remoteEncrypted = response.encrypted;
-      if (!response.payload) continue;
-      const remoteAccounts = response.payload.accounts.map(normalizeAccountShape);
-      const remoteFolders = response.payload.folders.map(normalizeFolderShape);
-      const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, response.payload.passkeys);
-      if (!remoteAggregate) {
-        remoteAggregate = { accounts: remoteAccounts, folders: remoteFolders, passkeys: remotePasskeys };
-        continue;
+      if (target.isPrimary) {
+        primaryRemotePayload = response.payload
+          ? normalizeSyncPayloadShape(response.payload)
+          : null;
       }
-      remoteAggregate.folders = mergeFolderCollections(remoteAggregate.folders, remoteFolders);
-      remoteAggregate.accounts = syncAliasGroups(mergeAccountCollections(remoteAggregate.accounts, remoteAccounts));
-      remoteAggregate.accounts = reconcileAccountFolders(remoteAggregate.accounts, remoteAggregate.folders);
-      remoteAggregate.passkeys = buildUnifiedPasskeys(
-        remoteAggregate.accounts,
-        mergePasskeyCollections(remoteAggregate.passkeys, remotePasskeys)
-      );
     }
-    const mergedFolders = mergeFolderCollections(localFolders, remoteAggregate?.folders || []);
-    let mergedAccounts = syncAliasGroups(mergeAccountCollections(localAccounts, remoteAggregate?.accounts || []));
-    mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
-    const mergedPasskeys = buildUnifiedPasskeys(
-      mergedAccounts,
-      mergePasskeyCollections(localPasskeys, remoteAggregate?.passkeys || [])
-    );
-    const safety = validateSyncSafety(
-      { accounts: localAccounts, folders: localFolders, passkeys: localPasskeys },
-      remoteAggregate,
-      { accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys },
-      SYNC_MODE_MERGE
-    );
+    const mergedPayload = primaryRemotePayload
+      ? mergeSyncPayloads(localPayload, primaryRemotePayload)
+      : localPayload;
+    const safety = validateSyncSafety(localPayload, primaryRemotePayload, mergedPayload, SYNC_MODE_MERGE);
     if (!safety.safe) throw new Error(`安全检查未通过：${safety.reasons.join("、")}`);
     dom.syncPreviewStatus.textContent =
-      `预览（未写入）：账号 ${localAccounts.length}->${mergedAccounts.length}，` +
-      `通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}，` +
-      `文件夹 ${localFolders.length}->${mergedFolders.length}；远端源 ${targets.length} 个`;
+      `预览（未写入）：账号 ${localPayload.accounts.length}->${mergedPayload.accounts.length}，` +
+      `通行密钥 ${localPayload.passkeys.length}->${mergedPayload.passkeys.length}，` +
+      `文件夹 ${localPayload.folders.length}->${mergedPayload.folders.length}；远端源 ${targets.length} 个`;
   } catch (error) {
     dom.syncPreviewStatus.textContent = `预览失败：${error.message}`;
   }
@@ -1542,11 +1565,17 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
     setStatus("同步进行中，请稍候；本次请求未重复执行");
     return false;
   }
+  const lockOwner = createSyncIdempotencyKey();
+  if (!await acquireSyncOperationLock(lockOwner)) {
+    setStatus("已有同步任务正在运行，请稍候；本次请求未重复执行");
+    return false;
+  }
   syncInFlight = true;
   try {
     return await performSyncNowWithRemote(syncMode);
   } finally {
     syncInFlight = false;
+    await releaseSyncOperationLock(lockOwner);
   }
 }
 
@@ -1557,16 +1586,10 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
   const normalizedSyncMode = normalizeSyncMode(syncMode);
 
   const localStored = await readBusinessDataFromStore();
-  const localAccounts = Array.isArray(localStored.accounts)
-    ? localStored.accounts.map(normalizeAccountShape)
-    : [];
-  const localStoredPasskeys = Array.isArray(localStored.passkeys)
-    ? localStored.passkeys.map(normalizePasskeyShape)
-    : [];
-  const localPasskeys = buildUnifiedPasskeys(localAccounts, localStoredPasskeys);
-  const localFolders = Array.isArray(localStored.folders)
-    ? localStored.folders.map(normalizeFolderShape)
-    : [];
+  const localPayload = normalizeSyncPayloadShape(localStored);
+  const localAccounts = localPayload.accounts;
+  const localPasskeys = localPayload.passkeys;
+  const localFolders = localPayload.folders;
 
   try {
     await saveLocalSafetySnapshot(`同步前自动备份（${getSyncModeHistoryLabel(normalizedSyncMode)}）`);
@@ -1575,13 +1598,11 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
     return;
   }
 
-  let mergedAccounts = localAccounts;
-  let mergedPasskeys = localPasskeys;
-  let mergedFolders = localFolders;
+  let mergedPayload = localPayload;
   let conflictCount = 0;
+  let primaryRemotePayload = null;
 
-  if (normalizedSyncMode !== SYNC_MODE_LOCAL_OVERWRITE_REMOTE) {
-    let remoteAggregate = null;
+  {
     for (const target of targets) {
       let remotePayload = null;
       try {
@@ -1595,42 +1616,21 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
         return;
       }
 
-      const remoteAccounts = remotePayload ? remotePayload.accounts.map(normalizeAccountShape) : [];
-      const remotePasskeys = remotePayload
-        ? buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys)
-        : [];
-      const remoteFolders = remotePayload ? remotePayload.folders.map(normalizeFolderShape) : [];
-
-      if (!remoteAggregate) {
-        remoteAggregate = {
-          accounts: remoteAccounts,
-          passkeys: remotePasskeys,
-          folders: remoteFolders,
-        };
-        continue;
+      if (target.isPrimary) {
+        primaryRemotePayload = remotePayload
+          ? normalizeSyncPayloadShape(remotePayload)
+          : null;
       }
-
-      remoteAggregate.folders = mergeFolderCollections(remoteAggregate.folders, remoteFolders);
-      remoteAggregate.accounts = mergeAccountCollections(remoteAggregate.accounts, remoteAccounts);
-      remoteAggregate.accounts = syncAliasGroups(remoteAggregate.accounts);
-      remoteAggregate.accounts = reconcileAccountFolders(remoteAggregate.accounts, remoteAggregate.folders);
-      remoteAggregate.passkeys = mergePasskeyCollections(remoteAggregate.passkeys, remotePasskeys);
-      remoteAggregate.passkeys = buildUnifiedPasskeys(remoteAggregate.accounts, remoteAggregate.passkeys);
     }
 
     const primaryTarget = targets.find((target) => target.isPrimary) || targets[0];
     if (normalizedSyncMode === SYNC_MODE_MERGE) {
-      if (remoteAggregate) {
-        conflictCount = countSyncAccountConflicts(localAccounts, remoteAggregate.accounts);
+      if (primaryRemotePayload) {
+        conflictCount = countSyncAccountConflicts(localAccounts, primaryRemotePayload.accounts);
         if (conflictCount > 0) {
-          await saveLocalSafetySnapshot("同步冲突远端候选备份", remoteAggregate);
+          await saveLocalSafetySnapshot("同步冲突主源备份", primaryRemotePayload);
         }
-        mergedFolders = mergeFolderCollections(localFolders, remoteAggregate.folders);
-        mergedAccounts = mergeAccountCollections(localAccounts, remoteAggregate.accounts);
-        mergedAccounts = syncAliasGroups(mergedAccounts);
-        mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
-        mergedPasskeys = mergePasskeyCollections(localPasskeys, remoteAggregate.passkeys);
-        mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
+        mergedPayload = mergeSyncPayloads(localPayload, primaryRemotePayload);
       }
     } else if (normalizedSyncMode === SYNC_MODE_REMOTE_OVERWRITE_LOCAL) {
       const primaryPayload = primaryTarget?.remotePayload || null;
@@ -1644,17 +1644,15 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
         setStatus("云端覆盖本地已停止：主同步源为空，避免清空本地数据");
         return;
       }
-      mergedAccounts = primaryPayload?.accounts || [];
-      mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, primaryPayload?.passkeys || []);
-      mergedFolders = primaryPayload?.folders || [];
+      mergedPayload = normalizeSyncPayloadShape(primaryPayload || {});
     }
   }
 
-  if (normalizedSyncMode === SYNC_MODE_MERGE && remoteAggregate) {
+  if (normalizedSyncMode === SYNC_MODE_MERGE && primaryRemotePayload) {
     const safety = validateSyncSafety(
-      { accounts: localAccounts, folders: localFolders, passkeys: localPasskeys },
-      remoteAggregate,
-      { accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys },
+      localPayload,
+      primaryRemotePayload,
+      mergedPayload,
       SYNC_MODE_MERGE
     );
     if (!safety.safe) {
@@ -1663,13 +1661,9 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
     }
   }
 
-  await writeBusinessDataToStore({
-    accounts: mergedAccounts,
-    passkeys: mergedPasskeys,
-    folders: mergedFolders,
-  });
+  await writeBusinessDataToStore(mergedPayload);
   await appendHistory(
-    `${getSyncModeHistoryLabel(normalizedSyncMode)}：账号 ${localAccounts.length}->${mergedAccounts.length}，通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}` +
+    `${getSyncModeHistoryLabel(normalizedSyncMode)}：账号 ${localAccounts.length}->${mergedPayload.accounts.length}，通行密钥 ${localPasskeys.length}->${mergedPayload.passkeys.length}` +
       (conflictCount > 0 ? `，检测到 ${conflictCount} 个字段冲突并按时间/设备规则裁决` : "")
   );
 
@@ -1681,21 +1675,13 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
   for (const target of pushTargets) {
     try {
       const result = await pushRemotePayloadWithMode(target, {
-        accounts: mergedAccounts,
-        passkeys: mergedPasskeys,
-        folders: mergedFolders,
+        ...mergedPayload,
       }, normalizedSyncMode);
-      mergedAccounts = result.payload.accounts.map(normalizeAccountShape);
-      mergedFolders = result.payload.folders.map(normalizeFolderShape);
-      mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, result.payload.passkeys);
+      mergedPayload = normalizeSyncPayloadShape(result.payload);
       await clearSyncOutbox(target);
     } catch (error) {
       pushErrors.push(`${target.label}: ${error.message}`);
-      await recordSyncOutboxFailure(target, {
-        accounts: mergedAccounts,
-        passkeys: mergedPasskeys,
-        folders: mergedFolders,
-      }, error);
+      await recordSyncOutboxFailure(target, mergedPayload, error);
     }
   }
 
@@ -1705,14 +1691,14 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
   const sourceSummary = targets.map((item) => item.label).join(" + ");
   if (pushErrors.length > 0) {
     setStatus(
-      `${getSyncModeStatusLabel(normalizedSyncMode)}，但部分源上传失败（${sourceSummary}）：${pushErrors.join("；")}（账号 ${localAccounts.length}->${mergedAccounts.length}，` +
-        `通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}，文件夹 ${localFolders.length}->${mergedFolders.length}）`
+      `${getSyncModeStatusLabel(normalizedSyncMode)}，但部分源上传失败（${sourceSummary}）：${pushErrors.join("；")}（账号 ${localAccounts.length}->${mergedPayload.accounts.length}，` +
+        `通行密钥 ${localPasskeys.length}->${mergedPayload.passkeys.length}，文件夹 ${localFolders.length}->${mergedPayload.folders.length}）`
     );
     return;
   }
   setStatus(
-    `${getSyncModeStatusLabel(normalizedSyncMode)}（${sourceSummary}）：账号 ${localAccounts.length}->${mergedAccounts.length}，` +
-      `通行密钥 ${localPasskeys.length}->${mergedPasskeys.length}，文件夹 ${localFolders.length}->${mergedFolders.length}` +
+    `${getSyncModeStatusLabel(normalizedSyncMode)}（${sourceSummary}）：账号 ${localAccounts.length}->${mergedPayload.accounts.length}，` +
+      `通行密钥 ${localPasskeys.length}->${mergedPayload.passkeys.length}，文件夹 ${localPayload.folders.length}->${mergedPayload.folders.length}` +
       (conflictCount > 0 ? `，字段冲突 ${conflictCount} 个` : "")
   );
 }
@@ -2067,6 +2053,8 @@ async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey
   }
   if (ifMatch) {
     headers["If-Match"] = ifMatch;
+  } else if (target.kind === "webdav") {
+    headers["If-None-Match"] = "*";
   }
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   const response = await fetch(target.url, {
@@ -2100,7 +2088,8 @@ async function pushRemotePayloadWithRetry(target, payload) {
       target.remoteEncrypted = true;
       return { payload: candidate };
     } catch (error) {
-      if (!target.supportsEtag || error?.status !== 412 || attempt === 2) throw error;
+      if (error?.status !== 412 && error?.status !== 428) throw error;
+      if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw error;
     }
 
     const latestResponse = await pullRemotePayload(target);
@@ -2118,16 +2107,22 @@ async function pushRemotePayloadWithRetry(target, payload) {
     const localFolders = Array.isArray(candidate.folders)
       ? candidate.folders.map(normalizeFolderShape)
       : [];
-    const remoteAccounts = remotePayload.accounts.map(normalizeAccountShape);
-    const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys);
-    const remoteFolders = remotePayload.folders.map(normalizeFolderShape);
-    let mergedFolders = mergeFolderCollections(localFolders, remoteFolders);
-    let mergedAccounts = mergeAccountCollections(localAccounts, remoteAccounts);
-    mergedAccounts = syncAliasGroups(mergedAccounts);
-    mergedAccounts = reconcileAccountFolders(mergedAccounts, mergedFolders);
-    let mergedPasskeys = mergePasskeyCollections(localPasskeys, remotePasskeys);
-    mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, mergedPasskeys);
-    candidate = { accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders };
+    const localBeforeMerge = {
+      ...candidate,
+      accounts: localAccounts,
+      passkeys: localPasskeys,
+      folders: localFolders,
+    };
+    candidate = mergeSyncPayloads(localBeforeMerge, remotePayload);
+    const safety = validateSyncSafety(
+      localBeforeMerge,
+      remotePayload,
+      candidate,
+      SYNC_MODE_MERGE,
+    );
+    if (!safety.safe) {
+      throw new Error(`并发重试合并被安全检查阻止：${safety.reasons.join("、")}`);
+    }
     await writeBusinessDataToStore(candidate);
   }
   throw new Error("远端并发冲突重试次数已用尽");
@@ -2143,7 +2138,8 @@ async function pushRemotePayloadRemotePreferred(target, payload) {
       target.remotePayload = candidate;
       return { payload: candidate };
     } catch (error) {
-      if (!target.supportsEtag || error?.status !== 412 || attempt === 2) throw error;
+      if (error?.status !== 412 && error?.status !== 428) throw error;
+      if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw error;
     }
     const latestResponse = await pullRemotePayload(target);
     updateRemoteConcurrencyState(target, latestResponse.etag);
@@ -2168,7 +2164,7 @@ async function pushRemotePayloadRemotePreferred(target, payload) {
 async function pushRemotePayloadWithMode(target, payload, syncMode) {
   switch (syncMode) {
     case SYNC_MODE_LOCAL_OVERWRITE_REMOTE: {
-      const pushResult = await pushRemotePayload(target, payload, null, createSyncIdempotencyKey());
+      const pushResult = await pushRemotePayload(target, payload, target.remoteEtag, createSyncIdempotencyKey());
       updateRemoteConcurrencyState(target, pushResult.etag);
       return { payload };
     }
@@ -2239,7 +2235,12 @@ async function buildSyncBundleFromPayload(payload) {
       logicalClockMs: Date.now(),
       formatVersion: 2,
     },
-    payload: sortSyncPayloadCollections({ accounts, passkeys, folders }),
+    payload: sortSyncPayloadCollections({
+      ...normalizeSyncPayloadShape(payload),
+      accounts,
+      passkeys,
+      folders,
+    }),
   };
 }
 
@@ -2281,7 +2282,12 @@ async function buildSyncBundle() {
       logicalClockMs: Date.now(),
       formatVersion: 2,
     },
-    payload: sortSyncPayloadCollections({ accounts, passkeys, folders }),
+    payload: sortSyncPayloadCollections({
+      ...normalizeSyncPayloadShape(stored),
+      accounts,
+      passkeys,
+      folders,
+    }),
   };
 }
 
@@ -2297,6 +2303,13 @@ function parseSyncBundlePayload(input, { requireBundleSchema = false } = {}) {
     accounts: Array.isArray(rawPayload.accounts) ? rawPayload.accounts : [],
     passkeys: Array.isArray(rawPayload.passkeys) ? rawPayload.passkeys : [],
     folders: Array.isArray(rawPayload.folders) ? rawPayload.folders : [],
+    allRegularAccountIds: Array.isArray(rawPayload.allRegularAccountIds) ? rawPayload.allRegularAccountIds : [],
+    allRegularOrderUpdatedAtMs: Number(rawPayload.allRegularOrderUpdatedAtMs) || 0,
+    allRegularOrderUpdatedDeviceName: String(rawPayload.allRegularOrderUpdatedDeviceName || ""),
+    folderOrderIds: Array.isArray(rawPayload.folderOrderIds) ? rawPayload.folderOrderIds : [],
+    folderOrderUpdatedAtMs: Number(rawPayload.folderOrderUpdatedAtMs) || 0,
+    folderOrderUpdatedDeviceName: String(rawPayload.folderOrderUpdatedDeviceName || ""),
+    deviceName: String(rawPayload.deviceName || ""),
   };
 }
 
@@ -4894,6 +4907,17 @@ function sortFoldersForDisplay(inputFolders) {
 
 function mergeAccountCollections(local, remote) {
   return mergeAccountCollectionsCore(local, remote, syncMergeHelpers());
+}
+
+function mergeSyncPayloads(local, remote) {
+  const merged = mergeSyncPayloadsCore(
+    normalizeSyncPayloadShape(local),
+    normalizeSyncPayloadShape(remote),
+    syncMergeHelpers(),
+  );
+  merged.accounts = syncAliasGroups(merged.accounts);
+  merged.passkeys = buildUnifiedPasskeys(merged.accounts, merged.passkeys);
+  return normalizeSyncPayloadShape(merged);
 }
 
 function mergePasskeyCollections(local, remote) {

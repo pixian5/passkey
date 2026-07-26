@@ -1233,12 +1233,39 @@ async fn sync_preview(
     let device = load_device_name(&conn)?;
     let local = local_payload_from_conn(&conn, &device)?;
     let platform = current_platform().to_string();
-    let local_for_preview = local.clone();
-    let (report, merged) = tauri::async_runtime::spawn_blocking(move || {
-        preview_sync(&settings, local_for_preview, &device, &platform)
-    })
-    .await
-    .map_err(|e| format!("预览合并任务异常: {e}"))??;
+    let prefs = load_ui_prefs(&dir);
+    settings.previous_encryption_key = prefs.previous_encryption_key.clone();
+    let local_for_webdav = local.clone();
+    let use_webdav =
+        prefs.webdav_enabled && (!settings.enabled || prefs.sync_primary_source.trim() == "webdav");
+    let (report, merged) = if use_webdav {
+        let webdav_settings = WebDavSettings {
+            enabled: prefs.webdav_enabled,
+            base_url: prefs.webdav_base_url,
+            remote_path: prefs.webdav_remote_path,
+            username: prefs.webdav_username,
+            password: prefs.webdav_password,
+            previous_encryption_key: prefs.previous_encryption_key,
+        };
+        let encryption_key = settings.encryption_key.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            webdav::preview(
+                &webdav_settings,
+                SyncMode::parse(&settings.mode),
+                local_for_webdav,
+                &encryption_key,
+            )
+        })
+        .await
+        .map_err(|e| format!("WebDAV 预览任务异常: {e}"))??
+    } else {
+        let local_for_preview = local.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            preview_sync(&settings, local_for_preview, &device, &platform)
+        })
+        .await
+        .map_err(|e| format!("预览合并任务异常: {e}"))??
+    };
     serde_json::to_string(&serde_json::json!({
         "report": report,
         "localPayload": local,
@@ -1263,6 +1290,7 @@ async fn sync_now(app: AppHandle, state: tauri::State<'_, AppLockState>) -> Resu
             settings.encryption_key = key;
         }
     }
+    settings.previous_encryption_key = load_ui_prefs(&dir).previous_encryption_key;
     let device = load_device_name(&conn)?;
     let local = local_payload_from_conn(&conn, &device)?;
     let platform = current_platform().to_string();
@@ -1308,6 +1336,7 @@ fn load_settings_unlocked(
             settings.encryption_key = key;
         }
     }
+    settings.previous_encryption_key = load_ui_prefs(&dir).previous_encryption_key;
     Ok((dir, settings, conn))
 }
 
@@ -1368,6 +1397,7 @@ async fn sync_webdav_now_mode(
         remote_path: prefs.webdav_remote_path,
         username: prefs.webdav_username,
         password: prefs.webdav_password,
+        previous_encryption_key: prefs.previous_encryption_key,
     };
     let device = load_device_name(&conn)?;
     let local = local_payload_from_conn(&conn, &device)?;

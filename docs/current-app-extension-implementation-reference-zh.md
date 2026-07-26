@@ -1,6 +1,6 @@
 # Pass 当前实现与设计决策基准
 
-> 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.2.2`。
+> 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.2.3`。
 >
 > 使用规则：当历史设计稿、路线图、旧 Swift 代码或界面文字与本文冲突时，先以本文和自动化门禁为准，再回到代码核对。没有测试或代码依据时，不得写“完整”“完全一致”“所有端均支持”。
 
@@ -256,6 +256,11 @@ Bearer Token 和同步加密密钥都允许留空，项目不会自动生成 Bea
 12. Chrome 主密码与数据密钥包装当前为 v4：主密码字节不做 `trim`；旧 v2/v3 包装仅在成功解锁时兼容读取并立即重包为 v4。
 13. 同步服务的 TLS 健康检查必须以证书域名请求，并用 `--resolve` 连接本机监听地址；禁止用 `--insecure` 绕过证书校验。
 14. `cargo fmt --check` 是 CI 阻断门禁，任何 Rust 格式漂移都必须在提交前清理。
+15. 多来源同步只有 `syncPrimarySource` 指定的来源参与合并；其它来源只作为镜像接收最终结果。主源拉取失败不得继续覆盖镜像。
+16. 永久删除墓碑不计入可见数量，但稳定 ID 必须保留，避免旧设备数据复活；安全闸门和 JS/Rust 对拍都遵守这一规则。
+17. 当前密钥轮换期间，Tauri/Web/扩展同步、服务器快照恢复和同步包导入均可用运行时上一把密钥读取旧包；空密钥仍表示明文模式。
+18. 自建服务器条件写入统一处理 412/428；Tauri 一次逻辑同步复用同一幂等键，扩展重试也复用稳定键。WebDAV 依赖 ETag，不宣称服务端幂等。
+19. 扩展选项页和后台自动同步共享 `chrome.storage.session` 短时互斥锁，异常退出由过期时间释放。
 
 ## 13. 验证入口和当前基线
 
@@ -270,7 +275,7 @@ cd apps/codex-tauri/src-tauri && cargo test --locked
 cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-版本 `1.2.1` 的已验证基线：版本落点 45 项、UI 命令 68 个、扩展测试 79 项、Docker Web 9 项、Tauri 22 项、同步服务器 33 项、脚本测试 23 项。Core 门禁、Clippy correctness、Docker Compose 解析、JSON Schema 文件解析、Shell 语法、仓库内 Markdown 相对链接和 Swift/Xcode 构建也纳入本轮验证。数字只描述该版本测试发现量，测试增删后应重新运行并更新，不能永久照抄。
+版本 `1.2.3` 的同步复核基线：扩展测试 82 项、Core `pass-merge` 26 项、Tauri 24 项、Docker Web 11 项，JS/Rust merge parity 通过。完整命令矩阵、Docker Compose、JSON Schema、Shell 和 Swift/Xcode 等工程门禁仍需按发布流程执行；测试数量只描述该版本实际运行结果，测试增删后必须重新更新。
 
 关联文档：
 
@@ -280,3 +285,4 @@ cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 
 - [同步包与手动导入导出](./manual-sync-import-export-design-and-implementation-zh.md)
 - [跨平台同步后端契约](./cross-platform-sync-backends-v2-zh.md)
 - [本轮代码/文档审计](./audit-2026-07-26-zh.md)
+- [同步功能复核记录（2026-07-27）](./audit-2026-07-27-zh.md)

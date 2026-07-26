@@ -822,11 +822,11 @@ export function summarizeSyncPayload(payload, helpers) {
     ? payload.passkeys.map(h.normalizePasskeyShape)
     : [];
   return {
-    accounts: accounts.length,
+    accounts: accounts.filter((item) => !item?.isPermanentlyDeleted).length,
     activeAccounts: accounts.filter((item) => !item?.isDeleted).length,
     deletedAccounts: accounts.filter((item) => Boolean(item?.isDeleted)).length,
-    folders: folders.length,
-    passkeys: passkeys.length,
+    folders: folders.filter((item) => !item?.isPermanentlyDeleted).length,
+    passkeys: passkeys.filter((item) => !item?.isPermanentlyDeleted).length,
     accountIds: identitySet(accounts, (item) => asString(item?.recordId || item?.id || item?.accountId).trim().toLowerCase()),
     folderIds: identitySet(folders, (item) => h.normalizeFolderId(item?.id)),
     passkeyIds: identitySet(passkeys, (item) => asString(item?.credentialIdB64u || item?.id).trim()),

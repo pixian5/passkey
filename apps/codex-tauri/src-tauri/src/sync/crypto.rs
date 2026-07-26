@@ -109,6 +109,14 @@ pub fn encrypt_bundle_document(document: &Value, key_string: &str) -> Result<Vec
 
 /// Decrypt wire body into plaintext bundle JSON value.
 pub fn decrypt_wire_body(body: &[u8], key_string: &str) -> Result<Value, String> {
+    decrypt_wire_body_with_fallback(body, key_string, "")
+}
+
+pub fn decrypt_wire_body_with_fallback(
+    body: &[u8],
+    key_string: &str,
+    fallback_key_string: &str,
+) -> Result<Value, String> {
     let value: Value =
         serde_json::from_slice(body).map_err(|e| format!("同步响应不是 JSON: {e}"))?;
     let schema = value.get("schema").and_then(|v| v.as_str()).unwrap_or("");
@@ -128,8 +136,12 @@ pub fn decrypt_wire_body(body: &[u8], key_string: &str) -> Result<Value, String>
         }
         return Err("不支持的同步包格式".into());
     }
-    let key_string = key_string.trim();
-    if key_string.is_empty() {
+    let keys: Vec<&str> = [key_string, fallback_key_string]
+        .into_iter()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect();
+    if keys.is_empty() {
         return Err("该同步包为加密信封，但当前未配置同步加密密钥".into());
     }
     let envelope: Envelope =
@@ -138,12 +150,6 @@ pub fn decrypt_wire_body(body: &[u8], key_string: &str) -> Result<Value, String>
         return Err("不支持的同步加密算法".into());
     }
     let declared = envelope.key_id.unwrap_or_default();
-    let kid = key_id(key_string);
-    if !declared.is_empty() && declared != kid {
-        return Err("同步密钥 ID 不匹配，请确认所有设备使用同一同步密钥".into());
-    }
-    let key = decode_key(key_string)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
     let nonce_raw = STANDARD
         .decode(&envelope.nonce_base64)
         .map_err(|_| "nonce 无效".to_string())?;
@@ -154,14 +160,66 @@ pub fn decrypt_wire_body(body: &[u8], key_string: &str) -> Result<Value, String>
     let ct = STANDARD
         .decode(&envelope.ciphertext_base64)
         .map_err(|_| "ciphertext 无效".to_string())?;
-    let plain = cipher
-        .decrypt(
+    for candidate in keys {
+        let Ok(key) = decode_key(candidate) else {
+            continue;
+        };
+        if !declared.is_empty() && declared != key_id(candidate) {
+            continue;
+        }
+        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
+        if let Ok(plain) = cipher.decrypt(
             nonce,
             Payload {
                 msg: &ct,
                 aad: ENCRYPTED_SCHEMA.as_bytes(),
             },
+        ) {
+            return serde_json::from_slice(&plain).map_err(|e| format!("解密后不是合法 JSON: {e}"));
+        }
+    }
+    Err("同步包解密失败，请确认所有设备使用同一同步密钥".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn decrypts_with_previous_key_but_rejects_wrong_key_id() {
+        let document = json!({
+            "schema": PLAINTEXT_SCHEMA,
+            "exportedAtMs": 1,
+            "payload": { "accounts": [] }
+        });
+        let previous = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let current = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+        let encrypted = encrypt_bundle_document(&document, previous).unwrap();
+        assert_eq!(
+            decrypt_wire_body_with_fallback(&encrypted, current, previous).unwrap(),
+            document
+        );
+        assert_eq!(
+            decrypt_wire_body_with_fallback(&encrypted, "invalid-current-key", previous).unwrap(),
+            document
+        );
+        assert!(decrypt_wire_body_with_fallback(&encrypted, current, current).is_err());
+    }
+
+    #[test]
+    fn empty_key_keeps_plaintext_mode() {
+        let document = json!({ "schema": PLAINTEXT_SCHEMA, "payload": {} });
+        let plain = encrypt_bundle_document(&document, "").unwrap();
+        assert_eq!(
+            decrypt_wire_body_with_fallback(&plain, "", "").unwrap(),
+            document
+        );
+        assert!(decrypt_wire_body_with_fallback(
+            &plain,
+            "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+            ""
         )
-        .map_err(|_| "同步包解密失败，请确认所有设备使用同一同步密钥".to_string())?;
-    serde_json::from_slice(&plain).map_err(|e| format!("解密后不是合法 JSON: {e}"))
+        .is_err());
+    }
 }

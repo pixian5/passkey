@@ -90,6 +90,8 @@ const STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
 const STORAGE_KEY_SYNC_PRIMARY_SOURCE = "pass.sync.primarySource.v1";
 const STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
 const STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
+const STORAGE_KEY_SYNC_OPERATION_LOCK = "pass.sync.operationLock.v1";
+const SYNC_OPERATION_LOCK_TTL_MS = 10 * 60 * 1000;
 const CONTEXT_MENU_ID_ALL_ACCOUNTS = "pass.context.all_accounts";
 const DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "https://uk.sbbz.tech:5443";
 const SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
@@ -97,6 +99,30 @@ const SYNC_MODE_MERGE = "merge";
 const SYNC_PRIMARY_SERVER = "server";
 const SYNC_PRIMARY_WEBDAV = "webdav";
 const AUTO_SYNC_ALARM_NAME = "pass.sync.auto";
+let autoSyncInFlight = false;
+
+async function acquireSyncOperationLock(owner) {
+  const storage = chrome.storage?.session;
+  if (!storage) return owner;
+  const now = Date.now();
+  const current = await storage.get([STORAGE_KEY_SYNC_OPERATION_LOCK]);
+  const lock = current[STORAGE_KEY_SYNC_OPERATION_LOCK];
+  if (lock && Number(lock.expiresAtMs) > now && lock.owner !== owner) return null;
+  await storage.set({
+    [STORAGE_KEY_SYNC_OPERATION_LOCK]: { owner, expiresAtMs: now + SYNC_OPERATION_LOCK_TTL_MS },
+  });
+  const verified = await storage.get([STORAGE_KEY_SYNC_OPERATION_LOCK]);
+  return verified[STORAGE_KEY_SYNC_OPERATION_LOCK]?.owner === owner ? owner : null;
+}
+
+async function releaseSyncOperationLock(owner) {
+  const storage = chrome.storage?.session;
+  if (!storage) return;
+  const current = await storage.get([STORAGE_KEY_SYNC_OPERATION_LOCK]);
+  if (current[STORAGE_KEY_SYNC_OPERATION_LOCK]?.owner === owner) {
+    await storage.remove(STORAGE_KEY_SYNC_OPERATION_LOCK);
+  }
+}
 const STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
 const STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
 const STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
@@ -323,6 +349,25 @@ async function scheduleAutoSyncAlarm() {
 }
 
 async function runAutoSync() {
+  if (autoSyncInFlight) {
+    logSyncFlow("auto-sync-skipped-in-flight");
+    return;
+  }
+  autoSyncInFlight = true;
+  const lockOwner = createSyncIdempotencyKey();
+  try {
+    if (!await acquireSyncOperationLock(lockOwner)) {
+      logSyncFlow("auto-sync-skipped-in-flight");
+      return;
+    }
+    return await runAutoSyncInternal();
+  } finally {
+    await releaseSyncOperationLock(lockOwner);
+    autoSyncInFlight = false;
+  }
+}
+
+async function runAutoSyncInternal() {
   const lockStatus = await getBackgroundLockStatus();
   if (lockStatus.locked) {
     logSyncFlow("auto-sync-skipped-locked");
@@ -360,7 +405,8 @@ async function runAutoSync() {
   let mergedAccounts = localAccounts;
   let mergedPasskeys = localPasskeys;
   let mergedFolders = localFolders;
-  let remoteAggregate = null;
+  let finalPayload = null;
+  let primaryRemotePayload = null;
 
   for (const target of targets) {
     logSyncFlow("pull-start", {
@@ -388,33 +434,15 @@ async function runAutoSync() {
     target.remotePayload = remoteResponse.payload;
     target.remoteEncrypted = remoteResponse.encrypted;
     const remotePayload = remoteResponse.payload;
-    const remoteAccounts = remotePayload ? remotePayload.accounts.map(normalizeAccountShape) : [];
-    const remotePasskeys = remotePayload ? buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys) : [];
-    const remoteFolders = remotePayload ? remotePayload.folders.map(normalizeFolderShape) : [];
-
-    if (!remoteAggregate) {
-      remoteAggregate = {
-        accounts: remoteAccounts,
-        passkeys: remotePasskeys,
-        folders: remoteFolders,
-        allRegularAccountIds: remotePayload?.allRegularAccountIds || [],
-        allRegularOrderUpdatedAtMs: remotePayload?.allRegularOrderUpdatedAtMs || 0,
-        allRegularOrderUpdatedDeviceName: remotePayload?.allRegularOrderUpdatedDeviceName || "",
-        folderOrderIds: remotePayload?.folderOrderIds || [],
-        folderOrderUpdatedAtMs: remotePayload?.folderOrderUpdatedAtMs || 0,
-        folderOrderUpdatedDeviceName: remotePayload?.folderOrderUpdatedDeviceName || "",
-      };
-      continue;
+    if (target.isPrimary) {
+      primaryRemotePayload = remotePayload
+        ? normalizeSyncPayloadShape(remotePayload)
+        : null;
     }
-    remoteAggregate = mergeSyncPayloadsCore(
-      remoteAggregate,
-      { ...remotePayload, accounts: remoteAccounts, folders: remoteFolders, passkeys: remotePasskeys },
-      syncMergeHelpers(),
-    );
   }
 
-  if (remoteAggregate) {
-    const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+  const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+  if (primaryRemotePayload) {
     const mergedPayload = mergeSyncPayloadsCore(
       {
         ...currentPayload,
@@ -422,17 +450,19 @@ async function runAutoSync() {
         folders: localFolders,
         passkeys: localPasskeys,
       },
-      remoteAggregate,
+      primaryRemotePayload,
       syncMergeHelpers(),
     );
     ({ accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys } = mergedPayload);
-    remoteAggregate = mergedPayload;
+    finalPayload = mergedPayload;
+  } else {
+    finalPayload = currentPayload;
   }
 
-  if (remoteAggregate) {
+  if (primaryRemotePayload) {
     const safety = validateSyncSafety(
       { accounts: localAccounts, folders: localFolders, passkeys: localPasskeys },
-      remoteAggregate,
+      primaryRemotePayload,
       { accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys },
       SYNC_MODE_MERGE
     );
@@ -448,7 +478,7 @@ async function runAutoSync() {
   }
 
   await writeBusinessDataToStore({
-    ...remoteAggregate,
+    ...finalPayload,
     accounts: mergedAccounts,
     passkeys: mergedPasskeys,
     folders: mergedFolders,
@@ -482,7 +512,7 @@ async function runAutoSync() {
     let result;
     try {
       result = await pushRemotePayloadWithMode(target, {
-        ...remoteAggregate,
+        ...finalPayload,
         accounts: mergedAccounts,
         passkeys: mergedPasskeys,
         folders: mergedFolders,
@@ -491,7 +521,7 @@ async function runAutoSync() {
       pushErrors.push(`${target.label}: ${error?.message || String(error || "")}`);
       const nextOutbox = upsertSyncOutbox([...outboxByTarget.values()], {
         targetKey,
-        payload: { ...remoteAggregate, accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders },
+        payload: { ...finalPayload, accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders },
         error,
       });
       outboxByTarget.clear();
@@ -520,7 +550,7 @@ async function runAutoSync() {
   await setSyncOutbox([...outboxByTarget.values()]);
 
   await writeBusinessDataToStore({
-    ...remoteAggregate,
+    ...finalPayload,
     accounts: mergedAccounts,
     passkeys: mergedPasskeys,
     folders: mergedFolders,
@@ -2019,6 +2049,7 @@ async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey
   };
   if (target.authHeader) headers.Authorization = target.authHeader;
   if (ifMatch) headers["If-Match"] = ifMatch;
+  else if (target.kind === "webdav") headers["If-None-Match"] = "*";
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   let response;
   try {
@@ -2081,7 +2112,8 @@ async function pushRemotePayloadWithRetry(target, payload) {
       target.remoteEncrypted = true;
       return { payload: candidate };
     } catch (error) {
-      if (!target.supportsEtag || error?.status !== 412 || attempt === 2) throw error;
+      if (error?.status !== 412 && error?.status !== 428) throw error;
+      if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw error;
     }
     const latestResponse = await pullRemotePayload(target);
     updateRemoteConcurrencyState(target, latestResponse.etag);
@@ -2116,7 +2148,7 @@ async function pushRemotePayloadWithRetry(target, payload) {
 
 async function pushRemotePayloadWithMode(target, payload, syncMode) {
   if (syncMode !== SYNC_MODE_MERGE) {
-    const pushResult = await pushRemotePayload(target, payload, null, createSyncIdempotencyKey());
+    const pushResult = await pushRemotePayload(target, payload, target.remoteEtag, createSyncIdempotencyKey());
     updateRemoteConcurrencyState(target, pushResult.etag);
     target.remotePayload = payload;
     target.remoteEncrypted = true;

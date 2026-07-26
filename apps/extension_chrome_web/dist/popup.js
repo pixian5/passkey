@@ -423,6 +423,29 @@
   var readyPromise = null;
   var unlockedEncryptionKey = null;
   var encryptionKeyPromise = null;
+  function sanitizeHistoryAction(value) {
+    const action = String(value || "").trim();
+    if (!action) return "";
+    const normalized = action.replace(/:/g, "\uFF1A");
+    if (/(创建账号|created account)\s*[（(][\s\S]*?(密码改为|password\s*(?:changed|to)|password was set to)[\s\S]*?[）)]/i.test(normalized)) {
+      return "\u65B0\u5EFA\u8D26\u53F7";
+    }
+    const separator = normalized.indexOf("\uFF1A");
+    const prefix = separator >= 0 ? `${normalized.slice(0, separator)}\uFF1A` : "";
+    if (/(密码改为|password\s*(?:changed|to)|password was set to)/i.test(normalized)) {
+      return `${prefix}\u5BC6\u7801\u5DF2\u4FEE\u6539`;
+    }
+    if (/(TOTP\s*改为|totp\s*(?:changed|to)|otp\s*(?:changed|to))/i.test(normalized)) {
+      return `${prefix}TOTP \u5DF2\u4FEE\u6539`;
+    }
+    if (/(恢复码改为|recovery(?:\s*codes?)?\s*(?:changed|to))/i.test(normalized)) {
+      return `${prefix}\u6062\u590D\u7801\u5DF2\u4FEE\u6539`;
+    }
+    if (/(备注改为|note\s*(?:changed|to)|notes?\s*(?:changed|to))/i.test(normalized)) {
+      return `${prefix}\u5907\u6CE8\u5DF2\u4FEE\u6539`;
+    }
+    return action;
+  }
   function requestAsPromise(request) {
     return new Promise((resolve, reject) => {
       request.onsuccess = () => resolve(request.result);
@@ -490,6 +513,9 @@
     return Array.isArray(decoded) ? decoded : [];
   }
   async function writeCollection(key, value) {
+    await writeCollectionRows([{ key, value }]);
+  }
+  async function encryptCollectionRow(key, value) {
     const cryptoKey = await loadOrCreateEncryptionKey();
     const nonce = crypto.getRandomValues(new Uint8Array(12));
     const plaintext = new TextEncoder().encode(JSON.stringify(Array.isArray(value) ? value : []));
@@ -498,15 +524,19 @@
       cryptoKey,
       plaintext
     );
-    const db = await openDatabase();
-    const tx = db.transaction(STORE_COLLECTIONS, "readwrite");
-    const store = tx.objectStore(STORE_COLLECTIONS);
-    store.put({
+    return {
       key,
       version: 1,
       nonceBase64: bytesToBase64(nonce),
       ciphertextBase64: bytesToBase64(new Uint8Array(ciphertext))
-    });
+    };
+  }
+  async function writeCollectionRows(entries) {
+    const rows = await Promise.all(entries.map((entry) => encryptCollectionRow(entry.key, entry.value)));
+    const db = await openDatabase();
+    const tx = db.transaction(STORE_COLLECTIONS, "readwrite");
+    const store = tx.objectStore(STORE_COLLECTIONS);
+    for (const row of rows) store.put(row);
     await new Promise((resolve, reject) => {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error || new Error("IndexedDB transaction failed"));
@@ -712,22 +742,31 @@
   }
   async function getHistory() {
     await ensureDataStorageReady();
-    const entries = await readCollection(COLLECTION_HISTORY);
-    return (Array.isArray(entries) ? entries : []).filter((item) => item && typeof item === "object").map((item) => ({
+    const rawEntries = await readCollection(COLLECTION_HISTORY);
+    const entries = Array.isArray(rawEntries) ? rawEntries : [];
+    const normalized = entries.filter((item) => item && typeof item === "object").map((item) => ({
       id: String(item.id || ""),
       timestampMs: Number(item.timestampMs || 0),
-      action: String(item.action || "")
+      action: sanitizeHistoryAction(item.action)
     })).filter((item) => item.timestampMs > 0 && item.action.trim().length > 0).sort((lhs, rhs) => {
       if (lhs.timestampMs !== rhs.timestampMs) return rhs.timestampMs - lhs.timestampMs;
       return lhs.id.localeCompare(rhs.id);
     });
+    const needsMigration = entries.length !== normalized.length || entries.some(
+      (item, index) => String(item?.action || "").trim() !== normalized[index]?.action
+    );
+    if (needsMigration) {
+      await writeCollection(COLLECTION_HISTORY, normalized);
+      await touchDataBump(COLLECTION_HISTORY);
+    }
+    return normalized;
   }
   async function setHistory(entries) {
     await ensureDataStorageReady();
     const normalized = (Array.isArray(entries) ? entries : []).filter((item) => item && typeof item === "object").map((item) => ({
       id: String(item.id || ""),
       timestampMs: Number(item.timestampMs || 0),
-      action: String(item.action || "").trim()
+      action: sanitizeHistoryAction(item.action)
     })).filter((item) => item.timestampMs > 0 && item.action.length > 0).sort((lhs, rhs) => {
       if (lhs.timestampMs !== rhs.timestampMs) return rhs.timestampMs - lhs.timestampMs;
       return lhs.id.localeCompare(rhs.id);
@@ -736,7 +775,7 @@
     await touchDataBump(COLLECTION_HISTORY);
   }
   async function appendHistoryEntry({ timestampMs, action }) {
-    const normalizedAction = String(action || "").trim();
+    const normalizedAction = sanitizeHistoryAction(action);
     if (!normalizedAction) return;
     const ts = Number(timestampMs || Date.now());
     const entry = {
@@ -1144,7 +1183,7 @@
       return;
     }
     if (lockOperationInFlight) return;
-    const password = String(dom.unlockPasswordInput.value || "").trim();
+    const password = String(dom.unlockPasswordInput.value || "");
     if (!password) {
       setStatus("\u8BF7\u8F93\u5165\u4E3B\u5BC6\u7801");
       return;
@@ -2046,7 +2085,7 @@
     const synced = syncAliasGroups2(next);
     await persistAccounts(synced);
     await appendHistory(
-      `${created.accountId}\uFF1A\u521B\u5EFA\u8D26\u53F7\uFF08\u7528\u6237\u540D\u6539\u4E3A${historyValueSnippet(username)}\uFF0C\u5BC6\u7801\u6539\u4E3A${historyValueSnippet(password)}\uFF09`,
+      "\u65B0\u5EFA\u8D26\u53F7",
       createdAtMs
     );
     dom.createSiteInput.value = "";
@@ -2110,7 +2149,7 @@
       target.passwordUpdatedAtMs = now;
       target.passwordUpdatedDeviceName = deviceName;
       changed = true;
-      historyMessages.push(`\u5BC6\u7801\u6539\u4E3A${historyValueSnippet(draft.password)}`);
+      historyMessages.push("\u5BC6\u7801\u5DF2\u4FEE\u6539");
     }
     const nextTotpSecret = normalizeTotpSecret(draft.totpSecret);
     if (nextTotpSecret && !isValidTotpSecret(nextTotpSecret)) {
@@ -2122,21 +2161,21 @@
       target.totpUpdatedAtMs = now;
       target.totpUpdatedDeviceName = deviceName;
       changed = true;
-      historyMessages.push(`TOTP \u6539\u4E3A${historyValueSnippet(nextTotpSecret)}`);
+      historyMessages.push("TOTP \u5DF2\u4FEE\u6539");
     }
     if (draft.recoveryCodes !== target.recoveryCodes) {
       target.recoveryCodes = draft.recoveryCodes;
       target.recoveryCodesUpdatedAtMs = now;
       target.recoveryCodesUpdatedDeviceName = deviceName;
       changed = true;
-      historyMessages.push(`\u6062\u590D\u7801\u6539\u4E3A${historyValueSnippet(draft.recoveryCodes)}`);
+      historyMessages.push("\u6062\u590D\u7801\u5DF2\u4FEE\u6539");
     }
     if (draft.note !== target.note) {
       target.note = draft.note;
       target.noteUpdatedAtMs = now;
       target.noteUpdatedDeviceName = deviceName;
       changed = true;
-      historyMessages.push(`\u5907\u6CE8\u6539\u4E3A${historyValueSnippet(draft.note)}`);
+      historyMessages.push("\u5907\u6CE8\u5DF2\u4FEE\u6539");
     }
     if (!changed) {
       setStatus("\u6CA1\u6709\u53EF\u4FDD\u5B58\u7684\u53D8\u66F4");

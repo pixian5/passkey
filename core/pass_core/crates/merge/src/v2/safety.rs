@@ -61,9 +61,20 @@ fn summarize(payload: &SyncPayload) -> PayloadSummary {
         .collect();
 
     let mut summary = PayloadSummary {
-        accounts: accounts.len(),
-        folders: folders.len(),
-        passkeys: passkeys.len(),
+        // Permanent deletion records are sync tombstones, not visible data.
+        // Keep their identities below so they still prevent resurrection.
+        accounts: accounts
+            .iter()
+            .filter(|item| !item.is_permanently_deleted)
+            .count(),
+        folders: folders
+            .iter()
+            .filter(|item| !item.is_permanently_deleted)
+            .count(),
+        passkeys: passkeys
+            .iter()
+            .filter(|item| !item.is_permanently_deleted)
+            .count(),
         ..PayloadSummary::default()
     };
     for account in &accounts {
@@ -162,5 +173,46 @@ pub fn evaluate_sync_safety(
     SyncSafetyReport {
         safe: reasons.is_empty(),
         reasons,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permanent_tombstones_do_not_count_as_visible_data() {
+        let mut tombstone = PasswordAccount::default();
+        tombstone.record_id = Some("record-tombstone".into());
+        tombstone.is_deleted = true;
+        tombstone.is_permanently_deleted = true;
+        let local = SyncPayload {
+            accounts: vec![tombstone.clone()],
+            ..SyncPayload::default()
+        };
+        let remote = SyncPayload::default();
+        let report = evaluate_sync_safety(&local, Some(&remote), &local, "merge");
+        assert!(
+            report.safe,
+            "墓碑不应触发空远端安全闸门: {:?}",
+            report.reasons
+        );
+        assert!(local.accounts[0].is_permanently_deleted);
+    }
+
+    #[test]
+    fn visible_data_still_blocks_empty_remote_merge() {
+        let mut account = PasswordAccount::default();
+        account.record_id = Some("record-visible".into());
+        let local = SyncPayload {
+            accounts: vec![account],
+            ..SyncPayload::default()
+        };
+        let remote = SyncPayload::default();
+        let report = evaluate_sync_safety(&local, Some(&remote), &remote, "merge");
+        assert!(!report.safe);
+        assert!(report
+            .reasons
+            .contains(&"REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL".to_string()));
     }
 }

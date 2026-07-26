@@ -20,6 +20,9 @@ pub struct SyncSettings {
     pub encryption_key: String,
     #[serde(default = "default_mode")]
     pub mode: String,
+    /// Runtime-only fallback key used during planned key rotation.
+    #[serde(skip)]
+    pub previous_encryption_key: String,
 }
 
 fn default_mode() -> String {
@@ -34,6 +37,7 @@ impl Default for SyncSettings {
             auth_token: String::new(),
             encryption_key: String::new(),
             mode: default_mode(),
+            previous_encryption_key: String::new(),
         }
     }
 }

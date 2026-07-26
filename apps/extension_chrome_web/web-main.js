@@ -2637,9 +2637,15 @@ const runSyncMode = async (mode, { quiet = false } = {}) => {
         { mode: sourceMode }
       );
       const result = typeof raw === "string" ? JSON.parse(raw) : raw;
-      reports.push({ source: source === "selfHosted" ? "自建服务器" : "WebDAV", ...(result.report || {}) });
+      const report = { source: source === "selfHosted" ? "自建服务器" : "WebDAV", ...(result.report || {}) };
+      reports.push(report);
+      if (source === preferred && report.ok === false) {
+        failures.push(`${report.source}：${report.message || "主同步源未完成"}`);
+        break;
+      }
     } catch (err) {
       failures.push(`${source === "selfHosted" ? "自建服务器" : "WebDAV"}：${err}`);
+      if (source === preferred) break;
     }
   }
   await refreshState();

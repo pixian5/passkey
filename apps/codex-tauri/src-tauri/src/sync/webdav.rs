@@ -6,13 +6,15 @@
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use reqwest::blocking::Client;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, ETAG, IF_MATCH};
+use reqwest::header::{
+    HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, ETAG, IF_MATCH, IF_NONE_MATCH,
+};
 use reqwest::StatusCode;
 use std::time::Duration;
 use url::Url;
 
 use super::http::FetchResult;
-use super::{crypto::decrypt_wire_body, pipeline, pipeline::SyncMode};
+use super::{crypto::decrypt_wire_body_with_fallback, pipeline, pipeline::SyncMode};
 use pass_merge::v2::SyncPayload;
 
 #[derive(Debug, Clone)]
@@ -22,6 +24,7 @@ pub struct WebDavSettings {
     pub remote_path: String,
     pub username: String,
     pub password: String,
+    pub previous_encryption_key: String,
 }
 
 fn client() -> Result<Client, String> {
@@ -126,6 +129,7 @@ pub fn put(
     password: &str,
     body: &[u8],
     if_match: Option<&str>,
+    _idempotency_key: &str,
 ) -> Result<String, String> {
     let mut request_headers = headers(username, password)?;
     request_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -134,6 +138,8 @@ pub fn put(
             IF_MATCH,
             HeaderValue::from_str(etag.trim()).map_err(|_| "WebDAV ETag 非法".to_string())?,
         );
+    } else {
+        request_headers.insert(IF_NONE_MATCH, HeaderValue::from_static("*"));
     }
     let response = client()?
         .put(resource_url(base_url, remote_path)?)
@@ -193,7 +199,11 @@ where
             let etag = fetched.etag;
             let payload = match fetched.body {
                 Some(body) => {
-                    let document = decrypt_wire_body(&body, encryption_key)?;
+                    let document = decrypt_wire_body_with_fallback(
+                        &body,
+                        encryption_key,
+                        &settings.previous_encryption_key,
+                    )?;
                     let value = document.get("payload").cloned().unwrap_or(document);
                     Some(
                         serde_json::from_value(value)
@@ -205,7 +215,7 @@ where
             Ok((payload, etag))
         },
         apply_local,
-        |wire, etag| {
+        |wire, etag, idempotency_key| {
             put(
                 &settings.base_url,
                 &settings.remote_path,
@@ -213,9 +223,47 @@ where
                 &settings.password,
                 wire,
                 etag,
+                idempotency_key,
             )
         },
     )
+}
+
+pub fn preview(
+    settings: &WebDavSettings,
+    mode: SyncMode,
+    local: SyncPayload,
+    encryption_key: &str,
+) -> Result<(pipeline::SyncReport, SyncPayload), String> {
+    if !settings.enabled {
+        return Err("WebDAV 同步未启用".into());
+    }
+    let _ = resource_url(&settings.base_url, &settings.remote_path)?;
+    pipeline::preview_with_transport(mode, local, || {
+        let fetched = get(
+            &settings.base_url,
+            &settings.remote_path,
+            &settings.username,
+            &settings.password,
+        )?;
+        let etag = fetched.etag;
+        let payload = match fetched.body {
+            Some(body) => {
+                let document = decrypt_wire_body_with_fallback(
+                    &body,
+                    encryption_key,
+                    &settings.previous_encryption_key,
+                )?;
+                let value = document.get("payload").cloned().unwrap_or(document);
+                Some(
+                    serde_json::from_value(value)
+                        .map_err(|e| format!("解析 WebDAV payload 失败: {e}"))?,
+                )
+            }
+            None => None,
+        };
+        Ok((payload, etag))
+    })
 }
 
 #[cfg(test)]

@@ -1,10 +1,11 @@
-use super::crypto::{decrypt_wire_body, encrypt_bundle_document, PLAINTEXT_SCHEMA};
+use super::crypto::{decrypt_wire_body_with_fallback, encrypt_bundle_document, PLAINTEXT_SCHEMA};
 use super::http::{get_sync_state, put_sync_state};
 use super::settings::SyncSettings;
 use chrono::Utc;
 use pass_merge::v2::{evaluate_sync_safety, merge_sync_payloads, sync_alias_groups, SyncPayload};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 const MAX_CONFLICT_RETRIES: u32 = 5;
 
@@ -238,6 +239,41 @@ pub fn preview_sync(
     ))
 }
 
+/// Preview a non-server transport without applying or pushing anything.
+pub fn preview_with_transport<P>(
+    mode: SyncMode,
+    local: SyncPayload,
+    mut pull: P,
+) -> Result<(SyncReport, SyncPayload), String>
+where
+    P: FnMut() -> Result<(Option<SyncPayload>, Option<String>), String>,
+{
+    let (remote_opt, etag) = pull()?;
+    let local_count = visible_account_count(&local);
+    let remote_count = remote_opt.as_ref().map(visible_account_count).unwrap_or(0);
+    let (merged, safety) = decide_merged(mode, local.clone(), remote_opt);
+    let merged_count = visible_account_count(&merged);
+    let report = SyncReport {
+        ok: safety.safe,
+        dry_run: true,
+        mode: mode.as_str().into(),
+        message: if safety.safe {
+            format!("预览（未写入）：账号 {local_count}->{merged_count}（远端 {remote_count}）")
+        } else {
+            format!("预览停止：安全检查未通过（{}）", safety.reasons.join(", "))
+        },
+        safe: safety.safe,
+        reasons: safety.reasons,
+        local_accounts: local_count,
+        remote_accounts: remote_count,
+        merged_accounts: merged_count,
+        applied: false,
+        pushed: false,
+        etag,
+    };
+    Ok((report, merged))
+}
+
 fn pull_remote(settings: &SyncSettings) -> Result<(Option<SyncPayload>, Option<String>), String> {
     if !settings.enabled {
         return Ok((None, None));
@@ -249,7 +285,11 @@ fn pull_remote(settings: &SyncSettings) -> Result<(Option<SyncPayload>, Option<S
     if fetched.empty || fetched.body.is_none() {
         return Ok((None, fetched.etag));
     }
-    let doc = decrypt_wire_body(fetched.body.as_ref().unwrap(), &settings.encryption_key)?;
+    let doc = decrypt_wire_body_with_fallback(
+        fetched.body.as_ref().unwrap(),
+        &settings.encryption_key,
+        &settings.previous_encryption_key,
+    )?;
     let payload = extract_payload(&doc)?;
     Ok((Some(payload), fetched.etag))
 }
@@ -270,9 +310,11 @@ pub(crate) fn run_sync_with_transport<P, U, A>(
 where
     P: FnMut() -> Result<(Option<SyncPayload>, Option<String>), String>,
     A: FnMut(&SyncPayload) -> Result<(), String>,
-    U: FnMut(&[u8], Option<&str>) -> Result<String, String>,
+    U: FnMut(&[u8], Option<&str>, &str) -> Result<String, String>,
 {
     let mut attempt = 0;
+    let mut last_applied: Option<SyncPayload> = None;
+    let idempotency_key = Uuid::new_v4().to_string();
     loop {
         attempt += 1;
         let (remote_opt, etag) = pull()?;
@@ -292,11 +334,11 @@ where
                     local_accounts: local_count,
                     remote_accounts: remote_count,
                     merged_accounts: merged_count,
-                    applied: false,
+                    applied: last_applied.is_some(),
                     pushed: false,
                     etag,
                 },
-                local,
+                last_applied.clone().unwrap_or_else(|| local.clone()),
             ));
         }
         let mut to_store = match mode {
@@ -309,11 +351,12 @@ where
         // "remote updated / local stale" split-brain. A failed push leaves the
         // merged local vault intact for the next retry.
         apply_local(&to_store)?;
+        last_applied = Some(to_store.clone());
         let wire = encrypt_bundle_document(
             &build_bundle_document(&to_store, device_name, platform),
             encryption_key,
         )?;
-        match push(&wire, etag.as_deref()) {
+        match push(&wire, etag.as_deref(), &idempotency_key) {
             Ok(new_etag) => {
                 return Ok((
                     SyncReport {
@@ -388,7 +431,9 @@ where
         &encryption_key,
         || pull_remote(settings),
         apply_local,
-        |wire, etag| put_sync_state(&base_url, &auth_token, wire, etag),
+        |wire, etag, idempotency_key| {
+            put_sync_state(&base_url, &auth_token, wire, etag, Some(idempotency_key))
+        },
     )
 }
 
