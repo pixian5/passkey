@@ -1,14 +1,17 @@
 # Pass Sync Protocol v2
 
-This document is the cross-platform contract for the macOS app, browser
-extensions, and self-hosted sync server.
+This is the current V2 wire and merge contract for Tauri, Docker Web, Chrome
+Web, compatible legacy clients, and the self-hosted sync server. Platform
+capability status is documented separately; compatibility with this protocol
+does not imply full UI parity.
 
 ## Payloads
 
 - Plain bundle schema: `pass.sync.bundle.v2`.
-- Remote production schema: `pass.sync.encrypted.v1`.
-- Remote payloads must be AES-256-GCM envelopes. The server stores the envelope
-  and never decrypts account, password, TOTP, recovery-code, or Passkey fields.
+- Optional encrypted schema: `pass.sync.encrypted.v1`.
+- With a non-empty sync key, remote payloads are AES-256-GCM envelopes. With an
+  empty sync key, clients send plaintext `pass.sync.bundle.v2` only when the
+  server allows plaintext. The server never decrypts business fields.
 - The envelope authenticates the schema string `pass.sync.encrypted.v1` as
   additional authenticated data.
 
@@ -18,7 +21,8 @@ extensions, and self-hosted sync server.
 - Fields use their own `*UpdatedAtMs` and `*UpdatedDeviceName` values.
 - A newer timestamp wins. Equal timestamps use account timestamp, then stable
   device-name ordering, then lexical value ordering.
-- Sites, folder IDs, Passkey IDs, and aliases are unioned and normalized.
+- Sites, folder IDs, Passkey IDs, and aliases use relation states/tombstones;
+  visible arrays are derived and normalized rather than blindly unioned.
 - Folder and Passkey removals use `isDeleted`, `deletedAtMs`,
   `deletedDeviceName`; permanent tombstones use `isPermanentlyDeleted` and
   remain authoritative until a future protocol-defined garbage-collection
@@ -42,7 +46,8 @@ extensions, and self-hosted sync server.
 
 ## Safety and recovery
 
-- Clients create a local safety snapshot before every sync write.
+- Clients create a local safety snapshot before a sync operation replaces the
+  local payload. A remote-only write does not require a local replacement snapshot.
 - Remote-overwrite-local requires a non-empty primary source.
 - Database/key mismatch is fatal: clients must not create a replacement key or
   fall back to a smaller legacy dataset.
@@ -50,6 +55,7 @@ extensions, and self-hosted sync server.
 
 ## Diagnostics
 
-Every sync UI should expose local/remote counts, conflict count, source name,
-remote revision, ETag, and last sync time. Error messages must preserve the
-HTTP status and operation stage (`pull`, `merge`, `push`, or `restore`).
+Sync UI exposes the available local/remote counts, safety reasons and source
+completion status. Revision/ETag are protocol diagnostics but are not currently
+shown in every surface. Error messages must preserve HTTP status and operation
+stage (`pull`, `merge`, `push`, or `restore`) when available.

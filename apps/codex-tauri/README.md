@@ -3,6 +3,8 @@
 Pass 的 **Win / macOS / Linux** 统一桌面壳（Tauri 2）。  
 macOS **系统级**能力（AutoFill、Credential Exchange）仍在 `apps/app_macos`（SwiftUI）；本壳用于跨桌面与 **自建同步互通**，设置面板与快捷键对齐 PassMac 主力功能。
 
+“统一桌面壳”不表示与 Docker Web/Chrome 的平台能力完全相同。Tauri 独有 SSH 创建服务和原生文件选择器，Touch ID 仅 macOS 可用；多个应用进程同时写同一数据目录尚无文件级 revision/CAS 保证。
+
 旧 Tauri/Flutter 实验壳已移除；跨平台桌面功能只在本目录继续开发。
 
 ## 已实现

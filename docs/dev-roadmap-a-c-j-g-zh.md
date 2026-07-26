@@ -30,7 +30,7 @@
 
 ### 2.1 已具备
 
-- **macOS**（`apps/app_macos`）：SwiftUI 主客户端，账号 CRUD、回收站、别名、同步、AutoFill、CSV/CXF 等，功能最完整。
+- **macOS（当时基线）**（`apps/app_macos`）：当时的 SwiftUI 主客户端，包含账号 CRUD、回收站、别名、同步、AutoFill、CSV/CXF 等；此描述不代表当前主端或当前功能优先级。
 - **浏览器扩展**（`apps/extension_shared` + 三壳）：填充、锁定、同步、passkey 等可构建可使用。
 - **同步服务**（`apps/sync_server_ubuntu`）：哑存储 + ETag/CAS + 版本快照。
 - **协议**：`pass.sync.bundle.v2` / 可选加密信封，macOS ↔ 扩展已互通。

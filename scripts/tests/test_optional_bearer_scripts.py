@@ -42,10 +42,12 @@ class OptionalBearerScriptTests(unittest.TestCase):
         self.assertIn("ExecStart=/opt/pass-sync-server/backup_sync_db.sh", service)
         self.assertNotIn("/apps/sync_server_ubuntu/", service)
 
-    def test_service_uses_saved_tls_certificate(self) -> None:
+    def test_service_loads_optional_tls_settings_from_environment_file(self) -> None:
         service = (ROOT / "apps" / "sync_server_ubuntu" / "pass-sync-server.service").read_text(encoding="utf-8")
-        self.assertIn("PASS_SYNC_TLS_CERT=/etc/pass-sync/tls/server.crt", service)
-        self.assertIn("PASS_SYNC_TLS_KEY=/etc/pass-sync/tls/server.key", service)
+        self.assertIn("EnvironmentFile=-/etc/pass-sync/pass-sync-server.env", service)
+        self.assertIn("TLS is optional", service)
+        self.assertNotIn("Environment=PASS_SYNC_TLS_CERT=", service)
+        self.assertNotIn("Environment=PASS_SYNC_TLS_KEY=", service)
         self.assertNotIn("EnvironmentFile=-/etc/pass-sync-server.env", service)
 
 

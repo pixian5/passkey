@@ -1,6 +1,6 @@
 # Pass 三端统一方案（Tauri / Docker Web / Chrome Web 扩展）
 
-> 范围：管理界面、命令契约、同步语义、平台能力边界。  
+> 文档性质：当前架构决策与已实施记录。能力现状以 [`current-app-extension-implementation-reference-zh.md`](./current-app-extension-implementation-reference-zh.md) 为准；“统一”不表示平台能力、存储和返回对象完全相同。
 > Chrome 正式入口为 `apps/extension_chrome_web`；旧 `apps/extension_chrome` 壳已移除。`apps/extension_shared` 继续提供填充、popup、WebAuthn 和 Firefox/Safari 共用代码。
 
 ## 1. 目标
@@ -39,13 +39,13 @@ UI 当前调用 68 个命令。
 
 | 能力 | Tauri | Docker Web | Chrome Web 扩展 |
 |---|---|---|---|
-| 账号/文件夹/排序/回收站 | 完整 | 完整 | 完整 |
+| 账号/文件夹/排序/回收站主流程 | 已接入 | 已接入 | 已接入 |
 | 字段级同步合并 | Rust Core | Rust Core | JS 本地合并（自建服务器可用） |
-| 文件夹顺序同步 | 完整 | 完整 | 完整 |
-| 文件夹去重 | 完整 | 完整 | 完整（本轮补齐） |
-| WebDAV | 完整 | 完整 | 未实现，明确报错 |
-| 服务器版本列表/恢复 | 完整 | 完整 | 完整（`/v2/sync/versions`） |
-| SSH 创建服务 | 完整 | 草稿/检测 only | 草稿 only |
+| 文件夹顺序同步 | 已接入 | 已接入 | 已接入 |
+| 文件夹去重 | 已接入 | 已接入 | 已接入 |
+| WebDAV | 已接入 | 已接入 | 未实现，明确报错 |
+| 服务器版本列表/恢复 | 已接入 | 已接入 | 已接入（`/v2/sync/versions`） |
+| SSH 创建服务 | 实际执行 | 草稿/有限检测 | 保存草稿 |
 | Touch ID / 生物识别 | macOS | 无 | 无 |
 | 原生目录选择器 | 有 | 无（浏览器下载） | 无（浏览器下载） |
 | 页面自动填充 / content script | 无 | 无 | 有（扩展独有） |
@@ -56,7 +56,7 @@ UI 当前调用 68 个命令。
 |---|---|
 | Tauri | 加密 SQLite KV + 本地 vault 封装 |
 | Docker Web | 加密 vault 文件 + 密钥文件 |
-| Chrome Web 扩展 | `chrome.storage.local` / 插件独立空间 |
+| Chrome Web 扩展 | `chrome.storage.local` 中的加密管理工作区 + 后台 IndexedDB 业务集合镜像 |
 
 数据模型统一为 v2 账号/文件夹/通行密钥 + 顶层顺序字段；存储介质可以不同。
 
@@ -193,13 +193,11 @@ UI 启动时读取并隐藏/降级不支持控件。
 
 > 阶段 D 已启动：见 `docs/three-surface-command-matrix-zh.md` 与 `scripts/check_command_matrix.mjs`。
 
-### 5.2 后续应继续统一的部分
-
 优先级从高到低：
 
 1. **扩展 WebDAV（平台边界）**
    浏览器直接使用 WebDAV 需要 CORS；应选择受控代理或明确保持桌面/Web 专属，不能绕过浏览器安全边界。
-2. **命令返回形状完全对象化**
+2. **命令返回形状对象化**
    少数命令仍返回数字/布尔/字符串；关键计数命令已统一为 number。完整对象化继续分阶段推进。
 3. **命令矩阵完整返回 schema**
    已有矩阵覆盖与部分契约；后续继续扩到完整返回 schema。
@@ -244,18 +242,20 @@ cd apps/pass-web && cargo test && cargo build --release
 
 旧 Chrome 壳和专用构建入口已移除；Chrome 只加载 `apps/extension_chrome_web`。
 
-## 8. 当前对齐结论（版本 1.1.5）
+## 8. 当前对齐结论（版本 1.1.6）
 
 已对齐并必须保持：
 
 1. UI 单源、命令同名、同步同核。
-2. 多集合本地写入同事务；保存失败回滚内存。
+2. 各端在自身事务/逻辑保存边界内提交关联集合；保存失败回滚内存。Web/Tauri 尚无跨进程 CAS。
 3. vault 原子落盘带 `fsync`。
 4. Web 同步网络 I/O 不长期占用全局 vault 锁。
 5. 主密码不 `trim`。
 6. 操作历史脱敏；撤销忽略 no-op。
 7. 同步服务器每次成功写入只产生 1 个新版本；审计/限流有上限。
 8. SSH 远端路径 shell quote；部署健康检查正常 TLS 校验。
+
+仍未对齐：Chrome 管理页/后台双锁状态、Web/Tauri 跨进程 revision、旧 Swift 文件夹内独立顺序、全部命令返回 Schema。不得把本节“已对齐”扩写为所有运行细节完全一致。
 
 详细规则见 [local-write-durability-and-history-consistency-zh.md](./local-write-durability-and-history-consistency-zh.md) 与 [current-app-extension-implementation-reference-zh.md](./current-app-extension-implementation-reference-zh.md)。
 

@@ -1,6 +1,6 @@
 # pass
 
-跨平台密码管理器 Monorepo。当前产品管理面统一为 Tauri 桌面、Docker Web 和 Chrome Web 扩展，三端复用同一 UI、V2 数据契约和同步语义；Rust `pass_core` 是合并权威，扩展 JS 实现通过黄金向量对拍。SwiftUI、Safari/Firefox 和 Android 模块保留平台系统能力，移动端完整产品化仍在推进。
+跨平台密码管理器 Monorepo。当前主管理面是 Tauri 桌面、Docker Web 和 Chrome Web 扩展：三端复用同一 UI 源码和 V2 契约，但存储、锁、平台能力及少数返回结构并不完全相同。Rust `pass_core` 是合并权威，Chrome 的 JS 实现通过黄金向量对拍。SwiftUI、Safari/Firefox 和 Android 模块保留平台系统能力或迁移参考，不是等价主端。
 
 > 完整设计文档见 [`docs/`](docs/README.md)。
 
@@ -27,7 +27,7 @@ pass/
 │   └── pass_core/          # Rust workspace（共享核心库）
 │       └── crates/
 │           ├── domain/     # 数据模型与规则
-│           ├── merge/      # op log + HLC + 冲突合并
+│           ├── merge/      # V2 字段级 LWW 合并 + 旧 op-log 辅助
 │           ├── storage/    # SQLite/SQLCipher 迁移与适配
 │           ├── transport/  # 同步协议编解码
 │           ├── csvio/      # CSV 导入导出
@@ -50,10 +50,10 @@ pass/
 
 | 层级 | 职责 | 技术 |
 |------|------|------|
-| **Shared Core** | 数据模型、加密、op log、合并引擎、CSV | Rust |
+| **Shared Core** | 数据模型、V2 合并引擎、CSV 与部分领域 mutation | Rust |
 | **Shared UI** | Tauri / Docker Web / Chrome Web 扩展管理页面 | HTML / CSS / JavaScript 单源构建 |
 | **Platform Adapter** | 密钥库、生物识别、自动填充、系统托盘 | 各平台原生 |
-| **Sync Layer** | V2 整包合并、端到端加密、ETag/CAS 与版本快照 | Tauri/Web/扩展适配器 + Python 服务/WebDAV |
+| **Sync Layer** | V2 整包合并、可选同步加密、ETag/CAS 与版本快照 | Tauri/Web/扩展适配器 + Python 服务/WebDAV |
 | **Browser Extension** | 网页域名识别、自动填充 UI | Chrome MV3 / WebExtension |
 
 ---
@@ -106,6 +106,8 @@ pass/
 - ✅ **Firefox / Safari 扩展**：基于共享代码构建
 - ✅ **Ubuntu 同步服务**：Python 单文件，GET/PUT `/v2/sync/state`（兼容 `/v1/sync/payload`），SQLite 版本快照、ETag/CAS、幂等重试和回滚，Bearer Token 认证；客户端配置密钥时存储 AES-256-GCM 信封，留空时可按配置存储明文同步包
 - 🚧 **Android Credential Provider**：Android 14+ 查询与选择骨架，真实 vault 解锁/回填仍在开发
+
+当前限制：Docker Web 是单用户、单进程 vault；Web/Tauri 尚无跨进程文件 revision/CAS；Chrome 管理页和后台仍有两套锁运行时；Firefox/Safari/Android 没有纳入三端 68 命令矩阵。详细事实与排障边界见 [`docs/current-app-extension-implementation-reference-zh.md`](docs/current-app-extension-implementation-reference-zh.md)。
 
 版本以根目录 [`VERSION`](VERSION) 为唯一来源。`scripts/bump_version.sh` 按 `0.0.1` 递增并满十进一，`node scripts/version.mjs check` 检查所有端和锁文件一致。
 

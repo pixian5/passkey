@@ -8,7 +8,7 @@
 - TOTP/同步设置的基础数据保存
 - AES-256-GCM 加密的数据文件和独立密钥文件
 
-当前版本定位为单用户网页保险库。`PASS_WEB_AUTH_TOKEN` 是网页访问令牌，不等同于同步 Bearer Token。
+当前版本定位为单用户、单进程网页保险库。`PASS_WEB_AUTH_TOKEN` 是网页访问令牌，不等同于同步 Bearer Token。同一个 `/data` 目录不得同时挂给多个写实例；当前没有跨进程 revision/CAS，多个实例会有最后写入者覆盖风险。
 
 ## 本机运行
 
@@ -69,5 +69,6 @@ Ubuntu 可参考 `pass-web.service.example`，Caddy 可参考 `Caddyfile.example
 ## 后续阶段
 
 - 生产级多用户隔离、网页登录会话、WebAuthn、审计日志和权限管理。
+- 跨进程文件锁/revision/CAS；完成前保持每个数据目录只有一个 Web 写进程。
 - 独立的管理员部署 API 需要额外的网络隔离、权限模型和审计，不能复用普通保险库网页接口。
 - macOS Touch ID、系统托盘、窗口尺寸和原生文件选择器属于桌面专属能力，网页端会改用浏览器会话、上传和下载。

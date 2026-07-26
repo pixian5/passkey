@@ -1,6 +1,8 @@
 # Pass Web / Docker / Ubuntu 三阶段完整设计
 
-本文定义把当前 Tauri 桌面版扩展为「Ubuntu 无 GUI + Docker + 浏览器」版本的完整实施方案。目标是复用桌面版业务规则和同步合并规则，在浏览器中完成同等的数据管理操作。
+> 文档性质：实施设计与未来验收目标混合文档。当前已经完成单用户 Web 核心与大部分三端管理命令；Cookie 会话、多用户隔离、WebAuthn 登录、管理员审计、跨进程 CAS 和远程生产部署尚未完成。准确现状以 [`current-app-extension-implementation-reference-zh.md`](./current-app-extension-implementation-reference-zh.md) 为准。
+
+本文定义把 Tauri 桌面版扩展为「Ubuntu 无 GUI + Docker + 浏览器」版本的完整实施方案。这里的“完整”是最终目标，不是当前完成声明。
 
 ## 1. 目标与边界
 
@@ -11,7 +13,7 @@
 - 账号、文件夹、回收站、批量恢复、撤销、重做、历史记录、导入导出、同步预览和合并规则保持一致。
 - 与现有 `pass.sync.bundle.v2`、`pass_merge::v2`、macOS/扩展同步协议兼容。
 - 数据落盘加密，支持备份、恢复、健康检查和失败回滚。
-- 第一版先支持单个保险库；第三阶段再支持多用户和权限隔离。
+- 当前只支持单个保险库；第三阶段的多用户和权限隔离仍是未完成目标。
 
 ### 不承诺完全相同的系统能力
 

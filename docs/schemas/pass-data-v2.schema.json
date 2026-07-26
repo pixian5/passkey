@@ -50,6 +50,18 @@
         "$ref": "#/$defs/passkey"
       }
     },
+    "allRegularAccountIds": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/uuidLower" },
+      "uniqueItems": true
+    },
+    "allRegularOrderUpdatedAtMs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "allRegularOrderUpdatedDeviceName": {
+      "type": "string"
+    },
     "folderOrderIds": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
