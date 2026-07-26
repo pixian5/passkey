@@ -1,6 +1,6 @@
 # Pass 当前实现与设计决策基准
 
-> 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.2.0`。
+> 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.2.1`。
 >
 > 使用规则：当历史设计稿、路线图、旧 Swift 代码或界面文字与本文冲突时，先以本文和自动化门禁为准，再回到代码核对。没有测试或代码依据时，不得写“完整”“完全一致”“所有端均支持”。
 
@@ -267,7 +267,7 @@ cd apps/codex-tauri/src-tauri && cargo test --locked
 cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-版本 `1.2.0` 的已验证基线：版本落点 45 项、UI 命令 68 个、扩展测试 79 项、Docker Web 9 项、Tauri 22 项、同步服务器 33 项、脚本测试 23 项。Core 门禁、Clippy correctness、Docker Compose 解析、JSON Schema 文件解析、Shell 语法、Markdown 本地链接和 Swift/Xcode 构建也纳入本轮验证。数字只描述该版本测试发现量，测试增删后应重新运行并更新，不能永久照抄。
+版本 `1.2.1` 的已验证基线：版本落点 45 项、UI 命令 68 个、扩展测试 79 项、Docker Web 9 项、Tauri 22 项、同步服务器 33 项、脚本测试 23 项。Core 门禁、Clippy correctness、Docker Compose 解析、JSON Schema 文件解析、Shell 语法、仓库内 Markdown 相对链接和 Swift/Xcode 构建也纳入本轮验证。数字只描述该版本测试发现量，测试增删后应重新运行并更新，不能永久照抄。
 
 关联文档：
 
