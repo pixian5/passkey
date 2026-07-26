@@ -108,9 +108,11 @@ jobs:
       - name: Rustfmt (informational until fully normalized)
         continue-on-error: true
         run: |
-          cargo fmt --manifest-path core/pass_core/Cargo.toml --check
-          cargo fmt --manifest-path apps/pass-web/Cargo.toml --check
-          cargo fmt --manifest-path apps/codex-tauri/src-tauri/Cargo.toml --check
+          fmt_failed=0
+          cargo fmt --manifest-path core/pass_core/Cargo.toml --all --check || fmt_failed=1
+          cargo fmt --manifest-path apps/pass-web/Cargo.toml --check || fmt_failed=1
+          cargo fmt --manifest-path apps/codex-tauri/src-tauri/Cargo.toml --check || fmt_failed=1
+          exit "${fmt_failed}"
       - name: Clippy correctness (core/web/tauri)
         run: |
           cargo clippy --manifest-path core/pass_core/Cargo.toml --workspace --all-targets -- -D clippy::correctness -A warnings

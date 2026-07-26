@@ -430,11 +430,17 @@ pub extern "C" fn pass_core_last_error_message() -> *const c_char {
 }
 
 #[no_mangle]
-pub extern "C" fn pass_core_string_free(ptr: *mut c_char) {
+/// Releases a string returned by a `pass_core_*` FFI function.
+///
+/// # Safety
+///
+/// `ptr` must be null or a pointer returned by this library through
+/// `CString::into_raw`, and it must not have been freed previously.
+pub unsafe extern "C" fn pass_core_string_free(ptr: *mut c_char) {
     if ptr.is_null() {
         return;
     }
-    // SAFETY: ptr must be allocated by CString::into_raw in this library.
+    // SAFETY: upheld by the caller as required by this function's contract.
     unsafe {
         let _ = CString::from_raw(ptr);
     }
