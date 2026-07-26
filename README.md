@@ -28,7 +28,7 @@ pass/
 │       └── crates/
 │           ├── domain/     # 数据模型与规则
 │           ├── merge/      # V2 字段级 LWW 合并 + 旧 op-log 辅助
-│           ├── storage/    # SQLite/SQLCipher 迁移与适配
+│           ├── storage/    # 候选规范化 SQLite DDL 嵌入；当前主端未接入
 │           ├── transport/  # 同步协议编解码
 │           ├── csvio/      # CSV 导入导出
 │           └── ffi/        # C ABI / UniFFI bindings
@@ -84,7 +84,7 @@ pass/
 |-------|------|
 | `pass-domain` | 数据模型原语（`Operation`、`TimeRange`、`HybridLogicalClock`）|
 | `pass-merge` | 合并比较器与删除冲突解析 |
-| `pass-storage` | SQLite 内嵌迁移文件 |
+| `pass-storage` | 规范化 SQLite 候选迁移的内嵌资源；当前 Tauri/Swift/Web 不执行 |
 | `pass-transport` | 同步协议契约结构体 |
 | `pass-csvio` | CSV 站点归一化工具 |
 | `pass-core-ffi` | 最小 C ABI 导出（供各端 FFI 调用）|

@@ -1,6 +1,6 @@
 # Pass 当前实现与设计决策基准
 
-> 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.1.6`。
+> 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.1.7`。
 >
 > 使用规则：当历史设计稿、路线图、旧 Swift 代码或界面文字与本文冲突时，先以本文和自动化门禁为准，再回到代码核对。没有测试或代码依据时，不得写“完整”“完全一致”“所有端均支持”。
 
@@ -125,6 +125,8 @@ Docker Web 必须单实例运行。同一个 `/data` 目录不能同时挂给两
 
 Chrome 管理页和后台目前仍有两套运行时锁状态。数据通过消息镜像保持一致，但锁定/解锁事件和失效时机尚未收敛成单一状态机；排障时必须分别检查管理页和 service worker。
 
+`docs/sqlite-schema.sql` 与 `core/pass_core/crates/storage/migrations/0001_initial.sql` 是相同的 V1 规范化候选 DDL，包含 `accounts/op_logs/version_vectors` 等表。当前 Tauri 和旧 Swift 实际只创建 `kv` 表，Docker Web 不使用 SQLite；因此候选 DDL 不能当作当前数据库结构，也不能直接应用到 `pass-tauri.db`。
+
 ### 6.2 保存失败语义
 
 - 账号、文件夹、Passkey、全局顺序等关联集合应在同一事务/逻辑保存中提交。
@@ -148,6 +150,8 @@ Bearer Token 和同步加密密钥都允许留空，项目不会自动生成 Bea
 - 同步密钥空：传输明文 `pass.sync.bundle.v2`，服务器还必须允许明文；
 - 同步密钥非空：传输 `pass.sync.encrypted.v1`；所有设备必须配置同一密钥。
 
+仓库的 Token 轮换脚本只把用户通过 `PASS_SYNC_NEW_BEARER_TOKEN` 或交互输入提供的现有 Token 写入配置文件；它不会生成或回显 Token。空 Token 开放模式也是受支持配置，部署和升级脚本不得擅自替换。
+
 主密码不做 `trim`，首尾空格是密码的一部分。应用锁定后，不应把 Token、同步密钥或解密后的业务数据返回 UI。Touch ID 仅在 macOS Tauri 可用；Docker Web 和 Chrome 不得伪装成功。
 
 ## 8. 同步流程和模式
@@ -163,6 +167,8 @@ Bearer Token 和同步加密密钥都允许留空，项目不会自动生成 Bea
 - `/v1/sync/payload` 仅作兼容入口。
 
 `merge` 的逻辑顺序是：拉取远端及 ETag → 客户端合并和安全评估 → 写本地合并结果 → 带 `If-Match` 和 `Idempotency-Key` 推送远端。若 PUT 返回 412，客户端重新拉取、重新合并并重试，最多 5 次。更新已有远端却没有 `If-Match` 时服务器返回 428。
+
+自建服务器 URL 只有 `localhost`、`127.0.0.1` 和 `::1` 可以使用 HTTP；非回环地址必须使用 HTTPS。本地脚本打印的局域网 HTTP URL 仅表示监听/健康检查地址，不代表当前客户端会接受它作为同步 URL。
 
 | 模式 | 本地结果 | 远端结果 | 主要保护 |
 |---|---|---|---|
@@ -261,7 +267,7 @@ cd apps/codex-tauri/src-tauri && cargo test --locked
 cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-版本 `1.1.6` 的已验证基线：版本落点 45 项、UI 命令 68 个、扩展测试 79 项、Docker Web 9 项、Tauri 22 项、同步服务器 33 项、脚本测试 17 项。数字只描述该版本测试发现量，测试增删后应重新运行并更新，不能永久照抄。
+版本 `1.1.7` 的已验证基线：版本落点 45 项、UI 命令 68 个、扩展测试 79 项、Docker Web 9 项、Tauri 22 项、同步服务器 33 项、脚本测试 23 项。Core 门禁、Docker Compose 解析、JSON Schema 文件解析、Shell 语法、Markdown 本地链接和 Swift/Xcode 构建也纳入本轮验证。数字只描述该版本测试发现量，测试增删后应重新运行并更新，不能永久照抄。
 
 关联文档：
 

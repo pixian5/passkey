@@ -15,6 +15,15 @@ mkdir -p "${LOG_DIR}"
 # 留空即开放模式；只有用户显式设置时才启用 Bearer Token。
 TOKEN_CONFIG="${PASS_SYNC_BEARER_TOKENS:-}"
 TOKEN_CONFIG_XML=$(printf '%s' "${TOKEN_CONFIG}" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g")
+ALLOW_PLAINTEXT_INPUT=$(printf '%s' "${PASS_SYNC_ALLOW_PLAINTEXT:-1}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')
+case "${ALLOW_PLAINTEXT_INPUT}" in
+  1|true|yes) ALLOW_PLAINTEXT_CONFIG="1" ;;
+  0|false|no) ALLOW_PLAINTEXT_CONFIG="0" ;;
+  *)
+    echo "PASS_SYNC_ALLOW_PLAINTEXT 只接受 1/true/yes 或 0/false/no" >&2
+    exit 2
+    ;;
+esac
 
 # 生成 plist 文件
 cat > "${LAUNCHD_DIR}/${LAUNCHD_PLIST}" <<EOF
@@ -39,6 +48,8 @@ cat > "${LAUNCHD_DIR}/${LAUNCHD_PLIST}" <<EOF
     <string>${DATA_DIR}/pass_sync.sqlite3</string>
     <key>PASS_SYNC_BEARER_TOKENS</key>
     <string>${TOKEN_CONFIG_XML}</string>
+    <key>PASS_SYNC_ALLOW_PLAINTEXT</key>
+    <string>${ALLOW_PLAINTEXT_CONFIG}</string>
     <key>PASS_SYNC_LOG_LEVEL</key>
     <string>INFO</string>
   </dict>
@@ -72,15 +83,20 @@ echo "========================================"
 echo "LaunchAgent: ${LAUNCHD_DIR}/${LAUNCHD_PLIST}"
 echo ""
 echo "局域网访问地址:"
-echo "  http://${LOCAL_IP}:53333/v1/sync/payload"
+echo "  http://${LOCAL_IP}:53333/v2/sync/state"
+echo "  注意: 当前客户端只允许回环地址使用 HTTP；跨设备请配置 HTTPS 反向代理"
 echo ""
 if [[ -z "${TOKEN_CONFIG}" ]]; then
   echo "认证模式 : 开放（未配置 Bearer Token）"
+  TOKEN_DISPLAY="（留空）"
 else
   echo "认证模式 : 已使用显式 Bearer Token 配置"
+  TOKEN_DISPLAY="（已配置，不显示）"
 fi
+echo "明文同步 : $([[ "${ALLOW_PLAINTEXT_CONFIG}" == "0" ]] && echo "拒绝" || echo "允许")"
 echo ""
 echo "客户端配置:"
-echo "  服务器地址: http://${LOCAL_IP}:53333"
-echo "  访问令牌:   ${TOKEN_CONFIG:-（留空）}"
+echo "  本机服务器地址: http://127.0.0.1:53333"
+echo "  跨设备服务器地址: https://你的受信任域名"
+echo "  访问令牌:   ${TOKEN_DISPLAY}"
 echo "========================================"

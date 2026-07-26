@@ -105,7 +105,7 @@ python3 pass_sync_server.py
 
 ## 客户端接入
 
-在 mac App 或 Chrome 扩展中填写：
+在 Tauri、Docker Web、Chrome Web 扩展或兼容的旧客户端中填写：
 
 - 服务地址：`https://your-domain.example`
 - Token：`PASS_SYNC_BEARER_TOKENS` 中对应值
@@ -148,8 +148,11 @@ sudo editor /etc/systemd/system/pass-sync-server.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now pass-sync-server
 
-# 轮换令牌（保留旧令牌，确认客户端迁移后再删除旧行）
-sudo ./rotate_token.sh /etc/pass-sync/tokens.conf default
+# 写入用户已有的新令牌；脚本不会生成或回显 Token
+read -r -s PASS_SYNC_NEW_BEARER_TOKEN
+export PASS_SYNC_NEW_BEARER_TOKEN
+sudo --preserve-env=PASS_SYNC_NEW_BEARER_TOKEN ./rotate_token.sh /etc/pass-sync/tokens.conf default
+unset PASS_SYNC_NEW_BEARER_TOKEN
 
 # 安装每日数据库备份（推荐）
 sudo cp pass-sync-server-backup.service pass-sync-server-backup.timer /etc/systemd/system/

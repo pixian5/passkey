@@ -16,7 +16,7 @@ if [[ -f "${PID_FILE}" ]]; then
   OLD_PID=$(cat "${PID_FILE}")
   if kill -0 "${OLD_PID}" 2>/dev/null; then
     echo "同步服务器已在运行 (PID: ${OLD_PID})"
-    echo "访问地址: http://${HOST}:${PORT}/v1/sync/payload"
+    echo "访问地址: http://${HOST}:${PORT}/v2/sync/state"
     exit 0
   else
     rm -f "${PID_FILE}"
@@ -46,6 +46,7 @@ echo "进程 PID : ${PID}"
 echo "监听地址 : ${HOST}:${PORT}"
 echo "数据库   : ${DATA_DIR}/pass_sync.sqlite3"
 echo "日志文件 : ${LOG_FILE}"
+echo "同步接口 : http://${HOST}:${PORT}/v2/sync/state"
 echo ""
 if [[ -z "${PASS_SYNC_BEARER_TOKENS:-}" && -z "${PASS_SYNC_BEARER_TOKENS_FILE:-}" ]]; then
   echo "认证模式 : 开放（未配置 Bearer Token）"

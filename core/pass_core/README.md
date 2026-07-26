@@ -8,7 +8,7 @@ Shared Rust core for the cross-platform password manager.
 | --- | --- |
 | `pass-domain` | Core data model types (incl. experimental op-log primitives) |
 | `pass-merge` | **Production** `pass.sync.bundle.v2` field-LWW merge (`pass_merge::v2`) + legacy op-log helpers |
-| `pass-storage` | SQL schema embedding helpers |
+| `pass-storage` | Candidate normalized SQL schema embedding; current Tauri/Swift/Web runtimes do not execute it |
 | `pass-transport` | Sync protocol data contracts |
 | `pass-csvio` | CSV normalization helpers |
 | `pass-core-ffi` | C ABI for host apps (includes merge entry points) |

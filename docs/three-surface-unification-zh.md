@@ -242,7 +242,7 @@ cd apps/pass-web && cargo test && cargo build --release
 
 旧 Chrome 壳和专用构建入口已移除；Chrome 只加载 `apps/extension_chrome_web`。
 
-## 8. 当前对齐结论（版本 1.1.6）
+## 8. 当前对齐结论（版本 1.1.7）
 
 已对齐并必须保持：
 

@@ -16,7 +16,7 @@
 10. [历史本地配对协议：sync-protocol-contract-zh.md](/Users/x/code/pass/docs/sync-protocol-contract-zh.md)
 11. [多设备同步与手动导入导出：manual-sync-import-export-design-and-implementation-zh.md](/Users/x/code/pass/docs/manual-sync-import-export-design-and-implementation-zh.md)
 12. [统一数据与同步实施计划（V2）：unified-data-sync-v2-design-and-plan-zh.md](/Users/x/code/pass/docs/unified-data-sync-v2-design-and-plan-zh.md)
-13. [数据库 DDL：sqlite-schema.sql](/Users/x/code/pass/docs/sqlite-schema.sql)
+13. [历史/候选规范化数据库 DDL：sqlite-schema.sql](/Users/x/code/pass/docs/sqlite-schema.sql)
 14. [数据模型 Schema（V2）：schemas/pass-data-v2.schema.json](/Users/x/code/pass/docs/schemas/pass-data-v2.schema.json)
 15. [同步包 Schema（V2）：schemas/pass-sync-bundle-v2.schema.json](/Users/x/code/pass/docs/schemas/pass-sync-bundle-v2.schema.json)
 16. [开发路线图（A+C+J+G）：dev-roadmap-a-c-j-g-zh.md](/Users/x/code/pass/docs/dev-roadmap-a-c-j-g-zh.md)
@@ -36,7 +36,7 @@
 - `audit-2026-07-26-zh.md`：逐项记录文档旧理解、代码事实、修正结果和仍未解决风险。
 - `manual-sync-import-export-design-and-implementation-zh.md`：多设备同步策略与手动导入导出协议、冲突合并规则及实施说明。
 - `unified-data-sync-v2-design-and-plan-zh.md`：APP/扩展统一数据格式、迁移规则、合并规则与实施排期。
-- `sqlite-schema.sql`：数据结构与索引落地。
+- `sqlite-schema.sql`：`pass-storage` 内嵌的 V1 规范化存储候选，当前主端没有执行；Tauri/Swift 实际使用 KV 表，Web 使用加密 JSON vault。
 - `schemas/pass-data-v2.schema.json`：统一数据模型 `pass.data.v2` 的机器可校验定义。
 - `schemas/pass-sync-bundle-v2.schema.json`：统一同步包 `pass.sync.bundle.v2` 的机器可校验定义。
 - `cross-platform-sync-backends-v2-zh.md`：WebDAV/自建服务器跨平台同步协议与接入清单。

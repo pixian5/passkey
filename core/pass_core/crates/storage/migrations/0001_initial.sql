@@ -1,4 +1,9 @@
 -- 跨平台密码管理器 SQLite/SQLCipher Schema (V1)
+--
+-- 状态：pass-storage crate 内嵌的规范化存储候选/历史 V1 设计，不是当前
+-- Tauri、Swift 或 Docker Web 的运行时数据库 DDL。Tauri/Swift 当前使用
+-- 单一 kv 表保存加密集合，Docker Web 使用加密 JSON vault。不得直接对
+-- 现有 pass-tauri.db 执行本文件，也不得据此编写当前数据迁移。
 -- 时间戳统一使用 UTC epoch milliseconds
 
 PRAGMA foreign_keys = ON;
