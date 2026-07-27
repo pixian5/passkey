@@ -296,7 +296,7 @@ fn get_operation_history(
 fn undo_last_operation(
     app: AppHandle,
     state: tauri::State<AppLockState>,
-) -> Result<String, String> {
+) -> Result<serde_json::Value, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
     let mut conn = open_db(&app)?;
@@ -307,14 +307,14 @@ fn undo_last_operation(
     local_snapshots::create(&dir, &current, "撤销本地操作前自动备份")?;
     save_payload_atomic(&mut conn, &entry.payload)?;
     operation_history::move_undo_to_redo(&dir, &entry.id, current)?;
-    Ok(format!("已撤销：{}", entry.title))
+    Ok(serde_json::json!({ "message": format!("已撤销：{}", entry.title) }))
 }
 
 #[tauri::command]
 fn redo_last_operation(
     app: AppHandle,
     state: tauri::State<AppLockState>,
-) -> Result<String, String> {
+) -> Result<serde_json::Value, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
     let entry: HistoryEntry =
@@ -325,7 +325,7 @@ fn redo_last_operation(
     local_snapshots::create(&dir, &current, "重做本地操作前自动备份")?;
     save_payload_atomic(&mut conn, &entry.payload)?;
     operation_history::move_redo_to_undo(&dir, &entry.id, current)?;
-    Ok(format!("已重做：{}", entry.title))
+    Ok(serde_json::json!({ "message": format!("已重做：{}", entry.title) }))
 }
 
 #[tauri::command]
@@ -1245,7 +1245,7 @@ fn generate_sync_encryption_key() -> String {
 async fn sync_preview(
     app: AppHandle,
     state: tauri::State<'_, AppLockState>,
-) -> Result<String, String> {
+) -> Result<serde_json::Value, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
 
@@ -1298,12 +1298,11 @@ async fn sync_preview(
         .await
         .map_err(|e| format!("预览合并任务异常: {e}"))??
     };
-    serde_json::to_string(&serde_json::json!({
+    Ok(serde_json::json!({
         "report": report,
         "localPayload": local,
         "payload": merged,
     }))
-    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1311,7 +1310,7 @@ async fn sync_now(
     app: AppHandle,
     state: tauri::State<'_, AppLockState>,
     sync_lock: tauri::State<'_, SyncInFlightState>,
-) -> Result<String, String> {
+) -> Result<serde_json::Value, String> {
     let _sync_guard = sync_lock.acquire()?;
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
@@ -1333,41 +1332,42 @@ async fn sync_now(
     let platform = current_platform().to_string();
     let worker_app = app.clone();
     let worker_dir = dir.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let mut conn = open_db(&worker_app)?;
-        let local_for_apply = local.clone();
-        let worker_dir_for_apply = worker_dir.clone();
-        let mut snapshot_created = false;
-        let mut last_applied_local: Option<SyncPayload> = None;
-        let (report, _applied) =
-            run_sync(&settings, local.clone(), &device, &platform, |payload| {
-                let expected = last_applied_local.as_ref().unwrap_or(&local_for_apply);
-                // Compare and write in one SQLite transaction.  A separate
-                // read followed by save_payload_atomic() still allowed a
-                // foreground edit to land between the check and the commit.
-                if !snapshot_created {
-                    local_snapshots::create(
-                        &worker_dir_for_apply,
-                        &local_for_apply,
-                        "同步写入本地前自动备份",
-                    )?;
-                }
-                save_payload_if_unchanged(&mut conn, &device, expected, payload)?;
-                if !snapshot_created {
-                    operation_history::push(
-                        &worker_dir_for_apply,
-                        "同步写入本地",
-                        local_for_apply.clone(),
-                    )?;
-                    snapshot_created = true;
-                }
-                last_applied_local = Some(payload.clone());
-                Ok(())
-            })?;
-        serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| format!("同步任务异常: {e}"))??;
+    let result =
+        tauri::async_runtime::spawn_blocking(move || -> Result<serde_json::Value, String> {
+            let mut conn = open_db(&worker_app)?;
+            let local_for_apply = local.clone();
+            let worker_dir_for_apply = worker_dir.clone();
+            let mut snapshot_created = false;
+            let mut last_applied_local: Option<SyncPayload> = None;
+            let (report, _applied) =
+                run_sync(&settings, local.clone(), &device, &platform, |payload| {
+                    let expected = last_applied_local.as_ref().unwrap_or(&local_for_apply);
+                    // Compare and write in one SQLite transaction.  A separate
+                    // read followed by save_payload_atomic() still allowed a
+                    // foreground edit to land between the check and the commit.
+                    if !snapshot_created {
+                        local_snapshots::create(
+                            &worker_dir_for_apply,
+                            &local_for_apply,
+                            "同步写入本地前自动备份",
+                        )?;
+                    }
+                    save_payload_if_unchanged(&mut conn, &device, expected, payload)?;
+                    if !snapshot_created {
+                        operation_history::push(
+                            &worker_dir_for_apply,
+                            "同步写入本地",
+                            local_for_apply.clone(),
+                        )?;
+                        snapshot_created = true;
+                    }
+                    last_applied_local = Some(payload.clone());
+                    Ok(())
+                })?;
+            Ok(serde_json::json!({ "report": report }))
+        })
+        .await
+        .map_err(|e| format!("同步任务异常: {e}"))??;
     Ok(result)
 }
 
@@ -1397,7 +1397,7 @@ async fn sync_now_mode(
     state: tauri::State<'_, AppLockState>,
     sync_lock: tauri::State<'_, SyncInFlightState>,
     mode: String,
-) -> Result<String, String> {
+) -> Result<serde_json::Value, String> {
     let _sync_guard = sync_lock.acquire()?;
     let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
     let device = load_device_name(&conn)?;
@@ -1406,44 +1406,45 @@ async fn sync_now_mode(
     let platform = current_platform().to_string();
     let worker_app = app.clone();
     let worker_dir = dir.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let mut conn = open_db(&worker_app)?;
-        let local_for_apply = local.clone();
-        let worker_dir_for_apply = worker_dir.clone();
-        let mut snapshot_created = false;
-        let mut last_applied_local: Option<SyncPayload> = None;
-        let (report, _applied) = run_sync_with_mode(
-            &settings,
-            local.clone(),
-            &device,
-            &platform,
-            mode,
-            |payload| {
-                let expected = last_applied_local.as_ref().unwrap_or(&local_for_apply);
-                if !snapshot_created {
-                    local_snapshots::create(
-                        &worker_dir_for_apply,
-                        &local_for_apply,
-                        "同步写入本地前自动备份",
-                    )?;
-                }
-                save_payload_if_unchanged(&mut conn, &device, expected, payload)?;
-                if !snapshot_created {
-                    operation_history::push(
-                        &worker_dir_for_apply,
-                        "同步写入本地",
-                        local_for_apply.clone(),
-                    )?;
-                    snapshot_created = true;
-                }
-                last_applied_local = Some(payload.clone());
-                Ok(())
-            },
-        )?;
-        serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| format!("同步任务异常: {e}"))??;
+    let result =
+        tauri::async_runtime::spawn_blocking(move || -> Result<serde_json::Value, String> {
+            let mut conn = open_db(&worker_app)?;
+            let local_for_apply = local.clone();
+            let worker_dir_for_apply = worker_dir.clone();
+            let mut snapshot_created = false;
+            let mut last_applied_local: Option<SyncPayload> = None;
+            let (report, _applied) = run_sync_with_mode(
+                &settings,
+                local.clone(),
+                &device,
+                &platform,
+                mode,
+                |payload| {
+                    let expected = last_applied_local.as_ref().unwrap_or(&local_for_apply);
+                    if !snapshot_created {
+                        local_snapshots::create(
+                            &worker_dir_for_apply,
+                            &local_for_apply,
+                            "同步写入本地前自动备份",
+                        )?;
+                    }
+                    save_payload_if_unchanged(&mut conn, &device, expected, payload)?;
+                    if !snapshot_created {
+                        operation_history::push(
+                            &worker_dir_for_apply,
+                            "同步写入本地",
+                            local_for_apply.clone(),
+                        )?;
+                        snapshot_created = true;
+                    }
+                    last_applied_local = Some(payload.clone());
+                    Ok(())
+                },
+            )?;
+            Ok(serde_json::json!({ "report": report }))
+        })
+        .await
+        .map_err(|e| format!("同步任务异常: {e}"))??;
     Ok(result)
 }
 
@@ -1453,7 +1454,7 @@ async fn sync_webdav_now_mode(
     state: tauri::State<'_, AppLockState>,
     sync_lock: tauri::State<'_, SyncInFlightState>,
     mode: String,
-) -> Result<String, String> {
+) -> Result<serde_json::Value, String> {
     let _sync_guard = sync_lock.acquire()?;
     let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
     let prefs = load_ui_prefs(&dir);
@@ -1472,45 +1473,46 @@ async fn sync_webdav_now_mode(
     let encryption_key = settings.encryption_key.clone();
     let worker_app = app.clone();
     let worker_dir = dir.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let mut conn = open_db(&worker_app)?;
-        let local_for_apply = local.clone();
-        let worker_dir_for_apply = worker_dir.clone();
-        let mut snapshot_created = false;
-        let mut last_applied_local: Option<SyncPayload> = None;
-        let (report, _applied) = webdav::run_sync(
-            &webdav_settings,
-            parsed_mode,
-            local.clone(),
-            &device,
-            &platform,
-            &encryption_key,
-            |payload| {
-                let expected = last_applied_local.as_ref().unwrap_or(&local_for_apply);
-                if !snapshot_created {
-                    local_snapshots::create(
-                        &worker_dir_for_apply,
-                        &local_for_apply,
-                        "WebDAV 同步写入本地前自动备份",
-                    )?;
-                }
-                save_payload_if_unchanged(&mut conn, &device, expected, payload)?;
-                if !snapshot_created {
-                    operation_history::push(
-                        &worker_dir_for_apply,
-                        "WebDAV 同步写入本地",
-                        local_for_apply.clone(),
-                    )?;
-                    snapshot_created = true;
-                }
-                last_applied_local = Some(payload.clone());
-                Ok(())
-            },
-        )?;
-        serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| format!("WebDAV 同步任务异常: {e}"))??;
+    let result =
+        tauri::async_runtime::spawn_blocking(move || -> Result<serde_json::Value, String> {
+            let mut conn = open_db(&worker_app)?;
+            let local_for_apply = local.clone();
+            let worker_dir_for_apply = worker_dir.clone();
+            let mut snapshot_created = false;
+            let mut last_applied_local: Option<SyncPayload> = None;
+            let (report, _applied) = webdav::run_sync(
+                &webdav_settings,
+                parsed_mode,
+                local.clone(),
+                &device,
+                &platform,
+                &encryption_key,
+                |payload| {
+                    let expected = last_applied_local.as_ref().unwrap_or(&local_for_apply);
+                    if !snapshot_created {
+                        local_snapshots::create(
+                            &worker_dir_for_apply,
+                            &local_for_apply,
+                            "WebDAV 同步写入本地前自动备份",
+                        )?;
+                    }
+                    save_payload_if_unchanged(&mut conn, &device, expected, payload)?;
+                    if !snapshot_created {
+                        operation_history::push(
+                            &worker_dir_for_apply,
+                            "WebDAV 同步写入本地",
+                            local_for_apply.clone(),
+                        )?;
+                        snapshot_created = true;
+                    }
+                    last_applied_local = Some(payload.clone());
+                    Ok(())
+                },
+            )?;
+            Ok(serde_json::json!({ "report": report }))
+        })
+        .await
+        .map_err(|e| format!("WebDAV 同步任务异常: {e}"))??;
     Ok(result)
 }
 
@@ -1610,7 +1612,7 @@ fn import_sync_bundle(
     state: tauri::State<AppLockState>,
     path: String,
     apply: bool,
-) -> Result<String, String> {
+) -> Result<serde_json::Value, String> {
     let (dir, settings, mut conn) = load_settings_unlocked(&app, &state)?;
     let prefs = load_ui_prefs(&dir);
     let content = fs::read(&path).map_err(|e| format!("读取同步包失败: {e}"))?;
@@ -1627,7 +1629,7 @@ fn import_sync_bundle(
         operation_history::push(&dir, "导入并合并同步包", local.clone())?;
         save_payload_atomic(&mut conn, &result.payload)?;
     }
-    serde_json::to_string(&result).map_err(|e| e.to_string())
+    serde_json::to_value(result).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1636,7 +1638,7 @@ fn import_sync_bundle_text(
     state: tauri::State<AppLockState>,
     content: String,
     apply: bool,
-) -> Result<String, String> {
+) -> Result<serde_json::Value, String> {
     let (dir, settings, mut conn) = load_settings_unlocked(&app, &state)?;
     let prefs = load_ui_prefs(&dir);
     let device = load_device_name(&conn)?;
@@ -1652,7 +1654,7 @@ fn import_sync_bundle_text(
         operation_history::push(&dir, "导入并合并同步包", local.clone())?;
         save_payload_atomic(&mut conn, &result.payload)?;
     }
-    serde_json::to_string(&result).map_err(|e| e.to_string())
+    serde_json::to_value(result).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1933,7 +1935,7 @@ fn restore_server_version(
     app: AppHandle,
     state: tauri::State<AppLockState>,
     version_id: String,
-) -> Result<String, String> {
+) -> Result<serde_json::Value, String> {
     let (dir, settings, mut conn) = load_settings_unlocked(&app, &state)?;
     let device = load_device_name(&conn)?;
     let local = local_payload_from_conn(&conn, &device)?;
@@ -1945,13 +1947,15 @@ fn restore_server_version(
         local.clone(),
     )?;
     save_payload_atomic(&mut conn, &payload)?;
-    Ok(format!(
-        "已恢复快照 {}：账号 {}，文件夹 {}，通行密钥 {}",
-        version_id,
-        visible_account_count(&payload),
-        visible_folder_count(&payload),
-        visible_passkey_count(&payload)
-    ))
+    Ok(serde_json::json!({
+        "message": format!(
+            "已恢复快照 {}：账号 {}，文件夹 {}，通行密钥 {}",
+            version_id,
+            visible_account_count(&payload),
+            visible_folder_count(&payload),
+            visible_passkey_count(&payload)
+        )
+    }))
 }
 
 fn snapshot_current_vault(
@@ -1988,19 +1992,21 @@ fn restore_local_snapshot(
     app: AppHandle,
     state: tauri::State<AppLockState>,
     snapshot_id: String,
-) -> Result<String, String> {
+) -> Result<serde_json::Value, String> {
     let (dir, _settings, mut conn) = load_settings_unlocked(&app, &state)?;
     let device = load_device_name(&conn)?;
     let current = local_payload_from_conn(&conn, &device)?;
     let payload = local_snapshots::get(&dir, &snapshot_id)?;
     local_snapshots::create(&dir, &current, "恢复本地安全快照前自动备份")?;
     save_payload_atomic(&mut conn, &payload)?;
-    Ok(format!(
-        "已恢复本地安全快照：账号 {}，文件夹 {}，通行密钥 {}",
-        visible_account_count(&payload),
-        visible_folder_count(&payload),
-        visible_passkey_count(&payload)
-    ))
+    Ok(serde_json::json!({
+        "message": format!(
+            "已恢复本地安全快照：账号 {}，文件夹 {}，通行密钥 {}",
+            visible_account_count(&payload),
+            visible_folder_count(&payload),
+            visible_passkey_count(&payload)
+        )
+    }))
 }
 
 #[tauri::command]

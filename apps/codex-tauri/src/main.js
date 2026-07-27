@@ -409,6 +409,10 @@ const message = (text, level) => showToast(text, level);
 const toastSuccess = (text) => showToast(text, "success");
 const toastError = (text) => showToast(text, "error");
 const toastWarn = (text) => showToast(text, "warn");
+const commandMessage = (value, fallback = "") => {
+  if (value && typeof value === "object" && typeof value.message === "string") return value.message;
+  return value == null || value === "" ? fallback : String(value);
+};
 
 const applyUiPrefs = () => {
   const root = document.documentElement;
@@ -3757,7 +3761,7 @@ els.btnUndo?.addEventListener("click", async () => {
   try {
     const message = await invoke("undo_last_operation");
     await refreshState();
-    toastSuccess(message || "已撤销最近一次操作");
+    toastSuccess(commandMessage(message, "已撤销最近一次操作"));
   } catch (err) {
     toastError(`撤销失败：${err}`);
     await refreshUndoStatus();
@@ -3774,7 +3778,7 @@ els.btnRedo?.addEventListener("click", async () => {
   try {
     const message = await invoke("redo_last_operation");
     await refreshState();
-    toastSuccess(message || "已重做最近一次操作");
+    toastSuccess(commandMessage(message, "已重做最近一次操作"));
   } catch (err) {
     toastError(`重做失败：${err}`);
   } finally {
@@ -4083,7 +4087,7 @@ els.btnLoadVersions?.addEventListener("click", async () => {
           try {
             const msg = await invoke("restore_server_version", { versionId: v.id });
             await refreshState();
-            toastSuccess(msg);
+            toastSuccess(commandMessage(msg, "服务器快照已恢复"));
           } catch (err) {
             toastError(`恢复失败：${err}`);
           } finally {
@@ -4130,7 +4134,7 @@ const loadLocalSnapshots = async () => {
           try {
             const msg = await invoke("restore_local_snapshot", { snapshotId: snapshot.id });
             await refreshState();
-            toastSuccess(msg);
+            toastSuccess(commandMessage(msg, "本地安全快照已恢复"));
           } catch (err) {
             toastError(`恢复本地安全快照失败：${err}`);
           } finally {

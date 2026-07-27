@@ -35,6 +35,7 @@ for (const [surface, list] of Object.entries(missing)) {
 
 // Extension must not fake unsupported platform features.
 const extSrc = read("apps/extension_chrome_web/extension-bridge.js");
+const exchangeSrc = read("apps/codex-tauri/src-tauri/src/exchange.rs");
 const mustError = [
   ["sync_webdav_now_mode", /case "sync_webdav_now_mode":\s*throw new Error/],
   ["provision_self_hosted_server", /case "provision_self_hosted_server":\s*throw new Error/],
@@ -89,6 +90,48 @@ if (!/Ok\(count\)\s*\}\s*"restore_account"/.test(webSrc.replace(/\s+/g, " ")) &&
   // fallback search
   if (!/soft_delete_accounts[\s\S]*Ok\(json!\(count\)\)/.test(webSrc)) {
     errors.push("pass-web soft_delete_accounts must return json!(count)");
+  }
+}
+
+// High-risk synchronization commands use structured JSON values on native
+// and server surfaces. Tauri previously serialized these values to strings,
+// while pass-web wrapped an already serialized string in JSON once more.
+for (const cmd of [
+  "sync_preview",
+  "sync_now",
+  "sync_now_mode",
+  "sync_webdav_now_mode",
+  "import_sync_bundle",
+  "import_sync_bundle_text",
+]) {
+  const tauriFn = tauriSrc.match(
+    new RegExp(`(?:async )?fn ${cmd}\\([\\s\\S]*?\\) -> Result<([^>]+), String>`),
+  );
+  if (!tauriFn || !tauriFn[1].includes("serde_json::Value")) {
+    errors.push(`tauri ${cmd} must return Result<serde_json::Value, String>`);
+  }
+}
+if (/Ok\(json!\(serde_json::to_string\(&json!\(/.test(webSrc)) {
+  errors.push("pass-web must not wrap command JSON objects as JSON strings");
+}
+if (!/pub local_payload:\s*SyncPayload/.test(exchangeSrc) || !/\"localPayload\": local/.test(webSrc) || !/localPayload:\s*local/.test(extSrc)) {
+  errors.push("sync bundle import must expose localPayload on all surfaces");
+}
+for (const cmd of [
+  "undo_last_operation",
+  "redo_last_operation",
+  "restore_server_version",
+  "restore_local_snapshot",
+]) {
+  const tauriFn = tauriSrc.match(
+    new RegExp(`(?:async )?fn ${cmd}\\([\\s\\S]*?\\) -> Result<([^>]+), String>`),
+  );
+  if (!tauriFn || !tauriFn[1].includes("serde_json::Value")) {
+    errors.push(`tauri ${cmd} must return an object with message`);
+  }
+  const extBlock = extSrc.match(new RegExp(`case "${cmd}":[\\s\\S]*?(?=case "|default:)`))?.[0] || "";
+  if (!/message:/.test(extBlock)) {
+    errors.push(`extension ${cmd} must return an object with message`);
   }
 }
 

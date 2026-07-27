@@ -699,8 +699,8 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
       case "get_undo_status": { const entry = store.undo.at(-1); return entry ? { title: entry.title, createdAtMs: entry.createdAtMs } : null; }
       case "get_redo_status": { const entry = store.redo.at(-1); return entry ? { title: entry.title, createdAtMs: entry.createdAtMs } : null; }
       case "get_operation_history": return [...store.undo.map((entry) => ({ ...entry, stack: "undo" })), ...store.redo.map((entry) => ({ ...entry, stack: "redo" }))].sort((a, b) => b.createdAtMs - a.createdAtMs).slice(0, MAX_HISTORY);
-      case "undo_last_operation": return serialized(async () => { const current = await loadStore(); const entry = current.undo.pop(); if (!entry) throw new Error("没有可撤销的本地操作"); current.data = normalizeData(clone(entry.before)); current.redo.push(entry); await persist(current); return `已撤销：${entry.title}`; });
-      case "redo_last_operation": return serialized(async () => { const current = await loadStore(); const entry = current.redo.pop(); if (!entry) throw new Error("没有可重做的本地操作"); current.data = normalizeData(clone(entry.after)); current.undo.push(entry); await persist(current); return `已重做：${entry.title}`; });
+      case "undo_last_operation": return serialized(async () => { const current = await loadStore(); const entry = current.undo.pop(); if (!entry) throw new Error("没有可撤销的本地操作"); current.data = normalizeData(clone(entry.before)); current.redo.push(entry); await persist(current); return { message: `已撤销：${entry.title}` }; });
+      case "redo_last_operation": return serialized(async () => { const current = await loadStore(); const entry = current.redo.pop(); if (!entry) throw new Error("没有可重做的本地操作"); current.data = normalizeData(clone(entry.after)); current.undo.push(entry); await persist(current); return { message: `已重做：${entry.title}` }; });
       case "create_account": {
         const input = args.input || {};
         return mutate("新建账号", (data) => { const requestedFolderIds = input.folderIds || []; const account = normalizeAccount({ ...input, folderIds: [], recordId: id("account"), createdAtMs: now(), updatedAtMs: now(), isDeleted: false }); data.accounts.push(account); data.allRegularAccountIds = addToTop(data.allRegularAccountIds, account.recordId); touchAllRegularOrder(data); setMembership(data, account, requestedFolderIds); return clone(account); });
@@ -891,11 +891,11 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
           const accounts = (restoredPayload.accounts || []).filter((account) => !account.isPermanentlyDeleted).length;
           const folders = (restoredPayload.folders || []).filter((folder) => !folder.isPermanentlyDeleted).length;
           const passkeys = (restoredPayload.passkeys || []).filter((passkey) => !passkey.isPermanentlyDeleted).length;
-          return `已恢复快照 ${versionId}：账号 ${accounts}，文件夹 ${folders}，通行密钥 ${passkeys}`;
+          return { message: `已恢复快照 ${versionId}：账号 ${accounts}，文件夹 ${folders}，通行密钥 ${passkeys}` };
         });
       }
       case "list_local_snapshots": return store.snapshots.map((snapshot) => ({ id: snapshot.id, reason: snapshot.reason, createdAtMs: snapshot.createdAtMs, accounts: (snapshot.payload.accounts || []).filter((a) => !a.isPermanentlyDeleted).length, folders: (snapshot.payload.folders || []).filter((f) => !f.isPermanentlyDeleted).length, passkeys: (snapshot.payload.passkeys || []).filter((p) => !p.isPermanentlyDeleted).length }));
-      case "restore_local_snapshot": { const snapshot = store.snapshots.find((item) => sameId(item.id, args.snapshotId)); if (!snapshot) throw new Error("本地快照不存在"); return mutate("恢复本地安全快照", (data) => { const restored = normalizePayload(snapshot.payload); Object.assign(data, restored); return true; }).then(() => "本地安全快照已恢复"); }
+      case "restore_local_snapshot": { const snapshot = store.snapshots.find((item) => sameId(item.id, args.snapshotId)); if (!snapshot) throw new Error("本地快照不存在"); return mutate("恢复本地安全快照", (data) => { const restored = normalizePayload(snapshot.payload); Object.assign(data, restored); return true; }).then(() => ({ message: "本地安全快照已恢复" })); }
       default: throw new Error(`Chrome 扩展暂未实现命令：${command}`);
     }
   };

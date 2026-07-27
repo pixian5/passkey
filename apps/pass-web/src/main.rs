@@ -2522,12 +2522,14 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             v.begin("恢复本地安全快照前自动备份");
             v.apply_payload(payload.clone());
             v.save()?;
-            Ok(json!(format!(
-                "已恢复本地安全快照：账号 {}，文件夹 {}，通行密钥 {}",
-                visible_accounts(&payload),
-                visible_folders(&payload),
-                visible_passkeys(&payload)
-            )))
+            Ok(json!({
+                "message": format!(
+                    "已恢复本地安全快照：账号 {}，文件夹 {}，通行密钥 {}",
+                    visible_accounts(&payload),
+                    visible_folders(&payload),
+                    visible_passkeys(&payload)
+                )
+            }))
         }
         "undo_last_operation" => {
             let current = v.payload();
@@ -2548,7 +2550,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             });
             v.apply_payload(entry.payload);
             v.save()?;
-            Ok(json!(format!("已撤销：{}", entry.title)))
+            Ok(json!({ "message": format!("已撤销：{}", entry.title) }))
         }
         "redo_last_operation" => {
             let entry = v.data.redo.pop().ok_or("没有可重做的本地操作")?;
@@ -2561,7 +2563,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             });
             v.apply_payload(entry.payload);
             v.save()?;
-            Ok(json!(format!("已重做：{}", entry.title)))
+            Ok(json!({ "message": format!("已重做：{}", entry.title) }))
         }
         "create_account" => {
             let input: AccountInput = arg(&args, "input")?;
@@ -3616,13 +3618,15 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             v.begin("恢复服务器快照前自动备份");
             v.apply_payload(payload.clone());
             v.save()?;
-            Ok(json!(format!(
-                "已恢复快照 {}：账号 {}，文件夹 {}，通行密钥 {}",
-                version_id,
-                visible_accounts(&payload),
-                visible_folders(&payload),
-                visible_passkeys(&payload)
-            )))
+            Ok(json!({
+                "message": format!(
+                    "已恢复快照 {}：账号 {}，文件夹 {}，通行密钥 {}",
+                    version_id,
+                    visible_accounts(&payload),
+                    visible_folders(&payload),
+                    visible_passkeys(&payload)
+                )
+            }))
         }
         "merge_sync_payloads" => {
             let local: String = arg(&args, "localJson")?;
@@ -3831,20 +3835,21 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 v.apply_payload(merged.clone());
                 v.save()?;
             }
-            Ok(json!(serde_json::to_string(&json!({
+            Ok(json!({
                 "ok": safety.safe,
                 "safe": safety.safe,
                 "reasons": safety.reasons,
                 "localAccounts": local_count,
                 "remoteAccounts": remote_count,
                 "mergedAccounts": merged_count,
+                "localPayload": local,
                 "message": if safety.safe {
                     format!("同步包合并预览：本地 {local_count} → 合并 {merged_count}（远端 {remote_count}）")
                 } else {
                     format!("同步包导入停止：安全检查未通过（{}）", safety.reasons.join("、"))
                 },
                 "payload": merged
-            })).unwrap()))
+            }))
         }
         _ => Err(format!("Web 版暂未实现命令：{command}")),
     }

@@ -38,6 +38,7 @@ pub struct BundleImportResult {
     pub remote_accounts: usize,
     pub merged_accounts: usize,
     pub message: String,
+    pub local_payload: SyncPayload,
     pub payload: SyncPayload,
 }
 
@@ -115,6 +116,7 @@ pub fn import_bundle_content(
         } else {
             format!("同步包合并被安全检查拦截：{}", report.reasons.join(", "))
         },
+        local_payload: local,
         payload: merged,
     })
 }

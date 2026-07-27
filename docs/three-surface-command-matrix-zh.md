@@ -39,6 +39,21 @@
 5. 平台不支持命令：明确中文错误，或列表类返回空数组；禁止静默成功。
 6. `health_check.capabilities` 必须反映真实能力。
 
+### 2.1 阶段 D 已统一的结构化命令
+
+以下高风险命令现在在 Tauri、Docker Web、Chrome 扩展均返回 JSON 对象，禁止再返回“JSON 字符串”或把 JSON 字符串套在 JSON 中：
+
+| 命令 | 统一对象字段 | 备注 |
+|---|---|---|
+| `sync_preview` | `report`、`localPayload`、`payload` | 只预览，不写入本地 |
+| `sync_now` / `sync_now_mode` | `report` | `report.applied/pushed` 表示实际副作用 |
+| `sync_webdav_now_mode` | `report` | 仅支持 WebDAV 的表面 |
+| `import_sync_bundle` / `import_sync_bundle_text` | `safe`、`reasons`、`localPayload`、`payload`、`report` | `apply=false` 只预览；`apply=true` 且安全检查通过才写入 |
+| `undo_last_operation` / `redo_last_operation` | `message` | 描述实际撤销或重做的操作 |
+| `restore_local_snapshot` / `restore_server_version` | `message` | 恢复成功后的可读摘要 |
+
+Tauri 以前将这些值序列化为字符串，Web 以前将导入结果再次包成字符串；当前已修复。UI 仍保留字符串解析兼容分支，以便读取旧版运行时或未更新的桌面构建，但新代码不得新增这种返回方式。
+
 ## 3. 平台专属 / 降级命令
 | 命令 | Tauri | Docker Web | Chrome 扩展 |
 |---|---|---|---|
