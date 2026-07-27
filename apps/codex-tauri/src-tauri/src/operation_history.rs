@@ -78,10 +78,6 @@ pub fn redo_entries(data_dir: &PathBuf) -> Vec<HistoryEntry> {
     load(data_dir).redo
 }
 
-pub fn latest_undo(data_dir: &PathBuf) -> Option<HistoryEntry> {
-    load(data_dir).undo.last().cloned()
-}
-
 pub fn latest_distinct_undo(
     data_dir: &PathBuf,
     current_payload: &SyncPayload,

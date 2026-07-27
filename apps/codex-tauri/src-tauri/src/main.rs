@@ -682,7 +682,7 @@ fn set_accounts_folders(
     state: tauri::State<AppLockState>,
     account_ids: Vec<String>,
     folder_ids: Vec<String>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
     let conn = open_db(&app)?;
@@ -778,7 +778,7 @@ fn set_accounts_folders(
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     commit_undo_point(&dir, undo_title, pre_payload)?;
-    Ok(())
+    Ok(true)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -787,7 +787,7 @@ fn set_accounts_pinned(
     state: tauri::State<AppLockState>,
     account_ids: Vec<String>,
     pinned: bool,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
     let conn = open_db(&app)?;
@@ -840,7 +840,7 @@ fn set_accounts_pinned(
     }
     save_accounts(&conn, &accounts)?;
     commit_undo_point(&dir, undo_title, pre_payload)?;
-    Ok(())
+    Ok(true)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -899,7 +899,7 @@ fn restore_account(
     app: AppHandle,
     state: tauri::State<AppLockState>,
     id: String,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
 
@@ -915,7 +915,7 @@ fn restore_account(
         return Err("已永久删除的账号不能恢复".into());
     }
     if !target.is_deleted {
-        return Ok(());
+        return Err("账号不在回收站".into());
     }
     let pre_payload = snapshot_current_vault(&conn, &dir, "恢复账号前自动备份")?;
     let undo_title = "恢复账号前自动备份";
@@ -941,7 +941,7 @@ fn restore_account(
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     commit_undo_point(&dir, undo_title, pre_payload)?;
-    Ok(())
+    Ok(true)
 }
 
 #[tauri::command]
@@ -949,7 +949,7 @@ fn hard_delete_account(
     app: AppHandle,
     state: tauri::State<AppLockState>,
     id: String,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
 
@@ -957,8 +957,12 @@ fn hard_delete_account(
     let mut accounts = load_accounts(&conn)?;
     let mut folders = load_folders(&conn)?;
     let mut all_order = load_all_regular_order(&conn)?;
-    if !accounts.iter().any(|item| account_matches_id(item, &id)) {
-        return Err("未找到要彻底删除的账号".into());
+    let target = accounts
+        .iter()
+        .find(|item| account_matches_id(item, &id))
+        .ok_or_else(|| "未找到要彻底删除的账号".to_string())?;
+    if target.is_permanently_deleted {
+        return Err("账号已永久删除".into());
     }
     let pre_payload = snapshot_current_vault(&conn, &dir, "彻底删除账号前自动备份")?;
     let undo_title = "彻底删除账号前自动备份";
@@ -976,7 +980,7 @@ fn hard_delete_account(
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     commit_undo_point(&dir, undo_title, pre_payload)?;
-    Ok(())
+    Ok(true)
 }
 
 #[tauri::command]
@@ -3429,7 +3433,7 @@ fn delete_folder(
     app: AppHandle,
     state: tauri::State<AppLockState>,
     id: String,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
     let conn = open_db(&app)?;
@@ -3503,7 +3507,7 @@ fn delete_folder(
         None,
     )?;
     commit_undo_point(&dir, undo_title, pre_payload)?;
-    Ok(())
+    Ok(true)
 }
 
 fn canonical_active_folder_ids(
@@ -3541,7 +3545,7 @@ fn set_account_folders(
     state: tauri::State<AppLockState>,
     id: String,
     folder_ids: Vec<String>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
     let conn = open_db(&app)?;
@@ -3599,7 +3603,7 @@ fn set_account_folders(
     normalize_order_state(&accounts, &mut folders, &mut all_order);
     save_account_folder_order_atomic(&conn, &accounts, &folders, &all_order)?;
     commit_undo_point(&dir, undo_title, pre_payload)?;
-    Ok(())
+    Ok(true)
 }
 
 #[tauri::command]

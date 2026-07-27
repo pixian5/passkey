@@ -8,6 +8,11 @@
 //! Reads settings + vault under:
 //!   ~/Library/Application Support/com.pixian5.pass.codextauri/
 
+#![allow(dead_code, unused_imports)]
+// This example includes the complete sync module so it can be used as a
+// one-shot harness; most library entry points are intentionally not called by
+// the single command-line path.
+
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
 

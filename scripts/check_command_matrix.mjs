@@ -117,6 +117,32 @@ if (/Ok\(json!\(serde_json::to_string\(&json!\(/.test(webSrc)) {
 if (!/pub local_payload:\s*SyncPayload/.test(exchangeSrc) || !/\"localPayload\": local/.test(webSrc) || !/localPayload:\s*local/.test(extSrc)) {
   errors.push("sync bundle import must expose localPayload on all surfaces");
 }
+
+// Mutating commands that do not return a domain object or count use the same
+// explicit success value on every surface. A null/array/object here usually
+// means one adapter was left on an older implementation.
+const booleanSuccessCommands = [
+  "delete_folder",
+  "set_account_folders",
+  "set_accounts_folders",
+  "set_accounts_pinned",
+  "restore_account",
+  "hard_delete_account",
+];
+for (const cmd of booleanSuccessCommands) {
+  const tauriFn = tauriSrc.match(new RegExp(`(?:async )?fn ${cmd}\\([\\s\\S]*?\\) -> Result<([^>]+), String>`));
+  if (!tauriFn || !tauriFn[1].includes("bool")) {
+    errors.push(`tauri ${cmd} must return Result<bool, String>`);
+  }
+  const webBlock = webSrc.match(new RegExp(`\\"${cmd}\\"\\s*=>[\\s\\S]*?(?=\\n\\s*\\"[a-zA-Z0-9_]+\\"\\s*=>|\\n\\s*_\\s*=>|$)`))?.[0] || "";
+  if (!/Ok\(json!\(true\)\)/.test(webBlock)) {
+    errors.push(`pass-web ${cmd} must return true on success`);
+  }
+  const extBlock = extSrc.match(new RegExp(`case \\"${cmd}\\":[\\s\\S]*?(?=case \\"|default:)`))?.[0] || "";
+  if (!/return true;/.test(extBlock)) {
+    errors.push(`extension ${cmd} must return true on success`);
+  }
+}
 for (const cmd of [
   "undo_last_operation",
   "redo_last_operation",

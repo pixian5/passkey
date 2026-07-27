@@ -1050,6 +1050,7 @@ fn encrypt_sync_document(doc: &Value, key_text: &str) -> Result<Vec<u8>, String>
     .map_err(|e| e.to_string())
 }
 
+#[cfg(test)]
 fn decrypt_sync_document(raw: &[u8], key_text: &str) -> Result<Value, String> {
     decrypt_sync_document_with_fallback(raw, key_text, "")
 }
@@ -2927,7 +2928,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             }
             normalize_order_state(&mut v.data);
             v.save()?;
-            Ok(json!(null))
+            Ok(json!(true))
         }
         "set_accounts_pinned" => {
             let account_ids: Vec<String> = arg(&args, "accountIds")?;
@@ -2984,7 +2985,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 }
             }
             v.save()?;
-            Ok(json!(null))
+            Ok(json!(true))
         }
         "soft_delete_accounts" => {
             let account_ids: Vec<String> = arg(&args, "accountIds")?;
@@ -3038,7 +3039,9 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 if a.is_permanently_deleted {
                     return Err("已永久删除的账号不能恢复".into());
                 }
-                restore_account_fields(a, now, &device)?;
+                if !restore_account_fields(a, now, &device)? {
+                    return Err("账号不在回收站".into());
+                }
                 (account_key(a), a.folder_ids.clone())
             };
             move_account_to_order_top(&mut v.data.all_regular_account_ids, &restored_id);
@@ -3055,7 +3058,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             }
             normalize_order_state(&mut v.data);
             v.save()?;
-            Ok(json!(null))
+            Ok(json!(true))
         }
         "hard_delete_account" => {
             let id: String = arg(&args, "id")?;
@@ -3063,10 +3066,13 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             let now = now_ms();
             let device = v.data.device_name.clone();
             let a = account_mut(&mut v.data.accounts, &id).ok_or("未找到账号")?;
+            if a.is_permanently_deleted {
+                return Err("账号已永久删除".into());
+            }
             mark_account_permanently_deleted(a, now, &device);
             normalize_order_state(&mut v.data);
             v.save()?;
-            Ok(json!(null))
+            Ok(json!(true))
         }
         "restore_all_deleted_accounts" => {
             v.begin("全部恢复账号");
@@ -3356,7 +3362,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             }
             normalize_order_state(&mut v.data);
             v.save()?;
-            Ok(json!(null))
+            Ok(json!(true))
         }
         "set_account_folders" => {
             let id: String = arg(&args, "id")?;
@@ -3405,7 +3411,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             }
             normalize_order_state(&mut v.data);
             v.save()?;
-            Ok(json!(null))
+            Ok(json!(true))
         }
         "toggle_account_pin" => {
             let id: String = arg(&args, "id")?;
@@ -3906,7 +3912,10 @@ fn authorized(headers: &HeaderMap, token: &str) -> bool {
 }
 
 fn is_loopback_bind_host(host: &str) -> bool {
-    matches!(host.trim().trim_matches(['[', ']']), "127.0.0.1" | "localhost" | "::1")
+    matches!(
+        host.trim().trim_matches(['[', ']']),
+        "127.0.0.1" | "localhost" | "::1"
+    )
 }
 
 fn validate_startup_security(

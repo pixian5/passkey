@@ -1,7 +1,7 @@
 # Pass 当前实现与设计决策基准
 
 > 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源；本轮完成后由版本脚本递增。
-> 当前为 `1.3.3`。
+> 当前为 `1.3.4`。
 >
 > 使用规则：当历史设计稿、路线图、旧 Swift 代码或界面文字与本文冲突时，先以本文和自动化门禁为准，再回到代码核对。没有测试或代码依据时，不得写“完整”“完全一致”“所有端均支持”。
 
@@ -252,7 +252,7 @@ Bearer Token 和同步加密密钥都允许留空，项目不会自动生成 Bea
 
 1. Chrome 锁定状态已由后台收口，但锁配置和业务数据仍分别存放在 `chrome.storage.local`、`chrome.storage.session` 与 IndexedDB；后续迁移必须保持锁定事件先清密钥、再清业务视图的顺序。
 2. Chrome 的 JS merge 不是 Rust/WASM 运行时；正确性依赖黄金向量和桥接测试。
-3. 少数命令仍返回数字、布尔、字符串或 `null`；尚未完成统一对象 Schema。
+3. 高风险同步、同步包、撤销/重做/快照恢复命令返回结构化对象；普通写命令 `delete_folder`、`set_account_folders`、`set_accounts_folders`、`set_accounts_pinned`、`restore_account`、`hard_delete_account` 成功统一返回布尔值 `true`；批量删除/恢复/清空仍返回数字 count，创建/编辑仍返回实体对象。锁设置、偏好设置等无业务载荷命令仍可返回 `null`，不能把它们误认为业务写入成功契约。
 4. Docker Web 是单用户、单进程 vault，没有 Cookie 会话、多租户授权、WebAuthn 登录或跨进程 CAS。
 5. Tauri/Web 的本地文件保存没有跨进程 revision；不要同时让多个实例写同一数据目录。
 6. Swift 已加入每文件夹 `regularAccountIds` 及其时间戳/设备名，并在同步合并与文件夹成员变更时保留；仍需通过真实跨端 round-trip 测试继续验证历史数据迁移。
@@ -271,6 +271,7 @@ Bearer Token 和同步加密密钥都允许留空，项目不会自动生成 Bea
 19. 扩展选项页和后台自动同步共享 `chrome.storage.session` 短时互斥锁，异常退出由过期时间释放。
 20. 服务端 `X-Sync-Revision` 是 scope 内连续 revision；`version_id` 仍是全局历史行 ID，旧数据库启动时会补齐 scope revision。
 21. 合并交换律不仅约束密码等字段值，也约束创建设备、最后操作设备、Passkey 更新设备和删除设备等元数据；任何 `>=` 隐式左侧优先或合并过程读取 `Date.now()` 都会破坏双客户端收敛。
+22. Chrome 真实页面验收使用 `scripts/fixtures/extension-autofill.html`。内容脚本注入、版本标记和页面无脚本错误可在本地 HTTP 页面验证；账号选择器只有在当前扩展存储存在匹配账号且扩展管理页可用时才可验证。Chrome 安全策略禁止自动化直接打开 `chrome://extensions/` 或 `chrome-extension://` 管理页，不能把“无账号时不显示选择器”误判为注入失败。
 
 ## 13. 验证入口和当前基线
 
@@ -284,9 +285,13 @@ cd apps/pass-web && cargo test --locked
 cd apps/codex-tauri/src-tauri && cargo test --locked
 cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s ../../scripts/tests -p 'test_sync_e2e.py'
+# Chrome 本地页面验收（手动）：
+python3 -m http.server 8766 --bind 127.0.0.1
+# Chrome 打开 http://127.0.0.1:8766/scripts/fixtures/extension-autofill.html，
+# 确认 data-pass-content-version、用户名/密码联动和无重复页面 UI。
 ```
 
-版本 `1.3.3` 的同步复核基线：扩展测试 94 项、Core `pass-merge` 29 项、Tauri 24 项、Docker Web 12 项、同步服务器 Python 测试 35 项，另有真实同步服务端端到端回归 4 项，JS/Rust merge parity 通过，Swift `swift build` 通过。锁状态回归覆盖先撤销会话数据密钥再清除业务视图、撤销失败时的内存清理，以及连续锁定/解锁通知的串行处理。本轮另外统一了高风险同步、同步包导入以及撤销/重做/快照恢复命令的结构化返回对象，禁止 JSON 字符串嵌套。端到端回归在临时 SQLite 与实际 HTTP 服务上覆盖同一 ETag 的双客户端冲突、拉取后提交合并候选、永久删除墓碑、顶层/文件夹顺序与临时 503 后的幂等重试；它不代替共享 JS/Rust 合并语义对拍。同步 Core 还使用 48 组确定性性质用例验证 JS/Rust 的交换律、固定点和可见排序结果。账号实体数组按稳定 `recordId`（再按 `accountId`）作传输规范化，用户可见顺序仍只由顶层和文件夹顺序数组决定；这避免双端独立新增账号时因数组字节顺序不同而造成不必要的 ETag/CAS 冲突。完整命令矩阵、Docker Compose、JSON Schema、Shell 和 Swift/Xcode 等工程门禁仍需按发布流程执行；测试数量只描述该版本实际运行结果，测试增删后必须重新更新。
+版本 `1.3.4` 的同步复核基线：扩展测试 94 项、Core `pass-merge` 29 项、Tauri 24 项、Docker Web 12 项、同步服务器 Python 测试 35 项，另有真实同步服务端端到端回归 4 项，JS/Rust merge parity 通过，Swift `swift build` 通过。锁状态回归覆盖先撤销会话数据密钥再清除业务视图、撤销失败时的内存清理，以及连续锁定/解锁通知的串行处理。本轮另外统一了普通写命令的布尔成功返回契约，并保留高风险同步、同步包导入以及撤销/重做/快照恢复命令的结构化返回对象，禁止 JSON 字符串嵌套。端到端回归在临时 SQLite 与实际 HTTP 服务上覆盖同一 ETag 的双客户端冲突、拉取后提交合并候选、永久删除墓碑、顶层/文件夹顺序与临时 503 后的幂等重试；它不代替共享 JS/Rust 合并语义对拍。同步 Core 还使用 48 组确定性性质用例验证 JS/Rust 的交换律、固定点和可见排序结果。账号实体数组按稳定 `recordId`（再按 `accountId`）作传输规范化，用户可见顺序仍只由顶层和文件夹顺序数组决定；这避免双端独立新增账号时因数组字节顺序不同而造成不必要的 ETag/CAS 冲突。完整命令矩阵、Docker Compose、JSON Schema、Shell 和 Swift/Xcode 等工程门禁仍需按发布流程执行；测试数量只描述该版本实际运行结果，测试增删后必须重新更新。
 
 关联文档：
 

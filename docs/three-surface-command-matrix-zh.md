@@ -30,6 +30,10 @@
 | `export_csv_to_path` | `object({csvPath|download*})` | UI 依赖或跨端关键 |
 | `sync_preview` | `object(report,...)` | UI 依赖或跨端关键 |
 | `sync_now_mode` | `object(report,...)` | UI 依赖或跨端关键 |
+| `delete_folder` | `true` | 成功返回布尔值；失败抛出中文错误 |
+| `set_account_folders` / `set_accounts_folders` | `true` | 成功返回布尔值；不返回文件夹 ID 数组 |
+| `set_accounts_pinned` | `true` | 成功返回布尔值；批量数量另由界面上下文计算 |
+| `restore_account` / `hard_delete_account` | `true` | 成功返回布尔值；批量恢复/清空仍返回数字 count |
 
 规则：
 1. `restore_all_deleted_accounts` / `hard_delete_all_deleted_accounts` 必须返回数字 count。
@@ -38,6 +42,7 @@
 4. `set_accounts_pinned` 可返回 void-like（`true`/`null`），但不得伪成功。
 5. 平台不支持命令：明确中文错误，或列表类返回空数组；禁止静默成功。
 6. `health_check.capabilities` 必须反映真实能力。
+7. 上述普通写命令成功统一返回 JSON 布尔值 `true`；禁止一端返回 `null`、数组或账号对象。
 
 ### 2.1 阶段 D 已统一的结构化命令
 
