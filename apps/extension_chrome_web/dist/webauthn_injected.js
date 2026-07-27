@@ -1,6 +1,6 @@
 (() => {
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.3.0";
+  var PASS_EXTENSION_VERSION = "1.3.1";
 
   // webauthn_injected.js
   (() => {

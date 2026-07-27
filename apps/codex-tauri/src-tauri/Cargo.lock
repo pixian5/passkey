@@ -578,7 +578,7 @@ dependencies = [
 
 [[package]]
 name = "codex-tauri"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -2657,15 +2657,15 @@ dependencies = [
 
 [[package]]
 name = "pass-csvio"
-version = "1.3.0"
+version = "1.3.1"
 
 [[package]]
 name = "pass-domain"
-version = "1.3.0"
+version = "1.3.1"
 
 [[package]]
 name = "pass-merge"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "pass-domain",
  "serde",
