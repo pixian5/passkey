@@ -351,6 +351,11 @@ struct AccountFolder: Codable, Identifiable, Hashable {
     var autoAddMatchingSites: Bool
     let createdAtMs: Int64
     var updatedAtMs: Int64
+    /// Per-folder regular account order.  This is a first-class sync field,
+    /// independent from account content timestamps.
+    var regularAccountIds: [String] = []
+    var regularOrderUpdatedAtMs: Int64 = 0
+    var regularOrderUpdatedDeviceName: String = ""
     var isDeleted: Bool = false
     var isPermanentlyDeleted: Bool = false
     var deletedAtMs: Int64? = nil
@@ -382,6 +387,9 @@ extension AccountFolder {
         case autoAddMatchingSites
         case createdAtMs
         case updatedAtMs
+        case regularAccountIds
+        case regularOrderUpdatedAtMs
+        case regularOrderUpdatedDeviceName
         case isDeleted
         case isPermanentlyDeleted
         case deletedAtMs
@@ -402,6 +410,11 @@ extension AccountFolder {
             ?? Int64(Date().timeIntervalSince1970 * 1000)
         updatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMs)
             ?? createdAtMs
+        let rawRegularIds = try container.decodeIfPresent([String].self, forKey: .regularAccountIds) ?? []
+        var seenRegularIds = Set<String>()
+        regularAccountIds = rawRegularIds.filter { seenRegularIds.insert($0.lowercased()).inserted }
+        regularOrderUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .regularOrderUpdatedAtMs) ?? 0
+        regularOrderUpdatedDeviceName = try container.decodeIfPresent(String.self, forKey: .regularOrderUpdatedDeviceName) ?? ""
         isDeleted = try container.decodeIfPresent(Bool.self, forKey: .isDeleted) ?? false
         isPermanentlyDeleted = try container.decodeIfPresent(Bool.self, forKey: .isPermanentlyDeleted) ?? false
         deletedAtMs = try container.decodeIfPresent(Int64.self, forKey: .deletedAtMs)
@@ -416,6 +429,9 @@ extension AccountFolder {
         try container.encode(autoAddMatchingSites, forKey: .autoAddMatchingSites)
         try container.encode(createdAtMs, forKey: .createdAtMs)
         try container.encode(updatedAtMs, forKey: .updatedAtMs)
+        try container.encode(regularAccountIds, forKey: .regularAccountIds)
+        try container.encode(regularOrderUpdatedAtMs, forKey: .regularOrderUpdatedAtMs)
+        try container.encode(regularOrderUpdatedDeviceName, forKey: .regularOrderUpdatedDeviceName)
         try container.encode(isDeleted, forKey: .isDeleted)
         try container.encode(isPermanentlyDeleted, forKey: .isPermanentlyDeleted)
         try container.encode(deletedAtMs, forKey: .deletedAtMs)

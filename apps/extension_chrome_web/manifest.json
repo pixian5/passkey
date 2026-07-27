@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Pass",
   "description": "Pass Chrome 扩展：统一管理界面、自动填充、同步和 WebAuthn。",
-  "version": "1.2.4",
+  "version": "1.2.8",
   "permissions": [
     "storage",
     "alarms",

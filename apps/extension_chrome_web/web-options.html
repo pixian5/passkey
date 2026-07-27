@@ -329,7 +329,7 @@
                 <button type="button" class="sync-action sync-remote-overwrite" id="btn-sync-remote-overwrite">云端覆盖本地</button>
                 <button type="button" class="sync-action sync-local-overwrite" id="btn-sync-local-overwrite">本地覆盖云端</button>
               </div>
-              <p class="hint">预览合并只读取远端并展示裁决结果，不写入本地或服务器。合并保留双方变更；云端覆盖本地会替换本机；本地覆盖云端会覆盖远端。设置会在输入后自动保存。</p>
+              <p class="hint">预览合并只读取远端并展示裁决结果，不写入本地或服务器。默认请用“合并”。覆盖模式会丢弃一侧独有修改，执行前会二次确认。空同步加密密钥=明文模式，同步前也会确认。WebDAV 若远端有文件但不返回 ETag，将拒绝同步。设置会在输入后自动保存。</p>
               <div id="syncDecisionSummary" class="sync-decision-summary" hidden></div>
               <div id="syncPreviewDiff" class="sync-preview-diff" hidden></div>
               <pre id="syncPreviewOut" class="mini-log" hidden></pre>

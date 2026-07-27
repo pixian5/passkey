@@ -40,6 +40,9 @@ pub struct UiPrefs {
     /// sources receive a local-overwrite mirror after it completes.
     #[serde(default = "default_sync_primary_source")]
     pub sync_primary_source: String,
+    /// Last successfully used primary sync source fingerprint (kind|endpoint|path).
+    #[serde(default)]
+    pub last_sync_primary_fingerprint: String,
     /// Manual folder sidebar order (folder ids). Missing folders append at end.
     #[serde(default)]
     pub folder_order: Vec<String>,
@@ -84,6 +87,7 @@ impl Default for UiPrefs {
             webdav_username: String::new(),
             webdav_password: String::new(),
             sync_primary_source: default_sync_primary_source(),
+            last_sync_primary_fingerprint: String::new(),
             folder_order: Vec::new(),
         }
     }

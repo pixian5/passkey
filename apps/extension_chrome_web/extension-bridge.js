@@ -34,6 +34,32 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
   const text = (value) => String(value ?? "").trim();
   const sameId = (left, right) => text(left).toLowerCase() === text(right).toLowerCase();
   const unique = (values) => [...new Set((Array.isArray(values) ? values : []).map(text).filter(Boolean))];
+  const syncPayloadEquals = (left, right) => JSON.stringify(normalizePayload(left)) === JSON.stringify(normalizePayload(right));
+  const syncBaseUrl = (raw) => {
+    const value = text(raw).replace(/\/$/, "");
+    if (!value) throw new Error("请先配置同步服务器 URL");
+    let parsed;
+    try { parsed = new URL(value); } catch (_) { throw new Error("同步服务器 URL 无效"); }
+    const scheme = String(parsed.protocol || "").toLowerCase();
+    const host = String(parsed.hostname || "").toLowerCase();
+    const loopback = host === "localhost" || host === "127.0.0.1" || host === "::1";
+    if (scheme !== "https:" && !(scheme === "http:" && loopback)) {
+      throw new Error("同步服务器必须使用 HTTPS（本机回环地址可使用 HTTP）");
+    }
+    return value;
+  };
+  const fetchWithSyncTimeout = async (resource, options = {}, timeoutMs = 30000) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(resource, { ...options, signal: options.signal || controller.signal });
+    } catch (error) {
+      if (error?.name === "AbortError") throw new Error("同步请求超时（30 秒）");
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 
   const emptyData = () => ({
     accounts: [],
@@ -533,6 +559,22 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
     const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = filename; link.click();
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
   };
+  const verifyRestoreReceipt = async (response, idempotencyKey) => {
+    const scope = text(response.headers.get("X-Sync-Scope"));
+    const etag = text(response.headers.get("ETag"));
+    const payloadSha256 = text(response.headers.get("X-Payload-Sha256"));
+    const revision = Number(response.headers.get("X-Sync-Revision"));
+    const responseKey = text(response.headers.get("X-Sync-Idempotency-Key"));
+    let receipt;
+    try { receipt = await response.json(); } catch (_) { throw new Error("服务器恢复回执不是有效 JSON"); }
+    if (!receipt?.ok || !receipt?.committed || !scope || receipt.scope !== scope
+      || !etag || receipt.etag !== etag || !payloadSha256 || receipt.payloadSha256 !== payloadSha256
+      || !Number.isInteger(revision) || revision < 1 || receipt.revision !== revision
+      || responseKey !== idempotencyKey || receipt.idempotencyKey !== idempotencyKey) {
+      throw new Error("服务器恢复回执校验失败");
+    }
+    return { etag, payloadSha256, revision };
+  };
 
   const getPrefs = async () => {
     const result = await chrome.storage.local.get([PREFS_KEY]);
@@ -764,9 +806,10 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
         const settings = await getSync();
         if (!text(settings.baseUrl)) return { ok: false, message: "请先配置同步服务器 URL" };
         try {
+          const base = syncBaseUrl(settings.baseUrl);
           const headers = {};
           if (text(settings.authToken)) headers.Authorization = `Bearer ${text(settings.authToken)}`;
-          const response = await fetch(`${text(settings.baseUrl).replace(/\/$/, "")}/healthz`, { headers });
+          const response = await fetchWithSyncTimeout(`${base}/healthz`, { headers });
           return { ok: response.ok, status: response.status, message: response.ok ? "端点可访问" : `端点返回 HTTP ${response.status}` };
         } catch (error) {
           return { ok: false, message: String(error) };
@@ -788,11 +831,11 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
       case "sync_webdav_now_mode": throw new Error("当前 Chrome 扩展表面尚未实现 WebDAV；请使用桌面端或 Docker Web，或改用自建服务器同步");
       case "list_server_versions": {
         const settings = await getSync();
-        const base = text(settings.baseUrl).replace(/\/$/, "");
-        if (!base) return [];
+        if (!text(settings.baseUrl)) return [];
+        const base = syncBaseUrl(settings.baseUrl);
         const headers = { Accept: "application/json" };
         if (text(settings.authToken)) headers.Authorization = `Bearer ${text(settings.authToken)}`;
-        const response = await fetch(`${base}/v2/sync/versions`, { headers, cache: "no-store" });
+        const response = await fetchWithSyncTimeout(`${base}/v2/sync/versions`, { headers, cache: "no-store" });
         if (!response.ok) {
           const body = await response.text().catch(() => "");
           throw new Error(`读取服务器快照失败 HTTP ${response.status}${body ? `：${body}` : ""}`);
@@ -815,24 +858,26 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
         const versionId = text(args.versionId);
         if (!/^\d+$/.test(versionId)) throw new Error("服务器快照编号无效");
         const settings = await getSync();
-        const base = text(settings.baseUrl).replace(/\/$/, "");
+        const base = syncBaseUrl(settings.baseUrl);
         if (!base) throw new Error("请先配置同步服务器 URL");
         const headers = { Accept: "application/json" };
         if (text(settings.authToken)) headers.Authorization = `Bearer ${text(settings.authToken)}`;
-        const current = await fetch(`${base}/v2/sync/state`, { headers, cache: "no-store" });
+        const current = await fetchWithSyncTimeout(`${base}/v2/sync/state`, { headers, cache: "no-store" });
         if (!current.ok) {
           const body = await current.text().catch(() => "");
           throw new Error(`读取服务器当前状态失败 HTTP ${current.status}${body ? `：${body}` : ""}`);
         }
         const etag = text(current.headers.get("ETag"));
         if (!etag) throw new Error("服务器当前状态没有 ETag，无法安全恢复");
-        const restoreHeaders = { ...headers, "If-Match": etag };
-        const restore = await fetch(`${base}/v2/sync/versions/${encodeURIComponent(versionId)}/restore`, { method: "POST", headers: restoreHeaders, cache: "no-store" });
+        const idempotencyKey = id("restore");
+        const restoreHeaders = { ...headers, "If-Match": etag, "Idempotency-Key": idempotencyKey };
+        const restore = await fetchWithSyncTimeout(`${base}/v2/sync/versions/${encodeURIComponent(versionId)}/restore`, { method: "POST", headers: restoreHeaders, cache: "no-store" });
         if (!restore.ok) {
           const body = await restore.text().catch(() => "");
           throw new Error(`恢复服务器快照失败 HTTP ${restore.status}${body ? `：${body}` : ""}`);
         }
-        const response = await fetch(`${base}/v2/sync/state`, { headers, cache: "no-store" });
+        await verifyRestoreReceipt(restore, idempotencyKey);
+        const response = await fetchWithSyncTimeout(`${base}/v2/sync/state`, { headers, cache: "no-store" });
         if (!response.ok) throw new Error(`读取恢复后的服务器状态失败 HTTP ${response.status}`);
         const envelope = await response.json();
         const document = await decryptDocument(envelope, settings.encryptionKey, settings.previousEncryptionKey || "");
@@ -907,12 +952,12 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
     if (!settings.enabled) throw new Error("请先启用自建服务器同步");
     if (!text(settings.baseUrl)) throw new Error("请先配置同步服务器 URL");
 
-    const base = text(settings.baseUrl).replace(/\/$/, "");
+    const base = syncBaseUrl(settings.baseUrl);
     const headers = { Accept: "application/json" };
     if (text(settings.authToken)) headers.Authorization = `Bearer ${text(settings.authToken)}`;
 
     const pull = async () => {
-      const response = await fetch(`${base}/v2/sync/state`, {
+      const response = await fetchWithSyncTimeout(`${base}/v2/sync/state`, {
         method: "GET",
         headers,
         cache: "no-store",
@@ -985,12 +1030,13 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
         source: { app: "pass-extension-chrome-web", formatVersion: 2 },
         payload,
       }, settings.encryptionKey);
-      const put = await fetch(`${base}/v2/sync/state`, {
+      const put = await fetchWithSyncTimeout(`${base}/v2/sync/state`, {
         method: "PUT",
         headers: putHeaders,
         body: JSON.stringify(body),
       });
       if (put.ok) {
+        await verifyRestoreReceipt(put, idempotencyKey);
         report.remoteAccounts = remoteState.payload.accounts.filter((account) => !account.isPermanentlyDeleted).length;
         report.mergedAccounts = payload.accounts.filter((account) => !account.isPermanentlyDeleted).length;
         report.applied = mode !== "localOverwriteRemote";
@@ -1009,6 +1055,11 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
 
       // The remote changed between GET and PUT. Pull its new ETag and merge
       // again before retrying, so a concurrent device's fields are preserved.
+      const currentStore = await loadStore();
+      const currentLocal = payloadFromData(currentStore.data);
+      if (!syncPayloadEquals(currentLocal, payload)) {
+        throw new Error("本地数据在远端冲突重试期间发生变化，已停止写入，请重新同步");
+      }
       remoteState = await pull();
       payload = choosePayload(remoteState.payload);
       if (mode !== "localOverwriteRemote") {

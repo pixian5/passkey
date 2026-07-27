@@ -114,7 +114,7 @@
   var SYNC_OUTBOX_MAX_ATTEMPTS = 12;
   var SYNC_OUTBOX_BASE_DELAY_MS = 5e3;
   var SYNC_OUTBOX_MAX_DELAY_MS = 60 * 60 * 1e3;
-  var SYNC_PUSH_CONFLICT_MAX_ATTEMPTS = 3;
+  var SYNC_PUSH_CONFLICT_MAX_ATTEMPTS = 5;
   function syncOutboxRetryDelayMs(attempts) {
     const exponent = Math.max(0, Math.min(Number(attempts || 1) - 1, 8));
     return Math.min(SYNC_OUTBOX_MAX_DELAY_MS, SYNC_OUTBOX_BASE_DELAY_MS * 2 ** exponent);
@@ -1622,7 +1622,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.2.4";
+  var PASS_EXTENSION_VERSION = "1.2.8";
 
   // ../../core/pass_core/js/sync_alias_core.js
   function syncAliasGroups(accounts, helpers, options = {}) {
@@ -3177,6 +3177,11 @@
       target.remotePayload = remoteResponse.payload;
       target.remoteEncrypted = remoteResponse.encrypted;
       const remotePayload = remoteResponse.payload;
+      if (target.kind === "webdav" && remotePayload && !String(remoteResponse.etag || "").trim()) {
+        throw new Error(
+          "WebDAV \u8FDC\u7AEF\u5DF2\u6709\u540C\u6B65\u5305\u4F46\u672A\u8FD4\u56DE ETag\uFF0C\u65E0\u6CD5\u5B89\u5168\u505A\u6761\u4EF6\u5199\u5165\u3002\u8BF7\u6539\u7528\u652F\u6301 ETag \u7684 WebDAV\uFF0C\u6216\u6539\u7528\u81EA\u5EFA\u670D\u52A1\u5668\u4F5C\u4E3A\u4E3B\u6E90\u3002"
+        );
+      }
       if (target.isPrimary) {
         primaryRemotePayload = remotePayload ? normalizeSyncPayloadShape(remotePayload) : null;
       }
@@ -3239,8 +3244,13 @@
       (left, right) => Number(right.isPrimary) - Number(left.isPrimary) || Number(right.supportsEtag) - Number(left.supportsEtag)
     );
     const pushErrors = [...pullErrors];
+    let primaryPushFailed = false;
     const outboxByTarget = new Map((await getSyncOutbox()).map((item) => [item.targetKey, item]));
     for (const target of pushTargets) {
+      if (primaryPushFailed && target.isPrimary === false) {
+        pushErrors.push(`${target.label}: \u4E3B\u540C\u6B65\u6E90\u4E0A\u4F20\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\u955C\u50CF\u5199\u5165`);
+        continue;
+      }
       const targetKey = syncTargetKey(target);
       const pendingOutbox = outboxByTarget.get(targetKey);
       if (pendingOutbox && !isSyncOutboxReady(pendingOutbox)) {
@@ -3269,6 +3279,7 @@
         }, SYNC_MODE_MERGE);
       } catch (error) {
         pushErrors.push(`${target.label}: ${error?.message || String(error || "")}`);
+        if (target.isPrimary) primaryPushFailed = true;
         const nextOutbox = upsertSyncOutbox([...outboxByTarget.values()], {
           targetKey,
           payload: { ...finalPayload, accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders },
@@ -4658,7 +4669,19 @@
         target.remoteEncrypted = true;
         return { payload: candidate };
       } catch (error) {
-        if (error?.status !== 412 && error?.status !== 428) throw error;
+        if (error?.status !== 412 && error?.status !== 428) {
+          try {
+            const probe = await pullRemotePayload(target);
+            if (probe.payload && syncPayloadEquals(probe.payload, candidate)) {
+              updateRemoteConcurrencyState(target, probe.etag);
+              target.remotePayload = candidate;
+              target.remoteEncrypted = true;
+              return { payload: candidate };
+            }
+          } catch (_) {
+          }
+          throw error;
+        }
         if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw error;
       }
       const latestResponse = await pullRemotePayload(target);
@@ -4669,6 +4692,10 @@
         continue;
       }
       const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
+      const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+      if (!syncPayloadEquals(currentLocalPayload, candidate)) {
+        throw new Error("\u672C\u5730\u6570\u636E\u5728\u8FDC\u7AEF\u51B2\u7A81\u91CD\u8BD5\u671F\u95F4\u53D1\u751F\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u5199\u5165\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65");
+      }
       const localAccounts = Array.isArray(candidate.accounts) ? candidate.accounts.map(normalizeAccountShape) : [];
       const localPasskeys = buildUnifiedPasskeys(localAccounts, Array.isArray(candidate.passkeys) ? candidate.passkeys.map(normalizePasskeyShape) : []);
       const localFolders = Array.isArray(candidate.folders) ? candidate.folders.map(normalizeFolderShape) : [];

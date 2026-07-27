@@ -170,6 +170,18 @@ pub fn put(
         .to_string())
 }
 
+fn require_etag_for_existing(body: &Option<Vec<u8>>, etag: &Option<String>) -> Result<(), String> {
+    if body.as_ref().is_some_and(|value| !value.is_empty())
+        && etag.as_ref().is_none_or(|value| value.trim().is_empty())
+    {
+        return Err(
+            "WebDAV 远端已有同步包但未返回 ETag，无法安全做条件写入。请改用支持 ETag 的 WebDAV，或改用自建服务器作为主源。"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 pub fn run_sync<A>(
     settings: &WebDavSettings,
     mode: SyncMode,
@@ -201,6 +213,7 @@ where
                 &settings.username,
                 &settings.password,
             )?;
+            require_etag_for_existing(&fetched.body, &fetched.etag)?;
             let etag = fetched.etag;
             let payload = match fetched.body {
                 Some(body) => {
@@ -252,6 +265,7 @@ pub fn preview(
             &settings.username,
             &settings.password,
         )?;
+        require_etag_for_existing(&fetched.body, &fetched.etag)?;
         let etag = fetched.etag;
         let payload = match fetched.body {
             Some(body) => {

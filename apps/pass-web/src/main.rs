@@ -202,6 +202,10 @@ struct Vault {
     locked: bool,
     last_activity_ms: i64,
     persist_enabled: bool,
+    /// Network commands run on a detached clone.  They may update the clone
+    /// in memory while pulling/pushing, but must never write the vault file
+    /// until the owning thread has performed its final compare-and-swap.
+    defer_persist: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -623,6 +627,7 @@ impl Vault {
                 locked: true,
                 last_activity_ms: now_ms(),
                 persist_enabled: true,
+                defer_persist: false,
             });
         }
         let key = load_or_create_raw_key(&dir)?;
@@ -640,6 +645,7 @@ impl Vault {
             locked: was_enabled,
             last_activity_ms: now_ms(),
             persist_enabled: true,
+            defer_persist: false,
         };
         ensure_fixed_folder(&mut vault.data);
         normalize_order_state(&mut vault.data);
@@ -649,7 +655,7 @@ impl Vault {
         Ok(vault)
     }
     fn save(&self) -> Result<(), String> {
-        if !self.persist_enabled {
+        if !self.persist_enabled || self.defer_persist {
             return Ok(());
         }
         let key = self
@@ -1461,6 +1467,21 @@ fn webdav_headers(username: &str, password: &str) -> Result<ReqwestHeaderMap, St
     Ok(headers)
 }
 
+fn require_webdav_etag_for_existing(
+    body: &Option<Vec<u8>>,
+    etag: &Option<String>,
+) -> Result<(), String> {
+    if body.as_ref().is_some_and(|value| !value.is_empty())
+        && etag.as_ref().is_none_or(|value| value.trim().is_empty())
+    {
+        return Err(
+            "WebDAV 远端已有同步包但未返回 ETag，无法安全做条件写入。请改用支持 ETag 的 WebDAV，或改用自建服务器作为主源。"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 fn webdav_get(
     base: &str,
     path: &str,
@@ -1494,10 +1515,12 @@ fn webdav_get(
         .bytes()
         .map_err(|e| format!("读取 WebDAV 响应失败：{e}"))?
         .to_vec();
-    Ok(FetchResult {
+    let result = FetchResult {
         body: (!body.is_empty()).then_some(body),
         etag,
-    })
+    };
+    require_webdav_etag_for_existing(&result.body, &result.etag)?;
+    Ok(result)
 }
 
 fn webdav_put(
@@ -3911,6 +3934,7 @@ async fn invoke(
                 let original_data = serde_json::to_vec(&live.data).map_err(|e| e.to_string())?;
                 let mut worker = live.clone();
                 worker.persist_enabled = false;
+                worker.defer_persist = true;
                 (worker, original_data)
             };
             let result = do_command(&mut worker, &command_for_worker, args)?;

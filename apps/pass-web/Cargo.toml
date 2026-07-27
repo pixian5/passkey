@@ -1,6 +1,6 @@
 [package]
 name = "pass-web"
-version = "1.2.4"
+version = "1.2.8"
 edition = "2021"
 
 [dependencies]

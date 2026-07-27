@@ -15,11 +15,14 @@ targets:
       - path: Sources/app_macos
       - path: Sources/shared
       - path: Resources
+        excludes:
+          - "**/__pycache__/**"
+          - "**/*.pyc"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pass.desktop
-        MARKETING_VERSION: "1.2.4"
-        CURRENT_PROJECT_VERSION: "124"
+        MARKETING_VERSION: "1.2.8"
+        CURRENT_PROJECT_VERSION: "128"
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_ENTITLEMENTS: PassMac.entitlements
         INFOPLIST_KEY_CFBundleDisplayName: PassMac
@@ -36,6 +39,8 @@ targets:
     info:
       path: AutofillExtension/AutoFillExtension-Info.plist
       properties:
+        CFBundleShortVersionString: "1.2.8"
+        CFBundleVersion: "128"
         NSExtension:
           NSExtensionAttributes:
             ASCredentialProviderExtensionCapabilities:
@@ -56,12 +61,14 @@ targets:
         PRODUCT_NAME: PassAutoFillExtension
         PRODUCT_MODULE_NAME: PassAutoFillExtension
         PRODUCT_BUNDLE_IDENTIFIER: com.pass.desktop.autofill
-        MARKETING_VERSION: "1.2.4"
-        CURRENT_PROJECT_VERSION: "124"
+        MARKETING_VERSION: "1.2.8"
+        CURRENT_PROJECT_VERSION: "128"
         CODE_SIGN_ENTITLEMENTS: AutofillExtension/AutoFillExtension.entitlements
         OTHER_LDFLAGS:
           - "$(inherited)"
           - "-lsqlite3"
+    scheme:
+      testTargets: []
 schemes:
   PassMac:
     build:

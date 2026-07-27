@@ -1342,19 +1342,25 @@ async fn sync_now(
         let (report, _applied) =
             run_sync(&settings, local.clone(), &device, &platform, |payload| {
                 let expected = last_applied_local.as_ref().unwrap_or(&local_for_apply);
-                let current = local_payload_from_conn(&conn, &device)?;
-                if &current != expected {
-                    return Err("同步期间本地数据已变化，已停止写入，请重新同步".into());
-                }
+                // Compare and write in one SQLite transaction.  A separate
+                // read followed by save_payload_atomic() still allowed a
+                // foreground edit to land between the check and the commit.
                 if !snapshot_created {
                     local_snapshots::create(
                         &worker_dir_for_apply,
                         &local_for_apply,
                         "同步写入本地前自动备份",
                     )?;
+                }
+                save_payload_if_unchanged(&mut conn, &device, expected, payload)?;
+                if !snapshot_created {
+                    operation_history::push(
+                        &worker_dir_for_apply,
+                        "同步写入本地",
+                        local_for_apply.clone(),
+                    )?;
                     snapshot_created = true;
                 }
-                save_payload_atomic(&mut conn, payload)?;
                 last_applied_local = Some(payload.clone());
                 Ok(())
             })?;
@@ -1414,19 +1420,22 @@ async fn sync_now_mode(
             mode,
             |payload| {
                 let expected = last_applied_local.as_ref().unwrap_or(&local_for_apply);
-                let current = local_payload_from_conn(&conn, &device)?;
-                if &current != expected {
-                    return Err("同步期间本地数据已变化，已停止写入，请重新同步".into());
-                }
                 if !snapshot_created {
                     local_snapshots::create(
                         &worker_dir_for_apply,
                         &local_for_apply,
                         "同步写入本地前自动备份",
                     )?;
+                }
+                save_payload_if_unchanged(&mut conn, &device, expected, payload)?;
+                if !snapshot_created {
+                    operation_history::push(
+                        &worker_dir_for_apply,
+                        "同步写入本地",
+                        local_for_apply.clone(),
+                    )?;
                     snapshot_created = true;
                 }
-                save_payload_atomic(&mut conn, payload)?;
                 last_applied_local = Some(payload.clone());
                 Ok(())
             },
@@ -1478,19 +1487,22 @@ async fn sync_webdav_now_mode(
             &encryption_key,
             |payload| {
                 let expected = last_applied_local.as_ref().unwrap_or(&local_for_apply);
-                let current = local_payload_from_conn(&conn, &device)?;
-                if &current != expected {
-                    return Err("同步期间本地数据已变化，已停止写入，请重新同步".into());
-                }
                 if !snapshot_created {
                     local_snapshots::create(
                         &worker_dir_for_apply,
                         &local_for_apply,
                         "WebDAV 同步写入本地前自动备份",
                     )?;
+                }
+                save_payload_if_unchanged(&mut conn, &device, expected, payload)?;
+                if !snapshot_created {
+                    operation_history::push(
+                        &worker_dir_for_apply,
+                        "WebDAV 同步写入本地",
+                        local_for_apply.clone(),
+                    )?;
                     snapshot_created = true;
                 }
-                save_payload_atomic(&mut conn, payload)?;
                 last_applied_local = Some(payload.clone());
                 Ok(())
             },
@@ -1612,6 +1624,7 @@ fn import_sync_bundle(
     )?;
     if apply && result.safe {
         local_snapshots::create(&dir, &local, "导入同步包前自动备份")?;
+        operation_history::push(&dir, "导入并合并同步包", local.clone())?;
         save_payload_atomic(&mut conn, &result.payload)?;
     }
     serde_json::to_string(&result).map_err(|e| e.to_string())
@@ -1636,6 +1649,7 @@ fn import_sync_bundle_text(
     )?;
     if apply && result.safe {
         local_snapshots::create(&dir, &local, "导入同步包前自动备份")?;
+        operation_history::push(&dir, "导入并合并同步包", local.clone())?;
         save_payload_atomic(&mut conn, &result.payload)?;
     }
     serde_json::to_string(&result).map_err(|e| e.to_string())
@@ -1925,6 +1939,11 @@ fn restore_server_version(
     let local = local_payload_from_conn(&conn, &device)?;
     let (payload, _) = restore_sync_version(&settings, &version_id)?;
     local_snapshots::create(&dir, &local, "恢复服务器快照前自动备份")?;
+    operation_history::push(
+        &dir,
+        format!("恢复服务器快照：{}", version_id),
+        local.clone(),
+    )?;
     save_payload_atomic(&mut conn, &payload)?;
     Ok(format!(
         "已恢复快照 {}：账号 {}，文件夹 {}，通行密钥 {}",
@@ -2740,6 +2759,46 @@ fn save_payload_atomic(conn: &mut Connection, payload: &SyncPayload) -> Result<(
     )?;
     tx.commit()
         .map_err(|e| format!("提交数据写入事务失败: {e}"))
+}
+
+/// Compare the current vault payload and replace all sync collections in the
+/// same SQLite transaction.  This is the local CAS boundary used by network
+/// sync callbacks; it prevents a user edit from being overwritten after a
+/// successful preflight read.
+fn save_payload_if_unchanged(
+    conn: &mut Connection,
+    device: &str,
+    expected: &SyncPayload,
+    payload: &SyncPayload,
+) -> Result<(), String> {
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("开始同步 CAS 事务失败: {e}"))?;
+    let current = local_payload_from_conn(&tx, device)?;
+    if &current != expected {
+        return Err("同步期间本地数据已变化，已停止写入，请重新同步".into());
+    }
+    save_accounts(&tx, &payload.accounts)?;
+    save_folders(&tx, &payload.folders)?;
+    save_passkeys(&tx, &payload.passkeys)?;
+    save_all_regular_order(
+        &tx,
+        &AllRegularOrder {
+            account_ids: payload.all_regular_account_ids.clone(),
+            updated_at_ms: payload.all_regular_order_updated_at_ms,
+            updated_device_name: payload.all_regular_order_updated_device_name.clone(),
+        },
+    )?;
+    save_folder_order(
+        &tx,
+        &FolderOrder {
+            folder_ids: payload.folder_order_ids.clone(),
+            updated_at_ms: payload.folder_order_updated_at_ms,
+            updated_device_name: payload.folder_order_updated_device_name.clone(),
+        },
+    )?;
+    tx.commit()
+        .map_err(|e| format!("提交同步 CAS 事务失败: {e}"))
 }
 
 fn save_account_folder_order_atomic(

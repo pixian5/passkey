@@ -668,6 +668,7 @@ final class AccountStore: ObservableObject {
 
         var previousFolderIdsByAccountId: [UUID: [UUID]] = [:]
         var beforeAccounts: [PasswordAccount] = []
+        var changedAccountIds: [UUID] = []
         var changedCount = 0
         let now = nowMs()
         let device = currentDeviceName()
@@ -681,6 +682,7 @@ final class AccountStore: ObservableObject {
                 accounts[index].setResolvedFolderIds(targetFolderIds)
                 accounts[index].touchUpdatedAt(now, deviceName: device)
                 changedCount += 1
+                changedAccountIds.append(accounts[index].id)
             }
         }
 
@@ -688,6 +690,19 @@ final class AccountStore: ObservableObject {
             statusMessage = "文件夹勾选无变更"
             return
         }
+
+        prependAccountsToFolderOrder(
+            accountIds: changedAccountIds,
+            folderIds: targetFolderIds,
+            timestamp: now,
+            deviceName: device
+        )
+        removeAccountsFromFolderOrder(
+            accountIds: selectedIndexes.map { accounts[$0].id },
+            excludingFolderIds: targetFolderIds,
+            timestamp: now,
+            deviceName: device
+        )
 
         let actionSummary = "已按勾选更新 \(changedCount) 个账号的文件夹"
         lastMoveOperation = FolderMoveOperation(
@@ -739,6 +754,7 @@ final class AccountStore: ObservableObject {
 
         var previousFolderIdsByAccountId: [UUID: [UUID]] = [:]
         var beforeAccounts: [PasswordAccount] = []
+        var changedAccountIds: [UUID] = []
         var changedCount = 0
         let now = nowMs()
         let device = currentDeviceName()
@@ -762,6 +778,7 @@ final class AccountStore: ObservableObject {
                 accounts[index].setResolvedFolderIds(normalizedNext)
                 accounts[index].touchUpdatedAt(now, deviceName: device)
                 changedCount += 1
+                changedAccountIds.append(accounts[index].id)
             }
         }
 
@@ -770,6 +787,22 @@ final class AccountStore: ObservableObject {
                 ? "所选账号已在文件夹：\(folderName(for: folderId))"
                 : "所选账号不在文件夹：\(folderName(for: folderId))"
             return
+        }
+
+        if shouldAddToFolder {
+            prependAccountsToFolderOrder(
+                accountIds: changedAccountIds,
+                folderIds: [folderId],
+                timestamp: now,
+                deviceName: device
+            )
+        } else {
+            removeAccountsFromFolderOrder(
+                accountIds: changedAccountIds,
+                excludingFolderIds: folders.map(\.id).filter { $0 != folderId },
+                timestamp: now,
+                deviceName: device
+            )
         }
 
         let actionPrefix = shouldAddToFolder ? "已放入" : "已移出"
@@ -811,6 +844,7 @@ final class AccountStore: ObservableObject {
 
         var previousFolderIdsByAccountId: [UUID: [UUID]] = [:]
         var beforeAccounts: [PasswordAccount] = []
+        var changedAccountIds: [UUID] = []
         var changedCount = 0
         let now = nowMs()
         let device = currentDeviceName()
@@ -829,6 +863,7 @@ final class AccountStore: ObservableObject {
                 accounts[index].setResolvedFolderIds(normalizedNext)
                 accounts[index].touchUpdatedAt(now, deviceName: device)
                 changedCount += 1
+                changedAccountIds.append(accounts[index].id)
             }
         }
 
@@ -836,6 +871,13 @@ final class AccountStore: ObservableObject {
             statusMessage = "所选账号已在文件夹：\(folderName(for: folderId))"
             return
         }
+
+        prependAccountsToFolderOrder(
+            accountIds: changedAccountIds,
+            folderIds: [folderId],
+            timestamp: now,
+            deviceName: device
+        )
 
         let actionSummary = "已放入 \(changedCount) 个账号 到文件夹：\(folderName(for: folderId))"
         lastMoveOperation = FolderMoveOperation(
@@ -1192,7 +1234,14 @@ final class AccountStore: ObservableObject {
         created.setResolvedFolderIds([Self.fixedNewAccountFolderId])
         applyAutomaticFolderRules(to: &created)
         accounts.append(created)
-        markAllRegularOrderChanged()
+        let createdNow = nowMs()
+        markAllRegularOrderChanged(at: createdNow)
+        prependAccountsToFolderOrder(
+            accountIds: [created.id],
+            folderIds: created.resolvedFolderIds,
+            timestamp: createdNow,
+            deviceName: currentDeviceName()
+        )
         syncAliasGroups()
         saveAccounts()
         let persistedCreated = accounts.first(where: { $0.accountId == created.accountId }) ?? created
@@ -1857,8 +1906,40 @@ final class AccountStore: ObservableObject {
             let localAccountCount = visibleAccountCount(accounts)
             let localFolderCount = visibleFolderCount(folders)
             let localPasskeyCount = visiblePasskeyCount(passkeys)
+            let localPayload = buildCurrentSyncPayload()
+            let mergedPayload = mergePayloads(local: localPayload, remote: remotePayload)
+            let safetyReasons = syncSafetyReasons(
+                local: localPayload,
+                remote: remotePayload,
+                merged: mergedPayload,
+                mode: .merge
+            )
+            guard safetyReasons.isEmpty else {
+                statusMessage = "同步包导入停止：安全检查未通过（\(safetyReasons.joined(separator: "、"))）"
+                return
+            }
 
-            let mergedPayload = mergePayloads(local: buildCurrentSyncPayload(), remote: remotePayload)
+            let preview = syncBundleImportPreviewText(
+                local: localPayload,
+                remote: remotePayload,
+                merged: mergedPayload,
+                kind: parsed.kind
+            )
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            alert.messageText = "确认导入并合并同步包？"
+            alert.informativeText = preview
+            alert.addButton(withTitle: "确认导入")
+            alert.addButton(withTitle: "取消")
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                statusMessage = "已取消同步包导入"
+                return
+            }
+            guard syncPayloadEquals(buildCurrentSyncPayload(), localPayload) else {
+                statusMessage = "同步包导入已取消：确认期间本地数据发生变化，请重新选择文件并预览"
+                return
+            }
+            try saveLocalSyncSafetySnapshot(localPayload, reason: "导入同步包写入前自动备份")
 
             let previousFolders = folders
             let previousAccounts = accounts
@@ -1893,6 +1974,38 @@ final class AccountStore: ObservableObject {
         } catch {
             statusMessage = "同步包导入失败: \(error.localizedDescription)"
         }
+    }
+
+    private func syncBundleImportPreviewText(
+        local: SyncBundlePayload,
+        remote: SyncBundlePayload,
+        merged: SyncBundlePayload,
+        kind: String
+    ) -> String {
+        let localIds = Set(local.accounts.map { $0.id })
+        let remoteIds = Set(remote.accounts.map { $0.id })
+        let added = remote.accounts.filter { !localIds.contains($0.id) && !$0.isPermanentlyDeleted }
+        let changed = remote.accounts.filter { account in
+            guard localIds.contains(account.id), let current = local.accounts.first(where: { $0.id == account.id }) else { return false }
+            return current != account
+        }
+        let removed = local.accounts.filter { !remoteIds.contains($0.id) && !$0.isPermanentlyDeleted }
+        var lines = [
+            "格式：\(kind)",
+            "本地账号 \(visibleAccountCount(local.accounts)) → 合并 \(visibleAccountCount(merged.accounts))（文件中 \(visibleAccountCount(remote.accounts))）",
+            "文件夹 \(visibleFolderCount(local.folders)) → \(visibleFolderCount(merged.folders))；通行密钥 \(visiblePasskeyCount(local.passkeys)) → \(visiblePasskeyCount(merged.passkeys))",
+            "差异：新增 \(added.count)，修改 \(changed.count)，本地独有 \(removed.count)"
+        ]
+        for account in added.prefix(30) {
+            lines.append("新增：\(account.canonicalSite) · \(account.username)")
+        }
+        for account in changed.prefix(30) {
+            lines.append("修改：\(account.canonicalSite) · \(account.username)")
+        }
+        if added.count > 30 || changed.count > 30 {
+            lines.append("其余差异已省略，确认后仍按字段时间戳合并")
+        }
+        return lines.joined(separator: "\n")
     }
 
     func mergeCredentialExchangeImport(_ result: CredentialExchangeImportResult) {
@@ -2357,13 +2470,28 @@ final class AccountStore: ObservableObject {
     }
 
     private func sortedAccountsForDisplay(_ source: [PasswordAccount], scopeKey: String) -> [PasswordAccount] {
-        source.sorted { lhs, rhs in
+        let folderScopeId = UUID(uuidString: scopeKey)
+            ?? UUID(uuidString: scopeKey.replacingOccurrences(of: "folder:", with: ""))
+        let folderOrder: [String: Int] = folderScopeId
+            .flatMap { folderId in folders.first(where: { $0.id == folderId }) }
+            .map { folder in
+                Dictionary(uniqueKeysWithValues: folder.regularAccountIds.enumerated().map {
+                    ($0.element.lowercased(), $0.offset)
+                })
+            } ?? [:]
+        return source.sorted { lhs, rhs in
             let lhsState = pinnedState(for: lhs, scopeKey: scopeKey)
             let rhsState = pinnedState(for: rhs, scopeKey: scopeKey)
             let lhsPinned = lhsState.pinned
             let rhsPinned = rhsState.pinned
             if lhsPinned != rhsPinned {
                 return lhsPinned && !rhsPinned
+            }
+
+            if !lhsPinned && !rhsPinned && !folderOrder.isEmpty {
+                let leftRank = folderOrder[lhs.id.uuidString.lowercased()] ?? Int.max
+                let rightRank = folderOrder[rhs.id.uuidString.lowercased()] ?? Int.max
+                if leftRank != rightRank { return leftRank < rightRank }
             }
 
             // 最近修改优先；恢复回收站、编辑保存后会触发 updatedAtMs 更新并置顶。
@@ -2413,6 +2541,47 @@ final class AccountStore: ObservableObject {
         guard !matchingFolderIds.isEmpty else { return }
         let mergedFolderIds = normalizeFolderIds(account.resolvedFolderIds + matchingFolderIds)
         account.setResolvedFolderIds(mergedFolderIds)
+    }
+
+    /// Keep the per-folder order array authoritative when accounts are added
+    /// through any membership path.  The selected order is inserted as a
+    /// contiguous block at the top; existing members keep their relative order.
+    private func prependAccountsToFolderOrder(
+        accountIds: [UUID],
+        folderIds: [UUID],
+        timestamp: Int64,
+        deviceName: String
+    ) {
+        let orderedIds = accountIds.map { $0.uuidString.lowercased() }
+        guard !orderedIds.isEmpty else { return }
+        for index in folders.indices where folderIds.contains(folders[index].id) {
+            var ids = folders[index].regularAccountIds.filter { existing in
+                !orderedIds.contains(existing.lowercased())
+            }
+            ids.insert(contentsOf: orderedIds, at: 0)
+            folders[index].regularAccountIds = ids
+            folders[index].regularOrderUpdatedAtMs = timestamp
+            folders[index].regularOrderUpdatedDeviceName = deviceName
+        }
+    }
+
+    private func removeAccountsFromFolderOrder(
+        accountIds: [UUID],
+        excludingFolderIds: [UUID],
+        timestamp: Int64,
+        deviceName: String
+    ) {
+        let selected = Set(accountIds.map { $0.uuidString.lowercased() })
+        for index in folders.indices where !excludingFolderIds.contains(folders[index].id) {
+            let filtered = folders[index].regularAccountIds.filter {
+                !selected.contains($0.lowercased())
+            }
+            if filtered != folders[index].regularAccountIds {
+                folders[index].regularAccountIds = filtered
+                folders[index].regularOrderUpdatedAtMs = timestamp
+                folders[index].regularOrderUpdatedDeviceName = deviceName
+            }
+        }
     }
 
     func accountForEditing() -> PasswordAccount? {
@@ -2508,6 +2677,7 @@ final class AccountStore: ObservableObject {
                             authorization: authorization
                         )
                         webDAVETag = remoteResponse.etag
+                        try requireWebDAVETagIfRemoteExists(payload: remoteResponse.payload, etag: remoteResponse.etag)
                         webDAVRemotePayload = remoteResponse.payload.map(canonicalizeSyncPayload)
                         webDAVRemoteEncrypted = remoteResponse.isEncrypted
                         if let remotePayload = remoteResponse.payload, primarySource == .webDAV {
@@ -2628,6 +2798,7 @@ final class AccountStore: ObservableObject {
         let syncTitle = "同步并更新本地（\(enabledSourceNames.joined(separator: " + "))，\(mode.label)）\(conflictSuffix)"
         var changed = applyMergedPayloadIfNeeded(mergedPayload, historyTitle: syncTitle)
         var pushErrors: [String] = pullErrors
+        var primaryPushFailed = false
 
         if syncEnableSelfHostedServer {
             let sourceKey = syncOutboxSourceKey(kind: "server", url: buildSelfHostedPayloadURL())
@@ -2705,11 +2876,17 @@ final class AccountStore: ObservableObject {
                 } catch {
                     recordSyncOutboxFailure(sourceKey: sourceKey, payload: mergedPayload, error: error)
                     pushErrors.append("服务器: \(error.localizedDescription)")
+                    if primarySource == .selfHostedServer {
+                        primaryPushFailed = true
+                    }
                 }
             }
         }
 
         if syncEnableICloud {
+            if primaryPushFailed {
+                pushErrors.append("iCloud: 主同步源推送失败，已跳过镜像写入")
+            } else {
             let sourceKey = syncOutboxSourceKey(kind: "icloud")
             if !shouldAttemptSyncOutbox(sourceKey: sourceKey, force: forceOutboxRetry) {
                 pushErrors.append("iCloud: 补偿任务等待退避时间")
@@ -2720,11 +2897,18 @@ final class AccountStore: ObservableObject {
                 } catch {
                     recordSyncOutboxFailure(sourceKey: sourceKey, payload: mergedPayload, error: error)
                     pushErrors.append("iCloud: \(error.localizedDescription)")
+                    if primarySource == .iCloud {
+                        primaryPushFailed = true
+                    }
                 }
+            }
             }
         }
 
         if syncEnableWebDAV {
+            if primaryPushFailed {
+                pushErrors.append("WebDAV: 主同步源推送失败，已跳过镜像写入")
+            } else {
             let sourceKey = syncOutboxSourceKey(kind: "webdav", url: buildWebDAVResourceURL())
             if !shouldAttemptSyncOutbox(sourceKey: sourceKey, force: forceOutboxRetry) {
                 pushErrors.append("WebDAV: 补偿任务等待退避时间")
@@ -2798,6 +2982,7 @@ final class AccountStore: ObservableObject {
                         mergedPayload,
                         to: resourceURL,
                         authorization: authorization,
+                        ifNoneMatchStar: true,
                         idempotencyKey: "pass-\(syncDeviceId())-\(UUID().uuidString)"
                     )
                     webDAVETag = confirmation.etag
@@ -2806,7 +2991,11 @@ final class AccountStore: ObservableObject {
                 } catch {
                     recordSyncOutboxFailure(sourceKey: sourceKey, payload: mergedPayload, error: error)
                     pushErrors.append("WebDAV: \(error.localizedDescription)")
+                    if primarySource == .webDAV {
+                        primaryPushFailed = true
+                    }
                 }
+            }
             }
         }
 
@@ -3028,6 +3217,23 @@ final class AccountStore: ObservableObject {
 
     private func buildCurrentSyncPayload() -> SyncBundlePayload {
         let orderedAccounts = sortedAccountsForDisplay(accounts.filter { !$0.isDeleted }, scopeKey: "all")
+        let activeAccounts = accounts.filter { !$0.isDeleted && !$0.isPermanentlyDeleted }
+        var payloadFolders = folders
+        for index in payloadFolders.indices {
+            let folderId = payloadFolders[index].id
+            let activeMembers = activeAccounts.filter { $0.isInFolder(folderId) }
+            let activeIds = Set(activeMembers.map { $0.id.uuidString.lowercased() })
+            var seen = Set<String>()
+            var normalizedIds = payloadFolders[index].regularAccountIds.filter {
+                let key = $0.lowercased()
+                return activeIds.contains(key) && seen.insert(key).inserted
+            }
+            for account in activeMembers {
+                let key = account.id.uuidString.lowercased()
+                if seen.insert(key).inserted { normalizedIds.append(key) }
+            }
+            payloadFolders[index].regularAccountIds = normalizedIds
+        }
         let allOrderClock = persistedOrderClock(
             key: Keys.allRegularOrderUpdatedAtMs,
             fallback: accounts.map(\.updatedAtMs).max() ?? 0
@@ -3038,7 +3244,7 @@ final class AccountStore: ObservableObject {
         )
         return SyncBundlePayload(
             accounts: accounts,
-            folders: folders,
+            folders: payloadFolders,
             passkeys: passkeys,
             allRegularAccountIds: orderedAccounts.map { $0.id.uuidString },
             allRegularOrderUpdatedAtMs: allOrderClock,
@@ -3318,7 +3524,7 @@ final class AccountStore: ObservableObject {
     /// Legacy in-process merge (rollback / FFI unavailable).
     private func mergePayloadsSwift(local: SyncBundlePayload, remote: SyncBundlePayload) -> SyncBundlePayload {
         let mergedFolders = mergeFolderCollections(local: local.folders, remote: remote.folders)
-        let validFolderIds = Set(mergedFolders.filter { !$0.isDeleted }.map(\.id))
+        let validFolderIds = Set(mergedFolders.filter { !$0.isDeleted && !$0.isPermanentlyDeleted }.map(\.id))
         var mergedAccounts = mergeAccountCollections(
             local: normalizeDecodedAccounts(local.accounts),
             remote: normalizeDecodedAccounts(remote.accounts)
@@ -3469,7 +3675,20 @@ final class AccountStore: ObservableObject {
         )
     }
 
-    private func buildWebDAVResourceURL() -> URL? {
+    private func requireWebDAVETagIfRemoteExists(payload: SyncBundlePayload?, etag: String?) throws {
+        if payload != nil, (etag ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw NSError(
+                domain: "PassSync",
+                code: 428,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "WebDAV 远端已有同步包但未返回 ETag，无法安全做条件写入。请改用支持 ETag 的 WebDAV，或改用自建服务器作为主源。"
+                ]
+            )
+        }
+    }
+
+    func buildWebDAVResourceURL() -> URL? {
         let base = webdavBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let remotePath = webdavRemotePath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !base.isEmpty,
@@ -3689,6 +3908,7 @@ final class AccountStore: ObservableObject {
         to url: URL,
         authorization: String?,
         ifMatch: String? = nil,
+        ifNoneMatchStar: Bool = false,
         idempotencyKey: String? = nil
     ) async throws -> RemoteWriteConfirmation {
         var request = URLRequest(url: url)
@@ -3701,6 +3921,8 @@ final class AccountStore: ObservableObject {
         }
         if let ifMatch {
             request.setValue(ifMatch, forHTTPHeaderField: "If-Match")
+        } else if ifNoneMatchStar {
+            request.setValue("*", forHTTPHeaderField: "If-None-Match")
         }
         if let idempotencyKey {
             request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
@@ -3750,6 +3972,16 @@ final class AccountStore: ObservableObject {
         return RemoteWriteConfirmation(etag: etag)
     }
 
+    private func ensureCurrentSyncPayloadUnchanged(_ expected: SyncBundlePayload) throws {
+        guard syncPayloadEquals(buildCurrentSyncPayload(), expected) else {
+            throw NSError(
+                domain: "AccountStore.SyncRemote",
+                code: 409,
+                userInfo: [NSLocalizedDescriptionKey: "同步冲突重试期间本地数据发生变化，已停止写入，请重新同步"]
+            )
+        }
+    }
+
     private func pushSelfHostedPayloadWithRetry(
         _ payload: SyncBundlePayload,
         to url: URL,
@@ -3764,12 +3996,14 @@ final class AccountStore: ObservableObject {
         var changed = false
         let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
         for attempt in 0..<PassSyncPolicy.syncPushConflictMaxAttempts {
+            try ensureCurrentSyncPayloadUnchanged(candidate)
             do {
                 _ = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
                 return SelfHostedPushResult(payload: candidate, changedLocalData: changed)
             } catch SyncRemoteError.preconditionFailed {
-                guard attempt < 2 else { throw SyncRemoteError.preconditionFailed }
+                guard attempt < PassSyncPolicy.syncPushConflictMaxAttempts - 1 else { throw SyncRemoteError.preconditionFailed }
                 let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
+                try ensureCurrentSyncPayloadUnchanged(candidate)
                 let latestPayload = latestResponse.payload ?? emptySyncPayload()
                 currentETag = latestResponse.etag
                 if !mergeOnConflict { continue }
@@ -3789,6 +4023,14 @@ final class AccountStore: ObservableObject {
                 }
                 let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
                 changed = changed || applied
+            } catch {
+                if let probe = try? await fetchRemotePayload(from: url, authorization: authorization),
+                   let remote = probe.payload,
+                   syncPayloadEquals(remote, candidate)
+                {
+                    return SelfHostedPushResult(payload: candidate, changedLocalData: changed)
+                }
+                throw error
             }
         }
         throw SyncRemoteError.preconditionFailed
@@ -3808,12 +4050,14 @@ final class AccountStore: ObservableObject {
         var changed = false
         let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
         for attempt in 0..<PassSyncPolicy.syncPushConflictMaxAttempts {
+            try ensureCurrentSyncPayloadUnchanged(candidate)
             do {
-                let confirmation = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
+                let confirmation = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, ifNoneMatchStar: currentETag == nil, idempotencyKey: idempotencyKey)
                 return ETagPushResult(payload: candidate, changedLocalData: changed, etag: confirmation.etag)
             } catch SyncRemoteError.preconditionFailed {
-                guard attempt < 2 else { throw SyncRemoteError.preconditionFailed }
+                guard attempt < PassSyncPolicy.syncPushConflictMaxAttempts - 1 else { throw SyncRemoteError.preconditionFailed }
                 let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
+                try ensureCurrentSyncPayloadUnchanged(candidate)
                 currentETag = latestResponse.etag
                 let latestPayload = latestResponse.payload ?? emptySyncPayload()
                 if !mergeOnConflict { continue }
@@ -3833,6 +4077,14 @@ final class AccountStore: ObservableObject {
                 }
                 let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
                 changed = changed || applied
+            } catch {
+                if let probe = try? await fetchRemotePayload(from: url, authorization: authorization),
+                   let remote = probe.payload,
+                   syncPayloadEquals(remote, candidate)
+                {
+                    return ETagPushResult(payload: candidate, changedLocalData: changed, etag: probe.etag)
+                }
+                throw error
             }
         }
         throw SyncRemoteError.preconditionFailed
@@ -3851,12 +4103,14 @@ final class AccountStore: ObservableObject {
         var changed = false
         let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
         for attempt in 0..<PassSyncPolicy.syncPushConflictMaxAttempts {
+            try ensureCurrentSyncPayloadUnchanged(candidate)
             do {
-                let confirmation = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
+                let confirmation = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, ifNoneMatchStar: currentETag == nil, idempotencyKey: idempotencyKey)
                 return ETagPushResult(payload: candidate, changedLocalData: changed, etag: confirmation.etag)
             } catch SyncRemoteError.preconditionFailed {
-                guard attempt < 2 else { throw SyncRemoteError.preconditionFailed }
+                guard attempt < PassSyncPolicy.syncPushConflictMaxAttempts - 1 else { throw SyncRemoteError.preconditionFailed }
                 let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
+                try ensureCurrentSyncPayloadUnchanged(candidate)
                 currentETag = latestResponse.etag
                 let latestPayload = latestResponse.payload ?? emptySyncPayload()
                 if !mergeOnConflict { continue }
@@ -3876,6 +4130,14 @@ final class AccountStore: ObservableObject {
                 candidate = canonicalizeSyncPayload(latestPayload)
                 let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
                 changed = changed || applied
+            } catch {
+                if let probe = try? await fetchRemotePayload(from: url, authorization: authorization),
+                   let remote = probe.payload,
+                   syncPayloadEquals(remote, candidate)
+                {
+                    return ETagPushResult(payload: candidate, changedLocalData: changed, etag: probe.etag)
+                }
+                throw error
             }
         }
         throw SyncRemoteError.preconditionFailed
@@ -3894,12 +4156,14 @@ final class AccountStore: ObservableObject {
         var changed = false
         let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
         for attempt in 0..<PassSyncPolicy.syncPushConflictMaxAttempts {
+            try ensureCurrentSyncPayloadUnchanged(candidate)
             do {
                 _ = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
                 return SelfHostedPushResult(payload: candidate, changedLocalData: changed)
             } catch SyncRemoteError.preconditionFailed {
-                guard attempt < 2 else { throw SyncRemoteError.preconditionFailed }
+                guard attempt < PassSyncPolicy.syncPushConflictMaxAttempts - 1 else { throw SyncRemoteError.preconditionFailed }
                 let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
+                try ensureCurrentSyncPayloadUnchanged(candidate)
                 currentETag = latestResponse.etag
                 let latestPayload = latestResponse.payload ?? emptySyncPayload()
                 if !mergeOnConflict { continue }
@@ -3919,6 +4183,14 @@ final class AccountStore: ObservableObject {
                 candidate = canonicalizeSyncPayload(latestPayload)
                 let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
                 changed = changed || applied
+            } catch {
+                if let probe = try? await fetchRemotePayload(from: url, authorization: authorization),
+                   let remote = probe.payload,
+                   syncPayloadEquals(remote, candidate)
+                {
+                    return SelfHostedPushResult(payload: candidate, changedLocalData: changed)
+                }
+                throw error
             }
         }
         throw SyncRemoteError.preconditionFailed
@@ -5525,7 +5797,10 @@ final class AccountStore: ObservableObject {
                 matchedSites: existing.matchedSites,
                 autoAddMatchingSites: existing.autoAddMatchingSites,
                 createdAtMs: existing.createdAtMs,
-                updatedAtMs: existing.updatedAtMs
+                updatedAtMs: existing.updatedAtMs,
+                regularAccountIds: existing.regularAccountIds,
+                regularOrderUpdatedAtMs: existing.regularOrderUpdatedAtMs,
+                regularOrderUpdatedDeviceName: existing.regularOrderUpdatedDeviceName
             )
         } else {
             // Align with JS: synthetic fixed folder uses epoch timestamps, not wall clock.
@@ -5547,6 +5822,12 @@ final class AccountStore: ObservableObject {
         let rightUpdatedAt = rhs.updatedAtMs
         let leftDeletedAt = lhs.isDeleted ? (lhs.deletedAtMs ?? 0) : 0
         let rightDeletedAt = rhs.isDeleted ? (rhs.deletedAtMs ?? 0) : 0
+        let useRightRegularOrder = rhs.regularOrderUpdatedAtMs > lhs.regularOrderUpdatedAtMs
+            || (rhs.regularOrderUpdatedAtMs == lhs.regularOrderUpdatedAtMs
+                && rhs.regularOrderUpdatedDeviceName > lhs.regularOrderUpdatedDeviceName)
+        let mergedRegularIds = useRightRegularOrder ? rhs.regularAccountIds : lhs.regularAccountIds
+        let mergedRegularOrderUpdatedAtMs = useRightRegularOrder ? rhs.regularOrderUpdatedAtMs : lhs.regularOrderUpdatedAtMs
+        let mergedRegularOrderUpdatedDeviceName = useRightRegularOrder ? rhs.regularOrderUpdatedDeviceName : lhs.regularOrderUpdatedDeviceName
         let latestDeletedAt = max(leftDeletedAt, rightDeletedAt)
         let keepPermanentlyDeleted = lhs.isPermanentlyDeleted || rhs.isPermanentlyDeleted
         let keepDeleted = keepPermanentlyDeleted || (latestDeletedAt > 0 && latestDeletedAt >= max(leftUpdatedAt, rightUpdatedAt))
@@ -5559,6 +5840,9 @@ final class AccountStore: ObservableObject {
                 autoAddMatchingSites: rightUpdatedAt >= leftUpdatedAt ? rhs.autoAddMatchingSites : lhs.autoAddMatchingSites,
                 createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs),
                 updatedAtMs: max(leftUpdatedAt, rightUpdatedAt),
+                regularAccountIds: mergedRegularIds,
+                regularOrderUpdatedAtMs: mergedRegularOrderUpdatedAtMs,
+                regularOrderUpdatedDeviceName: mergedRegularOrderUpdatedDeviceName,
                 isDeleted: false,
                 isPermanentlyDeleted: false,
                 deletedAtMs: nil,
@@ -5584,6 +5868,9 @@ final class AccountStore: ObservableObject {
             autoAddMatchingSites: rightUpdatedAt > leftUpdatedAt ? rhs.autoAddMatchingSites : lhs.autoAddMatchingSites,
             createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs),
             updatedAtMs: max(leftUpdatedAt, rightUpdatedAt),
+            regularAccountIds: mergedRegularIds,
+            regularOrderUpdatedAtMs: mergedRegularOrderUpdatedAtMs,
+            regularOrderUpdatedDeviceName: mergedRegularOrderUpdatedDeviceName,
             isDeleted: keepDeleted,
             isPermanentlyDeleted: keepPermanentlyDeleted,
             deletedAtMs: keepDeleted ? (latestDeletedAt == 0 ? max(leftUpdatedAt, rightUpdatedAt) : latestDeletedAt) : nil,
@@ -5988,7 +6275,10 @@ final class AccountStore: ObservableObject {
             matchedSites: folders.first(where: { $0.id == fixedId })?.matchedSites ?? [],
             autoAddMatchingSites: folders.first(where: { $0.id == fixedId })?.autoAddMatchingSites ?? false,
             createdAtMs: fixedCreatedAt,
-            updatedAtMs: fixedUpdatedAt
+            updatedAtMs: fixedUpdatedAt,
+            regularAccountIds: folders.first(where: { $0.id == fixedId })?.regularAccountIds ?? [],
+            regularOrderUpdatedAtMs: folders.first(where: { $0.id == fixedId })?.regularOrderUpdatedAtMs ?? 0,
+            regularOrderUpdatedDeviceName: folders.first(where: { $0.id == fixedId })?.regularOrderUpdatedDeviceName ?? ""
         )
 
         var deduplicated: [AccountFolder] = [fixedFolder]

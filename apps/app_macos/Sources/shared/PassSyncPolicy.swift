@@ -43,7 +43,7 @@ enum PassSyncPolicy {
     static let syncOutboxMaxAttempts = 12
     static let syncOutboxBaseDelaySeconds = 5
     static let syncOutboxMaxDelaySeconds = 60 * 60
-    static let syncPushConflictMaxAttempts = 3
+    static let syncPushConflictMaxAttempts = 5
 
     static func syncOutboxRetryDelaySeconds(attempts: Int) -> Int {
         let exponent = max(0, min(attempts - 1, 8))

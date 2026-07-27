@@ -45,7 +45,7 @@ export const SYNC_OUTBOX_BASE_DELAY_MS = 5_000;
 export const SYNC_OUTBOX_MAX_DELAY_MS = 60 * 60 * 1000;
 
 /** Concurrent remote push retries after HTTP 412. */
-export const SYNC_PUSH_CONFLICT_MAX_ATTEMPTS = 3;
+export const SYNC_PUSH_CONFLICT_MAX_ATTEMPTS = 5;
 
 export function syncOutboxRetryDelayMs(attempts) {
   const exponent = Math.max(0, Math.min(Number(attempts || 1) - 1, 8));

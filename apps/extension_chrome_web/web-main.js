@@ -352,6 +352,7 @@ let uiPrefs = {
   webdavUsername: "",
   webdavPassword: "",
   syncPrimarySource: "selfHosted",
+  lastSyncPrimaryFingerprint: "",
 };
 
 /**
@@ -526,6 +527,7 @@ const collectUiPrefs = () => ({
   webdavUsername: (els.webdavUsername?.value || "").trim(),
   webdavPassword: els.webdavPassword?.value || "",
   syncPrimarySource: els.syncPrimarySource?.value || "selfHosted",
+  lastSyncPrimaryFingerprint: uiPrefs.lastSyncPrimaryFingerprint || "",
 });
 
 const fillUiPrefsForm = () => {
@@ -2488,7 +2490,8 @@ const renderSyncDecisionSummary = (reports) => {
       const source = report.source ? `${report.source}：` : "";
       const mode = modeNames[report.mode] || report.mode || "未知模式";
       const safety = report.safe === false ? `安全检查未通过${report.reasons?.length ? `（${report.reasons.join("、")}）` : ""}` : "安全检查通过";
-      return `${source}${mode} · 本地 ${report.localAccounts ?? "-"} → 合并 ${report.mergedAccounts ?? "-"} · ${safety}`;
+      const pushState = formatSyncPushState(report);
+      return `${source}${mode} · 本地 ${report.localAccounts ?? "-"} → 合并 ${report.mergedAccounts ?? "-"} · ${safety}${pushState ? ` · ${pushState}` : ""}`;
     }),
   ];
   els.syncDecisionSummary.hidden = false;
@@ -2512,8 +2515,45 @@ const previewValue = (value) => JSON.stringify(value ?? null);
 const isVisibleSyncAccount = (account) => !account?.isPermanentlyDeleted;
 const isVisibleSyncFolder = (folder) => !folder?.isPermanentlyDeleted;
 const isVisibleSyncPasskey = (passkey) => !passkey?.isPermanentlyDeleted;
+const confirmPlaintextSync = () => {
+  const key = (els.syncEncKey?.value || "").trim();
+  if (key) return true;
+  return window.confirm(
+    "当前未配置同步加密密钥，将使用明文同步包（可能包含密码、TOTP、备注）。\n\n仅建议在可信网络/自建环境临时使用。确定继续？"
+  );
+};
+const confirmOverwriteSync = (mode) => {
+  if (mode === "merge") return true;
+  const label = mode === "remoteOverwriteLocal" ? "云端覆盖本地" : "本地覆盖云端";
+  return window.confirm(
+    `${label}会丢弃一侧的独有修改，且不可通过“合并”自动恢复。\n\n请先使用“预览合并”确认差异。确定继续执行${label}？`
+  );
+};
+const formatSyncPushState = (report) => {
+  if (!report) return "";
+  if (report.dryRun) return "仅预览";
+  if (report.applied && report.pushed) return "本地已写入 · 远端已推送";
+  if (report.applied && !report.pushed) return "本地已写入 · 远端未推送（待补偿）";
+  if (!report.applied && report.ok) return "无需写入";
+  return report.ok ? "已完成" : "未完成";
+};
+const primaryFingerprint = () => {
+  const primary = els.syncPrimarySource?.value || "selfHosted";
+  if (primary === "webdav") {
+    return `webdav|${(els.webdavBaseUrl?.value || "").trim().replace(/\/+$/, "")}|${(els.webdavRemotePath?.value || "").trim()}`;
+  }
+  return `selfHosted|${(els.syncBaseUrl?.value || "").trim().replace(/\/+$/, "")}`;
+};
+
+// Prefer stable recordId/id over accountId so preview matches merge identity
+// and permanent-delete tombstones do not reappear as fake "新增".
 const previewRecordKey = (record, fallbackPrefix) =>
-  String(record?.accountId?.trim() || record?.recordId?.trim() || record?.id?.trim() || `${fallbackPrefix}:${record?.canonicalSite || ""}:${record?.username || ""}`);
+  String(
+    record?.recordId?.trim()
+      || record?.id?.trim()
+      || record?.accountId?.trim()
+      || `${fallbackPrefix}:${record?.canonicalSite || ""}:${record?.username || ""}`
+  ).toLowerCase();
 const previewAccountLabel = (account) => {
   const site = account?.canonicalSite || account?.sites?.[0] || "未命名站点";
   const username = account?.username ? ` · ${account.username}` : "";
@@ -2616,6 +2656,8 @@ const renderSyncPreviewDiff = (localPayload, mergedPayload) => {
 
 const runSyncMode = async (mode, { quiet = false } = {}) => {
   await saveAllSyncRelated();
+  if (!quiet && !confirmPlaintextSync()) return [];
+  if (!quiet && !confirmOverwriteSync(mode)) return [];
   const reports = [];
   const failures = [];
   const sources = [];
@@ -2626,6 +2668,17 @@ const runSyncMode = async (mode, { quiet = false } = {}) => {
   }
   const configuredPrimary = els.syncPrimarySource?.value || "selfHosted";
   const preferred = sources.includes(configuredPrimary) ? configuredPrimary : sources[0];
+  if (preferred === "webdav") {
+    // WebDAV without reliable ETag cannot be a safe primary; backend also enforces this.
+  }
+  const fingerprint = primaryFingerprint();
+  const previousFingerprint = String(uiPrefs.lastSyncPrimaryFingerprint || "").trim();
+  if (!quiet && previousFingerprint && previousFingerprint !== fingerprint) {
+    const ok = window.confirm(
+      `检测到主同步源与上次成功同步不一致。\n\n上次：${previousFingerprint}\n当前：${fingerprint}\n\n不同设备/客户端应使用同一主源，否则可能产生分叉。确定仍用当前主源继续？`
+    );
+    if (!ok) return [];
+  }
   const ordered = [...sources].sort((left, right) => (right === preferred) - (left === preferred));
   for (const source of ordered) {
     // The primary source makes merge / overwrite decisions. Other enabled
@@ -2643,6 +2696,10 @@ const runSyncMode = async (mode, { quiet = false } = {}) => {
         failures.push(`${report.source}：${report.message || "主同步源未完成"}`);
         break;
       }
+      if (source === preferred && report.ok !== false && (report.applied || report.pushed || report.dryRun === false)) {
+        uiPrefs.lastSyncPrimaryFingerprint = fingerprint;
+        try { await invoke("set_ui_prefs", { prefs: collectUiPrefs() }); } catch (_) {}
+      }
     } catch (err) {
       failures.push(`${source === "selfHosted" ? "自建服务器" : "WebDAV"}：${err}`);
       if (source === preferred) break;
@@ -2653,7 +2710,7 @@ const runSyncMode = async (mode, { quiet = false } = {}) => {
     throw new Error(`${failures.join("；")}。已完成 ${reports.length} 个来源`);
   }
   const report = reports[reports.length - 1] || {};
-  if (!quiet) toastSuccess(reports.map((item) => `${item.source}：${item.message || "完成"}`).join("；"));
+  if (!quiet) toastSuccess(reports.map((item) => `${item.source}：${item.message || "完成"}${formatSyncPushState(item) ? `（${formatSyncPushState(item)}）` : ""}`).join("；"));
   if (els.syncPreviewOut) {
     els.syncPreviewOut.hidden = false;
     els.syncPreviewOut.textContent = JSON.stringify(reports, null, 2);

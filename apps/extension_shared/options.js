@@ -639,13 +639,13 @@ function sortSyncPayloadCollections(payload) {
 function countSyncAccountConflicts(localAccounts, remoteAccounts) {
   const localByKey = new Map();
   for (const account of localAccounts || []) {
-    const key = String(account?.recordId || account?.accountId || "").trim().toLowerCase();
+    const key = String(account?.recordId || account?.id || account?.accountId || "").trim().toLowerCase();
     if (key) localByKey.set(key, account);
   }
   const fields = ["username", "password", "totpSecret", "recoveryCodes", "note", "isDeleted"];
   let count = 0;
   for (const remote of remoteAccounts || []) {
-    const key = String(remote?.recordId || remote?.accountId || "").trim().toLowerCase();
+    const key = String(remote?.recordId || remote?.id || remote?.accountId || "").trim().toLowerCase();
     const local = localByKey.get(key);
     if (!local) continue;
     count += fields.filter((field) => String(local[field] ?? "") !== String(remote[field] ?? "")).length;
@@ -772,6 +772,32 @@ function normalizeSyncPrimarySource(value) {
   return String(value || "").trim() === SYNC_PRIMARY_WEBDAV
     ? SYNC_PRIMARY_WEBDAV
     : SYNC_PRIMARY_SERVER;
+}
+
+
+function confirmPlaintextSync(encryptionKey) {
+  if (String(encryptionKey || "").trim()) return true;
+  return window.confirm(
+    "当前未配置同步加密密钥，将使用明文同步包（可能包含密码、TOTP、备注）。\n\n仅建议在可信网络/自建环境临时使用。确定继续？"
+  );
+}
+
+function confirmOverwriteSync(mode) {
+  if (mode === "merge" || mode === SYNC_MODE_MERGE) return true;
+  const label = mode === SYNC_MODE_REMOTE_OVERWRITE_LOCAL || mode === "remoteOverwriteLocal"
+    ? "云端覆盖本地"
+    : "本地覆盖云端";
+  return window.confirm(
+    `${label}会丢弃一侧的独有修改，且不可通过“合并”自动恢复。\n\n请先预览差异。确定继续执行${label}？`
+  );
+}
+
+function formatSyncPushState(report) {
+  if (!report) return "";
+  if (report.dryRun) return "仅预览";
+  if (report.applied && report.pushed) return "本地已写入 · 远端已推送";
+  if (report.applied && !report.pushed) return "本地已写入 · 远端未推送（待补偿）";
+  return report.ok ? "已完成" : "未完成";
 }
 
 function primarySourceLabel(value) {
@@ -1629,6 +1655,9 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
   const targets = buildRemoteSyncTargetsFromDom();
   if (!targets || targets.length === 0) return;
   const normalizedSyncMode = normalizeSyncMode(syncMode);
+  const encryptionKey = normalizeSyncEncryptionKey(dom.syncEncryptionKey?.value || "");
+  if (!confirmPlaintextSync(encryptionKey)) return;
+  if (!confirmOverwriteSync(normalizedSyncMode)) return;
 
   const localStored = await readBusinessDataFromStore();
   const localPayload = normalizeSyncPayloadShape(localStored);
@@ -1657,6 +1686,15 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
         target.remotePayload = remoteResponse.payload;
         target.remoteEncrypted = remoteResponse.encrypted;
         remotePayload = remoteResponse.payload;
+        if (
+          target.kind === "webdav"
+          && remotePayload
+          && !String(remoteResponse.etag || "").trim()
+        ) {
+          throw new Error(
+            "WebDAV 远端已有同步包但未返回 ETag，无法安全做条件写入。请改用支持 ETag 的 WebDAV，或改用自建服务器作为主源。"
+          );
+        }
       } catch (error) {
         if (target.isPrimary) {
           setStatus(`${target.label} 拉取失败: ${error.message}`);
@@ -1724,11 +1762,16 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
   );
 
   const pushErrors = [...pullErrors];
+  let primaryPushFailed = false;
   const pushTargets = [...targets].sort((left, right) =>
     Number(right.isPrimary) - Number(left.isPrimary)
       || Number(right.supportsEtag) - Number(left.supportsEtag)
   );
   for (const target of pushTargets) {
+    if (primaryPushFailed && target.isPrimary === false) {
+      pushErrors.push(`${target.label}: 主同步源上传失败，已跳过镜像写入`);
+      continue;
+    }
     try {
       const result = await pushRemotePayloadWithMode(target, {
         ...mergedPayload,
@@ -1738,6 +1781,7 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
     } catch (error) {
       pushErrors.push(`${target.label}: ${error.message}`);
       await recordSyncOutboxFailure(target, mergedPayload, error);
+      if (target.isPrimary) primaryPushFailed = true;
     }
   }
 
@@ -2158,7 +2202,21 @@ async function pushRemotePayloadWithRetry(target, payload) {
       target.remoteEncrypted = true;
       return { payload: candidate };
     } catch (error) {
-      if (error?.status !== 412 && error?.status !== 428) throw error;
+      if (error?.status !== 412 && error?.status !== 428) {
+        // A PUT may have committed even when its response was lost.  Probe
+        // the remote before reporting failure so the same logical write is
+        // not needlessly replayed with a new idempotency key.
+        try {
+          const probe = await pullRemotePayload(target);
+          if (probe.payload && syncPayloadEquals(probe.payload, candidate)) {
+            updateRemoteConcurrencyState(target, probe.etag);
+            target.remotePayload = candidate;
+            target.remoteEncrypted = true;
+            return { payload: candidate };
+          }
+        } catch (_) {}
+        throw error;
+      }
       if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw error;
     }
 
@@ -2172,6 +2230,10 @@ async function pushRemotePayloadWithRetry(target, payload) {
       continue;
     }
     const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
+    const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+    if (!syncPayloadEquals(currentLocalPayload, candidate)) {
+      throw new Error("本地数据在远端冲突重试期间发生变化，已停止写入，请重新同步");
+    }
     const localAccounts = Array.isArray(candidate.accounts)
       ? candidate.accounts.map(normalizeAccountShape)
       : [];
@@ -2220,7 +2282,18 @@ async function pushRemotePayloadRemotePreferred(target, payload) {
       target.remotePayload = candidate;
       return { payload: candidate };
     } catch (error) {
-      if (error?.status !== 412 && error?.status !== 428) throw error;
+      if (error?.status !== 412 && error?.status !== 428) {
+        try {
+          const probe = await pullRemotePayload(target);
+          if (probe.payload && syncPayloadEquals(probe.payload, candidate)) {
+            updateRemoteConcurrencyState(target, probe.etag);
+            target.remotePayload = candidate;
+            target.remoteEncrypted = true;
+            return { payload: candidate };
+          }
+        } catch (_) {}
+        throw error;
+      }
       if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw error;
     }
     const latestResponse = await pullRemotePayload(target);
@@ -2231,6 +2304,10 @@ async function pushRemotePayloadRemotePreferred(target, payload) {
       continue;
     }
     const latestPayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
+    const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+    if (!syncPayloadEquals(currentLocalPayload, candidate)) {
+      throw new Error("本地数据在远端冲突重试期间发生变化，已停止写入，请重新同步");
+    }
     const safety = validateSyncSafety(
       candidate,
       latestPayload,

@@ -36,7 +36,7 @@
   var SYNC_OUTBOX_MAX_ATTEMPTS = 12;
   var SYNC_OUTBOX_BASE_DELAY_MS = 5e3;
   var SYNC_OUTBOX_MAX_DELAY_MS = 60 * 60 * 1e3;
-  var SYNC_PUSH_CONFLICT_MAX_ATTEMPTS = 3;
+  var SYNC_PUSH_CONFLICT_MAX_ATTEMPTS = 5;
   function syncOutboxRetryDelayMs(attempts) {
     const exponent = Math.max(0, Math.min(Number(attempts || 1) - 1, 8));
     return Math.min(SYNC_OUTBOX_MAX_DELAY_MS, SYNC_OUTBOX_BASE_DELAY_MS * 2 ** exponent);
@@ -2488,13 +2488,13 @@
   function countSyncAccountConflicts(localAccounts, remoteAccounts) {
     const localByKey = /* @__PURE__ */ new Map();
     for (const account of localAccounts || []) {
-      const key = String(account?.recordId || account?.accountId || "").trim().toLowerCase();
+      const key = String(account?.recordId || account?.id || account?.accountId || "").trim().toLowerCase();
       if (key) localByKey.set(key, account);
     }
     const fields = ["username", "password", "totpSecret", "recoveryCodes", "note", "isDeleted"];
     let count = 0;
     for (const remote of remoteAccounts || []) {
-      const key = String(remote?.recordId || remote?.accountId || "").trim().toLowerCase();
+      const key = String(remote?.recordId || remote?.id || remote?.accountId || "").trim().toLowerCase();
       const local = localByKey.get(key);
       if (!local) continue;
       count += fields.filter((field) => String(local[field] ?? "") !== String(remote[field] ?? "")).length;
@@ -2598,6 +2598,21 @@
   }
   function normalizeSyncPrimarySource(value) {
     return String(value || "").trim() === SYNC_PRIMARY_WEBDAV ? SYNC_PRIMARY_WEBDAV : SYNC_PRIMARY_SERVER;
+  }
+  function confirmPlaintextSync(encryptionKey) {
+    if (String(encryptionKey || "").trim()) return true;
+    return window.confirm(
+      "\u5F53\u524D\u672A\u914D\u7F6E\u540C\u6B65\u52A0\u5BC6\u5BC6\u94A5\uFF0C\u5C06\u4F7F\u7528\u660E\u6587\u540C\u6B65\u5305\uFF08\u53EF\u80FD\u5305\u542B\u5BC6\u7801\u3001TOTP\u3001\u5907\u6CE8\uFF09\u3002\n\n\u4EC5\u5EFA\u8BAE\u5728\u53EF\u4FE1\u7F51\u7EDC/\u81EA\u5EFA\u73AF\u5883\u4E34\u65F6\u4F7F\u7528\u3002\u786E\u5B9A\u7EE7\u7EED\uFF1F"
+    );
+  }
+  function confirmOverwriteSync(mode) {
+    if (mode === "merge" || mode === SYNC_MODE_MERGE) return true;
+    const label = mode === SYNC_MODE_REMOTE_OVERWRITE_LOCAL || mode === "remoteOverwriteLocal" ? "\u4E91\u7AEF\u8986\u76D6\u672C\u5730" : "\u672C\u5730\u8986\u76D6\u4E91\u7AEF";
+    return window.confirm(
+      `${label}\u4F1A\u4E22\u5F03\u4E00\u4FA7\u7684\u72EC\u6709\u4FEE\u6539\uFF0C\u4E14\u4E0D\u53EF\u901A\u8FC7\u201C\u5408\u5E76\u201D\u81EA\u52A8\u6062\u590D\u3002
+
+\u8BF7\u5148\u9884\u89C8\u5DEE\u5F02\u3002\u786E\u5B9A\u7EE7\u7EED\u6267\u884C${label}\uFF1F`
+    );
   }
   function primarySourceLabel(value) {
     return normalizeSyncPrimarySource(value) === SYNC_PRIMARY_WEBDAV ? "WebDAV" : "\u670D\u52A1\u5668";
@@ -3343,6 +3358,9 @@
     const targets = buildRemoteSyncTargetsFromDom();
     if (!targets || targets.length === 0) return;
     const normalizedSyncMode = normalizeSyncMode(syncMode);
+    const encryptionKey = normalizeSyncEncryptionKey(dom.syncEncryptionKey?.value || "");
+    if (!confirmPlaintextSync(encryptionKey)) return;
+    if (!confirmOverwriteSync(normalizedSyncMode)) return;
     const localStored = await readBusinessDataFromStore();
     const localPayload = normalizeSyncPayloadShape(localStored);
     const localAccounts = localPayload.accounts;
@@ -3367,6 +3385,11 @@
           target.remotePayload = remoteResponse.payload;
           target.remoteEncrypted = remoteResponse.encrypted;
           remotePayload = remoteResponse.payload;
+          if (target.kind === "webdav" && remotePayload && !String(remoteResponse.etag || "").trim()) {
+            throw new Error(
+              "WebDAV \u8FDC\u7AEF\u5DF2\u6709\u540C\u6B65\u5305\u4F46\u672A\u8FD4\u56DE ETag\uFF0C\u65E0\u6CD5\u5B89\u5168\u505A\u6761\u4EF6\u5199\u5165\u3002\u8BF7\u6539\u7528\u652F\u6301 ETag \u7684 WebDAV\uFF0C\u6216\u6539\u7528\u81EA\u5EFA\u670D\u52A1\u5668\u4F5C\u4E3A\u4E3B\u6E90\u3002"
+            );
+          }
         } catch (error) {
           if (target.isPrimary) {
             setStatus(`${target.label} \u62C9\u53D6\u5931\u8D25: ${error.message}`);
@@ -3421,10 +3444,15 @@
       `${getSyncModeHistoryLabel(normalizedSyncMode)}\uFF1A\u8D26\u53F7 ${visibleSyncCount(localAccounts)}->${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPasskeys)}->${visibleSyncCount(mergedPayload.passkeys)}` + (conflictCount > 0 ? `\uFF0C\u68C0\u6D4B\u5230 ${conflictCount} \u4E2A\u5B57\u6BB5\u51B2\u7A81\u5E76\u6309\u65F6\u95F4/\u8BBE\u5907\u89C4\u5219\u88C1\u51B3` : "")
     );
     const pushErrors = [...pullErrors];
+    let primaryPushFailed = false;
     const pushTargets = [...targets].sort(
       (left, right) => Number(right.isPrimary) - Number(left.isPrimary) || Number(right.supportsEtag) - Number(left.supportsEtag)
     );
     for (const target of pushTargets) {
+      if (primaryPushFailed && target.isPrimary === false) {
+        pushErrors.push(`${target.label}: \u4E3B\u540C\u6B65\u6E90\u4E0A\u4F20\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\u955C\u50CF\u5199\u5165`);
+        continue;
+      }
       try {
         const result = await pushRemotePayloadWithMode(target, {
           ...mergedPayload
@@ -3434,6 +3462,7 @@
       } catch (error) {
         pushErrors.push(`${target.label}: ${error.message}`);
         await recordSyncOutboxFailure(target, mergedPayload, error);
+        if (target.isPrimary) primaryPushFailed = true;
       }
     }
     editingAccountId = null;
@@ -3817,7 +3846,19 @@
         target.remoteEncrypted = true;
         return { payload: candidate };
       } catch (error) {
-        if (error?.status !== 412 && error?.status !== 428) throw error;
+        if (error?.status !== 412 && error?.status !== 428) {
+          try {
+            const probe = await pullRemotePayload(target);
+            if (probe.payload && syncPayloadEquals(probe.payload, candidate)) {
+              updateRemoteConcurrencyState(target, probe.etag);
+              target.remotePayload = candidate;
+              target.remoteEncrypted = true;
+              return { payload: candidate };
+            }
+          } catch (_) {
+          }
+          throw error;
+        }
         if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw error;
       }
       const latestResponse = await pullRemotePayload(target);
@@ -3828,6 +3869,10 @@
         continue;
       }
       const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
+      const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+      if (!syncPayloadEquals(currentLocalPayload, candidate)) {
+        throw new Error("\u672C\u5730\u6570\u636E\u5728\u8FDC\u7AEF\u51B2\u7A81\u91CD\u8BD5\u671F\u95F4\u53D1\u751F\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u5199\u5165\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65");
+      }
       const localAccounts = Array.isArray(candidate.accounts) ? candidate.accounts.map(normalizeAccountShape) : [];
       const localPasskeys = buildUnifiedPasskeys(
         localAccounts,
@@ -3868,7 +3913,19 @@
         target.remotePayload = candidate;
         return { payload: candidate };
       } catch (error) {
-        if (error?.status !== 412 && error?.status !== 428) throw error;
+        if (error?.status !== 412 && error?.status !== 428) {
+          try {
+            const probe = await pullRemotePayload(target);
+            if (probe.payload && syncPayloadEquals(probe.payload, candidate)) {
+              updateRemoteConcurrencyState(target, probe.etag);
+              target.remotePayload = candidate;
+              target.remoteEncrypted = true;
+              return { payload: candidate };
+            }
+          } catch (_) {
+          }
+          throw error;
+        }
         if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw error;
       }
       const latestResponse = await pullRemotePayload(target);
@@ -3879,6 +3936,10 @@
         continue;
       }
       const latestPayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
+      const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+      if (!syncPayloadEquals(currentLocalPayload, candidate)) {
+        throw new Error("\u672C\u5730\u6570\u636E\u5728\u8FDC\u7AEF\u51B2\u7A81\u91CD\u8BD5\u671F\u95F4\u53D1\u751F\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u5199\u5165\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65");
+      }
       const safety = validateSyncSafety(
         candidate,
         latestPayload,
