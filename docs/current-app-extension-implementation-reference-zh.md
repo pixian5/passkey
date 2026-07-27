@@ -1,7 +1,7 @@
 # Pass 当前实现与设计决策基准
 
 > 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源；本轮完成后由版本脚本递增。
-> 当前为 `1.3.1`。
+> 当前为 `1.3.2`。
 >
 > 使用规则：当历史设计稿、路线图、旧 Swift 代码或界面文字与本文冲突时，先以本文和自动化门禁为准，再回到代码核对。没有测试或代码依据时，不得写“完整”“完全一致”“所有端均支持”。
 
@@ -129,7 +129,7 @@
 
 Docker Web 必须单实例运行。同一个 `/data` 目录不能同时挂给两个写进程，否则两个进程各自加载旧状态后可能发生最后写入者覆盖。Tauri 当前也没有为两个同时运行的应用实例提供文件级 revision/CAS 保证。
 
-Chrome 后台 Service Worker 的 `chrome.storage.session` 锁记录是唯一权威状态。popup 与管理页只订阅 `PASS_LOCK_STATE_CHANGED`：收到锁定事件时清除账号、历史、同步密钥输入和本地数据密钥缓存；收到解锁事件后重新从加密存储加载。页面可请求“立即锁定”，但不能自行把状态改为已解锁。
+Chrome 后台 Service Worker 的 `chrome.storage.session` 锁记录是唯一权威状态。popup 与管理页只订阅 `PASS_LOCK_STATE_CHANGED`：收到锁定事件后先禁用交互、清除会话数据密钥，再清除账号、历史与同步密钥输入；即使会话存储删除失败，页面内存仍必须清空。连续锁定/解锁通知在每个页面内串行处理，解锁不能越过尚未完成的锁定清理。收到解锁事件后重新从加密存储加载。页面可请求“立即锁定”，但不能自行把状态改为已解锁。
 
 `docs/sqlite-schema.sql` 与 `core/pass_core/crates/storage/migrations/0001_initial.sql` 是相同的 V1 规范化候选 DDL，包含 `accounts/op_logs/version_vectors` 等表。当前 Tauri 和旧 Swift 实际只创建 `kv` 表，Docker Web 不使用 SQLite；因此候选 DDL 不能当作当前数据库结构，也不能直接应用到 `pass-tauri.db`。
 
@@ -286,7 +286,7 @@ cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 
 cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s ../../scripts/tests -p 'test_sync_e2e.py'
 ```
 
-版本 `1.3.1` 的同步复核基线：扩展测试 91 项、Core `pass-merge` 29 项、Tauri 24 项、Docker Web 12 项、同步服务器 Python 测试 35 项，另有真实同步服务端端到端回归 4 项，JS/Rust merge parity 通过，Swift `swift build` 通过。端到端回归在临时 SQLite 与实际 HTTP 服务上覆盖同一 ETag 的双客户端冲突、拉取后提交合并候选、永久删除墓碑、顶层/文件夹顺序与临时 503 后的幂等重试；它不代替共享 JS/Rust 合并语义对拍。同步 Core 还使用 48 组确定性性质用例验证 JS/Rust 的交换律、固定点和可见排序结果。账号实体数组按稳定 `recordId`（再按 `accountId`）作传输规范化，用户可见顺序仍只由顶层和文件夹顺序数组决定；这避免双端独立新增账号时因数组字节顺序不同而造成不必要的 ETag/CAS 冲突。完整命令矩阵、Docker Compose、JSON Schema、Shell 和 Swift/Xcode 等工程门禁仍需按发布流程执行；测试数量只描述该版本实际运行结果，测试增删后必须重新更新。
+版本 `1.3.2` 的同步复核基线：扩展测试 94 项、Core `pass-merge` 29 项、Tauri 24 项、Docker Web 12 项、同步服务器 Python 测试 35 项，另有真实同步服务端端到端回归 4 项，JS/Rust merge parity 通过，Swift `swift build` 通过。锁状态回归覆盖先撤销会话数据密钥再清除业务视图、撤销失败时的内存清理，以及连续锁定/解锁通知的串行处理。端到端回归在临时 SQLite 与实际 HTTP 服务上覆盖同一 ETag 的双客户端冲突、拉取后提交合并候选、永久删除墓碑、顶层/文件夹顺序与临时 503 后的幂等重试；它不代替共享 JS/Rust 合并语义对拍。同步 Core 还使用 48 组确定性性质用例验证 JS/Rust 的交换律、固定点和可见排序结果。账号实体数组按稳定 `recordId`（再按 `accountId`）作传输规范化，用户可见顺序仍只由顶层和文件夹顺序数组决定；这避免双端独立新增账号时因数组字节顺序不同而造成不必要的 ETag/CAS 冲突。完整命令矩阵、Docker Compose、JSON Schema、Shell 和 Swift/Xcode 等工程门禁仍需按发布流程执行；测试数量只描述该版本实际运行结果，测试增删后必须重新更新。
 
 关联文档：
 

@@ -1849,6 +1849,27 @@
     if (!Number.isFinite(parsed)) return LOCK_IDLE_MINUTES_DEFAULT;
     return Math.min(Math.max(parsed, LOCK_IDLE_MINUTES_MIN), LOCK_IDLE_MINUTES_MAX);
   }
+  async function applyLockStateChangedMessage(message, { lock, clear, unlock } = {}) {
+    if (message?.type !== LOCK_STATE_CHANGED_MESSAGE) return false;
+    if (message?.payload?.locked) {
+      try {
+        await lock?.();
+      } finally {
+        await clear?.();
+      }
+      return "locked";
+    }
+    await unlock?.();
+    return "unlocked";
+  }
+  function createLockStateTransitionQueue() {
+    let pending = Promise.resolve();
+    return (message, callbacks) => {
+      pending = pending.catch(() => {
+      }).then(() => applyLockStateChangedMessage(message, callbacks));
+      return pending;
+    };
+  }
 
   // sync_crypto.js
   var SYNC_ENCRYPTED_SCHEMA_V1 = "pass.sync.encrypted.v1";
@@ -2208,6 +2229,7 @@
   var lockSettingsSaveTimer = null;
   var syncInFlight = false;
   var optionsLocked = false;
+  var enqueueLockStateTransition = createLockStateTransitionQueue();
   async function acquireSyncOperationLock(owner) {
     const storage = chrome.storage?.session;
     if (!storage) return owner;
@@ -2428,15 +2450,22 @@
   }
   function handleRuntimeMessage(message) {
     if (message?.type !== LOCK_STATE_CHANGED_MESSAGE) return;
-    if (message?.payload?.locked) {
-      optionsLocked = true;
-      void lockDataEncryption();
-      clearOptionsSensitiveState();
-      setStatus("\u6269\u5C55\u5DF2\u9501\u5B9A\uFF0C\u8BF7\u8F93\u5165\u4E3B\u5BC6\u7801\u540E\u91CD\u65B0\u52A0\u8F7D\u8BBE\u7F6E\u3002");
-      return;
-    }
-    optionsLocked = false;
-    void resumeOptionsAfterExternalUnlock();
+    void enqueueLockStateTransition(message, {
+      lock: async () => {
+        optionsLocked = true;
+        await lockDataEncryption();
+      },
+      clear: () => {
+        clearOptionsSensitiveState();
+        setStatus("\u6269\u5C55\u5DF2\u9501\u5B9A\uFF0C\u8BF7\u8F93\u5165\u4E3B\u5BC6\u7801\u540E\u91CD\u65B0\u52A0\u8F7D\u8BBE\u7F6E\u3002");
+      },
+      unlock: async () => {
+        optionsLocked = false;
+        await resumeOptionsAfterExternalUnlock();
+      }
+    }).catch((error) => {
+      console.warn("[Pass options] \u9501\u72B6\u6001\u5207\u6362\u5931\u8D25", error);
+    });
   }
   function clearOptionsSensitiveState() {
     accountsRaw = [];

@@ -32,3 +32,33 @@ export function clampLockIdleMinutes(value) {
   if (!Number.isFinite(parsed)) return LOCK_IDLE_MINUTES_DEFAULT;
   return Math.min(Math.max(parsed, LOCK_IDLE_MINUTES_MIN), LOCK_IDLE_MINUTES_MAX);
 }
+
+/**
+ * Apply the background-owned lock transition in a page context. Clearing the
+ * business view must not run before the data-key eviction has settled; when
+ * storage removal fails, still clear the page's in-memory secrets.
+ */
+export async function applyLockStateChangedMessage(message, { lock, clear, unlock } = {}) {
+  if (message?.type !== LOCK_STATE_CHANGED_MESSAGE) return false;
+  if (message?.payload?.locked) {
+    try {
+      await lock?.();
+    } finally {
+      await clear?.();
+    }
+    return "locked";
+  }
+  await unlock?.();
+  return "unlocked";
+}
+
+/** Serialize state notifications so a fast unlock cannot overtake key eviction. */
+export function createLockStateTransitionQueue() {
+  let pending = Promise.resolve();
+  return (message, callbacks) => {
+    pending = pending
+      .catch(() => {})
+      .then(() => applyLockStateChangedMessage(message, callbacks));
+    return pending;
+  };
+}

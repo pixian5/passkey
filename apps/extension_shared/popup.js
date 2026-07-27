@@ -24,7 +24,9 @@ import {
 } from "./data_store.js";
 import { normalizeLockMasterCredential } from "./lock_crypto.js";
 import {
+  applyLockStateChangedMessage,
   clampLockIdleMinutes,
+  createLockStateTransitionQueue,
   LOCK_IDLE_MINUTES_DEFAULT,
   LOCK_POLICY_IDLE_TIMEOUT,
   LOCK_POLICY_ON_BACKGROUND,
@@ -119,6 +121,7 @@ let popupLockMessage = "";
 let lockIdleTimer = null;
 let lockLastActivityAtMs = Date.now();
 let lockOperationInFlight = false;
+const enqueueLockStateTransition = createLockStateTransitionQueue();
 
 init().catch((error) => {
   console.error("[Pass popup] 初始化失败", error);
@@ -151,13 +154,17 @@ async function init() {
 
 function handleRuntimeMessage(message) {
   if (message?.type !== LOCK_STATE_CHANGED_MESSAGE) return;
-  if (message?.payload?.locked) {
-    void lockDataEncryption();
-    clearPopupSensitiveState();
-    setPopupLockedState(true, "扩展已锁定，请输入主密码解锁。");
-    return;
-  }
-  void resumePopupAfterExternalUnlock();
+  void enqueueLockStateTransition(message, {
+      lock: async () => {
+        setPopupLockedState(true, "扩展已锁定，请输入主密码解锁。");
+        await lockDataEncryption();
+      },
+      clear: clearPopupSensitiveState,
+      unlock: resumePopupAfterExternalUnlock,
+    })
+    .catch((error) => {
+      console.warn("[Pass popup] 锁状态切换失败", error);
+    });
 }
 
 function clearPopupSensitiveState() {

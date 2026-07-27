@@ -829,6 +829,27 @@
     if (!Number.isFinite(parsed)) return LOCK_IDLE_MINUTES_DEFAULT;
     return Math.min(Math.max(parsed, LOCK_IDLE_MINUTES_MIN), LOCK_IDLE_MINUTES_MAX);
   }
+  async function applyLockStateChangedMessage(message, { lock, clear, unlock } = {}) {
+    if (message?.type !== LOCK_STATE_CHANGED_MESSAGE) return false;
+    if (message?.payload?.locked) {
+      try {
+        await lock?.();
+      } finally {
+        await clear?.();
+      }
+      return "locked";
+    }
+    await unlock?.();
+    return "unlocked";
+  }
+  function createLockStateTransitionQueue() {
+    let pending = Promise.resolve();
+    return (message, callbacks) => {
+      pending = pending.catch(() => {
+      }).then(() => applyLockStateChangedMessage(message, callbacks));
+      return pending;
+    };
+  }
 
   // popup.js
   var STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
@@ -904,6 +925,7 @@
   var lockIdleTimer = null;
   var lockLastActivityAtMs = Date.now();
   var lockOperationInFlight = false;
+  var enqueueLockStateTransition = createLockStateTransitionQueue();
   init().catch((error) => {
     console.error("[Pass popup] \u521D\u59CB\u5316\u5931\u8D25", error);
     const detail = [error?.name, error?.code, error?.message, String(error)].map((value) => String(value || "").trim()).filter((value, index, values) => value && values.indexOf(value) === index).join(" | ");
@@ -930,13 +952,16 @@
   }
   function handleRuntimeMessage(message) {
     if (message?.type !== LOCK_STATE_CHANGED_MESSAGE) return;
-    if (message?.payload?.locked) {
-      void lockDataEncryption();
-      clearPopupSensitiveState();
-      setPopupLockedState(true, "\u6269\u5C55\u5DF2\u9501\u5B9A\uFF0C\u8BF7\u8F93\u5165\u4E3B\u5BC6\u7801\u89E3\u9501\u3002");
-      return;
-    }
-    void resumePopupAfterExternalUnlock();
+    void enqueueLockStateTransition(message, {
+      lock: async () => {
+        setPopupLockedState(true, "\u6269\u5C55\u5DF2\u9501\u5B9A\uFF0C\u8BF7\u8F93\u5165\u4E3B\u5BC6\u7801\u89E3\u9501\u3002");
+        await lockDataEncryption();
+      },
+      clear: clearPopupSensitiveState,
+      unlock: resumePopupAfterExternalUnlock
+    }).catch((error) => {
+      console.warn("[Pass popup] \u9501\u72B6\u6001\u5207\u6362\u5931\u8D25", error);
+    });
   }
   function clearPopupSensitiveState() {
     accounts = [];

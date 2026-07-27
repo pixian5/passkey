@@ -40,7 +40,9 @@ import {
   verifyLockMasterPassword,
 } from "./lock_crypto.js";
 import {
+  applyLockStateChangedMessage,
   clampLockIdleMinutes,
+  createLockStateTransitionQueue,
   LOCK_POLICY_IDLE_TIMEOUT,
   LOCK_POLICY_ON_BACKGROUND,
   LOCK_POLICY_ONCE_UNTIL_QUIT,
@@ -279,6 +281,7 @@ let syncSettingsSaveTimer = null;
 let lockSettingsSaveTimer = null;
 let syncInFlight = false;
 let optionsLocked = false;
+const enqueueLockStateTransition = createLockStateTransitionQueue();
 
 async function acquireSyncOperationLock(owner) {
   const storage = chrome.storage?.session;
@@ -516,15 +519,23 @@ async function init() {
 
 function handleRuntimeMessage(message) {
   if (message?.type !== LOCK_STATE_CHANGED_MESSAGE) return;
-  if (message?.payload?.locked) {
-    optionsLocked = true;
-    void lockDataEncryption();
-    clearOptionsSensitiveState();
-    setStatus("扩展已锁定，请输入主密码后重新加载设置。");
-    return;
-  }
-  optionsLocked = false;
-  void resumeOptionsAfterExternalUnlock();
+  void enqueueLockStateTransition(message, {
+      lock: async () => {
+        optionsLocked = true;
+        await lockDataEncryption();
+      },
+      clear: () => {
+        clearOptionsSensitiveState();
+        setStatus("扩展已锁定，请输入主密码后重新加载设置。");
+      },
+      unlock: async () => {
+        optionsLocked = false;
+        await resumeOptionsAfterExternalUnlock();
+      },
+    })
+    .catch((error) => {
+      console.warn("[Pass options] 锁状态切换失败", error);
+    });
 }
 
 function clearOptionsSensitiveState() {
