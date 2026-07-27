@@ -1622,7 +1622,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.2.9";
+  var PASS_EXTENSION_VERSION = "1.3.0";
 
   // ../../core/pass_core/js/sync_alias_core.js
   function syncAliasGroups(accounts, helpers, options = {}) {
@@ -2345,7 +2345,17 @@
         merged.push(normalized);
       }
     }
-    return merged.filter(Boolean);
+    return merged.filter(Boolean).sort((left, right) => {
+      const leftRecordId = asString(left?.recordId || left?.id).trim().toLowerCase();
+      const rightRecordId = asString(right?.recordId || right?.id).trim().toLowerCase();
+      if (leftRecordId < rightRecordId) return -1;
+      if (leftRecordId > rightRecordId) return 1;
+      const leftAccountId = asString(left?.accountId).trim().toLowerCase();
+      const rightAccountId = asString(right?.accountId).trim().toLowerCase();
+      if (leftAccountId < rightAccountId) return -1;
+      if (leftAccountId > rightAccountId) return 1;
+      return 0;
+    });
   }
   function mergePasskeyCollections(local, remote, helpers) {
     const h = resolveHelpers(helpers);
@@ -2710,6 +2720,16 @@
     };
   }
 
+  // lock_state.js
+  var STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
+  var STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
+  var STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
+  var STORAGE_KEY_LOCK_MASTER_CREDENTIAL = "pass.lock.masterCredential.v1";
+  var STORAGE_KEY_LOCK_UNLOCKED_AT = "pass.lock.unlockedAtMs.v1";
+  var STORAGE_KEY_LOCK_LAST_ACTIVITY = "pass.lock.lastActivityAtMs.v1";
+  var LOCK_POLICY_IDLE_TIMEOUT = "idleTimeout";
+  var LOCK_STATE_CHANGED_MESSAGE = "PASS_LOCK_STATE_CHANGED";
+
   // sync_crypto.js
   var SYNC_ENCRYPTED_SCHEMA_V1 = "pass.sync.encrypted.v1";
   var SYNC_PLAINTEXT_SCHEMA = "pass.sync.bundle.v2";
@@ -2894,13 +2914,6 @@
       await storage.remove(STORAGE_KEY_SYNC_OPERATION_LOCK);
     }
   }
-  var STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
-  var STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
-  var STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
-  var STORAGE_KEY_LOCK_MASTER_CREDENTIAL = "pass.lock.masterCredential.v1";
-  var STORAGE_KEY_LOCK_UNLOCKED_AT = "pass.lock.unlockedAtMs.v1";
-  var STORAGE_KEY_LOCK_LAST_ACTIVITY = "pass.lock.lastActivityAtMs.v1";
-  var LOCK_POLICY_IDLE_TIMEOUT = "idleTimeout";
   var SENSITIVE_MESSAGE_TYPES = /* @__PURE__ */ new Set([
     "PASS_FILL_ACTIVE_TAB",
     "PASS_LOGIN_DETECTED",
@@ -3667,6 +3680,13 @@
     await chrome.storage.session.set({ [STORAGE_KEY_LOCK_LAST_ACTIVITY]: Date.now() });
   }
   async function broadcastLockState(locked) {
+    try {
+      await chrome.runtime.sendMessage({
+        type: LOCK_STATE_CHANGED_MESSAGE,
+        payload: { locked: Boolean(locked) }
+      });
+    } catch {
+    }
     try {
       const tabs = await chrome.tabs.query({});
       await Promise.allSettled(tabs.filter((tab) => tab.id).map((tab) => chrome.tabs.sendMessage(tab.id, { type: locked ? "PASS_LOCKED" : "PASS_UNLOCKED" })));

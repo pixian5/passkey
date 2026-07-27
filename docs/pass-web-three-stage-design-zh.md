@@ -111,7 +111,7 @@ Tauri 桌面端 ──同一服务层规则── Web API
 生产部署约束：
 
 - Web 服务只监听 `127.0.0.1`，由反向代理对外提供 HTTPS。
-- 生产环境必须设置 `PASS_WEB_AUTH_TOKEN` 或网页登录认证配置。
+- 生产环境必须设置 `PASS_WEB_AUTH_TOKEN` 或网页登录认证配置；非回环监听且令牌为空时程序拒绝启动。Docker 默认端口仅映射到宿主机回环地址，可显式使用 `PASS_WEB_TRUSTED_LOOPBACK_PROXY=1`，一旦公开端口必须关闭该开关并设置令牌。
 - `/data` 同时包含加密 vault 和密钥文件，备份必须成套进行。
 - 不把同步 Bearer Token、同步加密密钥、网页登录密钥写入镜像或 Git。
 - Docker 构建必须固定基础镜像大版本，并在 CI 中执行漏洞扫描。

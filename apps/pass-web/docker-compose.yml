@@ -9,6 +9,8 @@ services:
       - "${PASS_WEB_BIND_ADDRESS:-127.0.0.1}:${PASS_WEB_PORT:-53335}:53335"
     environment:
       PASS_WEB_AUTH_TOKEN: ${PASS_WEB_AUTH_TOKEN:-}
+      # Safe only while the published host port remains loopback-only.
+      PASS_WEB_TRUSTED_LOOPBACK_PROXY: ${PASS_WEB_TRUSTED_LOOPBACK_PROXY:-1}
     volumes:
       - pass_web_data:/data
     healthcheck:

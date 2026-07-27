@@ -87,7 +87,7 @@ pass/
 | Touch ID | macOS | 否 | 否 |
 | 页面填充/WebAuthn | 否 | 否 | 是 |
 
-补充边界：Docker Web 当前是单用户、单进程 vault；Chrome 管理页与后台存在双锁运行时；Tauri/Web 未提供多个进程同时写同一数据目录的 CAS。以上不能由“统一管理 UI”推导为已经解决。
+补充边界：Docker Web 当前是单用户、单进程 vault；Chrome 锁状态由后台 Service Worker 的 `chrome.storage.session` 记录唯一裁决，popup 与管理页只订阅通知并在锁定时清除内存和数据密钥；Tauri/Web 未提供多个进程同时写同一数据目录的 CAS。Docker Web 监听非回环地址时必须配置 `PASS_WEB_AUTH_TOKEN`，只有 Docker 端口严格映射到宿主机回环地址时才可显式设 `PASS_WEB_TRUSTED_LOOPBACK_PROXY=1` 使用空 Token。以上不能由“统一管理 UI”推导为已经解决。
 
 ## 7. 版本与验证
 

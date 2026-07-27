@@ -3900,6 +3900,24 @@ fn authorized(headers: &HeaderMap, token: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn is_loopback_bind_host(host: &str) -> bool {
+    matches!(host.trim().trim_matches(['[', ']']), "127.0.0.1" | "localhost" | "::1")
+}
+
+fn validate_startup_security(
+    host: &str,
+    auth_token: &str,
+    trusted_loopback_proxy: bool,
+) -> Result<(), String> {
+    if !is_loopback_bind_host(host) && auth_token.trim().is_empty() && !trusted_loopback_proxy {
+        return Err(
+            "PASS_WEB_HOST 为非回环地址时必须设置 PASS_WEB_AUTH_TOKEN；仅宿主机回环映射的可信 Docker 代理可设置 PASS_WEB_TRUSTED_LOOPBACK_PROXY=1"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 async fn invoke(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -4019,6 +4037,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|x| x.parse().ok())
         .unwrap_or(53335);
     let token = env::var("PASS_WEB_AUTH_TOKEN").unwrap_or_default();
+    let trusted_loopback_proxy = matches!(
+        env::var("PASS_WEB_TRUSTED_LOOPBACK_PROXY").ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE")
+    );
+    validate_startup_security(&host, &token, trusted_loopback_proxy)?;
     let instance_guard = Arc::new(acquire_instance_guard(&data_dir)?);
     let state = AppState {
         vault: Arc::new(Mutex::new(Vault::open(data_dir)?)),
@@ -4047,6 +4070,15 @@ mod tests {
         let vault = Vault::open(dir.clone()).unwrap();
         assert!(vault.data.folders.iter().any(|f| f.id == FIXED_FOLDER_ID));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn non_loopback_web_bind_requires_access_token() {
+        assert!(validate_startup_security("127.0.0.1", "", false).is_ok());
+        assert!(validate_startup_security("::1", "", false).is_ok());
+        assert!(validate_startup_security("0.0.0.0", "", false).is_err());
+        assert!(validate_startup_security("0.0.0.0", "operator-token", false).is_ok());
+        assert!(validate_startup_security("0.0.0.0", "", true).is_ok());
     }
     #[test]
     fn encrypt_round_trip() {

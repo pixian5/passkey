@@ -242,7 +242,7 @@ cd apps/pass-web && cargo test && cargo build --release
 
 旧 Chrome 壳和专用构建入口已移除；Chrome 只加载 `apps/extension_chrome_web`。
 
-## 8. 当前对齐结论（版本 1.2.9）
+## 8. 当前对齐结论（版本 1.3.0）
 
 已对齐并必须保持：
 
@@ -255,7 +255,7 @@ cd apps/pass-web && cargo test && cargo build --release
 7. 同步服务器每次成功写入只产生 1 个新版本；审计/限流有上限。
 8. SSH 远端路径 shell quote；部署健康检查正常 TLS 校验。
 
-仍未对齐：Chrome 管理页/后台双锁状态、Web/Tauri 跨进程 revision、旧 Swift 文件夹内独立顺序、全部命令返回 Schema。不得把本节“已对齐”扩写为所有运行细节完全一致。
+Chrome 的锁定状态已由后台 Service Worker 收口：popup 和管理页收到锁定通知后清除内存业务视图与本地数据密钥，解锁后重新读取加密存储。仍未对齐：Web/Tauri 跨进程 revision、旧 Swift 文件夹内独立顺序、全部命令返回 Schema。不得把本节“已对齐”扩写为所有运行细节完全一致。
 
 详细规则见 [local-write-durability-and-history-consistency-zh.md](./local-write-durability-and-history-consistency-zh.md) 与 [current-app-extension-implementation-reference-zh.md](./current-app-extension-implementation-reference-zh.md)。
 

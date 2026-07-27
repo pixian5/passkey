@@ -8,7 +8,7 @@
 - TOTP/同步设置的基础数据保存
 - AES-256-GCM 加密的数据文件和独立密钥文件
 
-当前版本定位为单用户网页保险库。`PASS_WEB_AUTH_TOKEN` 是网页访问令牌，不等同于同步 Bearer Token。启动时会在 `/data/pass-web-instance.lock` 建立原子单实例锁，拒绝同一数据目录的第二个写实例；它仍没有多实例 revision/CAS。异常终止遗留锁文件时，必须确认旧进程已停止再人工删除。
+当前版本定位为单用户网页保险库。`PASS_WEB_AUTH_TOKEN` 是网页访问令牌，不等同于同步 Bearer Token。仅绑定 `127.0.0.1`、`localhost` 或 `::1` 时可留空；绑定局域网或公网地址时程序会拒绝启动，必须设置该令牌并通过 HTTPS 反向代理访问。Docker 默认只发布宿主机回环端口，因此显式设置 `PASS_WEB_TRUSTED_LOOPBACK_PROXY=1` 保持一条命令本地启动；一旦把 `PASS_WEB_BIND_ADDRESS` 改为局域网或公网地址，必须把该值改为 `0` 并设置 `PASS_WEB_AUTH_TOKEN`。启动时会在 `/data/pass-web-instance.lock` 建立原子单实例锁，拒绝同一数据目录的第二个写实例；它仍没有多实例 revision/CAS。异常终止遗留锁文件时，必须确认旧进程已停止再人工删除。
 
 ## 本机运行
 
@@ -26,7 +26,8 @@ PASS_WEB_HOST=127.0.0.1
 PASS_WEB_PORT=53335
 PASS_WEB_DATA_DIR=./data
 PASS_WEB_STATIC_DIR=../codex-tauri/dist
-PASS_WEB_AUTH_TOKEN=（留空表示开放模式；生产环境必须设置）
+PASS_WEB_AUTH_TOKEN=（仅回环监听可留空；非回环必须设置）
+PASS_WEB_TRUSTED_LOOPBACK_PROXY=0
 ```
 
 ## Docker
@@ -36,7 +37,7 @@ cd apps/pass-web
 docker compose up -d --build
 ```
 
-默认只绑定宿主机 `127.0.0.1:53335`，空 `PASS_WEB_AUTH_TOKEN` 允许本机开发和可信内网测试；生产环境应在外部 `.env` 或 Docker secret 中配置已有的 Web 访问令牌，并通过 Caddy/Nginx 提供 HTTPS。程序不会自动生成新的 Bearer Token。
+默认只绑定宿主机 `127.0.0.1:53335`，Compose 以 `PASS_WEB_TRUSTED_LOOPBACK_PROXY=1` 声明这一前提，因此空 `PASS_WEB_AUTH_TOKEN` 仅用于本机开发。生产环境应在外部 `.env` 或 Docker secret 中配置已有的 Web 访问令牌，并通过 Caddy/Nginx 提供 HTTPS；将端口公开前必须将该开关设为 `0`。程序不会自动生成新的 Bearer Token。
 
 容器数据在 Docker volume `pass_web_data` 中。未启用应用锁时保留 `pass-web-vault-v1.enc` 和 `pass-web-vault-key-v1`；启用后必须保留 `pass-web-vault-v1.enc` 和 `pass-web-vault-key-wrapper-v1.json`。后者由主密码派生密钥包装 vault key，重启后必须解锁；丢失相应密钥材料将无法解密保险库。
 

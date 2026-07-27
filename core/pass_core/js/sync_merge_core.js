@@ -539,7 +539,20 @@ export function mergeAccountCollections(local, remote, helpers) {
     }
   }
 
-  return merged.filter(Boolean);
+  // Entity array order is transport canonicalization, not display order. The
+  // display order lives in allRegularAccountIds / regularAccountIds; sorting
+  // here keeps a logically identical merge byte-stable across A→B and B→A.
+  return merged.filter(Boolean).sort((left, right) => {
+    const leftRecordId = asString(left?.recordId || left?.id).trim().toLowerCase();
+    const rightRecordId = asString(right?.recordId || right?.id).trim().toLowerCase();
+    if (leftRecordId < rightRecordId) return -1;
+    if (leftRecordId > rightRecordId) return 1;
+    const leftAccountId = asString(left?.accountId).trim().toLowerCase();
+    const rightAccountId = asString(right?.accountId).trim().toLowerCase();
+    if (leftAccountId < rightAccountId) return -1;
+    if (leftAccountId > rightAccountId) return 1;
+    return 0;
+  });
 }
 
 export function mergePasskeyCollections(local, remote, helpers) {

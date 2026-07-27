@@ -845,6 +845,14 @@ pub fn merge_account_collections(
             merged.push(normalized);
         }
     }
+    // Entity array order is transport canonicalization, not display order.
+    // The display scopes are merged independently; canonical collection order
+    // prevents an A→B/B→A merge from producing different payload bytes.
+    merged.sort_by(|left, right| {
+        left.resolved_record_id()
+            .cmp(&right.resolved_record_id())
+            .then_with(|| left.account_id.cmp(&right.account_id))
+    });
     merged
 }
 
@@ -1316,6 +1324,25 @@ mod order_tests {
             ..Default::default()
         };
         assert_eq!(merge_account_collections(vec![left], vec![right]).len(), 2);
+    }
+
+    #[test]
+    fn independent_accounts_have_canonical_collection_order() {
+        let a = account("00000000-0000-0000-0000-000000000001", &[]);
+        let b = account("00000000-0000-0000-0000-000000000002", &[]);
+        let forward = merge_account_collections(vec![b.clone()], vec![a.clone()]);
+        let reverse = merge_account_collections(vec![a], vec![b]);
+        assert_eq!(forward, reverse);
+        assert_eq!(
+            forward
+                .iter()
+                .map(PasswordAccount::resolved_record_id)
+                .collect::<Vec<_>>(),
+            vec![
+                "00000000-0000-0000-0000-000000000001",
+                "00000000-0000-0000-0000-000000000002"
+            ]
+        );
     }
 
     #[test]

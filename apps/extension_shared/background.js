@@ -40,6 +40,16 @@ import {
   verifyLockMasterPassword,
 } from "./lock_crypto.js";
 import {
+  LOCK_POLICY_IDLE_TIMEOUT,
+  LOCK_STATE_CHANGED_MESSAGE,
+  STORAGE_KEY_LOCK_ENABLED,
+  STORAGE_KEY_LOCK_IDLE_MINUTES,
+  STORAGE_KEY_LOCK_LAST_ACTIVITY,
+  STORAGE_KEY_LOCK_MASTER_CREDENTIAL,
+  STORAGE_KEY_LOCK_POLICY,
+  STORAGE_KEY_LOCK_UNLOCKED_AT,
+} from "./lock_state.js";
+import {
   isSyncOutboxReady,
   syncTargetKey,
   upsertSyncOutbox,
@@ -129,13 +139,6 @@ async function releaseSyncOperationLock(owner) {
     await storage.remove(STORAGE_KEY_SYNC_OPERATION_LOCK);
   }
 }
-const STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
-const STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
-const STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
-const STORAGE_KEY_LOCK_MASTER_CREDENTIAL = "pass.lock.masterCredential.v1";
-const STORAGE_KEY_LOCK_UNLOCKED_AT = "pass.lock.unlockedAtMs.v1";
-const STORAGE_KEY_LOCK_LAST_ACTIVITY = "pass.lock.lastActivityAtMs.v1";
-const LOCK_POLICY_IDLE_TIMEOUT = "idleTimeout";
 const SENSITIVE_MESSAGE_TYPES = new Set([
   "PASS_FILL_ACTIVE_TAB",
   "PASS_LOGIN_DETECTED",
@@ -1002,6 +1005,14 @@ async function registerBackgroundLockActivity() {
 }
 
 async function broadcastLockState(locked) {
+  try {
+    await chrome.runtime.sendMessage({
+      type: LOCK_STATE_CHANGED_MESSAGE,
+      payload: { locked: Boolean(locked) },
+    });
+  } catch {
+    // The background worker can be the only extension context.
+  }
   try {
     const tabs = await chrome.tabs.query({});
     await Promise.allSettled(tabs

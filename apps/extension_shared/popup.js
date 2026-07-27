@@ -18,10 +18,25 @@ import {
   getFolders as getFoldersFromDataStore,
   getHistory as getHistoryFromDataStore,
   getPasskeys as getPasskeysFromDataStore,
+  lockDataEncryption,
   setAccounts as setAccountsToDataStore,
   setPasskeys as setPasskeysToDataStore,
 } from "./data_store.js";
 import { normalizeLockMasterCredential } from "./lock_crypto.js";
+import {
+  clampLockIdleMinutes,
+  LOCK_IDLE_MINUTES_DEFAULT,
+  LOCK_POLICY_IDLE_TIMEOUT,
+  LOCK_POLICY_ON_BACKGROUND,
+  LOCK_POLICY_ONCE_UNTIL_QUIT,
+  LOCK_STATE_CHANGED_MESSAGE,
+  LOCK_STORAGE_KEYS,
+  normalizeLockPolicy,
+  STORAGE_KEY_LOCK_ENABLED,
+  STORAGE_KEY_LOCK_IDLE_MINUTES,
+  STORAGE_KEY_LOCK_MASTER_CREDENTIAL,
+  STORAGE_KEY_LOCK_POLICY,
+} from "./lock_state.js";
 import {
   DEFAULT_DEVICE_NAME,
   FIXED_NEW_ACCOUNT_FOLDER_ID,
@@ -29,23 +44,6 @@ import {
 } from "../../core/pass_core/js/sync_policy.js";
 
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
-const STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
-const STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
-const STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
-const STORAGE_KEY_LOCK_MASTER_CREDENTIAL = "pass.lock.masterCredential.v1";
-const LOCK_POLICY_ONCE_UNTIL_QUIT = "onceUntilQuit";
-const LOCK_POLICY_IDLE_TIMEOUT = "idleTimeout";
-const LOCK_POLICY_ON_BACKGROUND = "onBackground";
-const LOCK_IDLE_MINUTES_DEFAULT = 5;
-const LOCK_IDLE_MINUTES_MIN = 1;
-const LOCK_IDLE_MINUTES_MAX = 60;
-const LOCK_STORAGE_KEYS = new Set([
-  STORAGE_KEY_LOCK_ENABLED,
-  STORAGE_KEY_LOCK_POLICY,
-  STORAGE_KEY_LOCK_IDLE_MINUTES,
-  STORAGE_KEY_LOCK_MASTER_CREDENTIAL,
-]);
-
 const ACCOUNT_SEARCH_FIELD_KEYS = ["username", "sites", "note", "password"];
 const TOTP_PERIOD_SECONDS = 30;
 const TOTP_DIGITS = 6;
@@ -139,6 +137,45 @@ async function init() {
   scheduleIdleAutoLockCheck();
   startTotpRefreshTicker();
   chrome.storage.onChanged.addListener(handleStorageChanged);
+  chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+  if (isLockedForInteraction()) return;
+  await Promise.all([
+    ensureDataStorageReady(),
+    loadAccounts(),
+    loadFolders(),
+    loadHistory(),
+    loadPasskeys(),
+  ]);
+  renderAccounts();
+}
+
+function handleRuntimeMessage(message) {
+  if (message?.type !== LOCK_STATE_CHANGED_MESSAGE) return;
+  if (message?.payload?.locked) {
+    void lockDataEncryption();
+    clearPopupSensitiveState();
+    setPopupLockedState(true, "扩展已锁定，请输入主密码解锁。");
+    return;
+  }
+  void resumePopupAfterExternalUnlock();
+}
+
+function clearPopupSensitiveState() {
+  accounts = [];
+  folders = [];
+  passkeys = [];
+  historyEntries = [];
+  editingAccountId = null;
+  sortModalOrderIds = [];
+  sortModalDraggingAccountId = "";
+  closeCreateModal();
+  closeSortModal();
+  closeHistoryModal();
+  closeAccountSearchFieldsPanel();
+}
+
+async function resumePopupAfterExternalUnlock() {
+  await loadLockSettingsFromStorage();
   if (isLockedForInteraction()) return;
   await Promise.all([
     ensureDataStorageReady(),
@@ -490,20 +527,6 @@ async function unlockPopupWithPassword() {
   } finally {
     lockOperationInFlight = false;
   }
-}
-
-function normalizeLockPolicy(value) {
-  const policy = String(value || "");
-  if (policy === LOCK_POLICY_IDLE_TIMEOUT) return LOCK_POLICY_IDLE_TIMEOUT;
-  if (policy === LOCK_POLICY_ON_BACKGROUND) return LOCK_POLICY_ON_BACKGROUND;
-  return LOCK_POLICY_ONCE_UNTIL_QUIT;
-}
-
-function clampLockIdleMinutes(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return LOCK_IDLE_MINUTES_DEFAULT;
-  const rounded = Math.round(parsed);
-  return Math.min(Math.max(rounded, LOCK_IDLE_MINUTES_MIN), LOCK_IDLE_MINUTES_MAX);
 }
 
 function setViewMode(nextMode) {

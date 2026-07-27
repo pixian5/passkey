@@ -25,6 +25,7 @@ import {
   getHistory as getHistoryFromDataStore,
   getSafetySnapshots,
   getSyncOutbox,
+  lockDataEncryption,
   migrateLegacySyncSecrets,
   setAccounts as setAccountsToDataStore,
   setAllData as setAllDataToDataStore,
@@ -38,6 +39,18 @@ import {
   normalizeLockMasterCredential,
   verifyLockMasterPassword,
 } from "./lock_crypto.js";
+import {
+  clampLockIdleMinutes,
+  LOCK_POLICY_IDLE_TIMEOUT,
+  LOCK_POLICY_ON_BACKGROUND,
+  LOCK_POLICY_ONCE_UNTIL_QUIT,
+  LOCK_STATE_CHANGED_MESSAGE,
+  normalizeLockPolicy,
+  STORAGE_KEY_LOCK_ENABLED,
+  STORAGE_KEY_LOCK_IDLE_MINUTES,
+  STORAGE_KEY_LOCK_MASTER_CREDENTIAL,
+  STORAGE_KEY_LOCK_POLICY,
+} from "./lock_state.js";
 import {
   decryptSyncBundleDocument,
   encryptSyncBundleDocument,
@@ -78,17 +91,7 @@ const SYNC_MODE_REMOTE_OVERWRITE_LOCAL = "remoteOverwriteLocal";
 const SYNC_MODE_LOCAL_OVERWRITE_REMOTE = "localOverwriteRemote";
 const SYNC_PRIMARY_SERVER = "server";
 const SYNC_PRIMARY_WEBDAV = "webdav";
-const STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
-const STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
-const STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
-const STORAGE_KEY_LOCK_MASTER_CREDENTIAL = "pass.lock.masterCredential.v1";
 const SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
-const LOCK_POLICY_ONCE_UNTIL_QUIT = "onceUntilQuit";
-const LOCK_POLICY_IDLE_TIMEOUT = "idleTimeout";
-const LOCK_POLICY_ON_BACKGROUND = "onBackground";
-const LOCK_IDLE_MINUTES_MIN = 1;
-const LOCK_IDLE_MINUTES_MAX = 60;
-const LOCK_IDLE_MINUTES_DEFAULT = 5;
 
 const ACCOUNT_SEARCH_FIELD_KEYS = ["username", "sites", "note", "password"];
 const TOTP_PERIOD_SECONDS = 30;
@@ -275,6 +278,7 @@ let deviceNameSaveTimer = null;
 let syncSettingsSaveTimer = null;
 let lockSettingsSaveTimer = null;
 let syncInFlight = false;
+let optionsLocked = false;
 
 async function acquireSyncOperationLock(owner) {
   const storage = chrome.storage?.session;
@@ -311,6 +315,7 @@ init().catch((error) => {
 });
 
 async function init() {
+  chrome.runtime.onMessage.addListener(handleRuntimeMessage);
   await loadDeviceName();
   await loadLockSettings();
   await ensureOptionsUnlocked();
@@ -509,9 +514,55 @@ async function init() {
   dom.clearBtn.addEventListener("click", clearAll);
 }
 
+function handleRuntimeMessage(message) {
+  if (message?.type !== LOCK_STATE_CHANGED_MESSAGE) return;
+  if (message?.payload?.locked) {
+    optionsLocked = true;
+    void lockDataEncryption();
+    clearOptionsSensitiveState();
+    setStatus("扩展已锁定，请输入主密码后重新加载设置。");
+    return;
+  }
+  optionsLocked = false;
+  void resumeOptionsAfterExternalUnlock();
+}
+
+function clearOptionsSensitiveState() {
+  accountsRaw = [];
+  passkeysRaw = [];
+  foldersRaw = [];
+  historyEntries = [];
+  editingAccountId = null;
+  closeContextMenu();
+  closeSortModal();
+  closeHistoryModal();
+  closeAddSitesToFolderModal();
+  closeAllAccountsSearchFieldsPanel();
+  dom.syncWebdavPassword.value = "";
+  dom.syncServerToken.value = "";
+  dom.syncEncryptionKey.value = "";
+  dom.syncPreviousEncryptionKey.value = "";
+  dom.lockMasterPassword.value = "";
+  dom.lockMasterPasswordConfirm.value = "";
+  renderSidebar(accountsRaw);
+  renderCurrentView(accountsRaw);
+}
+
+async function resumeOptionsAfterExternalUnlock() {
+  try {
+    await ensureOptionsUnlocked();
+    if (optionsLocked) return;
+    await Promise.all([loadSyncSettings(), refreshSyncOutboxStatus(), refresh({ silent: true })]);
+    setStatus("扩展已解锁，已重新加载数据。");
+  } catch {
+    // The next user action follows the same unlock path.
+  }
+}
+
 async function ensureOptionsUnlocked() {
   const status = await chrome.runtime.sendMessage({ type: "PASS_LOCK_STATUS" });
-  if (!status?.enabled || !status?.locked) return;
+  optionsLocked = Boolean(status?.enabled && status?.locked);
+  if (!optionsLocked) return;
   const password = String(window.prompt("请输入主密码以打开 Pass 设置", "") || "");
   if (!password) throw new Error("扩展已锁定，未加载账号数据");
   const result = await chrome.runtime.sendMessage({
@@ -519,6 +570,7 @@ async function ensureOptionsUnlocked() {
     payload: { password },
   });
   if (!result?.ok || result?.locked) throw new Error("主密码错误，未加载账号数据");
+  optionsLocked = false;
 }
 
 async function loadDeviceName() {
@@ -5134,20 +5186,6 @@ function formatTime(ms) {
   const minute = date.getMinutes();
   const second = date.getSeconds();
   return `${yy}-${month}-${day} ${hour}:${minute}:${second}`;
-}
-
-function normalizeLockPolicy(value) {
-  const policy = String(value || "");
-  if (policy === LOCK_POLICY_IDLE_TIMEOUT) return LOCK_POLICY_IDLE_TIMEOUT;
-  if (policy === LOCK_POLICY_ON_BACKGROUND) return LOCK_POLICY_ON_BACKGROUND;
-  return LOCK_POLICY_ONCE_UNTIL_QUIT;
-}
-
-function clampLockIdleMinutes(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return LOCK_IDLE_MINUTES_DEFAULT;
-  const rounded = Math.round(parsed);
-  return Math.min(Math.max(rounded, LOCK_IDLE_MINUTES_MIN), LOCK_IDLE_MINUTES_MAX);
 }
 
 function escapeHtml(value) {

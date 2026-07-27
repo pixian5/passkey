@@ -767,7 +767,17 @@
         merged.push(normalized);
       }
     }
-    return merged.filter(Boolean);
+    return merged.filter(Boolean).sort((left, right) => {
+      const leftRecordId = asString(left?.recordId || left?.id).trim().toLowerCase();
+      const rightRecordId = asString(right?.recordId || right?.id).trim().toLowerCase();
+      if (leftRecordId < rightRecordId) return -1;
+      if (leftRecordId > rightRecordId) return 1;
+      const leftAccountId = asString(left?.accountId).trim().toLowerCase();
+      const rightAccountId = asString(right?.accountId).trim().toLowerCase();
+      if (leftAccountId < rightAccountId) return -1;
+      if (leftAccountId > rightAccountId) return 1;
+      return 0;
+    });
   }
   function mergePasskeyCollections(local, remote, helpers) {
     const h = resolveHelpers(helpers);
@@ -1482,6 +1492,11 @@
       };
     });
   }
+  async function lockDataEncryption() {
+    unlockedEncryptionKey = null;
+    encryptionKeyPromise = null;
+    await chrome.storage.session.remove(STORAGE_KEY_SESSION_ENCRYPTION_KEY);
+  }
   async function touchDataBump(reason) {
     try {
       await chrome.storage.local.set({
@@ -1811,6 +1826,30 @@
     await setHistory([entry, ...current]);
   }
 
+  // lock_state.js
+  var STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
+  var STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
+  var STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
+  var STORAGE_KEY_LOCK_MASTER_CREDENTIAL = "pass.lock.masterCredential.v1";
+  var LOCK_POLICY_ONCE_UNTIL_QUIT = "onceUntilQuit";
+  var LOCK_POLICY_IDLE_TIMEOUT = "idleTimeout";
+  var LOCK_POLICY_ON_BACKGROUND = "onBackground";
+  var LOCK_IDLE_MINUTES_DEFAULT = 5;
+  var LOCK_IDLE_MINUTES_MIN = 1;
+  var LOCK_IDLE_MINUTES_MAX = 60;
+  var LOCK_STATE_CHANGED_MESSAGE = "PASS_LOCK_STATE_CHANGED";
+  function normalizeLockPolicy(value) {
+    const policy = String(value || "").trim();
+    if (policy === LOCK_POLICY_IDLE_TIMEOUT) return LOCK_POLICY_IDLE_TIMEOUT;
+    if (policy === LOCK_POLICY_ON_BACKGROUND) return LOCK_POLICY_ON_BACKGROUND;
+    return LOCK_POLICY_ONCE_UNTIL_QUIT;
+  }
+  function clampLockIdleMinutes(value) {
+    const parsed = Math.round(Number(value));
+    if (!Number.isFinite(parsed)) return LOCK_IDLE_MINUTES_DEFAULT;
+    return Math.min(Math.max(parsed, LOCK_IDLE_MINUTES_MIN), LOCK_IDLE_MINUTES_MAX);
+  }
+
   // sync_crypto.js
   var SYNC_ENCRYPTED_SCHEMA_V1 = "pass.sync.encrypted.v1";
   var SYNC_PLAINTEXT_SCHEMA = "pass.sync.bundle.v2";
@@ -1990,17 +2029,7 @@
   var SYNC_MODE_LOCAL_OVERWRITE_REMOTE = "localOverwriteRemote";
   var SYNC_PRIMARY_SERVER = "server";
   var SYNC_PRIMARY_WEBDAV = "webdav";
-  var STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
-  var STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
-  var STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
-  var STORAGE_KEY_LOCK_MASTER_CREDENTIAL = "pass.lock.masterCredential.v1";
   var SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
-  var LOCK_POLICY_ONCE_UNTIL_QUIT = "onceUntilQuit";
-  var LOCK_POLICY_IDLE_TIMEOUT = "idleTimeout";
-  var LOCK_POLICY_ON_BACKGROUND = "onBackground";
-  var LOCK_IDLE_MINUTES_MIN = 1;
-  var LOCK_IDLE_MINUTES_MAX = 60;
-  var LOCK_IDLE_MINUTES_DEFAULT = 5;
   var TOTP_PERIOD_SECONDS = 30;
   var TOTP_DIGITS = 6;
   var TOTP_REFRESH_INTERVAL_MS = 1e3;
@@ -2178,6 +2207,7 @@
   var syncSettingsSaveTimer = null;
   var lockSettingsSaveTimer = null;
   var syncInFlight = false;
+  var optionsLocked = false;
   async function acquireSyncOperationLock(owner) {
     const storage = chrome.storage?.session;
     if (!storage) return owner;
@@ -2206,6 +2236,7 @@
     setStatus(`\u521D\u59CB\u5316\u5931\u8D25: ${detail || "\u672A\u77E5\u9519\u8BEF\uFF0C\u8BF7\u67E5\u770B\u6269\u5C55 Service Worker \u63A7\u5236\u53F0"}\uFF1B\u6570\u636E\u672A\u88AB\u4FEE\u6539`);
   });
   async function init() {
+    chrome.runtime.onMessage.addListener(handleRuntimeMessage);
     await loadDeviceName();
     await loadLockSettings();
     await ensureOptionsUnlocked();
@@ -2395,9 +2426,51 @@
     dom.importGoogleAuthQrFilesBtn.addEventListener("click", importGoogleAuthenticatorExportQrFromFiles);
     dom.clearBtn.addEventListener("click", clearAll);
   }
+  function handleRuntimeMessage(message) {
+    if (message?.type !== LOCK_STATE_CHANGED_MESSAGE) return;
+    if (message?.payload?.locked) {
+      optionsLocked = true;
+      void lockDataEncryption();
+      clearOptionsSensitiveState();
+      setStatus("\u6269\u5C55\u5DF2\u9501\u5B9A\uFF0C\u8BF7\u8F93\u5165\u4E3B\u5BC6\u7801\u540E\u91CD\u65B0\u52A0\u8F7D\u8BBE\u7F6E\u3002");
+      return;
+    }
+    optionsLocked = false;
+    void resumeOptionsAfterExternalUnlock();
+  }
+  function clearOptionsSensitiveState() {
+    accountsRaw = [];
+    passkeysRaw = [];
+    foldersRaw = [];
+    historyEntries = [];
+    editingAccountId = null;
+    closeContextMenu();
+    closeSortModal();
+    closeHistoryModal();
+    closeAddSitesToFolderModal();
+    closeAllAccountsSearchFieldsPanel();
+    dom.syncWebdavPassword.value = "";
+    dom.syncServerToken.value = "";
+    dom.syncEncryptionKey.value = "";
+    dom.syncPreviousEncryptionKey.value = "";
+    dom.lockMasterPassword.value = "";
+    dom.lockMasterPasswordConfirm.value = "";
+    renderSidebar(accountsRaw);
+    renderCurrentView(accountsRaw);
+  }
+  async function resumeOptionsAfterExternalUnlock() {
+    try {
+      await ensureOptionsUnlocked();
+      if (optionsLocked) return;
+      await Promise.all([loadSyncSettings(), refreshSyncOutboxStatus(), refresh({ silent: true })]);
+      setStatus("\u6269\u5C55\u5DF2\u89E3\u9501\uFF0C\u5DF2\u91CD\u65B0\u52A0\u8F7D\u6570\u636E\u3002");
+    } catch {
+    }
+  }
   async function ensureOptionsUnlocked() {
     const status = await chrome.runtime.sendMessage({ type: "PASS_LOCK_STATUS" });
-    if (!status?.enabled || !status?.locked) return;
+    optionsLocked = Boolean(status?.enabled && status?.locked);
+    if (!optionsLocked) return;
     const password = String(window.prompt("\u8BF7\u8F93\u5165\u4E3B\u5BC6\u7801\u4EE5\u6253\u5F00 Pass \u8BBE\u7F6E", "") || "");
     if (!password) throw new Error("\u6269\u5C55\u5DF2\u9501\u5B9A\uFF0C\u672A\u52A0\u8F7D\u8D26\u53F7\u6570\u636E");
     const result = await chrome.runtime.sendMessage({
@@ -2405,6 +2478,7 @@
       payload: { password }
     });
     if (!result?.ok || result?.locked) throw new Error("\u4E3B\u5BC6\u7801\u9519\u8BEF\uFF0C\u672A\u52A0\u8F7D\u8D26\u53F7\u6570\u636E");
+    optionsLocked = false;
   }
   async function loadDeviceName() {
     const result = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
@@ -6241,18 +6315,6 @@
     const minute = date.getMinutes();
     const second = date.getSeconds();
     return `${yy}-${month}-${day} ${hour}:${minute}:${second}`;
-  }
-  function normalizeLockPolicy(value) {
-    const policy = String(value || "");
-    if (policy === LOCK_POLICY_IDLE_TIMEOUT) return LOCK_POLICY_IDLE_TIMEOUT;
-    if (policy === LOCK_POLICY_ON_BACKGROUND) return LOCK_POLICY_ON_BACKGROUND;
-    return LOCK_POLICY_ONCE_UNTIL_QUIT;
-  }
-  function clampLockIdleMinutes(value) {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return LOCK_IDLE_MINUTES_DEFAULT;
-    const rounded = Math.round(parsed);
-    return Math.min(Math.max(rounded, LOCK_IDLE_MINUTES_MIN), LOCK_IDLE_MINUTES_MAX);
   }
   function escapeHtml(value) {
     return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");

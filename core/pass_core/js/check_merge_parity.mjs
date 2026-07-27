@@ -156,6 +156,210 @@ function runRustMerge(local, remote) {
   return JSON.parse(result.stdout);
 }
 
+function deterministicRandom(seed) {
+  let value = seed >>> 0;
+  return () => {
+    value = (Math.imul(value, 1664525) + 1013904223) >>> 0;
+    return value;
+  };
+}
+
+function accountSignature(account) {
+  return {
+    recordId: account.recordId || account.id,
+    accountId: account.accountId,
+    sites: account.sites || [],
+    username: account.username,
+    password: account.password,
+    note: account.note,
+    isDeleted: Boolean(account.isDeleted),
+    isPermanentlyDeleted: Boolean(account.isPermanentlyDeleted),
+    deletedAtMs: account.deletedAtMs ?? null,
+    folderIds: account.folderIds || [],
+    passkeyCredentialIds: account.passkeyCredentialIds || [],
+  };
+}
+
+function payloadSignature(payload) {
+  return {
+    accounts: [...(payload.accounts || [])]
+      .map(accountSignature)
+      .sort((left, right) => String(left.recordId).localeCompare(String(right.recordId))),
+    folders: [...(payload.folders || [])]
+      .map((folder) => ({
+        id: folder.id,
+        isDeleted: Boolean(folder.isDeleted),
+        isPermanentlyDeleted: Boolean(folder.isPermanentlyDeleted),
+        regularAccountIds: folder.regularAccountIds || [],
+      }))
+      .sort((left, right) => String(left.id).localeCompare(String(right.id))),
+    passkeys: [...(payload.passkeys || [])]
+      .map((passkey) => ({
+        credentialIdB64u: passkey.credentialIdB64u,
+        signCount: passkey.signCount,
+        isDeleted: Boolean(passkey.isDeleted),
+        isPermanentlyDeleted: Boolean(passkey.isPermanentlyDeleted),
+      }))
+      .sort((left, right) => String(left.credentialIdB64u).localeCompare(String(right.credentialIdB64u))),
+    allRegularAccountIds: payload.allRegularAccountIds || [],
+    folderOrderIds: payload.folderOrderIds || [],
+  };
+}
+
+function makePropertyPayloads(seed) {
+  const random = deterministicRandom(seed);
+  const baseTime = 1_000 + (random() % 1_000);
+  const sharedId = "00000000-0000-0000-0000-000000000201";
+  const localOnlyId = "00000000-0000-0000-0000-000000000202";
+  const remoteOnlyId = "00000000-0000-0000-0000-000000000203";
+  const folderId = "folder-property";
+  const shared = {
+    accountId: "property-shared",
+    recordId: sharedId,
+    canonicalSite: "example.com",
+    usernameAtCreate: "alice",
+    username: "alice",
+    password: "base-password",
+    note: "base-note",
+    sites: ["example.com"],
+    folderIds: [folderId],
+    folderId,
+    passkeyCredentialIds: ["property-passkey"],
+    createdAtMs: baseTime,
+    updatedAtMs: baseTime,
+    createdDeviceName: "Base",
+    lastOperatedDeviceName: "Base",
+  };
+  const localOnly = {
+    ...shared,
+    accountId: "property-local",
+    recordId: localOnlyId,
+    canonicalSite: "local.example",
+    sites: ["local.example"],
+    username: "local",
+    usernameAtCreate: "local",
+    password: "local-secret",
+    passkeyCredentialIds: [],
+    createdAtMs: baseTime + 1,
+    updatedAtMs: baseTime + 1,
+    createdDeviceName: "Local",
+    lastOperatedDeviceName: "Local",
+  };
+  const remoteOnly = {
+    ...shared,
+    accountId: "property-remote",
+    recordId: remoteOnlyId,
+    canonicalSite: "remote.example",
+    sites: ["remote.example"],
+    username: "remote",
+    usernameAtCreate: "remote",
+    password: "remote-secret",
+    passkeyCredentialIds: [],
+    createdAtMs: baseTime + 2,
+    updatedAtMs: baseTime + 2,
+    createdDeviceName: "Remote",
+    lastOperatedDeviceName: "Remote",
+  };
+  const localShared = {
+    ...shared,
+    password: `local-${random()}`,
+    passwordUpdatedAtMs: baseTime + 10 + (random() % 3),
+    passwordUpdatedDeviceName: "Local",
+    updatedAtMs: baseTime + 10,
+    lastOperatedDeviceName: "Local",
+  };
+  const remoteShared = {
+    ...shared,
+    note: `remote-${random()}`,
+    noteUpdatedAtMs: baseTime + 10 + (random() % 3),
+    noteUpdatedDeviceName: "Remote",
+    updatedAtMs: baseTime + 10,
+    lastOperatedDeviceName: "Remote",
+  };
+  if (random() % 3 === 0) {
+    remoteShared.isDeleted = true;
+    remoteShared.isPermanentlyDeleted = true;
+    remoteShared.deletedAtMs = baseTime + 30;
+    remoteShared.deletedDeviceName = "Remote";
+    remoteShared.updatedAtMs = baseTime + 30;
+  }
+  const local = {
+    accounts: [localShared, localOnly],
+    folders: [{
+      id: folderId,
+      name: "属性测试",
+      regularAccountIds: [localOnlyId, sharedId],
+      regularOrderUpdatedAtMs: baseTime + 12,
+      regularOrderUpdatedDeviceName: "Local",
+      createdAtMs: baseTime,
+      updatedAtMs: baseTime + 12,
+    }],
+    passkeys: [{
+      credentialIdB64u: "property-passkey",
+      rpId: "example.com",
+      userName: "alice",
+      signCount: Number(random() % 10),
+      createdAtMs: baseTime,
+      updatedAtMs: baseTime + 10,
+    }],
+    allRegularAccountIds: [localOnlyId, sharedId],
+    allRegularOrderUpdatedAtMs: baseTime + 12,
+    allRegularOrderUpdatedDeviceName: "Local",
+    folderOrderIds: [folderId],
+    folderOrderUpdatedAtMs: baseTime + 12,
+    folderOrderUpdatedDeviceName: "Local",
+  };
+  const remote = {
+    accounts: [remoteShared, remoteOnly],
+    folders: [{
+      id: folderId,
+      name: "属性测试",
+      regularAccountIds: [sharedId, remoteOnlyId],
+      regularOrderUpdatedAtMs: baseTime + 13,
+      regularOrderUpdatedDeviceName: "Remote",
+      createdAtMs: baseTime,
+      updatedAtMs: baseTime + 13,
+    }],
+    passkeys: [{
+      credentialIdB64u: "property-passkey",
+      rpId: "example.com",
+      userName: "alice",
+      signCount: Number(random() % 10),
+      createdAtMs: baseTime,
+      updatedAtMs: baseTime + 10,
+    }],
+    allRegularAccountIds: [sharedId, remoteOnlyId],
+    allRegularOrderUpdatedAtMs: baseTime + 13,
+    allRegularOrderUpdatedDeviceName: "Remote",
+    folderOrderIds: [folderId],
+    folderOrderUpdatedAtMs: baseTime + 13,
+    folderOrderUpdatedDeviceName: "Remote",
+  };
+  return { local, remote };
+}
+
+function assertMergeProperties() {
+  for (let seed = 1; seed <= 48; seed += 1) {
+    const { local, remote } = makePropertyPayloads(seed);
+    const jsAB = mergeSyncPayloads(local, remote, helpers);
+    const jsBA = mergeSyncPayloads(remote, local, helpers);
+    assert.deepEqual(jsAB, jsBA, `JS merge must commute (seed ${seed})`);
+    const jsRound2 = mergeSyncPayloads(jsAB, jsAB, helpers);
+    assert.deepEqual(
+      mergeSyncPayloads(jsRound2, jsRound2, helpers),
+      jsRound2,
+      `JS merge must reach a fixed point (seed ${seed})`
+    );
+
+    const rustAB = runRustMerge(local, remote);
+    const rustBA = runRustMerge(remote, local);
+    assert.deepEqual(rustAB, rustBA, `Rust merge must commute (seed ${seed})`);
+    const rustRound2 = runRustMerge(rustAB, rustAB);
+    assert.deepEqual(runRustMerge(rustRound2, rustRound2), rustRound2, `Rust merge must reach a fixed point (seed ${seed})`);
+    assert.deepEqual(payloadSignature(jsRound2), payloadSignature(rustRound2), `JS↔Rust property parity (seed ${seed})`);
+  }
+}
+
 function main() {
   const golden = JSON.parse(fs.readFileSync(goldenPath, "utf8"));
   const vector = golden.cases.find((item) => item.name === "field-and-entity-merge");
@@ -250,7 +454,9 @@ function main() {
   assert.equal(safety.safe, empty.expectedSafe);
   assert.equal(safety.reasons[0], empty.reason);
 
-  console.log("merge parity OK: JS sync_merge_core ↔ Rust pass-merge v2");
+  assertMergeProperties();
+
+  console.log("merge parity OK: JS sync_merge_core ↔ Rust pass-merge v2 (48 deterministic property cases)");
 }
 
 main();

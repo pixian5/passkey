@@ -1,7 +1,7 @@
 # Pass 当前实现与设计决策基准
 
 > 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源；本轮完成后由版本脚本递增。
-> 当前为 `1.2.9`。
+> 当前为 `1.3.0`。
 >
 > 使用规则：当历史设计稿、路线图、旧 Swift 代码或界面文字与本文冲突时，先以本文和自动化门禁为准，再回到代码核对。没有测试或代码依据时，不得写“完整”“完全一致”“所有端均支持”。
 
@@ -123,13 +123,13 @@
 | 表面 | 业务数据 | 设置/密钥 | 当前原子性和并发边界 |
 |---|---|---|---|
 | Tauri | 本地 SQLite KV 中的加密 vault 集合 | 同步设置文件；启用应用锁时 Token/同步密钥单独密封 | 同一进程内多集合事务；本地加密文件使用临时文件、文件 `fsync`、rename、目录 `fsync` |
-| Docker Web | `/data/pass-web-vault-v1.enc` | 未启用应用锁时为 `pass-web-vault-key-v1`；启用后为主密码派生密钥包装的 `pass-web-vault-key-wrapper-v1.json` | 进程内 `Mutex` 串行；原子文件替换带 `fsync`；数据目录单实例锁拒绝第二写实例，**仍没有跨进程 revision/CAS** |
+| Docker Web | `/data/pass-web-vault-v1.enc` | 未启用应用锁时为 `pass-web-vault-key-v1`；启用后为主密码派生密钥包装的 `pass-web-vault-key-wrapper-v1.json` | 进程内 `Mutex` 串行；原子文件替换带 `fsync`；数据目录单实例锁拒绝第二写实例，**仍没有跨进程 revision/CAS**；非回环监听必须配置网页访问令牌，除非明确声明只经宿主机回环 Docker 映射访问 |
 | Chrome Web | `chrome.storage.local` 中的加密管理工作区 | 本地 AES-GCM 加密设置、UI 偏好和创建服务草稿 | 管理页写入后镜像后台；单次后台 IndexedDB 写事务覆盖账号/文件夹/Passkey/布局集合 |
 | Chrome 后台填充层 | IndexedDB `pass.local.db.v1` 业务集合镜像 | 数据密钥由扩展本地保存 | 填充/WebAuthn/后台同步写入后广播回管理页 |
 
 Docker Web 必须单实例运行。同一个 `/data` 目录不能同时挂给两个写进程，否则两个进程各自加载旧状态后可能发生最后写入者覆盖。Tauri 当前也没有为两个同时运行的应用实例提供文件级 revision/CAS 保证。
 
-Chrome 管理页和后台目前仍有两套运行时锁状态。数据通过消息镜像保持一致，但锁定/解锁事件和失效时机尚未收敛成单一状态机；排障时必须分别检查管理页和 service worker。
+Chrome 后台 Service Worker 的 `chrome.storage.session` 锁记录是唯一权威状态。popup 与管理页只订阅 `PASS_LOCK_STATE_CHANGED`：收到锁定事件时清除账号、历史、同步密钥输入和本地数据密钥缓存；收到解锁事件后重新从加密存储加载。页面可请求“立即锁定”，但不能自行把状态改为已解锁。
 
 `docs/sqlite-schema.sql` 与 `core/pass_core/crates/storage/migrations/0001_initial.sql` 是相同的 V1 规范化候选 DDL，包含 `accounts/op_logs/version_vectors` 等表。当前 Tauri 和旧 Swift 实际只创建 `kv` 表，Docker Web 不使用 SQLite；因此候选 DDL 不能当作当前数据库结构，也不能直接应用到 `pass-tauri.db`。
 
@@ -250,7 +250,7 @@ Bearer Token 和同步加密密钥都允许留空，项目不会自动生成 Bea
 
 ## 12. 已知尚未统一和不能误解的地方
 
-1. Chrome 管理页与后台锁状态仍是两套运行时状态机。
+1. Chrome 锁定状态已由后台收口，但锁配置和业务数据仍分别存放在 `chrome.storage.local`、`chrome.storage.session` 与 IndexedDB；后续迁移必须保持锁定事件先清密钥、再清业务视图的顺序。
 2. Chrome 的 JS merge 不是 Rust/WASM 运行时；正确性依赖黄金向量和桥接测试。
 3. 少数命令仍返回数字、布尔、字符串或 `null`；尚未完成统一对象 Schema。
 4. Docker Web 是单用户、单进程 vault，没有 Cookie 会话、多租户授权、WebAuthn 登录或跨进程 CAS。
@@ -285,7 +285,7 @@ cd apps/codex-tauri/src-tauri && cargo test --locked
 cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-版本 `1.2.9` 的同步复核基线：扩展测试 88 项、Core `pass-merge` 28 项、Tauri 24 项、Docker Web 11 项、同步服务器 Python 测试 35 项，JS/Rust merge parity 通过，Swift `swift build` 通过。完整命令矩阵、Docker Compose、JSON Schema、Shell 和 Swift/Xcode 等工程门禁仍需按发布流程执行；测试数量只描述该版本实际运行结果，测试增删后必须重新更新。
+版本 `1.3.0` 的同步复核基线：扩展测试 91 项、Core `pass-merge` 29 项、Tauri 24 项、Docker Web 12 项、同步服务器 Python 测试 35 项，JS/Rust merge parity 通过，Swift `swift build` 通过。同步 Core 还使用 48 组确定性性质用例验证 JS/Rust 的交换律、固定点和可见排序结果。账号实体数组按稳定 `recordId`（再按 `accountId`）作传输规范化，用户可见顺序仍只由顶层和文件夹顺序数组决定；这避免双端独立新增账号时因数组字节顺序不同而造成不必要的 ETag/CAS 冲突。完整命令矩阵、Docker Compose、JSON Schema、Shell 和 Swift/Xcode 等工程门禁仍需按发布流程执行；测试数量只描述该版本实际运行结果，测试增删后必须重新更新。
 
 关联文档：
 
