@@ -5538,9 +5538,35 @@ final class AccountStore: ObservableObject {
         return PassSyncPolicy.defaultDeviceName
     }
 
+    private func stableAccountSourceTieKey(_ account: PasswordAccount) -> String {
+        [
+            account.createdDeviceName,
+            account.lastOperatedDeviceName,
+            account.accountId,
+            account.canonicalSite,
+            account.usernameAtCreate,
+            account.id.uuidString
+        ]
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        .joined(separator: "\u{0}")
+    }
+
+    private func preferAccountSource(_ lhs: PasswordAccount, _ rhs: PasswordAccount) -> PasswordAccount {
+        stableAccountSourceTieKey(lhs) >= stableAccountSourceTieKey(rhs) ? lhs : rhs
+    }
+
     private func mergeSameAccount(_ lhs: PasswordAccount, _ rhs: PasswordAccount) -> PasswordAccount {
-        let primary = lhs.createdAtMs <= rhs.createdAtMs ? lhs : rhs
-        let secondary = lhs.createdAtMs <= rhs.createdAtMs ? rhs : lhs
+        let primary: PasswordAccount
+        if lhs.createdAtMs < rhs.createdAtMs {
+            primary = lhs
+        } else if rhs.createdAtMs < lhs.createdAtMs {
+            primary = rhs
+        } else {
+            primary = preferAccountSource(lhs, rhs)
+        }
+        let secondary = primary.id == lhs.id && stableAccountSourceTieKey(primary) == stableAccountSourceTieKey(lhs)
+            ? rhs
+            : lhs
         let leftActivityAt = resolvedAccountActivityAtMs(lhs)
         let rightActivityAt = resolvedAccountActivityAtMs(rhs)
 
@@ -5670,9 +5696,18 @@ final class AccountStore: ObservableObject {
         let leftPasskeyUpdatedAt = resolvedPasskeyUpdatedAtMs(lhs)
         let rightPasskeyUpdatedAt = resolvedPasskeyUpdatedAtMs(rhs)
         let passkeyUpdatedAtMs = max(leftPasskeyUpdatedAt, rightPasskeyUpdatedAt)
-        let passkeyUpdatedDeviceName = leftPasskeyUpdatedAt >= rightPasskeyUpdatedAt
-            ? firstNonEmptyDeviceName(lhs.passkeyUpdatedDeviceName, lhs.lastOperatedDeviceName)
-            : firstNonEmptyDeviceName(rhs.passkeyUpdatedDeviceName, rhs.lastOperatedDeviceName)
+        let passkeySource: PasswordAccount
+        if leftPasskeyUpdatedAt > rightPasskeyUpdatedAt {
+            passkeySource = lhs
+        } else if rightPasskeyUpdatedAt > leftPasskeyUpdatedAt {
+            passkeySource = rhs
+        } else {
+            passkeySource = preferAccountSource(lhs, rhs)
+        }
+        let passkeyUpdatedDeviceName = firstNonEmptyDeviceName(
+            passkeySource.passkeyUpdatedDeviceName,
+            passkeySource.lastOperatedDeviceName
+        )
 
         let latestContentUpdatedAt = max(
             usernameField.updatedAtMs,
@@ -5699,8 +5734,17 @@ final class AccountStore: ObservableObject {
             latestDeletedAt,
             primary.createdAtMs
         )
-        let newerAccount = lhs.updatedAtMs >= rhs.updatedAtMs ? lhs : rhs
-        let olderAccount = lhs.updatedAtMs >= rhs.updatedAtMs ? rhs : lhs
+        let newerAccount: PasswordAccount
+        if lhs.updatedAtMs > rhs.updatedAtMs {
+            newerAccount = lhs
+        } else if rhs.updatedAtMs > lhs.updatedAtMs {
+            newerAccount = rhs
+        } else {
+            newerAccount = preferAccountSource(lhs, rhs)
+        }
+        let olderAccount = newerAccount.id == lhs.id && stableAccountSourceTieKey(newerAccount) == stableAccountSourceTieKey(lhs)
+            ? rhs
+            : lhs
         let usernameAtCreate = firstNonEmptyString(
             primary.usernameAtCreate,
             secondary.usernameAtCreate,
@@ -5717,9 +5761,18 @@ final class AccountStore: ObservableObject {
             newerAccount.lastOperatedDeviceName,
             olderAccount.lastOperatedDeviceName
         )
-        let deletedDeviceNameCandidate = lhsDeletedAt >= rhsDeletedAt
-            ? lhs.deletedDeviceName
-            : rhs.deletedDeviceName
+        let deletedDeviceNameCandidate: String
+        if lhsDeletedAt > rhsDeletedAt {
+            deletedDeviceNameCandidate = lhs.deletedDeviceName
+        } else if rhsDeletedAt > lhsDeletedAt {
+            deletedDeviceNameCandidate = rhs.deletedDeviceName
+        } else {
+            let leftDevice = lhs.deletedDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let rightDevice = rhs.deletedDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            deletedDeviceNameCandidate = leftDevice >= rightDevice
+                ? lhs.deletedDeviceName
+                : rhs.deletedDeviceName
+        }
         let deletedDeviceName = keepPermanentlyDeleted || keepDeleted
             ? firstNonEmptyDeviceName(deletedDeviceNameCandidate, lastOperatedDeviceName)
             : ""
@@ -6075,9 +6128,12 @@ final class AccountStore: ObservableObject {
             return (rhsValue, rhsUpdatedAt, rhsDeviceName)
         }
         if lhsValue == rhsValue {
-            let device = lhsDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? rhsDeviceName
-                : lhsDeviceName
+            let lhsDevice = lhsDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let rhsDevice = rhsDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let candidate = lhsDevice >= rhsDevice ? lhsDeviceName : rhsDeviceName
+            let device = candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? PassSyncPolicy.defaultDeviceName
+                : candidate
             return (lhsValue, lhsUpdatedAt, device)
         }
         // Field clocks tied: never let an empty credential erase a non-empty one

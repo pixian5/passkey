@@ -351,18 +351,24 @@
     const parsed = Number(value || 0);
     return Number.isFinite(parsed) ? parsed : 0;
   }
-  function fallbackDeviceName(...candidates) {
-    for (const value of candidates) {
-      const trimmed = asString(value).trim();
-      if (trimmed) return trimmed;
-    }
-    return DEFAULT_DEVICE_NAME;
-  }
   function asString(value) {
     return String(value || "");
   }
   function stableTieValue(value) {
     return asString(value).trim().toLowerCase();
+  }
+  function accountSourceTieKey(account) {
+    return [
+      stableTieValue(account?.createdDeviceName),
+      stableTieValue(account?.lastOperatedDeviceName),
+      stableTieValue(account?.accountId),
+      stableTieValue(account?.canonicalSite),
+      stableTieValue(account?.usernameAtCreate),
+      stableTieValue(account?.recordId || account?.id)
+    ].join("\0");
+  }
+  function preferAccountSource(left, right) {
+    return accountSourceTieKey(left) >= accountSourceTieKey(right) ? left : right;
   }
   function requireFunction(helpers, name) {
     const candidate = helpers?.[name];
@@ -397,10 +403,13 @@
     const leftValue = asString(lhsValue);
     const rightValue = asString(rhsValue);
     if (leftValue === rightValue) {
+      const leftDevice2 = stableTieValue(lhsDeviceName);
+      const rightDevice2 = stableTieValue(rhsDeviceName);
+      const deviceName = leftDevice2 >= rightDevice2 ? asString(lhsDeviceName).trim() : asString(rhsDeviceName).trim();
       return {
         value: leftValue,
         updatedAtMs: leftUpdated,
-        deviceName: fallbackDeviceName(lhsDeviceName, rhsDeviceName)
+        deviceName: deviceName || DEFAULT_DEVICE_NAME
       };
     }
     if (!leftValue && rightValue) {
@@ -490,7 +499,7 @@
   function mergeSameAccount(lhs, rhs, h) {
     const left = h.normalizeAccountShape(lhs);
     const right = h.normalizeAccountShape(rhs);
-    const primary = asNumber(left.createdAtMs) <= asNumber(right.createdAtMs) ? left : right;
+    const primary = asNumber(left.createdAtMs) < asNumber(right.createdAtMs) ? left : asNumber(right.createdAtMs) < asNumber(left.createdAtMs) ? right : preferAccountSource(left, right);
     const secondary = primary === left ? right : left;
     const siteAliasStates = mergeRelationStates(left, right, "siteAliasStates", left.sites, right.sites, (id) => asString(id).trim().toLowerCase());
     const mergedSites = h.normalizeSites(Object.entries(siteAliasStates).filter(([, state]) => !state.isDeleted).map(([id]) => id));
@@ -554,7 +563,10 @@
       asNumber(left.passkeyUpdatedAtMs || left.updatedAtMs || left.createdAtMs),
       asNumber(right.passkeyUpdatedAtMs || right.updatedAtMs || right.createdAtMs)
     );
-    const passkeyUpdatedDeviceName = asNumber(left.passkeyUpdatedAtMs || left.updatedAtMs || left.createdAtMs) >= asNumber(right.passkeyUpdatedAtMs || right.updatedAtMs || right.createdAtMs) ? asString(left.passkeyUpdatedDeviceName).trim() || asString(left.lastOperatedDeviceName).trim() || DEFAULT_DEVICE_NAME : asString(right.passkeyUpdatedDeviceName).trim() || asString(right.lastOperatedDeviceName).trim() || DEFAULT_DEVICE_NAME;
+    const leftPasskeyActivity = asNumber(left.passkeyUpdatedAtMs || left.updatedAtMs || left.createdAtMs);
+    const rightPasskeyActivity = asNumber(right.passkeyUpdatedAtMs || right.updatedAtMs || right.createdAtMs);
+    const passkeySource = leftPasskeyActivity > rightPasskeyActivity ? left : rightPasskeyActivity > leftPasskeyActivity ? right : preferAccountSource(left, right);
+    const passkeyUpdatedDeviceName = asString(passkeySource.passkeyUpdatedDeviceName).trim() || asString(passkeySource.lastOperatedDeviceName).trim() || DEFAULT_DEVICE_NAME;
     const latestContentUpdatedAt = Math.max(
       usernameField.updatedAtMs,
       passwordField.updatedAtMs,
@@ -569,10 +581,10 @@
     const latestActivityAt = Math.max(latestContentUpdatedAt, left.updatedAtMs, right.updatedAtMs);
     const keepDeleted = latestDeletedAt > 0 && latestDeletedAt >= latestActivityAt;
     const keepPermanentlyDeleted = Boolean(left.isPermanentlyDeleted || right.isPermanentlyDeleted);
-    const deletedDeviceName = leftDeletedAt >= rightDeletedAt ? asString(left.deletedDeviceName).trim() : asString(right.deletedDeviceName).trim();
+    const deletedDeviceName = leftDeletedAt > rightDeletedAt ? asString(left.deletedDeviceName).trim() : rightDeletedAt > leftDeletedAt ? asString(right.deletedDeviceName).trim() : stableTieValue(left.deletedDeviceName) >= stableTieValue(right.deletedDeviceName) ? asString(left.deletedDeviceName).trim() : asString(right.deletedDeviceName).trim();
     const leftUpdatedAt = asNumber(left.updatedAtMs);
     const rightUpdatedAt = asNumber(right.updatedAtMs);
-    const newerAccount = leftUpdatedAt >= rightUpdatedAt ? left : right;
+    const newerAccount = leftUpdatedAt > rightUpdatedAt ? left : rightUpdatedAt > leftUpdatedAt ? right : preferAccountSource(left, right);
     const olderAccount = newerAccount === left ? right : left;
     const createdAtMs = Math.min(asNumber(left.createdAtMs), asNumber(right.createdAtMs));
     const updatedAtMs = Math.max(
@@ -971,8 +983,7 @@
       };
       const tombstoneAt = Math.max(
         asNumber(normalized.updatedAtMs),
-        asNumber(normalized.createdAtMs),
-        Date.now()
+        asNumber(normalized.createdAtMs)
       );
       const deviceName = asString(normalized.lastOperatedDeviceName).trim() || DEFAULT_DEVICE_NAME;
       for (const id of previousSet) {

@@ -140,7 +140,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.2.8";
+  var PASS_EXTENSION_VERSION = "1.2.9";
 
   // content.js
   var PASS_LOGIN_COOLDOWN_MS = 5e3;

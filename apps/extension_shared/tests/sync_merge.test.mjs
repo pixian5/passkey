@@ -8,6 +8,7 @@ import {
   mergeAccountCollections,
   mergeFolderCollections,
   mergePasskeyCollections,
+  mergeSyncPayloads,
   reconcileAccountFolders,
   summarizeSyncPayload,
 } from "../../../core/pass_core/js/sync_merge_core.js";
@@ -589,4 +590,145 @@ test("合并结果缺少远端稳定 ID 时必须阻止写入", () => {
   );
   assert.equal(safety.safe, false);
   assert.deepEqual(safety.reasons, ["REMOTE_ACCOUNTS_DROPPED"]);
+});
+
+test("两份独立客户端数据合并后可往返收敛并保留字段、墓碑和排序", () => {
+  const baseAccount = helpers.normalizeAccountShape({
+    accountId: "example-user",
+    recordId: "record-shared",
+    canonicalSite: "example.com",
+    sites: ["example.com"],
+    username: "alice",
+    password: "base-password",
+    note: "base-note",
+    folderIds: ["folder-work"],
+    folderId: "folder-work",
+    updatedAtMs: 100,
+    lastOperatedDeviceName: "Base",
+  });
+  const secondAccount = helpers.normalizeAccountShape({
+    accountId: "second-user",
+    recordId: "record-second",
+    canonicalSite: "example.net",
+    sites: ["example.net"],
+    username: "bob",
+    password: "second-password",
+    folderIds: ["folder-work"],
+    folderId: "folder-work",
+    updatedAtMs: 100,
+    lastOperatedDeviceName: "Base",
+  });
+  const baseFolder = helpers.normalizeFolderShape({
+    id: "folder-work",
+    name: "工作",
+    regularAccountIds: ["record-shared", "record-second"],
+    regularOrderUpdatedAtMs: 100,
+    regularOrderUpdatedDeviceName: "Base",
+    updatedAtMs: 100,
+    isDeleted: false,
+    isPermanentlyDeleted: false,
+  });
+  const base = {
+    accounts: [baseAccount, secondAccount],
+    folders: [baseFolder],
+    passkeys: [],
+    allRegularAccountIds: ["record-shared", "record-second"],
+    allRegularOrderUpdatedAtMs: 100,
+    allRegularOrderUpdatedDeviceName: "Base",
+    folderOrderIds: ["folder-work"],
+    folderOrderUpdatedAtMs: 100,
+    folderOrderUpdatedDeviceName: "Base",
+  };
+
+  // Client A edits the password and adds a new account/order entry.
+  const clientA = structuredClone(base);
+  clientA.accounts[0] = helpers.normalizeAccountShape({
+    ...clientA.accounts[0],
+    password: "password-from-a",
+    passwordUpdatedAtMs: 200,
+    passwordUpdatedDeviceName: "Client-A",
+    updatedAtMs: 200,
+    lastOperatedDeviceName: "Client-A",
+  });
+  const addedByA = helpers.normalizeAccountShape({
+    accountId: "a-only",
+    recordId: "record-a-only",
+    canonicalSite: "a.example",
+    sites: ["a.example"],
+    username: "a-user",
+    password: "a-password",
+    folderIds: ["folder-work"],
+    folderId: "folder-work",
+    createdAtMs: 210,
+    updatedAtMs: 210,
+    createdDeviceName: "Client-A",
+    lastOperatedDeviceName: "Client-A",
+  });
+  clientA.accounts.push(addedByA);
+  clientA.folders[0].regularAccountIds = ["record-a-only", "record-shared", "record-second"];
+  clientA.folders[0].regularOrderUpdatedAtMs = 210;
+  clientA.folders[0].regularOrderUpdatedDeviceName = "Client-A";
+  clientA.allRegularAccountIds = ["record-a-only", "record-shared", "record-second"];
+  clientA.allRegularOrderUpdatedAtMs = 210;
+  clientA.allRegularOrderUpdatedDeviceName = "Client-A";
+
+  // Client B independently edits an unrelated field and permanently deletes
+  // the old second account. The tombstone must win over A's stale active copy.
+  const clientB = structuredClone(base);
+  clientB.accounts[0] = helpers.normalizeAccountShape({
+    ...clientB.accounts[0],
+    note: "note-from-b",
+    noteUpdatedAtMs: 220,
+    noteUpdatedDeviceName: "Client-B",
+    updatedAtMs: 220,
+    lastOperatedDeviceName: "Client-B",
+  });
+  clientB.accounts[1] = helpers.normalizeAccountShape({
+    ...clientB.accounts[1],
+    isDeleted: true,
+    isPermanentlyDeleted: true,
+    deletedAtMs: 230,
+    deletedDeviceName: "Client-B",
+    updatedAtMs: 230,
+    lastOperatedDeviceName: "Client-B",
+    password: "",
+    totpSecret: "",
+    recoveryCodes: "",
+  });
+  clientB.folders[0].regularAccountIds = ["record-shared"];
+  clientB.folders[0].regularOrderUpdatedAtMs = 225;
+  clientB.folders[0].regularOrderUpdatedDeviceName = "Client-B";
+  clientB.allRegularAccountIds = ["record-shared"];
+  clientB.allRegularOrderUpdatedAtMs = 225;
+  clientB.allRegularOrderUpdatedDeviceName = "Client-B";
+
+  const mergedAB = mergeSyncPayloads(clientA, clientB, helpers);
+  const mergedBA = mergeSyncPayloads(clientB, clientA, helpers);
+  assert.deepEqual(mergedAB, mergedBA, "客户端合并顺序不能改变最终结果");
+
+  const shared = mergedAB.accounts.find((item) => item.recordId === "record-shared");
+  assert.equal(shared.password, "password-from-a");
+  assert.equal(shared.note, "note-from-b");
+  const deleted = mergedAB.accounts.find((item) => item.recordId === "record-second");
+  assert.equal(deleted.isPermanentlyDeleted, true);
+  assert.equal(deleted.isDeleted, true);
+  assert.ok(mergedAB.accounts.some((item) => item.recordId === "record-a-only"));
+
+  // A and B write the same merged payload locally. Legacy/incomplete shapes
+  // may materialize defaults once, but subsequent rounds must reach a fixed
+  // point without changing any business field, tombstone, or order.
+  const round2 = mergeSyncPayloads(mergedAB, mergedAB, helpers);
+  const round3 = mergeSyncPayloads(round2, round2, helpers);
+  assert.deepEqual(round3, round2, "归一化完成后的后续同步必须保持固定点");
+
+  const convergedShared = round2.accounts.find((item) => item.recordId === "record-shared");
+  assert.equal(convergedShared.password, "password-from-a");
+  assert.equal(convergedShared.note, "note-from-b");
+  const convergedDeleted = round2.accounts.find((item) => item.recordId === "record-second");
+  assert.equal(convergedDeleted.isPermanentlyDeleted, true);
+  assert.equal(convergedDeleted.isDeleted, true);
+  assert.ok(round2.accounts.some((item) => item.recordId === "record-a-only"));
+  assert.deepEqual(round2.allRegularAccountIds, ["record-shared", "record-a-only"]);
+  const convergedFolder = round2.folders.find((item) => item.id === "folder-work");
+  assert.deepEqual(convergedFolder.regularAccountIds, ["record-shared", "record-a-only"]);
 });

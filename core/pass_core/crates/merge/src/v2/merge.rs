@@ -44,6 +44,29 @@ fn merge_pinned_views(
     (!merged.is_empty()).then_some(Value::Object(merged))
 }
 
+fn account_source_tie_key(account: &PasswordAccount) -> String {
+    [
+        stable_tie_value(&account.created_device_name),
+        stable_tie_value(&account.last_operated_device_name),
+        stable_tie_value(&account.account_id),
+        stable_tie_value(&account.canonical_site),
+        stable_tie_value(&account.username_at_create),
+        stable_tie_value(&account.resolved_record_id()),
+    ]
+    .join("\u{0}")
+}
+
+fn prefer_account_source<'a>(
+    left: &'a PasswordAccount,
+    right: &'a PasswordAccount,
+) -> &'a PasswordAccount {
+    if account_source_tie_key(left) >= account_source_tie_key(right) {
+        left
+    } else {
+        right
+    }
+}
+
 fn newer_field(
     lhs_value: &str,
     lhs_updated_at: i64,
@@ -69,10 +92,20 @@ fn newer_field(
         };
     }
     if lhs_value == rhs_value {
+        let device_name = if stable_tie_value(lhs_device_name) >= stable_tie_value(rhs_device_name)
+        {
+            lhs_device_name.trim()
+        } else {
+            rhs_device_name.trim()
+        };
         return FieldWinner {
             value: lhs_value.to_string(),
             updated_at_ms: lhs_updated_at,
-            device_name: first_non_empty(&[lhs_device_name, rhs_device_name], DEFAULT_DEVICE_NAME),
+            device_name: if device_name.is_empty() {
+                DEFAULT_DEVICE_NAME.to_string()
+            } else {
+                device_name.to_string()
+            },
         };
     }
     // Field clocks tied: never let an empty credential erase a non-empty one.
@@ -226,10 +259,17 @@ fn merge_folder_membership_states(
 fn merge_same_account(lhs: PasswordAccount, rhs: PasswordAccount) -> PasswordAccount {
     let left = normalize_account_shape(lhs);
     let right = normalize_account_shape(rhs);
-    let (primary, secondary) = if left.created_at_ms <= right.created_at_ms {
-        (&left, &right)
+    let primary = if left.created_at_ms < right.created_at_ms {
+        &left
+    } else if right.created_at_ms < left.created_at_ms {
+        &right
     } else {
-        (&right, &left)
+        prefer_account_source(&left, &right)
+    };
+    let secondary = if std::ptr::eq(primary, &left) {
+        &right
+    } else {
+        &left
     };
 
     let site_alias_states = merge_relation_states(
@@ -336,23 +376,20 @@ fn merge_same_account(lhs: PasswordAccount, rhs: PasswordAccount) -> PasswordAcc
     let left_passkey_at = left.passkey_activity_at_ms();
     let right_passkey_at = right.passkey_activity_at_ms();
     let passkey_updated_at_ms = left_passkey_at.max(right_passkey_at);
-    let passkey_updated_device_name = if left_passkey_at >= right_passkey_at {
-        first_non_empty(
-            &[
-                &left.passkey_updated_device_name,
-                &left.last_operated_device_name,
-            ],
-            DEFAULT_DEVICE_NAME,
-        )
+    let passkey_source = if left_passkey_at > right_passkey_at {
+        &left
+    } else if right_passkey_at > left_passkey_at {
+        &right
     } else {
-        first_non_empty(
-            &[
-                &right.passkey_updated_device_name,
-                &right.last_operated_device_name,
-            ],
-            DEFAULT_DEVICE_NAME,
-        )
+        prefer_account_source(&left, &right)
     };
+    let passkey_updated_device_name = first_non_empty(
+        &[
+            &passkey_source.passkey_updated_device_name,
+            &passkey_source.last_operated_device_name,
+        ],
+        DEFAULT_DEVICE_NAME,
+    );
 
     let latest_content_updated_at = username_field
         .updated_at_ms
@@ -378,15 +415,28 @@ fn merge_same_account(lhs: PasswordAccount, rhs: PasswordAccount) -> PasswordAcc
         .max(right.updated_at_ms);
     let keep_deleted = latest_deleted_at > 0 && latest_deleted_at >= latest_activity_at;
     let keep_permanently_deleted = left.is_permanently_deleted || right.is_permanently_deleted;
-    let deleted_device_name = if left_deleted_at >= right_deleted_at {
+    let deleted_device_name = if left_deleted_at > right_deleted_at {
+        left.deleted_device_name.trim().to_string()
+    } else if right_deleted_at > left_deleted_at {
+        right.deleted_device_name.trim().to_string()
+    } else if stable_tie_value(&left.deleted_device_name)
+        >= stable_tie_value(&right.deleted_device_name)
+    {
         left.deleted_device_name.trim().to_string()
     } else {
         right.deleted_device_name.trim().to_string()
     };
-    let (newer_account, older_account) = if left.updated_at_ms >= right.updated_at_ms {
-        (&left, &right)
+    let newer_account = if left.updated_at_ms > right.updated_at_ms {
+        &left
+    } else if right.updated_at_ms > left.updated_at_ms {
+        &right
     } else {
-        (&right, &left)
+        prefer_account_source(&left, &right)
+    };
+    let older_account = if std::ptr::eq(newer_account, &left) {
+        &right
+    } else {
+        &left
     };
 
     let created_at_ms = left.created_at_ms.min(right.created_at_ms);
@@ -1266,6 +1316,42 @@ mod order_tests {
             ..Default::default()
         };
         assert_eq!(merge_account_collections(vec![left], vec![right]).len(), 2);
+    }
+
+    #[test]
+    fn equal_timestamps_use_stable_account_source_in_both_merge_directions() {
+        let record_id = "00000000-0000-0000-0000-000000000001";
+        let left = PasswordAccount {
+            record_id: Some(record_id.into()),
+            id: Some(record_id.into()),
+            account_id: "shared-account".into(),
+            canonical_site: "example.com".into(),
+            username_at_create: "alice".into(),
+            created_device_name: "device-a".into(),
+            last_operated_device_name: "device-a".into(),
+            passkey_updated_device_name: "device-a".into(),
+            deleted_device_name: "device-a".into(),
+            created_at_ms: 100,
+            updated_at_ms: 200,
+            passkey_updated_at_ms: 200,
+            deleted_at_ms: Some(200),
+            is_deleted: true,
+            ..Default::default()
+        };
+        let right = PasswordAccount {
+            created_device_name: "device-b".into(),
+            last_operated_device_name: "device-b".into(),
+            passkey_updated_device_name: "device-b".into(),
+            deleted_device_name: "device-b".into(),
+            ..left.clone()
+        };
+
+        let left_then_right = merge_account_collections(vec![left.clone()], vec![right.clone()]);
+        let right_then_left = merge_account_collections(vec![right], vec![left]);
+        assert_eq!(left_then_right, right_then_left);
+        assert_eq!(left_then_right[0].created_device_name, "device-b");
+        assert_eq!(left_then_right[0].passkey_updated_device_name, "device-b");
+        assert_eq!(left_then_right[0].deleted_device_name, "device-b");
     }
 
     #[test]

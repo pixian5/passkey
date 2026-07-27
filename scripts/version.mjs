@@ -193,6 +193,18 @@ function setVersion(version) {
     );
   }
   replaceExactly(
+    "apps/app_macos/project.autofill.yml",
+    /(CFBundleShortVersionString:\s*")[^"]+("\s*$)/m,
+    `$1${version}$2`,
+    "AutoFill CFBundleShortVersionString",
+  );
+  replaceExactly(
+    "apps/app_macos/project.autofill.yml",
+    /(CFBundleVersion:\s*")[^"]+("\s*$)/m,
+    `$1${platformBuildNumber(version)}$2`,
+    "AutoFill CFBundleVersion",
+  );
+  replaceExactly(
     androidGradleTarget,
     /(versionCode\s*=\s*)\d+/,
     `$1${platformBuildNumber(version)}`,
@@ -277,6 +289,15 @@ function collectVersions() {
     const buildValues = [...fs.readFileSync(absolute(target), "utf8").matchAll(/CURRENT_PROJECT_VERSION\s*=\s*([^;]+);/g)];
     buildValues.forEach((match, index) => entries.push([`${target}:buildNumber[${index}]`, Number(match[1].trim())]));
   }
+  const autofillProject = fs.readFileSync(absolute("apps/app_macos/project.autofill.yml"), "utf8");
+  entries.push([
+    "apps/app_macos/project.autofill.yml:CFBundleShortVersionString",
+    autofillProject.match(/CFBundleShortVersionString:\s*"([^"]+)"/)?.[1],
+  ]);
+  entries.push([
+    "apps/app_macos/project.autofill.yml:buildNumber",
+    Number(autofillProject.match(/CFBundleVersion:\s*"([^"]+)"/)?.[1]),
+  ]);
   const androidGradle = fs.readFileSync(absolute(androidGradleTarget), "utf8");
   entries.push([`${androidGradleTarget}:versionName`, androidGradle.match(/versionName\s*=\s*"([^"]+)"/)?.[1]]);
   entries.push([`${androidGradleTarget}:versionCode`, Number(androidGradle.match(/versionCode\s*=\s*(\d+)/)?.[1])]);

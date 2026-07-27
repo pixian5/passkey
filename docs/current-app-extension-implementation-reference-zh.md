@@ -1,7 +1,7 @@
 # Pass 当前实现与设计决策基准
 
 > 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源；本轮完成后由版本脚本递增。
-> 当前为 `1.2.8`。
+> 当前为 `1.2.9`。
 >
 > 使用规则：当历史设计稿、路线图、旧 Swift 代码或界面文字与本文冲突时，先以本文和自动化门禁为准，再回到代码核对。没有测试或代码依据时，不得写“完整”“完全一致”“所有端均支持”。
 
@@ -95,6 +95,9 @@
 
 - Tauri/Web 的运行时权威是 Rust `pass_merge::v2`；Chrome 使用 JS 同源实现并由黄金向量约束。
 - 标量字段采用字段级 LWW：先比较字段时间戳，再比较设备名和值，保证相同输入得到确定结果。
+- 账号级元数据时间戳并列时，按创建设备、最后操作设备、历史账号 ID、主站点、创建用户名和稳定记录 ID 组成的稳定键选择来源；正反向输入不能改变结果。
+- 纯合并函数禁止读取当前墙钟。关系墓碑只能使用载荷中已有的活动时间，否则预览、条件写入重试和下一轮同步会不断产生新状态。
+- 旧载荷允许在首轮归一化时补齐默认字段；归一化后再次合并必须达到固定点。双客户端回归测试还必须验证字段、永久删除墓碑、全局顺序和文件夹顺序不变。
 - 站点别名归并在安全检查前执行；别名归并不能越过永久删除墓碑。
 - `pinnedViews` 按作用域键合并，同一作用域由较新的账号裁决，单侧作用域保留。
 - 关系集合不能只做数组并集；移除关系时必须保留关系墓碑。
@@ -267,6 +270,7 @@ Bearer Token 和同步加密密钥都允许留空，项目不会自动生成 Bea
 18. 自建服务器条件写入统一处理 412/428；Tauri 一次逻辑同步复用同一幂等键，扩展重试也复用稳定键。WebDAV 依赖 ETag，不宣称服务端幂等。
 19. 扩展选项页和后台自动同步共享 `chrome.storage.session` 短时互斥锁，异常退出由过期时间释放。
 20. 服务端 `X-Sync-Revision` 是 scope 内连续 revision；`version_id` 仍是全局历史行 ID，旧数据库启动时会补齐 scope revision。
+21. 合并交换律不仅约束密码等字段值，也约束创建设备、最后操作设备、Passkey 更新设备和删除设备等元数据；任何 `>=` 隐式左侧优先或合并过程读取 `Date.now()` 都会破坏双客户端收敛。
 
 ## 13. 验证入口和当前基线
 
@@ -281,7 +285,7 @@ cd apps/codex-tauri/src-tauri && cargo test --locked
 cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-版本 `1.2.4` 的同步复核基线：扩展测试 85 项、Core `pass-merge` 27 项、Tauri 24 项、Docker Web 11 项、同步服务器 Python 测试 35 项，JS/Rust merge parity 通过，Swift `xcodebuild build` 通过。完整命令矩阵、Docker Compose、JSON Schema、Shell 和 Swift/Xcode 等工程门禁仍需按发布流程执行；测试数量只描述该版本实际运行结果，测试增删后必须重新更新。
+版本 `1.2.9` 的同步复核基线：扩展测试 88 项、Core `pass-merge` 28 项、Tauri 24 项、Docker Web 11 项、同步服务器 Python 测试 35 项，JS/Rust merge parity 通过，Swift `swift build` 通过。完整命令矩阵、Docker Compose、JSON Schema、Shell 和 Swift/Xcode 等工程门禁仍需按发布流程执行；测试数量只描述该版本实际运行结果，测试增删后必须重新更新。
 
 关联文档：
 
