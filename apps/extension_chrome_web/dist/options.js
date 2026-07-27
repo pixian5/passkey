@@ -593,10 +593,14 @@
       isPinned: Boolean(newerAccount.isPinned),
       pinnedSortOrder: newerAccount.pinnedSortOrder == null ? null : asNumber(newerAccount.pinnedSortOrder),
       regularSortOrder: newerAccount.regularSortOrder == null ? null : asNumber(newerAccount.regularSortOrder),
-      // Pinned state is UI metadata, but it is still synchronized account state.
-      // Keep the newest complete map instead of accidentally dropping it during
-      // a field merge; the native client follows the same last-writer rule.
-      pinnedViews: newerAccount.pinnedViews || olderAccount.pinnedViews || null,
+      // Pinned state is synchronized per view scope. Keep views that only exist
+      // on one side, while the newer account wins when both sides edited the
+      // same scope.
+      pinnedViews: mergePinnedViews(
+        left.pinnedViews,
+        right.pinnedViews,
+        newerAccount === right
+      ),
       folderId: mergedFolderIds[0] || (newerAccount.folderId == null ? null : h.normalizeFolderId(newerAccount.folderId)),
       folderIds: mergedFolderIds,
       folderMembershipStates,
@@ -742,7 +746,8 @@
       const existingIndex = merged.findIndex((candidate) => {
         const candidateAccountId = asString(candidate.accountId).trim();
         const candidateRecordId = asString(candidate.recordId || candidate.id).trim().toLowerCase();
-        return accountId && candidateAccountId === accountId || recordId && candidateRecordId === recordId;
+        if (recordId) return candidateRecordId === recordId;
+        return !candidateRecordId && accountId && candidateAccountId === accountId;
       });
       if (existingIndex >= 0) {
         merged[existingIndex] = mergeSameAccount(merged[existingIndex], normalized, h);
@@ -1006,6 +1011,21 @@
     }
     return result;
   }
+  function mergePinnedViews(leftValue, rightValue, preferRight) {
+    const left = leftValue && typeof leftValue === "object" && !Array.isArray(leftValue) ? leftValue : {};
+    const right = rightValue && typeof rightValue === "object" && !Array.isArray(rightValue) ? rightValue : {};
+    const merged = {};
+    for (const key of /* @__PURE__ */ new Set([...Object.keys(left), ...Object.keys(right)])) {
+      if (Object.prototype.hasOwnProperty.call(left, key) && Object.prototype.hasOwnProperty.call(right, key)) {
+        merged[key] = preferRight ? right[key] : left[key];
+      } else if (Object.prototype.hasOwnProperty.call(left, key)) {
+        merged[key] = left[key];
+      } else {
+        merged[key] = right[key];
+      }
+    }
+    return Object.keys(merged).length > 0 ? merged : null;
+  }
   function missingIdentities(source, target, identityFn) {
     const sourceIds = identitySet(source, identityFn);
     const targetIds = identitySet(target, identityFn);
@@ -1018,8 +1038,8 @@
     const passkeys = Array.isArray(payload?.passkeys) ? payload.passkeys.map(h.normalizePasskeyShape) : [];
     return {
       accounts: accounts.filter((item) => !item?.isPermanentlyDeleted).length,
-      activeAccounts: accounts.filter((item) => !item?.isDeleted).length,
-      deletedAccounts: accounts.filter((item) => Boolean(item?.isDeleted)).length,
+      activeAccounts: accounts.filter((item) => !item?.isDeleted && !item?.isPermanentlyDeleted).length,
+      deletedAccounts: accounts.filter((item) => Boolean(item?.isDeleted) && !item?.isPermanentlyDeleted).length,
       folders: folders.filter((item) => !item?.isPermanentlyDeleted).length,
       passkeys: passkeys.filter((item) => !item?.isPermanentlyDeleted).length,
       accountIds: identitySet(accounts, (item) => asString(item?.recordId || item?.id || item?.accountId).trim().toLowerCase()),
@@ -1974,6 +1994,33 @@
   var TOTP_DIGITS = 6;
   var TOTP_REFRESH_INTERVAL_MS = 1e3;
   var OPTIONS_TOAST_DURATION_MS = 3e3;
+  var SYNC_HTTP_TIMEOUT_MS = 3e4;
+  async function fetchWithSyncTimeout(url, options = {}, stage = "\u540C\u6B65\u8BF7\u6C42") {
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), SYNC_HTTP_TIMEOUT_MS) : null;
+    try {
+      return await fetch(url, controller ? { ...options, signal: controller.signal } : options);
+    } catch (error) {
+      if (controller?.signal.aborted) {
+        throw new Error(`${stage}\u8D85\u65F6\uFF08${SYNC_HTTP_TIMEOUT_MS / 1e3} \u79D2\uFF09`);
+      }
+      throw error;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+  function normalizeWebdavRemotePath(value) {
+    const raw = String(value || "").trim();
+    if (!raw || /^[a-z][a-z\d+.-]*:/i.test(raw) || raw.includes("?") || raw.includes("#")) {
+      throw new Error("WebDAV \u8FDC\u7AEF\u8DEF\u5F84\u5FC5\u987B\u662F\u76F8\u5BF9\u8DEF\u5F84\uFF0C\u4E14\u4E0D\u80FD\u5305\u542B\u67E5\u8BE2\u4E32\u6216\u951A\u70B9");
+    }
+    const path = raw.replace(/^\/+/, "");
+    const parts = path.split("/");
+    if (parts.some((part) => !part || part === "." || part === "..")) {
+      throw new Error("WebDAV \u8FDC\u7AEF\u8DEF\u5F84\u5305\u542B\u975E\u6CD5\u8DEF\u5F84\u6BB5");
+    }
+    return parts.join("/");
+  }
   function normalizeLegacySelfHostedServerBaseUrl(value) {
     const trimmed = String(value || "").trim();
     if (!trimmed) return DEFAULT_SELF_HOSTED_SERVER_BASE_URL;
@@ -2414,6 +2461,9 @@
       folderOrderUpdatedDeviceName: String(payload?.folderOrderUpdatedDeviceName || ""),
       deviceName: String(payload?.deviceName || "")
     };
+  }
+  function visibleSyncCount(values) {
+    return (Array.isArray(values) ? values : []).filter((item) => item?.isPermanentlyDeleted !== true).length;
   }
   function syncPayloadEquals(lhs, rhs) {
     return JSON.stringify(sortSyncPayloadCollections(normalizeSyncPayloadShape(lhs))) === JSON.stringify(sortSyncPayloadCollections(normalizeSyncPayloadShape(rhs)));
@@ -2934,7 +2984,7 @@
       const text = JSON.stringify(encrypted, null, 2);
       await downloadTextFile(fileName, text, "application/json");
       setStatus(
-        `\u540C\u6B65\u5305\u5DF2\u5BFC\u51FA${encryptionKey ? "\uFF08\u5DF2\u52A0\u5BC6\uFF09" : "\uFF08\u672A\u52A0\u5BC6\uFF0C\u8BF7\u59A5\u5584\u4FDD\u7BA1\uFF09"}\uFF1A${bundle.payload.accounts.length} \u6761\u8D26\u53F7\uFF0C${bundle.payload.passkeys.length} \u6761\u901A\u884C\u5BC6\u94A5\uFF0C${bundle.payload.folders.length} \u4E2A\u6587\u4EF6\u5939`
+        `\u540C\u6B65\u5305\u5DF2\u5BFC\u51FA${encryptionKey ? "\uFF08\u5DF2\u52A0\u5BC6\uFF09" : "\uFF08\u672A\u52A0\u5BC6\uFF0C\u8BF7\u59A5\u5584\u4FDD\u7BA1\uFF09"}\uFF1A${visibleSyncCount(bundle.payload.accounts)} \u6761\u8D26\u53F7\uFF0C${visibleSyncCount(bundle.payload.passkeys)} \u6761\u901A\u884C\u5BC6\u94A5\uFF0C${visibleSyncCount(bundle.payload.folders)} \u4E2A\u6587\u4EF6\u5939`
       );
     } catch (error) {
       setStatus(`\u540C\u6B65\u5305\u5BFC\u51FA\u5931\u8D25\uFF1A${error.message}`);
@@ -2991,7 +3041,7 @@
       return;
     }
     const confirmed = window.confirm(
-      `\u540C\u6B65\u5305\u5408\u5E76\u9884\u89C8\uFF1A\u8D26\u53F7 ${localAccounts.length} \u2192 ${mergedPayload.accounts.length}\uFF0C\u901A\u884C\u5BC6\u94A5 ${localPasskeys.length} \u2192 ${mergedPayload.passkeys.length}\uFF0C\u6587\u4EF6\u5939 ${localFolders.length} \u2192 ${mergedPayload.folders.length}
+      `\u540C\u6B65\u5305\u5408\u5E76\u9884\u89C8\uFF1A\u8D26\u53F7 ${visibleSyncCount(localAccounts)} \u2192 ${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPasskeys)} \u2192 ${visibleSyncCount(mergedPayload.passkeys)}\uFF0C\u6587\u4EF6\u5939 ${visibleSyncCount(localFolders)} \u2192 ${visibleSyncCount(mergedPayload.folders)}
 
 \u786E\u8BA4\u5199\u5165\u672C\u5730\u5417\uFF1F`
     );
@@ -3002,12 +3052,12 @@
     await saveLocalSafetySnapshot("\u5BFC\u5165\u540C\u6B65\u5305\u524D\u81EA\u52A8\u5907\u4EFD");
     await writeBusinessDataToStore(mergedPayload);
     await appendHistory(
-      `\u5BFC\u5165\u540C\u6B65\u5305\u5E76\u5408\u5E76\uFF1A\u8D26\u53F7 ${localAccounts.length}->${mergedPayload.accounts.length}\uFF0C\u901A\u884C\u5BC6\u94A5 ${localPasskeys.length}->${mergedPayload.passkeys.length}`
+      `\u5BFC\u5165\u540C\u6B65\u5305\u5E76\u5408\u5E76\uFF1A\u8D26\u53F7 ${visibleSyncCount(localAccounts)}->${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPasskeys)}->${visibleSyncCount(mergedPayload.passkeys)}`
     );
     editingAccountId = null;
     await refresh({ silent: true });
     setStatus(
-      `\u540C\u6B65\u5305\u5408\u5E76\u5B8C\u6210\uFF1A\u8D26\u53F7 ${localAccounts.length}+${remotePayload.accounts.length}->${mergedPayload.accounts.length}\uFF0C\u901A\u884C\u5BC6\u94A5 ${localPasskeys.length}+${remotePayload.passkeys.length}->${mergedPayload.passkeys.length}\uFF0C\u6587\u4EF6\u5939 ${localFolders.length}+${remotePayload.folders.length}->${mergedPayload.folders.length}`
+      `\u540C\u6B65\u5305\u5408\u5E76\u5B8C\u6210\uFF1A\u8D26\u53F7 ${visibleSyncCount(localAccounts)}+${visibleSyncCount(remotePayload.accounts)}->${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPasskeys)}+${visibleSyncCount(remotePayload.passkeys)}->${visibleSyncCount(mergedPayload.passkeys)}\uFF0C\u6587\u4EF6\u5939 ${visibleSyncCount(localFolders)}+${visibleSyncCount(remotePayload.folders)}->${visibleSyncCount(mergedPayload.folders)}`
     );
   }
   async function importBrowserPasswordCsv() {
@@ -3246,8 +3296,16 @@
       const localStored = await readBusinessDataFromStore();
       const localPayload = normalizeSyncPayloadShape(localStored);
       let primaryRemotePayload = null;
+      const pullErrors = [];
       for (const target of targets) {
-        const response = await pullRemotePayload(target);
+        let response;
+        try {
+          response = await pullRemotePayload(target);
+        } catch (error) {
+          if (target.isPrimary) throw error;
+          pullErrors.push(`${target.label}: ${error.message}`);
+          continue;
+        }
         target.remotePayload = response.payload;
         target.remoteEncrypted = response.encrypted;
         if (target.isPrimary) {
@@ -3257,7 +3315,7 @@
       const mergedPayload = primaryRemotePayload ? mergeSyncPayloads2(localPayload, primaryRemotePayload) : localPayload;
       const safety = validateSyncSafety(localPayload, primaryRemotePayload, mergedPayload, SYNC_MODE_MERGE);
       if (!safety.safe) throw new Error(`\u5B89\u5168\u68C0\u67E5\u672A\u901A\u8FC7\uFF1A${safety.reasons.join("\u3001")}`);
-      dom.syncPreviewStatus.textContent = `\u9884\u89C8\uFF08\u672A\u5199\u5165\uFF09\uFF1A\u8D26\u53F7 ${localPayload.accounts.length}->${mergedPayload.accounts.length}\uFF0C\u901A\u884C\u5BC6\u94A5 ${localPayload.passkeys.length}->${mergedPayload.passkeys.length}\uFF0C\u6587\u4EF6\u5939 ${localPayload.folders.length}->${mergedPayload.folders.length}\uFF1B\u8FDC\u7AEF\u6E90 ${targets.length} \u4E2A`;
+      dom.syncPreviewStatus.textContent = `\u9884\u89C8\uFF08\u672A\u5199\u5165\uFF09\uFF1A\u8D26\u53F7 ${visibleSyncCount(localPayload.accounts)}->${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPayload.passkeys)}->${visibleSyncCount(mergedPayload.passkeys)}\uFF0C\u6587\u4EF6\u5939 ${visibleSyncCount(localPayload.folders)}->${visibleSyncCount(mergedPayload.folders)}\uFF1B\u4E3B\u6E90 ${targets.find((target) => target.isPrimary)?.label || "\u672A\u6307\u5B9A"}`;
     } catch (error) {
       dom.syncPreviewStatus.textContent = `\u9884\u89C8\u5931\u8D25\uFF1A${error.message}`;
     }
@@ -3299,6 +3357,7 @@
     let mergedPayload = localPayload;
     let conflictCount = 0;
     let primaryRemotePayload = null;
+    const pullErrors = [];
     {
       for (const target of targets) {
         let remotePayload = null;
@@ -3309,12 +3368,21 @@
           target.remoteEncrypted = remoteResponse.encrypted;
           remotePayload = remoteResponse.payload;
         } catch (error) {
-          setStatus(`${target.label} \u62C9\u53D6\u5931\u8D25: ${error.message}`);
-          return;
+          if (target.isPrimary) {
+            setStatus(`${target.label} \u62C9\u53D6\u5931\u8D25: ${error.message}`);
+            return;
+          }
+          pullErrors.push(`${target.label}: ${error.message}`);
+          continue;
         }
         if (target.isPrimary) {
           primaryRemotePayload = remotePayload ? normalizeSyncPayloadShape(remotePayload) : null;
         }
+      }
+      const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+      if (!syncPayloadEquals(currentLocalPayload, localPayload)) {
+        setStatus("\u540C\u6B65\u671F\u95F4\u672C\u5730\u6570\u636E\u5DF2\u53D8\u5316\uFF0C\u672C\u6B21\u540C\u6B65\u5DF2\u53D6\u6D88\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65");
+        return;
       }
       const primaryTarget = targets.find((target) => target.isPrimary) || targets[0];
       if (normalizedSyncMode === SYNC_MODE_MERGE) {
@@ -3327,8 +3395,8 @@
         }
       } else if (normalizedSyncMode === SYNC_MODE_REMOTE_OVERWRITE_LOCAL) {
         const primaryPayload = primaryTarget?.remotePayload || null;
-        const remoteIsEmpty = !primaryPayload || primaryPayload.accounts.length === 0 && primaryPayload.passkeys.length === 0 && primaryPayload.folders.length === 0;
-        const localIsNonEmpty = localAccounts.length > 0 || localPasskeys.length > 0 || localFolders.length > 0;
+        const remoteIsEmpty = !primaryPayload || visibleSyncCount(primaryPayload.accounts) === 0 && visibleSyncCount(primaryPayload.passkeys) === 0 && visibleSyncCount(primaryPayload.folders) === 0;
+        const localIsNonEmpty = visibleSyncCount(localAccounts) > 0 || visibleSyncCount(localPasskeys) > 0 || visibleSyncCount(localFolders) > 0;
         if (remoteIsEmpty && localIsNonEmpty) {
           setStatus("\u4E91\u7AEF\u8986\u76D6\u672C\u5730\u5DF2\u505C\u6B62\uFF1A\u4E3B\u540C\u6B65\u6E90\u4E3A\u7A7A\uFF0C\u907F\u514D\u6E05\u7A7A\u672C\u5730\u6570\u636E");
           return;
@@ -3350,9 +3418,9 @@
     }
     await writeBusinessDataToStore(mergedPayload);
     await appendHistory(
-      `${getSyncModeHistoryLabel(normalizedSyncMode)}\uFF1A\u8D26\u53F7 ${localAccounts.length}->${mergedPayload.accounts.length}\uFF0C\u901A\u884C\u5BC6\u94A5 ${localPasskeys.length}->${mergedPayload.passkeys.length}` + (conflictCount > 0 ? `\uFF0C\u68C0\u6D4B\u5230 ${conflictCount} \u4E2A\u5B57\u6BB5\u51B2\u7A81\u5E76\u6309\u65F6\u95F4/\u8BBE\u5907\u89C4\u5219\u88C1\u51B3` : "")
+      `${getSyncModeHistoryLabel(normalizedSyncMode)}\uFF1A\u8D26\u53F7 ${visibleSyncCount(localAccounts)}->${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPasskeys)}->${visibleSyncCount(mergedPayload.passkeys)}` + (conflictCount > 0 ? `\uFF0C\u68C0\u6D4B\u5230 ${conflictCount} \u4E2A\u5B57\u6BB5\u51B2\u7A81\u5E76\u6309\u65F6\u95F4/\u8BBE\u5907\u89C4\u5219\u88C1\u51B3` : "")
     );
-    const pushErrors = [];
+    const pushErrors = [...pullErrors];
     const pushTargets = [...targets].sort(
       (left, right) => Number(right.isPrimary) - Number(left.isPrimary) || Number(right.supportsEtag) - Number(left.supportsEtag)
     );
@@ -3374,12 +3442,12 @@
     const sourceSummary = targets.map((item) => item.label).join(" + ");
     if (pushErrors.length > 0) {
       setStatus(
-        `${getSyncModeStatusLabel(normalizedSyncMode)}\uFF0C\u4F46\u90E8\u5206\u6E90\u4E0A\u4F20\u5931\u8D25\uFF08${sourceSummary}\uFF09\uFF1A${pushErrors.join("\uFF1B")}\uFF08\u8D26\u53F7 ${localAccounts.length}->${mergedPayload.accounts.length}\uFF0C\u901A\u884C\u5BC6\u94A5 ${localPasskeys.length}->${mergedPayload.passkeys.length}\uFF0C\u6587\u4EF6\u5939 ${localFolders.length}->${mergedPayload.folders.length}\uFF09`
+        `${getSyncModeStatusLabel(normalizedSyncMode)}\uFF0C\u4F46\u90E8\u5206\u6E90\u4E0A\u4F20\u5931\u8D25\uFF08${sourceSummary}\uFF09\uFF1A${pushErrors.join("\uFF1B")}\uFF08\u8D26\u53F7 ${visibleSyncCount(localAccounts)}->${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPasskeys)}->${visibleSyncCount(mergedPayload.passkeys)}\uFF0C\u6587\u4EF6\u5939 ${visibleSyncCount(localFolders)}->${visibleSyncCount(mergedPayload.folders)}\uFF09`
       );
       return;
     }
     setStatus(
-      `${getSyncModeStatusLabel(normalizedSyncMode)}\uFF08${sourceSummary}\uFF09\uFF1A\u8D26\u53F7 ${localAccounts.length}->${mergedPayload.accounts.length}\uFF0C\u901A\u884C\u5BC6\u94A5 ${localPasskeys.length}->${mergedPayload.passkeys.length}\uFF0C\u6587\u4EF6\u5939 ${localPayload.folders.length}->${mergedPayload.folders.length}` + (conflictCount > 0 ? `\uFF0C\u5B57\u6BB5\u51B2\u7A81 ${conflictCount} \u4E2A` : "")
+      `${getSyncModeStatusLabel(normalizedSyncMode)}\uFF08${sourceSummary}\uFF09\uFF1A\u8D26\u53F7 ${visibleSyncCount(localAccounts)}->${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPasskeys)}->${visibleSyncCount(mergedPayload.passkeys)}\uFF0C\u6587\u4EF6\u5939 ${visibleSyncCount(localPayload.folders)}->${visibleSyncCount(mergedPayload.folders)}` + (conflictCount > 0 ? `\uFF0C\u5B57\u6BB5\u51B2\u7A81 ${conflictCount} \u4E2A` : "")
     );
   }
   async function confirmRemoteOverwriteLocalIfNeeded() {
@@ -3390,7 +3458,8 @@
     for (const target of targets) {
       try {
         const remoteResponse = await pullRemotePayload(target);
-        if (!remoteResponse.payload) {
+        const remotePayload = remoteResponse.payload ? normalizeSyncPayloadShape(remoteResponse.payload) : null;
+        if (!remotePayload || visibleSyncCount(remotePayload.accounts) === 0 && visibleSyncCount(remotePayload.passkeys) === 0 && visibleSyncCount(remotePayload.folders) === 0) {
           emptyTargets.push(target.label);
         }
       } catch (error) {
@@ -3415,7 +3484,7 @@
     const localAccounts = Array.isArray(localStored.accounts) ? localStored.accounts : [];
     const localPasskeys = Array.isArray(localStored.passkeys) ? localStored.passkeys : [];
     const localFolders = Array.isArray(localStored.folders) ? localStored.folders : [];
-    const isEmpty = localAccounts.length === 0 && localPasskeys.length === 0 && localFolders.length === 0;
+    const isEmpty = visibleSyncCount(localAccounts) === 0 && visibleSyncCount(localPasskeys) === 0 && visibleSyncCount(localFolders) === 0;
     if (!isEmpty) {
       return true;
     }
@@ -3426,7 +3495,7 @@
     const primarySource = normalizeSyncPrimarySource(dom.syncPrimarySource.value);
     if (dom.syncEnableWebdav.checked) {
       const baseUrl = String(dom.syncWebdavBaseUrl.value || "").trim();
-      const remotePath = String(dom.syncWebdavPath.value || "").trim() || "pass-sync-bundle-v2.json";
+      const remotePath = normalizeWebdavRemotePath(String(dom.syncWebdavPath.value || "").trim() || "pass-sync-bundle-v2.json");
       if (!baseUrl || !remotePath) {
         setStatus("WebDAV \u914D\u7F6E\u4E0D\u5B8C\u6574\uFF1A\u8BF7\u586B\u5199\u5730\u5740\u548C\u8FDC\u7AEF\u8DEF\u5F84");
         return null;
@@ -3434,7 +3503,9 @@
       let url;
       try {
         const normalizedBase2 = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-        url = new URL(remotePath.replace(/^\/+/g, ""), normalizedBase2).toString();
+        const base = new URL(normalizedBase2);
+        if (base.username || base.password || base.search || base.hash) throw new Error("WebDAV \u5730\u5740\u4E0D\u80FD\u5305\u542B\u8D26\u53F7\u3001\u67E5\u8BE2\u4E32\u6216\u951A\u70B9");
+        url = new URL(remotePath, normalizedBase2).toString();
       } catch {
         setStatus("WebDAV \u5730\u5740\u683C\u5F0F\u4E0D\u6B63\u786E");
         return null;
@@ -3490,7 +3561,7 @@
     if (target.authHeader) {
       headers.Authorization = target.authHeader;
     }
-    const response = await fetch(target.url, {
+    const response = await fetchWithSyncTimeout(target.url, {
       method: "GET",
       headers,
       cache: "no-store"
@@ -3537,7 +3608,7 @@
       if (!target) throw new Error("\u8BF7\u5148\u542F\u7528\u5E76\u914D\u7F6E\u81EA\u5EFA\u670D\u52A1\u5668");
       const headers = { Accept: "application/json" };
       if (target.authHeader) headers.Authorization = target.authHeader;
-      const response = await fetch(target.versionsUrl, { method: "GET", headers, cache: "no-store" });
+      const response = await fetchWithSyncTimeout(target.versionsUrl, { method: "GET", headers, cache: "no-store" }, "\u8BFB\u53D6\u670D\u52A1\u5668\u5FEB\u7167");
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const parsed = await response.json();
       const versions = Array.isArray(parsed?.versions) ? parsed.versions : [];
@@ -3584,7 +3655,7 @@
       const snapshots = await getSafetySnapshots();
       const invalidSnapshots = snapshots.filter((item) => !item || !item.payload || !Number(item.createdAtMs));
       if (invalidSnapshots.length > 0) throw new Error(`\u53D1\u73B0 ${invalidSnapshots.length} \u4E2A\u635F\u574F\u672C\u5730\u5FEB\u7167`);
-      dom.storageDiagnosticsStatus.textContent = `\u81EA\u68C0\u901A\u8FC7\uFF1A\u8D26\u53F7 ${data.accounts.length}\u3001\u901A\u884C\u5BC6\u94A5 ${data.passkeys.length}\u3001\u6587\u4EF6\u5939 ${data.folders.length}\u3001\u5FEB\u7167 ${snapshots.length}\u3001\u540C\u6B65\u5BC6\u94A5 ${secrets.encryptionKey ? "\u5DF2\u914D\u7F6E" : "\u672A\u914D\u7F6E"}`;
+      dom.storageDiagnosticsStatus.textContent = `\u81EA\u68C0\u901A\u8FC7\uFF1A\u8D26\u53F7 ${visibleSyncCount(data.accounts)}\u3001\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(data.passkeys)}\u3001\u6587\u4EF6\u5939 ${visibleSyncCount(data.folders)}\u3001\u5FEB\u7167 ${snapshots.length}\u3001\u540C\u6B65\u5BC6\u94A5 ${secrets.encryptionKey ? "\u5DF2\u914D\u7F6E" : "\u672A\u914D\u7F6E"}`;
     } catch (error) {
       dom.storageDiagnosticsStatus.textContent = `\u81EA\u68C0\u5931\u8D25${error.code ? `\uFF08${error.code}\uFF09` : ""}\uFF1A${error.message}\uFF1B\u672A\u4FEE\u6539\u6570\u636E`;
     }
@@ -3598,9 +3669,9 @@
         exportedAtMs: Date.now(),
         deviceId: String(result[STORAGE_KEY_SYNC_DEVICE_ID] || ""),
         counts: {
-          accounts: data.accounts.length,
-          passkeys: data.passkeys.length,
-          folders: data.folders.length
+          accounts: visibleSyncCount(data.accounts),
+          passkeys: visibleSyncCount(data.passkeys),
+          folders: visibleSyncCount(data.folders)
         },
         snapshotCount: snapshots.length,
         note: "\u8BCA\u65AD\u5BFC\u51FA\u4E0D\u5305\u542B\u5BC6\u7801\u5B57\u6BB5\u3001\u540C\u6B65\u4EE4\u724C\u6216\u540C\u6B65\u52A0\u5BC6\u5BC6\u94A5"
@@ -3628,9 +3699,9 @@
     try {
       await saveLocalSafetySnapshot("\u6062\u590D\u6700\u8FD1\u5FEB\u7167\u524D");
       await writeBusinessDataToStore(latest.payload);
-      await appendHistory(`\u6062\u590D\u6700\u8FD1\u672C\u5730\u5B89\u5168\u5FEB\u7167\uFF1A\u8D26\u53F7 ${latest.payload.accounts.length}`);
+      await appendHistory(`\u6062\u590D\u6700\u8FD1\u672C\u5730\u5B89\u5168\u5FEB\u7167\uFF1A\u8D26\u53F7 ${visibleSyncCount(latest.payload.accounts)}`);
       await refresh({ silent: true });
-      dom.storageDiagnosticsStatus.textContent = `\u5DF2\u6062\u590D\u5FEB\u7167\uFF1A\u8D26\u53F7 ${latest.payload.accounts.length}\u3001\u901A\u884C\u5BC6\u94A5 ${latest.payload.passkeys.length}`;
+      dom.storageDiagnosticsStatus.textContent = `\u5DF2\u6062\u590D\u5FEB\u7167\uFF1A\u8D26\u53F7 ${visibleSyncCount(latest.payload.accounts)}\u3001\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(latest.payload.passkeys)}`;
     } catch (error) {
       dom.storageDiagnosticsStatus.textContent = `\u6062\u590D\u5931\u8D25\uFF1A${error.message}`;
     }
@@ -3654,14 +3725,17 @@
       const headers = { Accept: "application/json", "If-Match": currentResponse.etag };
       if (target.authHeader) headers.Authorization = target.authHeader;
       const restoreUrl = `${target.versionsUrl}/${encodeURIComponent(versionId)}/restore`;
-      const response = await fetch(restoreUrl, { method: "POST", headers, cache: "no-store" });
+      const idempotencyKey = createSyncIdempotencyKey();
+      headers["Idempotency-Key"] = idempotencyKey;
+      const response = await fetchWithSyncTimeout(restoreUrl, { method: "POST", headers, cache: "no-store" }, "\u6062\u590D\u670D\u52A1\u5668\u5FEB\u7167");
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      await verifySelfHostedWriteReceipt(response, idempotencyKey);
       const restoredRemote = await pullRemotePayload(target);
       if (!restoredRemote.payload) throw new Error("\u6062\u590D\u540E\u670D\u52A1\u5668\u6CA1\u6709\u8FD4\u56DE\u6709\u6548\u6570\u636E");
       const before = await readBusinessDataFromStore();
       await writeBusinessDataToStore(restoredRemote.payload);
       await appendHistory(
-        `\u6062\u590D\u670D\u52A1\u5668\u5FEB\u7167\u7248\u672C ${versionId}\uFF1A\u8D26\u53F7 ${before.accounts.length}->${restoredRemote.payload.accounts.length}\uFF0C\u901A\u884C\u5BC6\u94A5 ${before.passkeys.length}->${restoredRemote.payload.passkeys.length}`
+        `\u6062\u590D\u670D\u52A1\u5668\u5FEB\u7167\u7248\u672C ${versionId}\uFF1A\u8D26\u53F7 ${visibleSyncCount(before.accounts)}->${visibleSyncCount(restoredRemote.payload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(before.passkeys)}->${visibleSyncCount(restoredRemote.payload.passkeys)}`
       );
       await refresh({ silent: true });
       dom.syncVersionsStatus.textContent = `\u7248\u672C ${versionId} \u6062\u590D\u5B8C\u6210`;
@@ -3680,6 +3754,8 @@
     const scope = response.headers.get("X-Sync-Scope");
     const etag = response.headers.get("ETag");
     const payloadSha256 = response.headers.get("X-Payload-Sha256");
+    const revisionHeader = Number(response.headers.get("X-Sync-Revision"));
+    const idempotencyHeader = response.headers.get("X-Sync-Idempotency-Key");
     if (!scope || !etag || !payloadSha256) {
       throw new Error("\u670D\u52A1\u5668\u672A\u8FD4\u56DE\u53EF\u9A8C\u8BC1\u7684\u540C\u6B65\u63D0\u4EA4\u56DE\u6267");
     }
@@ -3689,7 +3765,7 @@
     } catch {
       throw new Error("\u670D\u52A1\u5668\u63D0\u4EA4\u56DE\u6267\u4E0D\u662F\u6709\u6548 JSON");
     }
-    if (!receipt?.ok || !receipt?.committed || receipt.scope !== scope || receipt.etag !== etag || receipt.payloadSha256 !== payloadSha256 || !Number.isInteger(receipt.revision) || receipt.revision < 1 || idempotencyKey && receipt.idempotencyKey !== idempotencyKey) {
+    if (!receipt?.ok || !receipt?.committed || receipt.scope !== scope || receipt.etag !== etag || receipt.payloadSha256 !== payloadSha256 || !Number.isInteger(receipt.revision) || receipt.revision < 1 || receipt.revision !== revisionHeader || idempotencyKey && idempotencyHeader !== idempotencyKey || idempotencyKey && receipt.idempotencyKey !== idempotencyKey) {
       throw new Error("\u670D\u52A1\u5668\u63D0\u4EA4\u56DE\u6267\u6821\u9A8C\u5931\u8D25");
     }
     return etag;
@@ -3713,7 +3789,7 @@
       headers["If-None-Match"] = "*";
     }
     if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
-    const response = await fetch(target.url, {
+    const response = await fetchWithSyncTimeout(target.url, {
       method: "PUT",
       headers,
       body: JSON.stringify(encryptedBundle, null, 2)
@@ -3748,6 +3824,9 @@
       updateRemoteConcurrencyState(target, latestResponse.etag);
       target.remotePayload = latestResponse.payload;
       target.remoteEncrypted = latestResponse.encrypted;
+      if (target.isPrimary === false) {
+        continue;
+      }
       const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
       const localAccounts = Array.isArray(candidate.accounts) ? candidate.accounts.map(normalizeAccountShape) : [];
       const localPasskeys = buildUnifiedPasskeys(
@@ -3761,7 +3840,9 @@
         passkeys: localPasskeys,
         folders: localFolders
       };
-      candidate = mergeSyncPayloads2(localBeforeMerge, remotePayload);
+      if (target.isPrimary !== false) {
+        candidate = mergeSyncPayloads2(localBeforeMerge, remotePayload);
+      }
       const safety = validateSyncSafety(
         localBeforeMerge,
         remotePayload,
@@ -3771,7 +3852,9 @@
       if (!safety.safe) {
         throw new Error(`\u5E76\u53D1\u91CD\u8BD5\u5408\u5E76\u88AB\u5B89\u5168\u68C0\u67E5\u963B\u6B62\uFF1A${safety.reasons.join("\u3001")}`);
       }
-      await writeBusinessDataToStore(candidate);
+      if (target.isPrimary !== false) {
+        await writeBusinessDataToStore(candidate);
+      }
     }
     throw new Error("\u8FDC\u7AEF\u5E76\u53D1\u51B2\u7A81\u91CD\u8BD5\u6B21\u6570\u5DF2\u7528\u5C3D");
   }
@@ -3790,6 +3873,11 @@
       }
       const latestResponse = await pullRemotePayload(target);
       updateRemoteConcurrencyState(target, latestResponse.etag);
+      if (target.isPrimary === false) {
+        target.remotePayload = latestResponse.payload;
+        target.remoteEncrypted = latestResponse.encrypted;
+        continue;
+      }
       const latestPayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
       const safety = validateSyncSafety(
         candidate,
@@ -3800,10 +3888,14 @@
       if (!safety.safe) {
         throw new Error(`\u5E76\u53D1\u91CD\u8BD5\u7684\u4E91\u7AEF\u8986\u76D6\u88AB\u5B89\u5168\u68C0\u67E5\u963B\u6B62: ${safety.reasons.join(",")}`);
       }
-      candidate = latestPayload;
+      if (target.isPrimary !== false) {
+        candidate = latestPayload;
+      }
       target.remotePayload = candidate;
       target.remoteEncrypted = true;
-      await writeBusinessDataToStore(candidate);
+      if (target.isPrimary !== false) {
+        await writeBusinessDataToStore(candidate);
+      }
     }
     throw new Error("\u8FDC\u7AEF\u5E76\u53D1\u51B2\u7A81\u91CD\u8BD5\u6B21\u6570\u5DF2\u7528\u5C3D");
   }

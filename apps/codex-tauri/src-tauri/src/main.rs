@@ -13,7 +13,11 @@ use chrono::{Local, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
+};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
@@ -96,6 +100,32 @@ struct AppState {
     folders: Vec<Folder>,
     passkeys: Vec<Passkey>,
     all_regular_account_ids: Vec<String>,
+}
+
+#[derive(Default)]
+struct SyncInFlightState {
+    active: AtomicBool,
+}
+
+struct SyncInFlightGuard<'a> {
+    active: &'a AtomicBool,
+}
+
+impl SyncInFlightState {
+    fn acquire(&self) -> Result<SyncInFlightGuard<'_>, String> {
+        self.active
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .map(|_| SyncInFlightGuard {
+                active: &self.active,
+            })
+            .map_err(|_| "同步进行中，请稍候；本次请求未重复执行".to_string())
+    }
+}
+
+impl Drop for SyncInFlightGuard<'_> {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Release);
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1248,11 +1278,13 @@ async fn sync_preview(
             previous_encryption_key: prefs.previous_encryption_key,
         };
         let encryption_key = settings.encryption_key.clone();
+        let device_name = device.clone();
         tauri::async_runtime::spawn_blocking(move || {
             webdav::preview(
                 &webdav_settings,
                 SyncMode::parse(&settings.mode),
                 local_for_webdav,
+                &device_name,
                 &encryption_key,
             )
         })
@@ -1275,7 +1307,12 @@ async fn sync_preview(
 }
 
 #[tauri::command]
-async fn sync_now(app: AppHandle, state: tauri::State<'_, AppLockState>) -> Result<String, String> {
+async fn sync_now(
+    app: AppHandle,
+    state: tauri::State<'_, AppLockState>,
+    sync_lock: tauri::State<'_, SyncInFlightState>,
+) -> Result<String, String> {
+    let _sync_guard = sync_lock.acquire()?;
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
 
@@ -1301,8 +1338,14 @@ async fn sync_now(app: AppHandle, state: tauri::State<'_, AppLockState>) -> Resu
         let local_for_apply = local.clone();
         let worker_dir_for_apply = worker_dir.clone();
         let mut snapshot_created = false;
+        let mut last_applied_local: Option<SyncPayload> = None;
         let (report, _applied) =
             run_sync(&settings, local.clone(), &device, &platform, |payload| {
+                let expected = last_applied_local.as_ref().unwrap_or(&local_for_apply);
+                let current = local_payload_from_conn(&conn, &device)?;
+                if &current != expected {
+                    return Err("同步期间本地数据已变化，已停止写入，请重新同步".into());
+                }
                 if !snapshot_created {
                     local_snapshots::create(
                         &worker_dir_for_apply,
@@ -1311,7 +1354,9 @@ async fn sync_now(app: AppHandle, state: tauri::State<'_, AppLockState>) -> Resu
                     )?;
                     snapshot_created = true;
                 }
-                save_payload_atomic(&mut conn, payload)
+                save_payload_atomic(&mut conn, payload)?;
+                last_applied_local = Some(payload.clone());
+                Ok(())
             })?;
         serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
     })
@@ -1344,8 +1389,10 @@ fn load_settings_unlocked(
 async fn sync_now_mode(
     app: AppHandle,
     state: tauri::State<'_, AppLockState>,
+    sync_lock: tauri::State<'_, SyncInFlightState>,
     mode: String,
 ) -> Result<String, String> {
+    let _sync_guard = sync_lock.acquire()?;
     let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
     let device = load_device_name(&conn)?;
     let local = local_payload_from_conn(&conn, &device)?;
@@ -1358,6 +1405,7 @@ async fn sync_now_mode(
         let local_for_apply = local.clone();
         let worker_dir_for_apply = worker_dir.clone();
         let mut snapshot_created = false;
+        let mut last_applied_local: Option<SyncPayload> = None;
         let (report, _applied) = run_sync_with_mode(
             &settings,
             local.clone(),
@@ -1365,6 +1413,11 @@ async fn sync_now_mode(
             &platform,
             mode,
             |payload| {
+                let expected = last_applied_local.as_ref().unwrap_or(&local_for_apply);
+                let current = local_payload_from_conn(&conn, &device)?;
+                if &current != expected {
+                    return Err("同步期间本地数据已变化，已停止写入，请重新同步".into());
+                }
                 if !snapshot_created {
                     local_snapshots::create(
                         &worker_dir_for_apply,
@@ -1373,7 +1426,9 @@ async fn sync_now_mode(
                     )?;
                     snapshot_created = true;
                 }
-                save_payload_atomic(&mut conn, payload)
+                save_payload_atomic(&mut conn, payload)?;
+                last_applied_local = Some(payload.clone());
+                Ok(())
             },
         )?;
         serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
@@ -1387,8 +1442,10 @@ async fn sync_now_mode(
 async fn sync_webdav_now_mode(
     app: AppHandle,
     state: tauri::State<'_, AppLockState>,
+    sync_lock: tauri::State<'_, SyncInFlightState>,
     mode: String,
 ) -> Result<String, String> {
+    let _sync_guard = sync_lock.acquire()?;
     let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
     let prefs = load_ui_prefs(&dir);
     let webdav_settings = WebDavSettings {
@@ -1411,6 +1468,7 @@ async fn sync_webdav_now_mode(
         let local_for_apply = local.clone();
         let worker_dir_for_apply = worker_dir.clone();
         let mut snapshot_created = false;
+        let mut last_applied_local: Option<SyncPayload> = None;
         let (report, _applied) = webdav::run_sync(
             &webdav_settings,
             parsed_mode,
@@ -1419,6 +1477,11 @@ async fn sync_webdav_now_mode(
             &platform,
             &encryption_key,
             |payload| {
+                let expected = last_applied_local.as_ref().unwrap_or(&local_for_apply);
+                let current = local_payload_from_conn(&conn, &device)?;
+                if &current != expected {
+                    return Err("同步期间本地数据已变化，已停止写入，请重新同步".into());
+                }
                 if !snapshot_created {
                     local_snapshots::create(
                         &worker_dir_for_apply,
@@ -1427,7 +1490,9 @@ async fn sync_webdav_now_mode(
                     )?;
                     snapshot_created = true;
                 }
-                save_payload_atomic(&mut conn, payload)
+                save_payload_atomic(&mut conn, payload)?;
+                last_applied_local = Some(payload.clone());
+                Ok(())
             },
         )?;
         serde_json::to_string(&serde_json::json!({ "report": report })).map_err(|e| e.to_string())
@@ -3690,6 +3755,7 @@ fn deduplicate_folder(
 fn main() {
     tauri::Builder::default()
         .manage(AppLockState::default())
+        .manage(SyncInFlightState::default())
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 let state_window = window.clone();

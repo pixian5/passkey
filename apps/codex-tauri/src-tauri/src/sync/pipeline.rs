@@ -185,16 +185,40 @@ pub fn visible_passkey_count(payload: &SyncPayload) -> usize {
 
 fn decide_merged(
     mode: SyncMode,
-    local: SyncPayload,
-    remote: Option<SyncPayload>,
+    mut local: SyncPayload,
+    mut remote: Option<SyncPayload>,
+    device_name: &str,
 ) -> (SyncPayload, pass_merge::v2::SyncSafetyReport) {
-    let remote = remote.unwrap_or_default();
-    let merged = match mode {
-        SyncMode::Merge => merge_sync_payloads(local.clone(), remote.clone()),
-        SyncMode::RemoteOverwriteLocal => remote.clone(),
-        SyncMode::LocalOverwriteRemote => local.clone(),
+    // Alias expansion changes site membership and its timestamps. Canonicalize
+    // every candidate before the safety gate so a tombstone cannot be bypassed
+    // by a post-check alias rewrite.
+    let alias_now = now_ms();
+    let alias_device = if device_name.trim().is_empty() {
+        "sync-merge"
+    } else {
+        device_name
     };
-    let report = evaluate_sync_safety(&local, Some(&remote), &merged, mode.safety_mode());
+    let _ = sync_alias_groups(&mut local.accounts, alias_now, alias_device);
+    if let Some(remote_payload) = remote.as_mut() {
+        let _ = sync_alias_groups(&mut remote_payload.accounts, alias_now, alias_device);
+    }
+    let mut merged = match remote.as_ref() {
+        Some(remote) => match mode {
+            SyncMode::Merge => merge_sync_payloads(local.clone(), remote.clone()),
+            SyncMode::RemoteOverwriteLocal => remote.clone(),
+            SyncMode::LocalOverwriteRemote => local.clone(),
+        },
+        // A missing remote object is an uninitialized source, not a confirmed
+        // empty payload. It is safe to initialize during merge/local-overwrite,
+        // while remote-overwrite still resolves to an empty candidate and is
+        // rejected by the safety gate when local data is visible.
+        None => match mode {
+            SyncMode::RemoteOverwriteLocal => SyncPayload::default(),
+            SyncMode::Merge | SyncMode::LocalOverwriteRemote => local.clone(),
+        },
+    };
+    let _ = sync_alias_groups(&mut merged.accounts, alias_now, alias_device);
+    let report = evaluate_sync_safety(&local, remote.as_ref(), &merged, mode.safety_mode());
     (merged, report)
 }
 
@@ -209,7 +233,7 @@ pub fn preview_sync(
     let (remote_opt, _) = pull_remote(settings)?;
     let local_count = visible_account_count(&local);
     let remote_count = remote_opt.as_ref().map(visible_account_count).unwrap_or(0);
-    let (merged, report) = decide_merged(mode, local.clone(), remote_opt);
+    let (merged, report) = decide_merged(mode, local.clone(), remote_opt, device_name);
     let merged_count = visible_account_count(&merged);
     let message = if report.safe {
         format!(
@@ -243,6 +267,7 @@ pub fn preview_sync(
 pub fn preview_with_transport<P>(
     mode: SyncMode,
     local: SyncPayload,
+    device_name: &str,
     mut pull: P,
 ) -> Result<(SyncReport, SyncPayload), String>
 where
@@ -251,7 +276,7 @@ where
     let (remote_opt, etag) = pull()?;
     let local_count = visible_account_count(&local);
     let remote_count = remote_opt.as_ref().map(visible_account_count).unwrap_or(0);
-    let (merged, safety) = decide_merged(mode, local.clone(), remote_opt);
+    let (merged, safety) = decide_merged(mode, local.clone(), remote_opt, device_name);
     let merged_count = visible_account_count(&merged);
     let report = SyncReport {
         ok: safety.safe,
@@ -320,7 +345,7 @@ where
         let (remote_opt, etag) = pull()?;
         let local_count = visible_account_count(&local);
         let remote_count = remote_opt.as_ref().map(visible_account_count).unwrap_or(0);
-        let (merged, report) = decide_merged(mode, local.clone(), remote_opt);
+        let (merged, report) = decide_merged(mode, local.clone(), remote_opt, device_name);
         let merged_count = visible_account_count(&merged);
         if !report.safe {
             return Ok((

@@ -31,15 +31,46 @@ does not imply full UI parity.
 - A remote empty payload never replaces a non-empty local payload.
 - A merge is rejected if any local stable account, folder, or Passkey ID is
   absent from the merged result.
+- Alias/site normalization runs before the safety gate on local, primary remote,
+  and merged candidates. It must never be used to bypass a permanent-delete
+  tombstone.
+- `pinnedViews` is merged by view-scope key: unique scopes are retained and a
+  same-scope conflict is decided by the newer account side.
+- Permanent-delete tombstones remain in the payload and identity sets so stale
+  clients cannot resurrect data, but they are excluded from user-visible
+  counts, previews, export/import summaries, and safety diagnostics.
 
 ## Server concurrency
 
 - `GET /v2/sync/state` returns `ETag` and `X-Sync-Revision`.
 - `PUT /v2/sync/state` must send `If-Match` when updating an existing state.
 - Clients send a unique `Idempotency-Key` for every logical write.
-- HTTP `412` means the client must pull, merge, and retry from the new ETag.
+- HTTP `412` and `428` mean the client must pull, merge, and retry from the new
+  ETag (or treat a missing precondition as a conflict).
+- A successful write response is a receipt. Clients must verify JSON `ok`,
+  `committed`, `scope`, `etag`, `payloadSha256`, `revision`, and
+  `idempotencyKey`, and compare them with `ETag`, `X-Sync-Scope`,
+  `X-Payload-Sha256`, `X-Sync-Revision`, and
+  `X-Sync-Idempotency-Key` headers.
+- `POST /v2/sync/versions/{id}/restore` requires both `If-Match` and
+  `Idempotency-Key`; retries replay the original restore receipt instead of
+  creating another history version.
 - Each successful PUT or restore appends **exactly one** new `payload_versions` row for the new state. Do not re-insert the previous snapshot before the new one.
-- `X-Sync-Revision` equals `MAX(version_id)` for the scope; two successful writes produce revisions `1` then `2`.
+- `X-Sync-Revision` is a scope-local monotonic counter. `version_id` remains a
+  global history row identifier, while two successful writes in one scope
+  produce revisions `1` then `2` even when another scope is written between them.
+- On startup, the self-hosted server migrates old SQLite databases by adding
+  `scope_revision` to `payload_versions`, `sync_idempotency`, and `payloads` when
+  absent. Historical versions are checked per scope in `version_id` order; a
+  fully valid scope keeps its positive revisions, while a scope with any missing
+  or invalid value is rebuilt from `1`. Current payload and idempotency rows are
+  backfilled by matching `scope + etag`. Missing matches remain `0` and do not
+  create a history row.
+- The revision migration does not rewrite payload JSON, create tokens or keys,
+  or merge scopes. A separate existing compatibility cleanup may move
+  unsupported legacy payload rows to a temporary `.jsonl` file and remove them
+  from the active table. Back up the SQLite file before upgrading and never let
+  old and new server processes write the same database concurrently.
 - Version history retains at most 50 entries per scope.
 - Audit history retains at most 5000 entries per scope and never stores ciphertext bodies.
 - Rate-limit windows are keyed by client IP and expire after about one minute.

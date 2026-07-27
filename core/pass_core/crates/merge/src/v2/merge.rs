@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use serde_json::{Map, Value};
+
 use super::normalize::{
     etld_plus_one, first_non_empty, normalize_account_shape, normalize_folder_id,
     normalize_folder_id_list, normalize_folder_shape, normalize_passkey_create_compat_method,
@@ -17,6 +19,29 @@ struct FieldWinner {
     value: String,
     updated_at_ms: i64,
     device_name: String,
+}
+
+fn merge_pinned_views(
+    left: &Option<Value>,
+    right: &Option<Value>,
+    prefer_right: bool,
+) -> Option<Value> {
+    let left_map = left.as_ref().and_then(Value::as_object);
+    let right_map = right.as_ref().and_then(Value::as_object);
+    let mut merged = Map::new();
+    if let Some(values) = left_map {
+        for (key, value) in values {
+            merged.insert(key.clone(), value.clone());
+        }
+    }
+    if let Some(values) = right_map {
+        for (key, value) in values {
+            if prefer_right || !merged.contains_key(key) {
+                merged.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    (!merged.is_empty()).then_some(Value::Object(merged))
 }
 
 fn newer_field(
@@ -416,10 +441,11 @@ fn merge_same_account(lhs: PasswordAccount, rhs: PasswordAccount) -> PasswordAcc
         is_pinned: newer_account.is_pinned,
         pinned_sort_order: newer_account.pinned_sort_order,
         regular_sort_order: newer_account.regular_sort_order,
-        pinned_views: newer_account
-            .pinned_views
-            .clone()
-            .or_else(|| older_account.pinned_views.clone()),
+        pinned_views: merge_pinned_views(
+            &left.pinned_views,
+            &right.pinned_views,
+            std::ptr::eq(newer_account, &right),
+        ),
         folder_id: merged_folder_ids.first().cloned().or_else(|| {
             newer_account
                 .folder_id
@@ -753,8 +779,15 @@ pub fn merge_account_collections(
         if let Some(existing_index) = merged.iter().position(|candidate| {
             let candidate_account_id = candidate.account_id.trim();
             let candidate_record_id = candidate.resolved_record_id();
-            (!account_id.is_empty() && candidate_account_id == account_id)
-                || (!record_id.is_empty() && candidate_record_id == record_id)
+            // A stable recordId is authoritative. Only records with no stable
+            // id at all may use the historical accountId fallback.
+            if !record_id.is_empty() {
+                candidate_record_id == record_id
+            } else {
+                candidate_record_id.is_empty()
+                    && !account_id.is_empty()
+                    && candidate_account_id == account_id
+            }
         }) {
             let existing = merged[existing_index].clone();
             merged[existing_index] = merge_same_account(existing, normalized);
@@ -1198,8 +1231,9 @@ fn normalize_regular_order(
 #[cfg(test)]
 mod order_tests {
     use super::{
-        apply_folder_order, merge_sync_payloads, normalize_all_regular_order,
-        normalize_folder_regular_order, normalize_folder_regular_orders,
+        apply_folder_order, merge_account_collections, merge_sync_payloads,
+        normalize_all_regular_order, normalize_folder_regular_order,
+        normalize_folder_regular_orders,
     };
     use crate::v2::{Folder, PasswordAccount, SyncPayload, FIXED_NEW_ACCOUNT_FOLDER_ID};
 
@@ -1213,6 +1247,25 @@ mod order_tests {
             updated_at_ms: 10,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn different_stable_record_ids_do_not_merge_by_historical_account_id() {
+        let left = PasswordAccount {
+            record_id: Some("00000000-0000-0000-0000-000000000001".into()),
+            id: Some("00000000-0000-0000-0000-000000000001".into()),
+            account_id: "legacy-shared".into(),
+            password: "left".into(),
+            ..Default::default()
+        };
+        let right = PasswordAccount {
+            record_id: Some("00000000-0000-0000-0000-000000000002".into()),
+            id: Some("00000000-0000-0000-0000-000000000002".into()),
+            account_id: "legacy-shared".into(),
+            password: "right".into(),
+            ..Default::default()
+        };
+        assert_eq!(merge_account_collections(vec![left], vec![right]).len(), 2);
     }
 
     #[test]

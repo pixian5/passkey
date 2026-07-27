@@ -1,6 +1,7 @@
 # Pass 当前实现与设计决策基准
 
-> 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源，当前为 `1.2.3`。
+> 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源；本轮完成后由版本脚本递增。
+> 当前为 `1.2.4`。
 >
 > 使用规则：当历史设计稿、路线图、旧 Swift 代码或界面文字与本文冲突时，先以本文和自动化门禁为准，再回到代码核对。没有测试或代码依据时，不得写“完整”“完全一致”“所有端均支持”。
 
@@ -94,6 +95,8 @@
 
 - Tauri/Web 的运行时权威是 Rust `pass_merge::v2`；Chrome 使用 JS 同源实现并由黄金向量约束。
 - 标量字段采用字段级 LWW：先比较字段时间戳，再比较设备名和值，保证相同输入得到确定结果。
+- 站点别名归并在安全检查前执行；别名归并不能越过永久删除墓碑。
+- `pinnedViews` 按作用域键合并，同一作用域由较新的账号裁决，单侧作用域保留。
 - 关系集合不能只做数组并集；移除关系时必须保留关系墓碑。
 - 永久删除具有粘性：普通合并不能自行清除 `isPermanentlyDeleted`。
 - 服务端不执行合并，也不理解账号、文件夹和顺序；合并只发生在客户端。
@@ -166,7 +169,7 @@ Bearer Token 和同步加密密钥都允许留空，项目不会自动生成 Bea
 - `POST /v2/sync/versions/{id}/restore`；
 - `/v1/sync/payload` 仅作兼容入口。
 
-`merge` 的逻辑顺序是：拉取远端及 ETag → 客户端合并和安全评估 → 写本地合并结果 → 带 `If-Match` 和 `Idempotency-Key` 推送远端。若 PUT 返回 412，客户端重新拉取、重新合并并重试，最多 5 次。更新已有远端却没有 `If-Match` 时服务器返回 428。
+`merge` 的逻辑顺序是：拉取远端及 ETag → 别名归并 → 客户端合并和安全评估 → 写本地合并结果 → 带 `If-Match` 和 `Idempotency-Key` 推送远端。若 PUT 返回 412/428，客户端重新拉取、重新合并并重试，最多 5 次。成功写入还必须校验 JSON 回执及 `ETag`、`X-Sync-*` 响应头的一致性。恢复接口要求 `If-Match` 和 `Idempotency-Key`，重复请求只重放原回执，不重复创建历史版本。
 
 自建服务器 URL 只有 `localhost`、`127.0.0.1` 和 `::1` 可以使用 HTTP；非回环地址必须使用 HTTPS。本地脚本打印的局域网 HTTP URL 仅表示监听/健康检查地址，不代表当前客户端会接受它作为同步 URL。
 
@@ -181,13 +184,15 @@ Bearer Token 和同步加密密钥都允许留空，项目不会自动生成 Bea
 
 - Tauri、Docker Web 支持 WebDAV；Chrome 明确不支持，原因是浏览器 CORS/凭据边界。
 - WebDAV 使用一个 JSON 资源及 ETag/If-Match，没有自建服务器的版本列表、审计和恢复接口。
-- UI 可以设置主同步源和其它启用来源。主源产生合并结果，其它来源作为后续写入目标；某个来源失败必须单独报告完成数，不能掩盖其它来源状态。
+- UI 可以设置主同步源和其它启用来源。主源产生合并结果，其它来源作为后续写入目标；镜像拉取或推送失败不阻塞主源，但会单独报告并进入 outbox；主源拉取失败则停止本次同步。
 
 ### 8.3 服务器版本恢复
 
 “恢复服务器版本”不是只把旧包覆盖到当前设备：客户端先读取当前 ETag，调用服务器恢复接口把指定历史版本生成一个**新的当前版本**，再刷新/覆盖本地。恢复前创建本地安全快照。恢复动作本身也新增一个服务器版本，不会倒退 revision 或删除后来的历史记录。
 
 同步服务器每个 scope 最多保留 50 个载荷版本、5000 条不含密文正文的审计记录。限流当前按 TCP 对端 IP；放在反向代理后会把代理视为客户端，代码也不会直接信任任意 `X-Forwarded-For`。
+
+服务器启动会自动迁移旧 SQLite：为 `payload_versions`、`sync_idempotency`、`payloads` 补齐 `scope_revision` 列；按 scope 和 `version_id` 检查历史 revision，完整 scope 保留原值，存在缺失/非法值的 scope 全量重建连续序号；当前 payload/幂等记录按 `scope + etag` 回填，找不到历史匹配时为 `0`。该迁移不改写载荷 JSON、不生成 Token/密钥、不跨 scope 合并。启动阶段另有独立的旧协议载荷清理，会把不支持的记录转移到临时 `.jsonl` 后移出当前表；升级前必须备份数据库，不能让新旧服务器进程并行写同一文件。
 
 仓库中的通用 systemd 模板不强制 TLS，证书和私钥必须成对通过 `/etc/pass-sync/pass-sync-server.env` 配置。Tauri/Swift SSH 创建服务在目标 URL 为 HTTPS 时会把已选证书复制到 `/etc/pass-sync/tls/`，并为那次生成的服务单元写入固定证书路径。这两种部署入口不能混为一谈。
 
@@ -261,6 +266,7 @@ Bearer Token 和同步加密密钥都允许留空，项目不会自动生成 Bea
 17. 当前密钥轮换期间，Tauri/Web/扩展同步、服务器快照恢复和同步包导入均可用运行时上一把密钥读取旧包；空密钥仍表示明文模式。
 18. 自建服务器条件写入统一处理 412/428；Tauri 一次逻辑同步复用同一幂等键，扩展重试也复用稳定键。WebDAV 依赖 ETag，不宣称服务端幂等。
 19. 扩展选项页和后台自动同步共享 `chrome.storage.session` 短时互斥锁，异常退出由过期时间释放。
+20. 服务端 `X-Sync-Revision` 是 scope 内连续 revision；`version_id` 仍是全局历史行 ID，旧数据库启动时会补齐 scope revision。
 
 ## 13. 验证入口和当前基线
 
@@ -275,7 +281,7 @@ cd apps/codex-tauri/src-tauri && cargo test --locked
 cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-版本 `1.2.3` 的同步复核基线：扩展测试 82 项、Core `pass-merge` 26 项、Tauri 24 项、Docker Web 11 项，JS/Rust merge parity 通过。完整命令矩阵、Docker Compose、JSON Schema、Shell 和 Swift/Xcode 等工程门禁仍需按发布流程执行；测试数量只描述该版本实际运行结果，测试增删后必须重新更新。
+版本 `1.2.4` 的同步复核基线：扩展测试 85 项、Core `pass-merge` 27 项、Tauri 24 项、Docker Web 11 项、同步服务器 Python 测试 35 项，JS/Rust merge parity 通过，Swift `xcodebuild build` 通过。完整命令矩阵、Docker Compose、JSON Schema、Shell 和 Swift/Xcode 等工程门禁仍需按发布流程执行；测试数量只描述该版本实际运行结果，测试增删后必须重新更新。
 
 关联文档：
 

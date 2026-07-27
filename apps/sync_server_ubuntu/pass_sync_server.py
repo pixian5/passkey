@@ -54,6 +54,7 @@ class StoredPayload:
     payload_sha256: str
     exported_at_ms: int
     updated_at_ms: int
+    scope_revision: int = 0
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,7 @@ class StoredVersion:
     exported_at_ms: int
     updated_at_ms: int
     saved_at_ms: int
+    scope_revision: int = 0
 
 
 @dataclass(frozen=True)
@@ -112,10 +114,17 @@ class PayloadRepository:
                   payload_json TEXT NOT NULL,
                   payload_sha256 TEXT NOT NULL,
                   exported_at_ms INTEGER NOT NULL,
-                  updated_at_ms INTEGER NOT NULL
+                  updated_at_ms INTEGER NOT NULL,
+                  scope_revision INTEGER
                 );
                 """
             )
+            payload_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(payloads);").fetchall()
+            }
+            if "scope_revision" not in payload_columns:
+                connection.execute("ALTER TABLE payloads ADD COLUMN scope_revision INTEGER;")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS sync_operations (
@@ -139,10 +148,31 @@ class PayloadRepository:
                   payload_sha256 TEXT NOT NULL,
                   exported_at_ms INTEGER NOT NULL,
                   updated_at_ms INTEGER NOT NULL,
-                  saved_at_ms INTEGER NOT NULL
+                  saved_at_ms INTEGER NOT NULL,
+                  scope_revision INTEGER
                 );
                 """
             )
+            version_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(payload_versions);").fetchall()
+            }
+            if "scope_revision" not in version_columns:
+                connection.execute("ALTER TABLE payload_versions ADD COLUMN scope_revision INTEGER;")
+            # A migration may be interrupted after adding the column. Rebuild
+            # incomplete scopes from the append-only version history.
+            for scope_row in connection.execute("SELECT DISTINCT scope FROM payload_versions;").fetchall():
+                scope = scope_row["scope"]
+                version_rows = connection.execute(
+                    "SELECT version_id, scope_revision FROM payload_versions WHERE scope = ? ORDER BY version_id ASC;",
+                    (scope,),
+                ).fetchall()
+                if any(row["scope_revision"] is None or int(row["scope_revision"] or 0) <= 0 for row in version_rows):
+                    for revision, version_row in enumerate(version_rows, start=1):
+                        connection.execute(
+                            "UPDATE payload_versions SET scope_revision = ? WHERE version_id = ?;",
+                            (revision, version_row["version_id"]),
+                        )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS sync_idempotency (
@@ -154,10 +184,53 @@ class PayloadRepository:
                   exported_at_ms INTEGER NOT NULL,
                   updated_at_ms INTEGER NOT NULL,
                   created_at_ms INTEGER NOT NULL,
+                  scope_revision INTEGER,
                   PRIMARY KEY(scope, idempotency_key)
                 );
                 """
             )
+            idempotency_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(sync_idempotency);").fetchall()
+            }
+            if "scope_revision" not in idempotency_columns:
+                connection.execute("ALTER TABLE sync_idempotency ADD COLUMN scope_revision INTEGER;")
+            for row in connection.execute(
+                "SELECT scope, idempotency_key, etag FROM sync_idempotency WHERE scope_revision IS NULL OR scope_revision <= 0;"
+            ).fetchall():
+                revision_row = connection.execute(
+                    """
+                    SELECT scope_revision
+                    FROM payload_versions
+                    WHERE scope = ? AND etag = ? AND scope_revision IS NOT NULL
+                    ORDER BY version_id DESC
+                    LIMIT 1;
+                    """,
+                    (row["scope"], row["etag"]),
+                ).fetchone()
+                revision = int(revision_row["scope_revision"]) if revision_row else 0
+                connection.execute(
+                    "UPDATE sync_idempotency SET scope_revision = ? WHERE scope = ? AND idempotency_key = ?;",
+                    (revision, row["scope"], row["idempotency_key"]),
+                )
+            for row in connection.execute(
+                "SELECT scope, etag FROM payloads WHERE scope_revision IS NULL OR scope_revision <= 0;"
+            ).fetchall():
+                revision_row = connection.execute(
+                    """
+                    SELECT scope_revision
+                    FROM payload_versions
+                    WHERE scope = ? AND etag = ? AND scope_revision IS NOT NULL
+                    ORDER BY version_id DESC
+                    LIMIT 1;
+                    """,
+                    (row["scope"], row["etag"]),
+                ).fetchone()
+                revision = int(revision_row["scope_revision"]) if revision_row else 0
+                connection.execute(
+                    "UPDATE payloads SET scope_revision = ? WHERE scope = ?;",
+                    (revision, row["scope"]),
+                )
             rows = connection.execute(
                 "SELECT scope, etag, payload_json, payload_sha256, exported_at_ms, updated_at_ms FROM payloads;"
             ).fetchall()
@@ -214,7 +287,7 @@ class PayloadRepository:
         with self._managed_connect() as connection:
             row = connection.execute(
                 """
-                SELECT scope, etag, payload_json, payload_sha256, exported_at_ms, updated_at_ms
+                SELECT scope, etag, payload_json, payload_sha256, exported_at_ms, updated_at_ms, scope_revision
                 FROM payloads
                 WHERE scope = ?
                 LIMIT 1;
@@ -230,12 +303,13 @@ class PayloadRepository:
             payload_sha256=row["payload_sha256"],
             exported_at_ms=row["exported_at_ms"],
             updated_at_ms=row["updated_at_ms"],
+            scope_revision=int(row["scope_revision"] or 0),
         )
 
     def current_revision(self, scope: str) -> int:
         with self._managed_connect() as connection:
             row = connection.execute(
-                "SELECT COALESCE(MAX(version_id), 0) AS revision FROM payload_versions WHERE scope = ? LIMIT 1;",
+                "SELECT COALESCE(MAX(scope_revision), 0) AS revision FROM payload_versions WHERE scope = ? LIMIT 1;",
                 (scope,),
             ).fetchone()
         return int(row["revision"] if row is not None else 0)
@@ -246,7 +320,7 @@ class PayloadRepository:
             rows = connection.execute(
                 """
                 SELECT version_id, scope, etag, payload_json, payload_sha256,
-                       exported_at_ms, updated_at_ms, saved_at_ms
+                       exported_at_ms, updated_at_ms, saved_at_ms, scope_revision
                 FROM payload_versions
                 WHERE scope = ?
                 ORDER BY version_id DESC
@@ -264,6 +338,7 @@ class PayloadRepository:
                 exported_at_ms=row["exported_at_ms"],
                 updated_at_ms=row["updated_at_ms"],
                 saved_at_ms=row["saved_at_ms"],
+                scope_revision=int(row["scope_revision"] or 0),
             )
             for row in rows
         ]
@@ -273,7 +348,7 @@ class PayloadRepository:
             row = connection.execute(
                 """
                 SELECT version_id, scope, etag, payload_json, payload_sha256,
-                       exported_at_ms, updated_at_ms, saved_at_ms
+                       exported_at_ms, updated_at_ms, saved_at_ms, scope_revision
                 FROM payload_versions
                 WHERE scope = ? AND version_id = ?
                 LIMIT 1;
@@ -291,6 +366,7 @@ class PayloadRepository:
             exported_at_ms=row["exported_at_ms"],
             updated_at_ms=row["updated_at_ms"],
             saved_at_ms=row["saved_at_ms"],
+            scope_revision=int(row["scope_revision"] or 0),
         )
 
     def put(
@@ -311,7 +387,7 @@ class PayloadRepository:
                 with self._managed_connect() as connection:
                     replay = connection.execute(
                         """
-                        SELECT etag, payload_json, payload_sha256, exported_at_ms, updated_at_ms
+                        SELECT etag, payload_json, payload_sha256, exported_at_ms, updated_at_ms, scope_revision
                         FROM sync_idempotency
                         WHERE scope = ? AND idempotency_key = ?
                         LIMIT 1;
@@ -340,6 +416,7 @@ class PayloadRepository:
                         payload_sha256=replay["payload_sha256"],
                         exported_at_ms=replay["exported_at_ms"],
                         updated_at_ms=replay["updated_at_ms"],
+                        scope_revision=int(replay["scope_revision"] or self.current_revision(scope)),
                     )
             current = self.get(scope)
             if current is not None and (if_match is None or not str(if_match).strip()):
@@ -355,6 +432,8 @@ class PayloadRepository:
                 self.record_operation_best_effort(scope, operation, "conflict", current.etag if current else None, None)
                 raise PreconditionFailedError()
 
+            scope_revision = self.current_revision(scope) + 1
+
             with self._managed_connect() as connection:
                 connection.execute(
                     """
@@ -364,33 +443,35 @@ class PayloadRepository:
                       payload_json,
                       payload_sha256,
                       exported_at_ms,
-                      updated_at_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                      updated_at_ms,
+                      scope_revision
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(scope) DO UPDATE SET
                       etag = excluded.etag,
                       payload_json = excluded.payload_json,
                       payload_sha256 = excluded.payload_sha256,
                       exported_at_ms = excluded.exported_at_ms,
-                      updated_at_ms = excluded.updated_at_ms;
+                      updated_at_ms = excluded.updated_at_ms,
+                      scope_revision = excluded.scope_revision;
                     """,
-                    (scope, next_etag, payload_json, payload_sha256, exported_at_ms, now_ms),
+                    (scope, next_etag, payload_json, payload_sha256, exported_at_ms, now_ms, scope_revision),
                 )
                 connection.execute(
                     """
                     INSERT INTO payload_versions (
                       scope, etag, payload_json, payload_sha256,
-                      exported_at_ms, updated_at_ms, saved_at_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?);
+                      exported_at_ms, updated_at_ms, saved_at_ms, scope_revision
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
                     """,
-                    (scope, next_etag, payload_json, payload_sha256, exported_at_ms, now_ms, now_ms),
+                    (scope, next_etag, payload_json, payload_sha256, exported_at_ms, now_ms, now_ms, scope_revision),
                 )
                 if idempotency_key:
                     connection.execute(
                         """
                         INSERT OR IGNORE INTO sync_idempotency (
                           scope, idempotency_key, etag, payload_json, payload_sha256,
-                          exported_at_ms, updated_at_ms, created_at_ms
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                          exported_at_ms, updated_at_ms, created_at_ms, scope_revision
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
                         """,
                         (
                             scope,
@@ -401,6 +482,7 @@ class PayloadRepository:
                             exported_at_ms,
                             now_ms,
                             now_ms,
+                            scope_revision,
                         ),
                     )
                     connection.execute(
@@ -438,9 +520,16 @@ class PayloadRepository:
                 payload_sha256=payload_sha256,
                 exported_at_ms=exported_at_ms,
                 updated_at_ms=now_ms,
+                scope_revision=scope_revision,
             )
 
-    def restore_version(self, scope: str, version_id: int, if_match: str | None) -> StoredPayload | None:
+    def restore_version(
+        self,
+        scope: str,
+        version_id: int,
+        if_match: str | None,
+        idempotency_key: str | None = None,
+    ) -> StoredPayload | None:
         version = self.get_version(scope, version_id)
         if version is None:
             return None
@@ -451,6 +540,7 @@ class PayloadRepository:
             exported_at_ms=version.exported_at_ms,
             if_match=if_match,
             operation="restore",
+            idempotency_key=idempotency_key,
         )
 
     def record_operation(
@@ -726,6 +816,7 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                     "exportedAtMs": item.exported_at_ms,
                     "updatedAtMs": item.updated_at_ms,
                     "savedAtMs": item.saved_at_ms,
+                    "revision": item.scope_revision,
                 }
                 for item in versions
             ],
@@ -761,6 +852,7 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             "X-Payload-Sha256": stored.payload_sha256,
             "X-Sync-Scope": scope,
             "X-Sync-Version": str(stored.version_id),
+            "X-Sync-Revision": str(stored.scope_revision),
             "Cache-Control": "no-store",
         }
         self._send_bytes(HTTPStatus.OK, body_bytes, headers=headers, head_only=head_only)
@@ -773,10 +865,20 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 "IF_MATCH_REQUIRED",
                 "恢复快照必须提供当前数据的 If-Match，以避免覆盖并发更新。",
             )
+        idempotency_key = self.headers.get("Idempotency-Key", "").strip() or None
+        if idempotency_key is None:
+            raise RequestError(
+                HTTPStatus.PRECONDITION_REQUIRED,
+                "IDEMPOTENCY_KEY_REQUIRED",
+                "恢复快照必须提供 Idempotency-Key，以便安全重试。",
+            )
+        if len(idempotency_key) > 200:
+            raise RequestError(HTTPStatus.BAD_REQUEST, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key 过长。")
         restored = self.server.repository.restore_version(
             scope=scope,
             version_id=version_id,
             if_match=if_match,
+            idempotency_key=idempotency_key,
         )
         if restored is None:
             raise RequestError(HTTPStatus.NOT_FOUND, "VERSION_NOT_FOUND", "同步快照版本不存在。")
@@ -784,17 +886,22 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             HTTPStatus.OK,
             {
                 "ok": True,
+                "committed": True,
+                "scope": scope,
                 "restoredVersionId": version_id,
                 "etag": restored.etag,
                 "payloadSha256": restored.payload_sha256,
                 "updatedAtMs": restored.updated_at_ms,
-                "revision": self.server.repository.current_revision(scope),
+                "revision": restored.scope_revision or self.server.repository.current_revision(scope),
+                "idempotencyKey": idempotency_key,
             },
             extra_headers={
                 "ETag": restored.etag,
                 "X-Payload-Sha256": restored.payload_sha256,
                 "X-Sync-Scope": scope,
                 "X-Sync-Version": str(version_id),
+                "X-Sync-Revision": str(restored.scope_revision or self.server.repository.current_revision(scope)),
+                "X-Sync-Idempotency-Key": idempotency_key,
                 "Cache-Control": "no-store",
             },
         )
@@ -845,14 +952,15 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 "etag": stored.etag,
                 "payloadSha256": stored.payload_sha256,
                 "updatedAtMs": stored.updated_at_ms,
-                "revision": self.server.repository.current_revision(scope),
+                "revision": stored.scope_revision or self.server.repository.current_revision(scope),
                 "idempotencyKey": idempotency_key,
             },
             extra_headers={
                 "ETag": stored.etag,
                 "X-Payload-Sha256": stored.payload_sha256,
                 "X-Sync-Scope": scope,
-                "X-Sync-Revision": str(self.server.repository.current_revision(scope)),
+                "X-Sync-Revision": str(stored.scope_revision or self.server.repository.current_revision(scope)),
+                "X-Sync-Idempotency-Key": idempotency_key or "",
                 "Cache-Control": "no-store",
             },
         )
@@ -909,6 +1017,7 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
         return {
             "Access-Control-Allow-Origin": origin,
             "Vary": "Origin",
+            "Access-Control-Expose-Headers": "ETag, X-Payload-Sha256, X-Sync-Scope, X-Sync-Revision, X-Sync-Idempotency-Key",
         }
 
 

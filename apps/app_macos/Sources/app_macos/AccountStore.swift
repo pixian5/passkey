@@ -526,6 +526,7 @@ final class AccountStore: ObservableObject {
             updatedAtMs: nowMs()
         )
         folders.append(folder)
+        markFolderOrderChanged()
         _ = normalizeFoldersEnsuringFixedNewAccountFolder()
         saveFoldersToDefaults()
         appendHistoryEntry(action: "创建文件夹：\(name)")
@@ -555,6 +556,7 @@ final class AccountStore: ObservableObject {
                 updatedAtMs: now
             )
             folders.append(folder)
+            markFolderOrderChanged(at: now)
             _ = normalizeFoldersEnsuringFixedNewAccountFolder()
             saveFoldersToDefaults()
             appendHistoryEntry(action: "创建文件夹：\(normalizedNewFolderName)")
@@ -591,6 +593,7 @@ final class AccountStore: ObservableObject {
             folders[index].updatedAtMs = now
         }
         _ = normalizeFoldersEnsuringFixedNewAccountFolder()
+        markFolderOrderChanged(at: now)
 
         var removedFromAccountCount = 0
 
@@ -1147,6 +1150,7 @@ final class AccountStore: ObservableObject {
             return account
         }
         accounts.append(contentsOf: samples)
+        markAllRegularOrderChanged()
         syncAliasGroups()
         saveAccounts()
         let createdIds = Set(samples.map(\.accountId))
@@ -1188,6 +1192,7 @@ final class AccountStore: ObservableObject {
         created.setResolvedFolderIds([Self.fixedNewAccountFolderId])
         applyAutomaticFolderRules(to: &created)
         accounts.append(created)
+        markAllRegularOrderChanged()
         syncAliasGroups()
         saveAccounts()
         let persistedCreated = accounts.first(where: { $0.accountId == created.accountId }) ?? created
@@ -1472,6 +1477,7 @@ final class AccountStore: ObservableObject {
         accounts[index].deletedDeviceName = ""
         statusMessage = "账号已从回收站恢复"
         accounts[index].touchUpdatedAt(now, deviceName: currentDeviceName())
+        markAllRegularOrderChanged(at: now)
         saveAccounts()
         appendAccountHistoryBatch(
             category: .local,
@@ -1501,6 +1507,7 @@ final class AccountStore: ObservableObject {
             accounts[index].deletedDeviceName = ""
             accounts[index].touchUpdatedAt(now, deviceName: device)
         }
+        markAllRegularOrderChanged(at: now)
         saveAccounts()
         let changedIds = Set(beforeAccounts.map(\.accountId))
         let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
@@ -1605,6 +1612,7 @@ final class AccountStore: ObservableObject {
             accounts[index].deletedDeviceName = ""
             accounts[index].touchUpdatedAt(now, deviceName: device)
         }
+        markAllRegularOrderChanged(at: now)
         saveAccounts()
         let changedIds = Set(beforeAccounts.map(\.accountId))
         let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
@@ -1831,26 +1839,33 @@ final class AccountStore: ObservableObject {
             loadSyncSecretsIfNeeded()
             let data = try Data(contentsOf: fileURL)
             let parsed = try decodeSyncBundle(data)
-            let remoteAccounts = normalizeDecodedAccounts(parsed.accounts)
-            let remoteFolders = parsed.folders
-            let remotePasskeys = parsed.passkeys
+            let remotePayload = SyncBundlePayload(
+                accounts: normalizeDecodedAccounts(parsed.payload.accounts),
+                folders: parsed.payload.folders,
+                passkeys: parsed.payload.passkeys,
+                allRegularAccountIds: parsed.payload.allRegularAccountIds,
+                allRegularOrderUpdatedAtMs: parsed.payload.allRegularOrderUpdatedAtMs,
+                allRegularOrderUpdatedDeviceName: parsed.payload.allRegularOrderUpdatedDeviceName,
+                folderOrderIds: parsed.payload.folderOrderIds,
+                folderOrderUpdatedAtMs: parsed.payload.folderOrderUpdatedAtMs,
+                folderOrderUpdatedDeviceName: parsed.payload.folderOrderUpdatedDeviceName
+            )
+            let remoteAccounts = remotePayload.accounts
+            let remoteFolders = remotePayload.folders
+            let remotePasskeys = remotePayload.passkeys
 
-            let localAccountCount = accounts.count
-            let localFolderCount = folders.count
-            let localPasskeyCount = passkeys.count
+            let localAccountCount = visibleAccountCount(accounts)
+            let localFolderCount = visibleFolderCount(folders)
+            let localPasskeyCount = visiblePasskeyCount(passkeys)
 
-            let mergedFolders = mergeFolderCollections(local: folders, remote: remoteFolders)
-            let validFolderIds = Set(mergedFolders.filter { !$0.isDeleted }.map(\.id))
-            var mergedAccounts = mergeAccountCollections(local: accounts, remote: remoteAccounts)
-            mergedAccounts = reconcileAccountsWithValidFolderIds(mergedAccounts, validFolderIds: validFolderIds)
-            let mergedPasskeys = mergePasskeyCollections(local: passkeys, remote: remotePasskeys)
+            let mergedPayload = mergePayloads(local: buildCurrentSyncPayload(), remote: remotePayload)
 
             let previousFolders = folders
             let previousAccounts = accounts
             let previousPasskeys = passkeys
-            folders = mergedFolders
-            accounts = mergedAccounts
-            passkeys = mergedPasskeys
+            folders = orderedFolders(mergedPayload.folders, ids: mergedPayload.folderOrderIds)
+            accounts = orderedAccounts(mergedPayload.accounts, ids: mergedPayload.allRegularAccountIds)
+            passkeys = mergedPayload.passkeys
             syncAliasGroups()
             do {
                 try saveCoreCollectionsAtomically()
@@ -1866,9 +1881,9 @@ final class AccountStore: ObservableObject {
             }
 
             statusMessage =
-                "同步包导入并合并完成（\(parsed.kind)）：账号 \(localAccountCount)+\(remoteAccounts.count)->\(accounts.count)，" +
-                "文件夹 \(localFolderCount)+\(remoteFolders.count)->\(folders.count)，" +
-                "通行密钥 \(localPasskeyCount)+\(remotePasskeys.count)->\(passkeys.count)"
+                "同步包导入并合并完成（\(parsed.kind)）：账号 \(localAccountCount)+\(visibleAccountCount(remoteAccounts))->\(visibleAccountCount(accounts))，" +
+                "文件夹 \(localFolderCount)+\(visibleFolderCount(remoteFolders))->\(visibleFolderCount(folders))，" +
+                "通行密钥 \(localPasskeyCount)+\(visiblePasskeyCount(remotePasskeys))->\(visiblePasskeyCount(passkeys))"
             appendAccountHistoryBatch(
                 category: .sync,
                 title: "导入同步包并合并（\(parsed.kind)）",
@@ -1883,8 +1898,8 @@ final class AccountStore: ObservableObject {
     func mergeCredentialExchangeImport(_ result: CredentialExchangeImportResult) {
         let previousAccounts = accounts
         let previousPasskeys = passkeys
-        let localAccountCount = accounts.count
-        let localPasskeyCount = passkeys.count
+        let localAccountCount = visibleAccountCount(accounts)
+        let localPasskeyCount = visiblePasskeyCount(passkeys)
 
         let mergedAccounts = mergeAccountCollections(
             local: accounts,
@@ -1905,8 +1920,8 @@ final class AccountStore: ObservableObject {
         }
 
         statusMessage =
-            "Apple Credential Exchange 导入完成：账号 \(localAccountCount)+\(result.accounts.count)->\(accounts.count)，" +
-            "通行密钥 \(localPasskeyCount)+\(result.passkeys.count)->\(passkeys.count)" +
+            "Apple Credential Exchange 导入完成：账号 \(localAccountCount)+\(visibleAccountCount(result.accounts))->\(visibleAccountCount(accounts))，" +
+            "通行密钥 \(localPasskeyCount)+\(visiblePasskeyCount(result.passkeys))->\(visiblePasskeyCount(passkeys))" +
             (result.skippedPasskeyCount > 0 ? "，跳过 \(result.skippedPasskeyCount) 条无法转换的通行密钥" : "")
         appendAccountHistoryBatch(
             category: .sync,
@@ -2290,6 +2305,10 @@ final class AccountStore: ObservableObject {
             accounts[index].touchUpdatedAt(now, deviceName: device)
         }
 
+        if scopeKey == "all" {
+            markAllRegularOrderChanged(at: now)
+        }
+
         saveAccounts()
         appendHistoryEntry(action: pinned ? "重排置顶账号顺序" : "重排普通账号顺序", timestampMs: now)
     }
@@ -2437,7 +2456,7 @@ final class AccountStore: ObservableObject {
         }
 
         loadSyncSecretsIfNeeded()
-        let localPayload = buildCurrentSyncPayload()
+        let localPayload = canonicalizeSyncPayload(buildCurrentSyncPayload())
         do {
             try saveLocalSyncSafetySnapshot(localPayload, reason: "同步前自动备份")
         } catch {
@@ -2458,76 +2477,93 @@ final class AccountStore: ObservableObject {
         var primaryRemoteRevision: Int?
         var primaryRemoteETag: String?
         let primarySource = resolvedPrimarySyncSource()
+        var pullErrors: [String] = []
 
         if mode != .localOverwriteRemote {
             if syncEnableICloud {
                 do {
-                    if let remotePayload = try fetchRemotePayloadFromICloud() {
-                        if primarySource == .iCloud { primaryRemotePayload = remotePayload }
-                        remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: remotePayload)
+                    if let remotePayload = try fetchRemotePayloadFromICloud(), primarySource == .iCloud {
+                        let canonicalRemote = canonicalizeSyncPayload(remotePayload)
+                        primaryRemotePayload = canonicalRemote
+                        remoteAggregate = canonicalRemote
                     }
                 } catch {
-                    statusMessage = "iCloud 拉取失败: \(error.localizedDescription)"
-                    return
+                    if primarySource == .iCloud {
+                        statusMessage = "iCloud 拉取失败: \(error.localizedDescription)"
+                        return
+                    }
+                    pullErrors.append("iCloud 拉取失败: \(error.localizedDescription)")
                 }
             }
 
             if syncEnableWebDAV {
-                guard let resourceURL = buildWebDAVResourceURL() else {
-                    statusMessage = "WebDAV 配置不完整：请填写服务地址与远端文件路径"
-                    return
-                }
-                do {
-                    let authorization = buildBasicAuthorization(
-                        username: webdavUsername,
-                        password: webdavPassword
-                    )
-                    let remoteResponse = try await fetchRemotePayload(
-                        from: resourceURL,
-                        authorization: authorization
-                    )
-                    webDAVETag = remoteResponse.etag
-                    webDAVRemotePayload = remoteResponse.payload
-                    webDAVRemoteEncrypted = remoteResponse.isEncrypted
-                    if let remotePayload = remoteResponse.payload {
-                        if primarySource == .webDAV {
-                            primaryRemotePayload = remotePayload
+                if let resourceURL = buildWebDAVResourceURL() {
+                    do {
+                        let authorization = buildBasicAuthorization(
+                            username: webdavUsername,
+                            password: webdavPassword
+                        )
+                        let remoteResponse = try await fetchRemotePayload(
+                            from: resourceURL,
+                            authorization: authorization
+                        )
+                        webDAVETag = remoteResponse.etag
+                        webDAVRemotePayload = remoteResponse.payload.map(canonicalizeSyncPayload)
+                        webDAVRemoteEncrypted = remoteResponse.isEncrypted
+                        if let remotePayload = remoteResponse.payload, primarySource == .webDAV {
+                            let canonicalRemote = canonicalizeSyncPayload(remotePayload)
+                            primaryRemotePayload = canonicalRemote
                             primaryRemoteETag = remoteResponse.etag
                             primaryRemoteRevision = remoteResponse.revision
+                            remoteAggregate = canonicalRemote
                         }
-                        remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: remotePayload)
+                    } catch {
+                        if primarySource == .webDAV {
+                            statusMessage = "WebDAV 拉取失败: \(error.localizedDescription)"
+                            return
+                        }
+                        pullErrors.append("WebDAV 拉取失败: \(error.localizedDescription)")
                     }
-                } catch {
-                    statusMessage = "WebDAV 拉取失败: \(error.localizedDescription)"
-                    return
+                } else {
+                    if primarySource == .webDAV {
+                        statusMessage = "WebDAV 配置不完整：请填写服务地址与远端文件路径"
+                        return
+                    }
+                    pullErrors.append("WebDAV 配置不完整")
                 }
             }
 
             if syncEnableSelfHostedServer {
-                guard let resourceURL = buildSelfHostedPayloadURL() else {
-                    statusMessage = "服务器配置不完整：请填写服务地址"
-                    return
-                }
-                do {
-                    let authorization = buildBearerAuthorization(serverAuthToken)
-                    let remoteResponse = try await fetchRemotePayload(
-                        from: resourceURL,
-                        authorization: authorization
-                    )
-                    selfHostedETag = remoteResponse.etag
-                    selfHostedRemotePayload = remoteResponse.payload
-                    selfHostedRemoteEncrypted = remoteResponse.isEncrypted
-                    if let remotePayload = remoteResponse.payload {
-                        if primarySource == .selfHostedServer {
-                            primaryRemotePayload = remotePayload
+                if let resourceURL = buildSelfHostedPayloadURL() {
+                    do {
+                        let authorization = buildBearerAuthorization(serverAuthToken)
+                        let remoteResponse = try await fetchRemotePayload(
+                            from: resourceURL,
+                            authorization: authorization
+                        )
+                        selfHostedETag = remoteResponse.etag
+                        selfHostedRemotePayload = remoteResponse.payload.map(canonicalizeSyncPayload)
+                        selfHostedRemoteEncrypted = remoteResponse.isEncrypted
+                        if let remotePayload = remoteResponse.payload, primarySource == .selfHostedServer {
+                            let canonicalRemote = canonicalizeSyncPayload(remotePayload)
+                            primaryRemotePayload = canonicalRemote
                             primaryRemoteETag = remoteResponse.etag
                             primaryRemoteRevision = remoteResponse.revision
+                            remoteAggregate = canonicalRemote
                         }
-                        remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: remotePayload)
+                    } catch {
+                        if primarySource == .selfHostedServer {
+                            statusMessage = "服务器拉取失败: \(error.localizedDescription)"
+                            return
+                        }
+                        pullErrors.append("服务器拉取失败: \(error.localizedDescription)")
                     }
-                } catch {
-                    statusMessage = "服务器拉取失败: \(error.localizedDescription)"
-                    return
+                } else {
+                    if primarySource == .selfHostedServer {
+                        statusMessage = "服务器配置不完整：请填写服务地址"
+                        return
+                    }
+                    pullErrors.append("服务器配置不完整")
                 }
             }
 
@@ -2538,7 +2574,7 @@ final class AccountStore: ObservableObject {
                     if conflictCount > 0 {
                         try? saveLocalSyncSafetySnapshot(remoteAggregate, reason: "同步冲突远端候选备份")
                     }
-                    mergedPayload = mergePayloads(local: localPayload, remote: remoteAggregate)
+                    mergedPayload = canonicalizeSyncPayload(mergePayloads(local: localPayload, remote: remoteAggregate))
                 }
             case .remoteOverwriteLocal:
                 guard let primaryRemotePayload,
@@ -2547,7 +2583,7 @@ final class AccountStore: ObservableObject {
                     statusMessage = "云端覆盖本地已停止：主同步源为空，避免清空本地数据"
                     return
                 }
-                mergedPayload = primaryRemotePayload
+                mergedPayload = canonicalizeSyncPayload(primaryRemotePayload)
             case .localOverwriteRemote:
                 break
             }
@@ -2565,13 +2601,21 @@ final class AccountStore: ObservableObject {
             return
         }
 
+        // The network phase may have yielded to local edits. Never apply an
+        // older merge result over a newer in-memory payload.
+        guard syncPayloadEquals(buildCurrentSyncPayload(), localPayload) else {
+            cloudSyncStatus = "同步已停止：同步期间本地数据发生变化"
+            statusMessage = "同步期间本地数据发生变化，请重新同步"
+            return
+        }
+
         syncDiagnostics = SyncDiagnostics(
-            localAccounts: localPayload.accounts.count,
-            localPasskeys: localPayload.passkeys.count,
-            localFolders: localPayload.folders.count,
-            remoteAccounts: remoteAggregate?.accounts.count ?? 0,
-            remotePasskeys: remoteAggregate?.passkeys.count ?? 0,
-            remoteFolders: remoteAggregate?.folders.count ?? 0,
+            localAccounts: visibleAccountCount(localPayload.accounts),
+            localPasskeys: visiblePasskeyCount(localPayload.passkeys),
+            localFolders: visibleFolderCount(localPayload.folders),
+            remoteAccounts: remoteAggregate.map { visibleAccountCount($0.accounts) } ?? 0,
+            remotePasskeys: remoteAggregate.map { visiblePasskeyCount($0.passkeys) } ?? 0,
+            remoteFolders: remoteAggregate.map { visibleFolderCount($0.folders) } ?? 0,
             conflictCount: conflictCount,
             revision: primaryRemoteRevision,
             etag: primaryRemoteETag,
@@ -2583,7 +2627,7 @@ final class AccountStore: ObservableObject {
         let conflictSuffix = conflictCount > 0 ? "，检测到 \(conflictCount) 个字段冲突并按时间/设备规则裁决" : ""
         let syncTitle = "同步并更新本地（\(enabledSourceNames.joined(separator: " + "))，\(mode.label)）\(conflictSuffix)"
         var changed = applyMergedPayloadIfNeeded(mergedPayload, historyTitle: syncTitle)
-        var pushErrors: [String] = []
+        var pushErrors: [String] = pullErrors
 
         if syncEnableSelfHostedServer {
             let sourceKey = syncOutboxSourceKey(kind: "server", url: buildSelfHostedPayloadURL())
@@ -2624,7 +2668,8 @@ final class AccountStore: ObservableObject {
                         to: resourceURL,
                         authorization: authorization,
                         etag: selfHostedETag,
-                        historyTitle: "同步冲突后重新合并（服务器，\(mode.label)）"
+                        historyTitle: "同步冲突后重新合并（服务器，\(mode.label)）",
+                        mergeOnConflict: primarySource == .selfHostedServer
                     )
                     mergedPayload = pushResult.payload
                     changed = changed || pushResult.changedLocalData
@@ -2642,7 +2687,8 @@ final class AccountStore: ObservableObject {
                         to: resourceURL,
                         authorization: authorization,
                         etag: selfHostedETag,
-                        historyTitle: "远端覆盖本地（服务器，\(mode.label)）"
+                        historyTitle: "远端覆盖本地（服务器，\(mode.label)）",
+                        mergeOnConflict: primarySource == .selfHostedServer
                     )
                     mergedPayload = pushResult.payload
                     changed = changed || pushResult.changedLocalData
@@ -2720,7 +2766,8 @@ final class AccountStore: ObservableObject {
                         to: resourceURL,
                         authorization: authorization,
                         etag: webDAVETag,
-                        historyTitle: "同步冲突后重新合并（WebDAV，\(mode.label)）"
+                        historyTitle: "同步冲突后重新合并（WebDAV，\(mode.label)）",
+                        mergeOnConflict: primarySource == .webDAV
                     )
                     webDAVETag = pushResult.etag
                     mergedPayload = pushResult.payload
@@ -2739,7 +2786,8 @@ final class AccountStore: ObservableObject {
                         to: resourceURL,
                         authorization: authorization,
                         etag: webDAVETag,
-                        historyTitle: "远端覆盖本地（WebDAV，\(mode.label)）"
+                        historyTitle: "远端覆盖本地（WebDAV，\(mode.label)）",
+                        mergeOnConflict: primarySource == .webDAV
                     )
                     webDAVETag = pushResult.etag
                     mergedPayload = pushResult.payload
@@ -2800,14 +2848,31 @@ final class AccountStore: ObservableObject {
 
     private func syncPayloadSummary(before: SyncBundlePayload, after: SyncBundlePayload) -> String {
         [
-            "账号 \(before.accounts.count)->\(after.accounts.count)",
-            "通行密钥 \(before.passkeys.count)->\(after.passkeys.count)",
-            "文件夹 \(before.folders.count)->\(after.folders.count)"
+            "账号 \(visibleAccountCount(before.accounts))->\(visibleAccountCount(after.accounts))",
+            "通行密钥 \(visiblePasskeyCount(before.passkeys))->\(visiblePasskeyCount(after.passkeys))",
+            "文件夹 \(visibleFolderCount(before.folders))->\(visibleFolderCount(after.folders))"
         ].joined(separator: "\n")
     }
 
+    private func visibleAccountCount(_ values: [PasswordAccount]) -> Int {
+        values.reduce(into: 0) { count, account in
+            if !account.isPermanentlyDeleted { count += 1 }
+        }
+    }
+
+    private func visibleFolderCount(_ values: [AccountFolder]) -> Int {
+        values.reduce(into: 0) { count, folder in
+            if !folder.isPermanentlyDeleted { count += 1 }
+        }
+    }
+
+    private func visiblePasskeyCount(_ values: [PasskeyRecord]) -> Int {
+        values.reduce(into: 0) { count, passkey in
+            if passkey.isPermanentlyDeleted != true { count += 1 }
+        }
+    }
+
     private func countSyncAccountConflicts(local: [PasswordAccount], remote: [PasswordAccount]) -> Int {
-        let localByIdentity = Dictionary(local.map { ("account:\($0.accountId)", $0) }) { first, _ in first }
         let localByRecord = Dictionary(local.map { ("record:\($0.id.uuidString.lowercased())", $0) }) { first, _ in first }
         let fields: [(PasswordAccount) -> String] = [
             { $0.username }, { $0.password }, { $0.totpSecret },
@@ -2815,8 +2880,11 @@ final class AccountStore: ObservableObject {
         ]
         var count = 0
         for account in remote {
-            let localAccount = localByIdentity["account:\(account.accountId)"]
-                ?? localByRecord["record:\(account.id.uuidString.lowercased())"]
+            // Stable record identity is authoritative. Do not use a legacy
+            // accountId fallback when both records have stable IDs, otherwise
+            // recreated accounts with the same historical accountId look like
+            // field conflicts instead of distinct records.
+            let localAccount = localByRecord["record:\(account.id.uuidString.lowercased())"]
             guard let localAccount else { continue }
             count += fields.reduce(into: 0) { result, field in
                 if field(localAccount) != field(account) { result += 1 }
@@ -2826,7 +2894,9 @@ final class AccountStore: ObservableObject {
     }
 
     private func isSyncPayloadEmpty(_ payload: SyncBundlePayload) -> Bool {
-        payload.accounts.isEmpty && payload.passkeys.isEmpty && payload.folders.isEmpty
+        visibleAccountCount(payload.accounts) == 0
+            && visiblePasskeyCount(payload.passkeys) == 0
+            && visibleFolderCount(payload.folders) == 0
     }
 
     private func syncSafetyReasons(
@@ -2958,44 +3028,66 @@ final class AccountStore: ObservableObject {
 
     private func buildCurrentSyncPayload() -> SyncBundlePayload {
         let orderedAccounts = sortedAccountsForDisplay(accounts.filter { !$0.isDeleted }, scopeKey: "all")
+        let allOrderClock = persistedOrderClock(
+            key: Keys.allRegularOrderUpdatedAtMs,
+            fallback: accounts.map(\.updatedAtMs).max() ?? 0
+        )
+        let folderOrderClock = persistedOrderClock(
+            key: Keys.folderOrderUpdatedAtMs,
+            fallback: folders.map(\.updatedAtMs).max() ?? 0
+        )
         return SyncBundlePayload(
             accounts: accounts,
             folders: folders,
             passkeys: passkeys,
             allRegularAccountIds: orderedAccounts.map { $0.id.uuidString },
-            allRegularOrderUpdatedAtMs: accounts.map(\.updatedAtMs).max() ?? 0,
+            allRegularOrderUpdatedAtMs: allOrderClock,
             allRegularOrderUpdatedDeviceName: currentDeviceName(),
             folderOrderIds: folders.filter { !$0.isDeleted && !$0.isPermanentlyDeleted }.map { $0.id.uuidString },
-            folderOrderUpdatedAtMs: folders.map(\.updatedAtMs).max() ?? 0,
+            folderOrderUpdatedAtMs: folderOrderClock,
             folderOrderUpdatedDeviceName: currentDeviceName()
         )
     }
 
     func previewSync() async {
         loadSyncSecretsIfNeeded()
-        let localPayload = buildCurrentSyncPayload()
-        var remoteAggregate: SyncBundlePayload?
+        let localPayload = canonicalizeSyncPayload(buildCurrentSyncPayload())
+        let primarySource = resolvedPrimarySyncSource()
         do {
-            if syncEnableICloud, let payload = try fetchRemotePayloadFromICloud() {
-                remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: payload)
+            let remotePayload: SyncBundlePayload?
+            switch primarySource {
+            case .iCloud:
+                remotePayload = try fetchRemotePayloadFromICloud().map(canonicalizeSyncPayload)
+            case .webDAV:
+                guard let url = buildWebDAVResourceURL() else {
+                    throw NSError(domain: "AccountStore.SyncPreview", code: 1, userInfo: [NSLocalizedDescriptionKey: "WebDAV 配置不完整"])
+                }
+                let response = try await fetchRemotePayload(
+                    from: url,
+                    authorization: buildBasicAuthorization(username: webdavUsername, password: webdavPassword)
+                )
+                remotePayload = response.payload.map(canonicalizeSyncPayload)
+            case .selfHostedServer:
+                guard let url = buildSelfHostedPayloadURL() else {
+                    throw NSError(domain: "AccountStore.SyncPreview", code: 2, userInfo: [NSLocalizedDescriptionKey: "服务器配置不完整"])
+                }
+                let response = try await fetchRemotePayload(
+                    from: url,
+                    authorization: buildBearerAuthorization(serverAuthToken)
+                )
+                remotePayload = response.payload.map(canonicalizeSyncPayload)
             }
-            if syncEnableWebDAV {
-                guard let url = buildWebDAVResourceURL() else { throw NSError(domain: "AccountStore.SyncPreview", code: 1, userInfo: [NSLocalizedDescriptionKey: "WebDAV 配置不完整"]) }
-                let response = try await fetchRemotePayload(from: url, authorization: buildBasicAuthorization(username: webdavUsername, password: webdavPassword))
-                if let payload = response.payload { remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: payload) }
-            }
-            if syncEnableSelfHostedServer {
-                guard let url = buildSelfHostedPayloadURL() else { throw NSError(domain: "AccountStore.SyncPreview", code: 2, userInfo: [NSLocalizedDescriptionKey: "服务器配置不完整"]) }
-                let response = try await fetchRemotePayload(from: url, authorization: buildBearerAuthorization(serverAuthToken))
-                if let payload = response.payload { remoteAggregate = mergePayloadsIfNeeded(current: remoteAggregate, incoming: payload) }
-            }
-            let merged = mergePayloads(local: localPayload, remote: remoteAggregate ?? emptySyncPayload())
-            let safetyReasons = syncSafetyReasons(local: localPayload, remote: remoteAggregate, merged: merged, mode: .merge)
+
+            // Preview uses the same primary-source merge semantics as the
+            // actual sync path. A missing remote object means first-time
+            // initialization, not a confirmed empty payload.
+            let merged = remotePayload.map { mergePayloads(local: localPayload, remote: $0) } ?? localPayload
+            let safetyReasons = syncSafetyReasons(local: localPayload, remote: remotePayload, merged: merged, mode: .merge)
             guard safetyReasons.isEmpty else {
                 syncPreviewStatus = "预览停止：安全检查未通过（\(safetyReasons.joined(separator: ", "))）"
                 return
             }
-            syncPreviewStatus = "预览（未写入）：账号 \(localPayload.accounts.count)->\(merged.accounts.count)，通行密钥 \(localPayload.passkeys.count)->\(merged.passkeys.count)，文件夹 \(localPayload.folders.count)->\(merged.folders.count)"
+            syncPreviewStatus = "预览（未写入，主源：\(primarySource.label)）：账号 \(visibleAccountCount(localPayload.accounts))->\(visibleAccountCount(merged.accounts))，通行密钥 \(visiblePasskeyCount(localPayload.passkeys))->\(visiblePasskeyCount(merged.passkeys))，文件夹 \(visibleFolderCount(localPayload.folders))->\(visibleFolderCount(merged.folders))"
         } catch {
             syncPreviewStatus = "预览失败：\(error.localizedDescription)"
         }
@@ -3131,18 +3223,32 @@ final class AccountStore: ObservableObject {
             request.timeoutInterval = 30
             request.setValue("application/json", forHTTPHeaderField: "Accept")
             request.setValue(currentETag, forHTTPHeaderField: "If-Match")
+            let idempotencyKey = "pass-restore-\(syncDeviceId())-\(UUID().uuidString)"
+            request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
             if let authorization {
                 request.setValue(authorization, forHTTPHeaderField: "Authorization")
             }
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (responseData, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else {
                 throw NSError(domain: "AccountStore.SyncVersions", code: 2, userInfo: [NSLocalizedDescriptionKey: "恢复响应不可识别"])
             }
-            if http.statusCode == 412 {
+            if http.statusCode == 412 || http.statusCode == 428 {
                 throw SyncRemoteError.preconditionFailed
             }
             guard (200 ... 299).contains(http.statusCode) else {
                 throw NSError(domain: "AccountStore.SyncVersions", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "恢复失败，HTTP \(http.statusCode)"])
+            }
+            guard let receipt = try? decoder.decode(SelfHostedWriteReceipt.self, from: responseData),
+                  receipt.ok,
+                  receipt.committed,
+                  receipt.scope == http.value(forHTTPHeaderField: "X-Sync-Scope"),
+                  receipt.etag == http.value(forHTTPHeaderField: "ETag"),
+                  receipt.payloadSha256 == http.value(forHTTPHeaderField: "X-Payload-Sha256"),
+                  receipt.revision == http.value(forHTTPHeaderField: "X-Sync-Revision").flatMap(Int.init),
+                  receipt.idempotencyKey == idempotencyKey,
+                  http.value(forHTTPHeaderField: "X-Sync-Idempotency-Key") == idempotencyKey
+            else {
+                throw NSError(domain: "AccountStore.SyncVersions", code: 4, userInfo: [NSLocalizedDescriptionKey: "服务器未返回可验证的恢复提交回执"])
             }
             let restoredResponse = try await fetchRemotePayload(from: payloadURL, authorization: authorization)
             guard let restoredPayload = restoredResponse.payload else {
@@ -3236,6 +3342,39 @@ final class AccountStore: ObservableObject {
             folderOrderUpdatedAtMs: useRemoteFolderOrder ? remote.folderOrderUpdatedAtMs : local.folderOrderUpdatedAtMs,
             folderOrderUpdatedDeviceName: useRemoteFolderOrder ? remote.folderOrderUpdatedDeviceName : local.folderOrderUpdatedDeviceName
         )
+    }
+
+    /// Canonicalize alias/site relations before safety checks. The fallback
+    /// implementation temporarily uses the in-memory account array because
+    /// the legacy Swift alias routine predates pure payload transforms.
+    private func canonicalizeSyncPayload(_ payload: SyncBundlePayload) -> SyncBundlePayload {
+        var result = payload
+        if !PassCoreFFI.forceSwiftMerge {
+            do {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                let data = try encoder.encode(result.accounts)
+                guard let accountsJSON = String(data: data, encoding: .utf8) else { return result }
+                let aliasResult = try PassCoreFFI.syncAliasGroupsJSON(
+                    accountsJSON: accountsJSON,
+                    deviceName: currentDeviceName(),
+                    nowMs: nowMs()
+                )
+                guard aliasResult.changed,
+                      let decoded = try? decoder.decode([PasswordAccount].self, from: Data(aliasResult.accountsJSON.utf8))
+                else { return result }
+                result.accounts = decoded
+                return result
+            } catch {
+                NSLog("[PassCore] alias canonicalization via Rust failed, fallback Swift: %@", error.localizedDescription)
+            }
+        }
+        let previousAccounts = accounts
+        accounts = result.accounts
+        syncAliasGroupsSwift()
+        result.accounts = accounts
+        accounts = previousAccounts
+        return result
     }
 
     private func encodeSyncPayloadJSON(_ payload: SyncBundlePayload) throws -> String {
@@ -3336,12 +3475,24 @@ final class AccountStore: ObservableObject {
         guard !base.isEmpty,
               !remotePath.isEmpty,
               let baseURL = URL(string: base),
-              isSecureSyncEndpoint(baseURL)
+              isSecureSyncEndpoint(baseURL),
+              let baseComponents = URLComponents(url: baseURL, resolvingAgainstBaseURL: false),
+              baseComponents.user == nil,
+              baseComponents.password == nil,
+              baseComponents.query == nil,
+              baseComponents.fragment == nil,
+              !remotePath.contains("?"),
+              !remotePath.contains("#"),
+              !remotePath.contains("://")
         else {
             return nil
         }
+        let pathComponents = remotePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard pathComponents.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+            return nil
+        }
         var url = baseURL
-        for component in remotePath.split(separator: "/").map(String.init) {
+        for component in pathComponents {
             url.appendPathComponent(component)
         }
         return url
@@ -3517,9 +3668,15 @@ final class AccountStore: ObservableObject {
         let parsed = try decodeSyncBundle(data)
         return RemotePayloadResponse(
             payload: SyncBundlePayload(
-                accounts: normalizeDecodedAccounts(parsed.accounts),
-                folders: parsed.folders,
-                passkeys: parsed.passkeys
+                accounts: normalizeDecodedAccounts(parsed.payload.accounts),
+                folders: parsed.payload.folders,
+                passkeys: parsed.payload.passkeys,
+                allRegularAccountIds: parsed.payload.allRegularAccountIds,
+                allRegularOrderUpdatedAtMs: parsed.payload.allRegularOrderUpdatedAtMs,
+                allRegularOrderUpdatedDeviceName: parsed.payload.allRegularOrderUpdatedDeviceName,
+                folderOrderIds: parsed.payload.folderOrderIds,
+                folderOrderUpdatedAtMs: parsed.payload.folderOrderUpdatedAtMs,
+                folderOrderUpdatedDeviceName: parsed.payload.folderOrderUpdatedDeviceName
             ),
             etag: http.value(forHTTPHeaderField: "ETag"),
             isEncrypted: isEncrypted,
@@ -3557,7 +3714,7 @@ final class AccountStore: ObservableObject {
                 userInfo: [NSLocalizedDescriptionKey: "远端响应不可识别"]
             )
         }
-        if http.statusCode == 412 {
+        if http.statusCode == 412 || http.statusCode == 428 {
             throw SyncRemoteError.preconditionFailed
         }
         guard (200 ... 299).contains(http.statusCode) else {
@@ -3569,14 +3726,18 @@ final class AccountStore: ObservableObject {
         }
         let etag = http.value(forHTTPHeaderField: "ETag")
         if let scope = http.value(forHTTPHeaderField: "X-Sync-Scope") {
+            let revisionHeader = http.value(forHTTPHeaderField: "X-Sync-Revision").flatMap(Int.init)
+            let idempotencyHeader = http.value(forHTTPHeaderField: "X-Sync-Idempotency-Key")
             guard let receipt = try? decoder.decode(SelfHostedWriteReceipt.self, from: responseData),
                   receipt.ok,
                   receipt.committed,
                   !scope.isEmpty,
                   receipt.scope == scope,
                   receipt.revision > 0,
+                  receipt.revision == revisionHeader,
                   receipt.etag == etag,
                   receipt.payloadSha256 == http.value(forHTTPHeaderField: "X-Payload-Sha256"),
+                  idempotencyKey == nil || idempotencyHeader == idempotencyKey,
                   idempotencyKey == nil || receipt.idempotencyKey == idempotencyKey
             else {
                 throw NSError(
@@ -3594,7 +3755,8 @@ final class AccountStore: ObservableObject {
         to url: URL,
         authorization: String?,
         etag: String?,
-        historyTitle: String
+        historyTitle: String,
+        mergeOnConflict: Bool
     ) async throws -> SelfHostedPushResult {
         var candidate = payload
         let safetyBaseline = payload
@@ -3610,7 +3772,8 @@ final class AccountStore: ObservableObject {
                 let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
                 let latestPayload = latestResponse.payload ?? emptySyncPayload()
                 currentETag = latestResponse.etag
-                candidate = mergePayloads(local: candidate, remote: latestPayload)
+                if !mergeOnConflict { continue }
+                candidate = canonicalizeSyncPayload(mergePayloads(local: candidate, remote: canonicalizeSyncPayload(latestPayload)))
                 let safetyReasons = syncSafetyReasons(
                     local: safetyBaseline,
                     remote: latestPayload,
@@ -3636,7 +3799,8 @@ final class AccountStore: ObservableObject {
         to url: URL,
         authorization: String?,
         etag: String?,
-        historyTitle: String
+        historyTitle: String,
+        mergeOnConflict: Bool
     ) async throws -> ETagPushResult {
         var candidate = payload
         let safetyBaseline = payload
@@ -3652,7 +3816,8 @@ final class AccountStore: ObservableObject {
                 let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
                 currentETag = latestResponse.etag
                 let latestPayload = latestResponse.payload ?? emptySyncPayload()
-                candidate = mergePayloads(local: candidate, remote: latestPayload)
+                if !mergeOnConflict { continue }
+                candidate = canonicalizeSyncPayload(mergePayloads(local: candidate, remote: canonicalizeSyncPayload(latestPayload)))
                 let safetyReasons = syncSafetyReasons(
                     local: safetyBaseline,
                     remote: latestPayload,
@@ -3678,7 +3843,8 @@ final class AccountStore: ObservableObject {
         to url: URL,
         authorization: String?,
         etag: String?,
-        historyTitle: String
+        historyTitle: String,
+        mergeOnConflict: Bool
     ) async throws -> ETagPushResult {
         var candidate = payload
         var currentETag = etag
@@ -3693,6 +3859,7 @@ final class AccountStore: ObservableObject {
                 let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
                 currentETag = latestResponse.etag
                 let latestPayload = latestResponse.payload ?? emptySyncPayload()
+                if !mergeOnConflict { continue }
                 let safetyReasons = syncSafetyReasons(
                     local: candidate,
                     remote: latestPayload,
@@ -3706,7 +3873,7 @@ final class AccountStore: ObservableObject {
                         userInfo: [NSLocalizedDescriptionKey: "并发重试的云端覆盖被安全检查阻止：\(safetyReasons.joined(separator: ", "))"]
                     )
                 }
-                candidate = latestPayload
+                candidate = canonicalizeSyncPayload(latestPayload)
                 let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
                 changed = changed || applied
             }
@@ -3719,7 +3886,8 @@ final class AccountStore: ObservableObject {
         to url: URL,
         authorization: String?,
         etag: String?,
-        historyTitle: String
+        historyTitle: String,
+        mergeOnConflict: Bool
     ) async throws -> SelfHostedPushResult {
         var candidate = payload
         var currentETag = etag
@@ -3734,6 +3902,7 @@ final class AccountStore: ObservableObject {
                 let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
                 currentETag = latestResponse.etag
                 let latestPayload = latestResponse.payload ?? emptySyncPayload()
+                if !mergeOnConflict { continue }
                 let safetyReasons = syncSafetyReasons(
                     local: candidate,
                     remote: latestPayload,
@@ -3747,7 +3916,7 @@ final class AccountStore: ObservableObject {
                         userInfo: [NSLocalizedDescriptionKey: "并发重试的云端覆盖被安全检查阻止：\(safetyReasons.joined(separator: ", "))"]
                     )
                 }
-                candidate = latestPayload
+                candidate = canonicalizeSyncPayload(latestPayload)
                 let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
                 changed = changed || applied
             }
@@ -4936,9 +5105,15 @@ final class AccountStore: ObservableObject {
 
         let parsed = try decodeSyncBundle(data)
         return SyncBundlePayload(
-            accounts: normalizeDecodedAccounts(parsed.accounts),
-            folders: parsed.folders,
-            passkeys: parsed.passkeys
+            accounts: normalizeDecodedAccounts(parsed.payload.accounts),
+            folders: parsed.payload.folders,
+            passkeys: parsed.payload.passkeys,
+            allRegularAccountIds: parsed.payload.allRegularAccountIds,
+            allRegularOrderUpdatedAtMs: parsed.payload.allRegularOrderUpdatedAtMs,
+            allRegularOrderUpdatedDeviceName: parsed.payload.allRegularOrderUpdatedDeviceName,
+            folderOrderIds: parsed.payload.folderOrderIds,
+            folderOrderUpdatedAtMs: parsed.payload.folderOrderUpdatedAtMs,
+            folderOrderUpdatedDeviceName: parsed.payload.folderOrderUpdatedDeviceName
         )
     }
 
@@ -5537,12 +5712,7 @@ final class AccountStore: ObservableObject {
         }
     }
 
-    private func decodeSyncBundle(_ data: Data) throws -> (
-        accounts: [PasswordAccount],
-        folders: [AccountFolder],
-        passkeys: [PasskeyRecord],
-        kind: String
-    ) {
+    private func decodeSyncBundle(_ data: Data) throws -> (payload: SyncBundlePayload, kind: String) {
         let plaintext: Data
         do {
             plaintext = try PassSyncCrypto.decrypt(
@@ -5561,7 +5731,7 @@ final class AccountStore: ObservableObject {
         if let bundle = try? decoder.decode(SyncBundleV2.self, from: plaintext),
            bundle.schema == Self.syncBundleSchemaV2
         {
-            return (bundle.payload.accounts, bundle.payload.folders, bundle.payload.passkeys, "v2")
+            return (bundle.payload, "v2")
         }
 
         throw NSError(
@@ -6790,6 +6960,25 @@ final class AccountStore: ObservableObject {
         Int64(Date().timeIntervalSince1970 * 1000)
     }
 
+    private func persistedOrderClock(key: String, fallback: Int64) -> Int64 {
+        if let stored = UserDefaults.standard.object(forKey: key) as? NSNumber,
+           stored.int64Value > 0
+        {
+            return stored.int64Value
+        }
+        let resolved = max(fallback, 0)
+        UserDefaults.standard.set(resolved, forKey: key)
+        return resolved
+    }
+
+    private func markAllRegularOrderChanged(at timestamp: Int64? = nil) {
+        UserDefaults.standard.set(timestamp ?? nowMs(), forKey: Keys.allRegularOrderUpdatedAtMs)
+    }
+
+    private func markFolderOrderChanged(at timestamp: Int64? = nil) {
+        UserDefaults.standard.set(timestamp ?? nowMs(), forKey: Keys.folderOrderUpdatedAtMs)
+    }
+
     private func currentDeviceName() -> String {
         PassSyncPolicy.normalizeDeviceName(deviceName)
     }
@@ -6969,7 +7158,7 @@ private struct SyncBundleSource: Codable {
 }
 
 private struct SyncBundlePayload: Codable {
-    let accounts: [PasswordAccount]
+    var accounts: [PasswordAccount]
     let folders: [AccountFolder]
     let passkeys: [PasskeyRecord]
     let allRegularAccountIds: [String]
@@ -7056,6 +7245,8 @@ private enum Keys {
     static let uiToastDurationSeconds = "pass.ui.toast.duration"
     static let showPasswordsGlobally = "pass.ui.passwords.showGlobally.v1"
     static let syncDiagnostics = "pass.sync.diagnostics.v1"
+    static let allRegularOrderUpdatedAtMs = "pass.sync.order.all.updatedAtMs.v1"
+    static let folderOrderUpdatedAtMs = "pass.sync.order.folders.updatedAtMs.v1"
 }
 
 private enum SecretKeys {

@@ -85,6 +85,107 @@ class PassSyncServerTests(unittest.TestCase):
         finally:
             server_module.MAX_AUDIT_OPERATIONS_PER_SCOPE = original_limit
 
+    def test_scope_revisions_are_independent_and_idempotent_replay_keeps_revision(self) -> None:
+        repository = self.server.repository
+
+        def put(scope: str, exported_at_ms: int, if_match: str | None = None, key: str | None = None):
+            payload_json, payload_sha256, exported = server_module.parse_and_validate_bundle(
+                sample_bundle(exported_at_ms)
+            )
+            return repository.put(scope, payload_json, payload_sha256, exported, if_match, idempotency_key=key)
+
+        first_default = put("default", 1, key="scope-default-1")
+        first_other = put("other", 2, key="scope-other-1")
+        second_default = put("default", 3, if_match=first_default.etag, key="scope-default-2")
+        replay = put("default", 3, if_match=second_default.etag, key="scope-default-2")
+
+        self.assertEqual(first_default.scope_revision, 1)
+        self.assertEqual(first_other.scope_revision, 1)
+        self.assertEqual(second_default.scope_revision, 2)
+        self.assertEqual(replay.scope_revision, second_default.scope_revision)
+        self.assertEqual(repository.current_revision("default"), 2)
+        self.assertEqual(repository.current_revision("other"), 1)
+
+    def test_legacy_revision_columns_are_backfilled_per_scope(self) -> None:
+        legacy_dir = tempfile.TemporaryDirectory()
+        db_path = Path(legacy_dir.name) / "legacy.sqlite3"
+        try:
+            connection = sqlite3.connect(db_path)
+            connection.executescript(
+                """
+                CREATE TABLE payloads (
+                  scope TEXT PRIMARY KEY NOT NULL,
+                  etag TEXT NOT NULL,
+                  payload_json TEXT NOT NULL,
+                  payload_sha256 TEXT NOT NULL,
+                  exported_at_ms INTEGER NOT NULL,
+                  updated_at_ms INTEGER NOT NULL
+                );
+                CREATE TABLE payload_versions (
+                  version_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  scope TEXT NOT NULL,
+                  etag TEXT NOT NULL,
+                  payload_json TEXT NOT NULL,
+                  payload_sha256 TEXT NOT NULL,
+                  exported_at_ms INTEGER NOT NULL,
+                  updated_at_ms INTEGER NOT NULL,
+                  saved_at_ms INTEGER NOT NULL
+                );
+                CREATE TABLE sync_idempotency (
+                  scope TEXT NOT NULL,
+                  idempotency_key TEXT NOT NULL,
+                  etag TEXT NOT NULL,
+                  payload_json TEXT NOT NULL,
+                  payload_sha256 TEXT NOT NULL,
+                  exported_at_ms INTEGER NOT NULL,
+                  updated_at_ms INTEGER NOT NULL,
+                  created_at_ms INTEGER NOT NULL,
+                  PRIMARY KEY(scope, idempotency_key)
+                );
+                """
+            )
+            rows = [
+                ("default", '"legacy-1"', "{}", "sha-1", 1, 1, 1),
+                ("default", '"legacy-2"', "{}", "sha-2", 2, 2, 2),
+                ("other", '"legacy-3"', "{}", "sha-3", 3, 3, 3),
+            ]
+            connection.executemany(
+                """
+                INSERT INTO payload_versions (
+                  scope, etag, payload_json, payload_sha256,
+                  exported_at_ms, updated_at_ms, saved_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?);
+                """,
+                rows,
+            )
+            connection.execute(
+                """
+                INSERT INTO sync_idempotency (
+                  scope, idempotency_key, etag, payload_json, payload_sha256,
+                  exported_at_ms, updated_at_ms, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                ("default", "legacy-key", '"legacy-2"', "{}", "sha-2", 2, 2, 2),
+            )
+            connection.commit()
+            connection.close()
+
+            repository = server_module.PayloadRepository(db_path)
+            default_versions = repository.list_versions("default")
+            other_versions = repository.list_versions("other")
+            self.assertEqual([item.scope_revision for item in default_versions], [2, 1])
+            self.assertEqual([item.scope_revision for item in other_versions], [1])
+            self.assertEqual(repository.current_revision("default"), 2)
+            with sqlite3.connect(db_path) as migrated:
+                migrated.row_factory = sqlite3.Row
+                row = migrated.execute(
+                    "SELECT scope_revision FROM sync_idempotency WHERE scope = ? AND idempotency_key = ?",
+                    ("default", "legacy-key"),
+                ).fetchone()
+            self.assertEqual(int(row["scope_revision"]), 2)
+        finally:
+            legacy_dir.cleanup()
+
     def test_slow_connection_cannot_exhaust_bounded_workers(self) -> None:
         limited_dir = tempfile.TemporaryDirectory()
         limited_server = build_server(AppConfig(
@@ -619,7 +720,7 @@ class PassSyncServerTests(unittest.TestCase):
             self.request(
                 "POST",
                 "/v1/sync/versions/1/restore",
-                headers={**headers, "If-Match": first_etag},
+                headers={**headers, "If-Match": first_etag, "Idempotency-Key": "restore-test-1"},
             )
         self.assertEqual(context.exception.code, 412)
         context.exception.close()
@@ -627,13 +728,22 @@ class PassSyncServerTests(unittest.TestCase):
         with self.request(
             "POST",
             "/v1/sync/versions/1/restore",
-            headers={**headers, "If-Match": current_etag},
+            headers={**headers, "If-Match": current_etag, "Idempotency-Key": "restore-test-2"},
         ) as response:
             self.assertEqual(response.status, 200)
             restored_etag = response.headers["ETag"]
             result = json.loads(response.read().decode("utf-8"))
         self.assertTrue(result["ok"])
         self.assertNotEqual(restored_etag, current_etag)
+
+        with self.request(
+            "POST",
+            "/v1/sync/versions/1/restore",
+            headers={**headers, "If-Match": restored_etag, "Idempotency-Key": "restore-test-2"},
+        ) as response:
+            replayed = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(replayed["etag"], restored_etag)
+        self.assertEqual(replayed["revision"], result["revision"])
 
         with self.request("GET", "/v1/sync/payload", headers=headers) as response:
             restored = json.loads(response.read().decode("utf-8"))

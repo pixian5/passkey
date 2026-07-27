@@ -1622,7 +1622,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.2.3";
+  var PASS_EXTENSION_VERSION = "1.2.4";
 
   // ../../core/pass_core/js/sync_alias_core.js
   function syncAliasGroups(accounts, helpers, options = {}) {
@@ -2171,10 +2171,14 @@
       isPinned: Boolean(newerAccount.isPinned),
       pinnedSortOrder: newerAccount.pinnedSortOrder == null ? null : asNumber(newerAccount.pinnedSortOrder),
       regularSortOrder: newerAccount.regularSortOrder == null ? null : asNumber(newerAccount.regularSortOrder),
-      // Pinned state is UI metadata, but it is still synchronized account state.
-      // Keep the newest complete map instead of accidentally dropping it during
-      // a field merge; the native client follows the same last-writer rule.
-      pinnedViews: newerAccount.pinnedViews || olderAccount.pinnedViews || null,
+      // Pinned state is synchronized per view scope. Keep views that only exist
+      // on one side, while the newer account wins when both sides edited the
+      // same scope.
+      pinnedViews: mergePinnedViews(
+        left.pinnedViews,
+        right.pinnedViews,
+        newerAccount === right
+      ),
       folderId: mergedFolderIds[0] || (newerAccount.folderId == null ? null : h.normalizeFolderId(newerAccount.folderId)),
       folderIds: mergedFolderIds,
       folderMembershipStates,
@@ -2320,7 +2324,8 @@
       const existingIndex = merged.findIndex((candidate) => {
         const candidateAccountId = asString(candidate.accountId).trim();
         const candidateRecordId = asString(candidate.recordId || candidate.id).trim().toLowerCase();
-        return accountId && candidateAccountId === accountId || recordId && candidateRecordId === recordId;
+        if (recordId) return candidateRecordId === recordId;
+        return !candidateRecordId && accountId && candidateAccountId === accountId;
       });
       if (existingIndex >= 0) {
         merged[existingIndex] = mergeSameAccount(merged[existingIndex], normalized, h);
@@ -2584,6 +2589,21 @@
     }
     return result;
   }
+  function mergePinnedViews(leftValue, rightValue, preferRight) {
+    const left = leftValue && typeof leftValue === "object" && !Array.isArray(leftValue) ? leftValue : {};
+    const right = rightValue && typeof rightValue === "object" && !Array.isArray(rightValue) ? rightValue : {};
+    const merged = {};
+    for (const key of /* @__PURE__ */ new Set([...Object.keys(left), ...Object.keys(right)])) {
+      if (Object.prototype.hasOwnProperty.call(left, key) && Object.prototype.hasOwnProperty.call(right, key)) {
+        merged[key] = preferRight ? right[key] : left[key];
+      } else if (Object.prototype.hasOwnProperty.call(left, key)) {
+        merged[key] = left[key];
+      } else {
+        merged[key] = right[key];
+      }
+    }
+    return Object.keys(merged).length > 0 ? merged : null;
+  }
   function missingIdentities(source, target, identityFn) {
     const sourceIds = identitySet(source, identityFn);
     const targetIds = identitySet(target, identityFn);
@@ -2596,8 +2616,8 @@
     const passkeys = Array.isArray(payload?.passkeys) ? payload.passkeys.map(h.normalizePasskeyShape) : [];
     return {
       accounts: accounts.filter((item) => !item?.isPermanentlyDeleted).length,
-      activeAccounts: accounts.filter((item) => !item?.isDeleted).length,
-      deletedAccounts: accounts.filter((item) => Boolean(item?.isDeleted)).length,
+      activeAccounts: accounts.filter((item) => !item?.isDeleted && !item?.isPermanentlyDeleted).length,
+      deletedAccounts: accounts.filter((item) => Boolean(item?.isDeleted) && !item?.isPermanentlyDeleted).length,
       folders: folders.filter((item) => !item?.isPermanentlyDeleted).length,
       passkeys: passkeys.filter((item) => !item?.isPermanentlyDeleted).length,
       accountIds: identitySet(accounts, (item) => asString(item?.recordId || item?.id || item?.accountId).trim().toLowerCase()),
@@ -2819,6 +2839,9 @@
     } catch {
     }
   }
+  function visibleSyncCount(values) {
+    return (Array.isArray(values) ? values : []).filter((item) => item?.isPermanentlyDeleted !== true).length;
+  }
   var STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
   var STORAGE_KEY_SYNC_ENABLE_WEBDAV = "pass.sync.enableWebDAV.v3";
   var STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER = "pass.sync.enableSelfHostedServer.v3";
@@ -2879,6 +2902,31 @@
     "PASS_WEB_BRIDGE_SYNC_DATA"
   ]);
   var webBridgeSyncChain = Promise.resolve();
+  var SYNC_HTTP_TIMEOUT_MS = 3e4;
+  async function fetchWithSyncTimeout(url, options = {}, stage = "\u540C\u6B65\u8BF7\u6C42") {
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), SYNC_HTTP_TIMEOUT_MS) : null;
+    try {
+      return await fetch(url, controller ? { ...options, signal: controller.signal } : options);
+    } catch (error) {
+      if (controller?.signal.aborted) throw new Error(`${stage}\u8D85\u65F6\uFF08${SYNC_HTTP_TIMEOUT_MS / 1e3} \u79D2\uFF09`);
+      throw error;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+  function normalizeWebdavRemotePath(value) {
+    const raw = String(value || "").trim();
+    if (!raw || /^[a-z][a-z\d+.-]*:/i.test(raw) || raw.includes("?") || raw.includes("#")) {
+      throw new Error("WebDAV \u8FDC\u7AEF\u8DEF\u5F84\u5FC5\u987B\u662F\u76F8\u5BF9\u8DEF\u5F84\uFF0C\u4E14\u4E0D\u80FD\u5305\u542B\u67E5\u8BE2\u4E32\u6216\u951A\u70B9");
+    }
+    const path = raw.replace(/^\/+/, "");
+    const parts = path.split("/");
+    if (parts.some((part) => !part || part === "." || part === "..")) {
+      throw new Error("WebDAV \u8FDC\u7AEF\u8DEF\u5F84\u5305\u542B\u975E\u6CD5\u8DEF\u5F84\u6BB5");
+    }
+    return parts.join("/");
+  }
   function normalizeLegacySelfHostedServerBaseUrl(value) {
     const trimmed = String(value || "").trim();
     if (!trimmed) return DEFAULT_SELF_HOSTED_SERVER_BASE_URL;
@@ -3100,6 +3148,7 @@
     let mergedFolders = localFolders;
     let finalPayload = null;
     let primaryRemotePayload = null;
+    const pullErrors = [];
     for (const target of targets) {
       logSyncFlow("pull-start", {
         label: target.label,
@@ -3110,11 +3159,13 @@
       try {
         remoteResponse = await pullRemotePayload(target);
       } catch (error) {
-        logSyncFlow("auto-sync-aborted-pull-failed", {
+        logSyncFlow("auto-sync-pull-failed", {
           label: target.label,
           message: error?.message || String(error || "")
         });
-        return;
+        if (target.isPrimary) return;
+        pullErrors.push(`${target.label}: ${error?.message || String(error || "")}`);
+        continue;
       }
       logSyncFlow("pull-success", {
         label: target.label,
@@ -3131,17 +3182,31 @@
       }
     }
     const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+    const pulledLocalPayload = {
+      ...currentPayload,
+      accounts: localAccounts,
+      folders: localFolders,
+      passkeys: localPasskeys
+    };
+    if (!syncPayloadEquals(currentPayload, pulledLocalPayload)) {
+      logSyncFlow("auto-sync-aborted-local-changed-during-pull");
+      return;
+    }
     if (primaryRemotePayload) {
+      const canonicalLocalPayload = {
+        ...pulledLocalPayload,
+        accounts: syncAliasGroups2(pulledLocalPayload.accounts)
+      };
+      const canonicalRemotePayload = {
+        ...primaryRemotePayload,
+        accounts: syncAliasGroups2(primaryRemotePayload.accounts)
+      };
       const mergedPayload = mergeSyncPayloads(
-        {
-          ...currentPayload,
-          accounts: localAccounts,
-          folders: localFolders,
-          passkeys: localPasskeys
-        },
-        primaryRemotePayload,
+        canonicalLocalPayload,
+        canonicalRemotePayload,
         syncMergeHelpers()
       );
+      mergedPayload.accounts = syncAliasGroups2(mergedPayload.accounts);
       ({ accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys } = mergedPayload);
       finalPayload = mergedPayload;
     } else {
@@ -3149,8 +3214,8 @@
     }
     if (primaryRemotePayload) {
       const safety = validateSyncSafety(
-        { accounts: localAccounts, folders: localFolders, passkeys: localPasskeys },
-        primaryRemotePayload,
+        { accounts: syncAliasGroups2(localAccounts), folders: localFolders, passkeys: localPasskeys },
+        { ...primaryRemotePayload, accounts: syncAliasGroups2(primaryRemotePayload.accounts) },
         { accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys },
         SYNC_MODE_MERGE
       );
@@ -3173,7 +3238,7 @@
     const pushTargets = [...targets].sort(
       (left, right) => Number(right.isPrimary) - Number(left.isPrimary) || Number(right.supportsEtag) - Number(left.supportsEtag)
     );
-    const pushErrors = [];
+    const pushErrors = [...pullErrors];
     const outboxByTarget = new Map((await getSyncOutbox()).map((item) => [item.targetKey, item]));
     for (const target of pushTargets) {
       const targetKey = syncTargetKey(target);
@@ -3222,9 +3287,9 @@
         label: target.label,
         url: target.url,
         itemCounts: {
-          accounts: Array.isArray(result?.payload?.accounts) ? result.payload.accounts.length : 0,
-          passkeys: Array.isArray(result?.payload?.passkeys) ? result.payload.passkeys.length : 0,
-          folders: Array.isArray(result?.payload?.folders) ? result.payload.folders.length : 0
+          accounts: visibleSyncCount(result?.payload?.accounts),
+          passkeys: visibleSyncCount(result?.payload?.passkeys),
+          folders: visibleSyncCount(result?.payload?.folders)
         }
       });
       mergedAccounts = result.payload.accounts.map(normalizeAccountShape);
@@ -3341,7 +3406,7 @@
     const targets = [];
     if (Boolean(result[STORAGE_KEY_SYNC_ENABLE_WEBDAV])) {
       const baseUrl = String(result[STORAGE_KEY_SYNC_WEBDAV_BASE_URL] || "").trim();
-      const remotePath = String(result[STORAGE_KEY_SYNC_WEBDAV_PATH] || "").trim() || "pass-sync-bundle-v2.json";
+      const remotePath = normalizeWebdavRemotePath(String(result[STORAGE_KEY_SYNC_WEBDAV_PATH] || "").trim() || "pass-sync-bundle-v2.json");
       if (!baseUrl) return null;
       let parsedBaseUrl;
       try {
@@ -3353,7 +3418,9 @@
         throw new Error("WebDAV \u540C\u6B65\u5730\u5740\u5FC5\u987B\u4F7F\u7528 HTTPS\uFF08\u672C\u673A\u56DE\u73AF\u5730\u5740\u53EF\u4F7F\u7528 HTTP\uFF09");
       }
       const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-      const url = new URL(remotePath.replace(/^\/+/g, ""), normalizedBase).toString();
+      const base = new URL(normalizedBase);
+      if (base.username || base.password || base.search || base.hash) throw new Error("WebDAV \u5730\u5740\u4E0D\u80FD\u5305\u542B\u8D26\u53F7\u3001\u67E5\u8BE2\u4E32\u6216\u951A\u70B9");
+      const url = new URL(remotePath, normalizedBase).toString();
       const username = String(result[STORAGE_KEY_SYNC_WEBDAV_USERNAME] || "");
       const password = secrets.webdavPassword;
       let authHeader = null;
@@ -3730,9 +3797,9 @@
       });
       return {
         ok: true,
-        accounts: accounts.length,
-        folders: folders.length,
-        passkeys: passkeys.length
+        accounts: visibleSyncCount(accounts),
+        folders: visibleSyncCount(folders),
+        passkeys: visibleSyncCount(passkeys)
       };
     });
     webBridgeSyncChain = run.catch(() => {
@@ -4461,7 +4528,7 @@
     if (target.authHeader) headers.Authorization = target.authHeader;
     let response;
     try {
-      response = await fetch(target.url, { method: "GET", headers, cache: "no-store" });
+      response = await fetchWithSyncTimeout(target.url, { method: "GET", headers, cache: "no-store" }, `\u62C9\u53D6${target.label}`);
     } catch (error) {
       logSyncFlow("pull-fetch-error", {
         label: target.label,
@@ -4505,6 +4572,8 @@
     const scope = response.headers.get("X-Sync-Scope");
     const etag = response.headers.get("ETag");
     const payloadSha256 = response.headers.get("X-Payload-Sha256");
+    const revisionHeader = Number(response.headers.get("X-Sync-Revision"));
+    const idempotencyHeader = response.headers.get("X-Sync-Idempotency-Key");
     if (!scope || !etag || !payloadSha256) {
       throw new Error("\u670D\u52A1\u5668\u672A\u8FD4\u56DE\u53EF\u9A8C\u8BC1\u7684\u540C\u6B65\u63D0\u4EA4\u56DE\u6267");
     }
@@ -4514,7 +4583,7 @@
     } catch {
       throw new Error("\u670D\u52A1\u5668\u63D0\u4EA4\u56DE\u6267\u4E0D\u662F\u6709\u6548 JSON");
     }
-    if (!receipt?.ok || !receipt?.committed || receipt.scope !== scope || receipt.etag !== etag || receipt.payloadSha256 !== payloadSha256 || !Number.isInteger(receipt.revision) || receipt.revision < 1 || idempotencyKey && receipt.idempotencyKey !== idempotencyKey) {
+    if (!receipt?.ok || !receipt?.committed || receipt.scope !== scope || receipt.etag !== etag || receipt.payloadSha256 !== payloadSha256 || !Number.isInteger(receipt.revision) || receipt.revision < 1 || receipt.revision !== revisionHeader || idempotencyKey && idempotencyHeader !== idempotencyKey || idempotencyKey && receipt.idempotencyKey !== idempotencyKey) {
       throw new Error("\u670D\u52A1\u5668\u63D0\u4EA4\u56DE\u6267\u6821\u9A8C\u5931\u8D25");
     }
     return etag;
@@ -4535,7 +4604,7 @@
     if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
     let response;
     try {
-      response = await fetch(target.url, {
+      response = await fetchWithSyncTimeout(target.url, {
         method: "PUT",
         headers,
         body: JSON.stringify(encryptedBundle, null, 2)
@@ -4596,21 +4665,28 @@
       updateRemoteConcurrencyState(target, latestResponse.etag);
       target.remotePayload = latestResponse.payload;
       target.remoteEncrypted = latestResponse.encrypted;
+      if (target.isPrimary === false) {
+        continue;
+      }
       const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
       const localAccounts = Array.isArray(candidate.accounts) ? candidate.accounts.map(normalizeAccountShape) : [];
       const localPasskeys = buildUnifiedPasskeys(localAccounts, Array.isArray(candidate.passkeys) ? candidate.passkeys.map(normalizePasskeyShape) : []);
       const localFolders = Array.isArray(candidate.folders) ? candidate.folders.map(normalizeFolderShape) : [];
-      const remoteAccounts = remotePayload.accounts.map(normalizeAccountShape);
+      const remoteAccounts = syncAliasGroups2(remotePayload.accounts.map(normalizeAccountShape));
+      const canonicalLocalAccounts = syncAliasGroups2(localAccounts);
       const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys);
       const remoteFolders = remotePayload.folders.map(normalizeFolderShape);
-      candidate = mergeSyncPayloads(
-        { ...candidate, accounts: localAccounts, passkeys: localPasskeys, folders: localFolders },
-        { ...remotePayload, accounts: remoteAccounts, passkeys: remotePasskeys, folders: remoteFolders },
-        syncMergeHelpers()
-      );
+      if (target.isPrimary !== false) {
+        candidate = mergeSyncPayloads(
+          { ...candidate, accounts: canonicalLocalAccounts, passkeys: localPasskeys, folders: localFolders },
+          { ...remotePayload, accounts: remoteAccounts, passkeys: remotePasskeys, folders: remoteFolders },
+          syncMergeHelpers()
+        );
+        candidate.accounts = syncAliasGroups2(candidate.accounts);
+      }
       const safety = validateSyncSafety(
-        { ...candidate, accounts: localAccounts, folders: localFolders, passkeys: localPasskeys },
-        remotePayload,
+        { ...candidate, accounts: canonicalLocalAccounts, folders: localFolders, passkeys: localPasskeys },
+        { ...remotePayload, accounts: remoteAccounts },
         candidate,
         SYNC_MODE_MERGE
       );
@@ -4618,7 +4694,9 @@
         logSyncFlow("push-retry-aborted-safety-check", { reasons: safety.reasons });
         throw new Error(`\u5E76\u53D1\u91CD\u8BD5\u5408\u5E76\u88AB\u5B89\u5168\u68C0\u67E5\u963B\u6B62: ${safety.reasons.join(",")}`);
       }
-      await writeBusinessDataToStore(candidate);
+      if (target.isPrimary !== false) {
+        await writeBusinessDataToStore(candidate);
+      }
     }
     throw new Error("\u8FDC\u7AEF\u5E76\u53D1\u51B2\u7A81\u91CD\u8BD5\u6B21\u6570\u5DF2\u7528\u5C3D");
   }

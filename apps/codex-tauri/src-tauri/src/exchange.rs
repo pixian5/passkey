@@ -333,9 +333,11 @@ pub fn restore_sync_version(
     let token = settings.auth_token.trim();
 
     let restore_url = format!("{base}/v2/sync/versions/{id}/restore");
+    let idempotency_key = format!("pass-tauri-restore-{}", uuid::Uuid::new_v4());
     let mut req = client
         .post(&restore_url)
-        .header("Content-Type", "application/json");
+        .header("Content-Type", "application/json")
+        .header("Idempotency-Key", &idempotency_key);
     if !token.is_empty() {
         req = req.header("Authorization", format!("Bearer {token}"));
     }
@@ -344,6 +346,47 @@ pub fn restore_sync_version(
     }
     let resp = req.send().map_err(|e| format!("恢复快照失败: {e}"))?;
     if resp.status().is_success() {
+        let headers = resp.headers().clone();
+        let receipt_body = resp
+            .bytes()
+            .map_err(|e| format!("读取恢复提交回执失败: {e}"))?;
+        let receipt: Value = serde_json::from_slice(&receipt_body)
+            .map_err(|e| format!("恢复提交回执不是有效 JSON: {e}"))?;
+        let scope = headers
+            .get("X-Sync-Scope")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let etag_header = headers
+            .get("ETag")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let payload_sha256 = headers
+            .get("X-Payload-Sha256")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let revision = headers
+            .get("X-Sync-Revision")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<i64>().ok());
+        let valid = receipt.get("ok").and_then(Value::as_bool) == Some(true)
+            && receipt.get("committed").and_then(Value::as_bool) == Some(true)
+            && receipt.get("scope").and_then(Value::as_str) == Some(scope)
+            && receipt.get("etag").and_then(Value::as_str) == Some(etag_header)
+            && receipt.get("payloadSha256").and_then(Value::as_str) == Some(payload_sha256)
+            && receipt
+                .get("revision")
+                .and_then(Value::as_i64)
+                .filter(|value| *value > 0)
+                == revision
+            && receipt.get("idempotencyKey").and_then(Value::as_str)
+                == Some(idempotency_key.as_str())
+            && headers
+                .get("X-Sync-Idempotency-Key")
+                .and_then(|v| v.to_str().ok())
+                == Some(idempotency_key.as_str());
+        if !valid {
+            return Err("服务器未返回可验证的恢复提交回执".into());
+        }
         // Re-pull state after restore
         let after = get_sync_state(&settings.base_url, &settings.auth_token)?;
         if let Some(body) = after.body {
@@ -391,7 +434,7 @@ pub fn restore_sync_version(
         &settings.auth_token,
         &wire,
         etag.as_deref(),
-        None,
+        Some(&format!("{idempotency_key}-fallback")),
     )?;
     Ok((payload, Some(new_etag)))
 }

@@ -28,6 +28,15 @@ const cargoTargets = [
   ["apps/pass-web/Cargo.toml", "apps/pass-web/Cargo.lock", "pass-web"],
 ];
 
+// Cargo lockfiles also pin path dependencies by package version. Keep these
+// local crate entries in step with the canonical version so `--locked` builds
+// remain reproducible after a version bump.
+const cargoLockPackageTargets = [
+  ["apps/codex-tauri/src-tauri/Cargo.lock", ["codex-tauri", "pass-csvio", "pass-domain", "pass-merge"]],
+  ["apps/pass-web/Cargo.lock", ["pass-web", "pass-csvio", "pass-domain", "pass-merge"]],
+  ["core/pass_core/Cargo.lock", ["pass-core-ffi", "pass-csvio", "pass-domain", "pass-merge", "pass-storage", "pass-transport"]],
+];
+
 const coreWorkspaceCargoTarget = "core/pass_core/Cargo.toml";
 const coreFfiVersionTarget = "core/pass_core/crates/ffi/src/lib.rs";
 
@@ -155,6 +164,9 @@ function setVersion(version) {
     updateCargoToml(toml, version);
     updateCargoLock(lock, packageName, version);
   }
+  for (const [lock, packageNames] of cargoLockPackageTargets) {
+    for (const packageName of packageNames) updateCargoLock(lock, packageName, version);
+  }
   updateWorkspaceCargoToml(coreWorkspaceCargoTarget, version);
   replaceExactly(
     coreFfiVersionTarget,
@@ -232,6 +244,16 @@ function collectVersions() {
     const lockText = fs.readFileSync(absolute(lock), "utf8");
     const escapedName = packageName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     entries.push([lock, lockText.match(new RegExp(`\\[\\[package\\]\\]\\nname = "${escapedName}"\\nversion = "([^"]+)"`))?.[1]]);
+  }
+  for (const [lock, packageNames] of cargoLockPackageTargets) {
+    const lockText = fs.readFileSync(absolute(lock), "utf8");
+    for (const packageName of packageNames) {
+      const escapedName = packageName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      entries.push([
+        `${lock}:${packageName}`,
+        lockText.match(new RegExp(`\\[\\[package\\]\\]\\nname = "${escapedName}"\\nversion = "([^"]+)"`))?.[1],
+      ]);
+    }
   }
   const coreWorkspaceCargo = fs.readFileSync(absolute(coreWorkspaceCargoTarget), "utf8");
   entries.push([

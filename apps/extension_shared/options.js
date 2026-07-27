@@ -95,6 +95,35 @@ const TOTP_PERIOD_SECONDS = 30;
 const TOTP_DIGITS = 6;
 const TOTP_REFRESH_INTERVAL_MS = 1000;
 const OPTIONS_TOAST_DURATION_MS = 3000;
+const SYNC_HTTP_TIMEOUT_MS = 30_000;
+
+async function fetchWithSyncTimeout(url, options = {}, stage = "同步请求") {
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), SYNC_HTTP_TIMEOUT_MS) : null;
+  try {
+    return await fetch(url, controller ? { ...options, signal: controller.signal } : options);
+  } catch (error) {
+    if (controller?.signal.aborted) {
+      throw new Error(`${stage}超时（${SYNC_HTTP_TIMEOUT_MS / 1000} 秒）`);
+    }
+    throw error;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+function normalizeWebdavRemotePath(value) {
+  const raw = String(value || "").trim();
+  if (!raw || /^[a-z][a-z\d+.-]*:/i.test(raw) || raw.includes("?") || raw.includes("#")) {
+    throw new Error("WebDAV 远端路径必须是相对路径，且不能包含查询串或锚点");
+  }
+  const path = raw.replace(/^\/+/, "");
+  const parts = path.split("/");
+  if (parts.some((part) => !part || part === "." || part === "..")) {
+    throw new Error("WebDAV 远端路径包含非法路径段");
+  }
+  return parts.join("/");
+}
 
 function normalizeLegacySelfHostedServerBaseUrl(value) {
   const trimmed = String(value || "").trim();
@@ -574,6 +603,14 @@ function normalizeSyncPayloadShape(payload) {
     folderOrderUpdatedDeviceName: String(payload?.folderOrderUpdatedDeviceName || ""),
     deviceName: String(payload?.deviceName || ""),
   };
+}
+
+// Permanent-delete tombstones stay in the payload to prevent stale devices
+// from recreating records, but they are not visible business records.
+function visibleSyncCount(values) {
+  return (Array.isArray(values) ? values : [])
+    .filter((item) => item?.isPermanentlyDeleted !== true)
+    .length;
 }
 
 function syncPayloadEquals(lhs, rhs) {
@@ -1154,8 +1191,8 @@ async function exportSyncBundle() {
     const text = JSON.stringify(encrypted, null, 2);
     await downloadTextFile(fileName, text, "application/json");
     setStatus(
-      `同步包已导出${encryptionKey ? "（已加密）" : "（未加密，请妥善保管）"}：${bundle.payload.accounts.length} 条账号，` +
-        `${bundle.payload.passkeys.length} 条通行密钥，${bundle.payload.folders.length} 个文件夹`
+      `同步包已导出${encryptionKey ? "（已加密）" : "（未加密，请妥善保管）"}：${visibleSyncCount(bundle.payload.accounts)} 条账号，` +
+        `${visibleSyncCount(bundle.payload.passkeys)} 条通行密钥，${visibleSyncCount(bundle.payload.folders)} 个文件夹`
     );
   } catch (error) {
     setStatus(`同步包导出失败：${error.message}`);
@@ -1221,9 +1258,9 @@ async function importSyncBundleAndMerge() {
   }
 
   const confirmed = window.confirm(
-    `同步包合并预览：账号 ${localAccounts.length} → ${mergedPayload.accounts.length}，` +
-      `通行密钥 ${localPasskeys.length} → ${mergedPayload.passkeys.length}，` +
-      `文件夹 ${localFolders.length} → ${mergedPayload.folders.length}\n\n` +
+    `同步包合并预览：账号 ${visibleSyncCount(localAccounts)} → ${visibleSyncCount(mergedPayload.accounts)}，` +
+      `通行密钥 ${visibleSyncCount(localPasskeys)} → ${visibleSyncCount(mergedPayload.passkeys)}，` +
+      `文件夹 ${visibleSyncCount(localFolders)} → ${visibleSyncCount(mergedPayload.folders)}\n\n` +
       "确认写入本地吗？"
   );
   if (!confirmed) {
@@ -1233,15 +1270,15 @@ async function importSyncBundleAndMerge() {
   await saveLocalSafetySnapshot("导入同步包前自动备份");
   await writeBusinessDataToStore(mergedPayload);
   await appendHistory(
-    `导入同步包并合并：账号 ${localAccounts.length}->${mergedPayload.accounts.length}，通行密钥 ${localPasskeys.length}->${mergedPayload.passkeys.length}`
+    `导入同步包并合并：账号 ${visibleSyncCount(localAccounts)}->${visibleSyncCount(mergedPayload.accounts)}，通行密钥 ${visibleSyncCount(localPasskeys)}->${visibleSyncCount(mergedPayload.passkeys)}`
   );
 
   editingAccountId = null;
   await refresh({ silent: true });
   setStatus(
-    `同步包合并完成：账号 ${localAccounts.length}+${remotePayload.accounts.length}->${mergedPayload.accounts.length}，` +
-      `通行密钥 ${localPasskeys.length}+${remotePayload.passkeys.length}->${mergedPayload.passkeys.length}，` +
-      `文件夹 ${localFolders.length}+${remotePayload.folders.length}->${mergedPayload.folders.length}`
+    `同步包合并完成：账号 ${visibleSyncCount(localAccounts)}+${visibleSyncCount(remotePayload.accounts)}->${visibleSyncCount(mergedPayload.accounts)}，` +
+      `通行密钥 ${visibleSyncCount(localPasskeys)}+${visibleSyncCount(remotePayload.passkeys)}->${visibleSyncCount(mergedPayload.passkeys)}，` +
+      `文件夹 ${visibleSyncCount(localFolders)}+${visibleSyncCount(remotePayload.folders)}->${visibleSyncCount(mergedPayload.folders)}`
   );
 }
 
@@ -1536,8 +1573,16 @@ async function previewSyncWithRemote() {
     const localStored = await readBusinessDataFromStore();
     const localPayload = normalizeSyncPayloadShape(localStored);
     let primaryRemotePayload = null;
+    const pullErrors = [];
     for (const target of targets) {
-      const response = await pullRemotePayload(target);
+      let response;
+      try {
+        response = await pullRemotePayload(target);
+      } catch (error) {
+        if (target.isPrimary) throw error;
+        pullErrors.push(`${target.label}: ${error.message}`);
+        continue;
+      }
       target.remotePayload = response.payload;
       target.remoteEncrypted = response.encrypted;
       if (target.isPrimary) {
@@ -1552,9 +1597,9 @@ async function previewSyncWithRemote() {
     const safety = validateSyncSafety(localPayload, primaryRemotePayload, mergedPayload, SYNC_MODE_MERGE);
     if (!safety.safe) throw new Error(`安全检查未通过：${safety.reasons.join("、")}`);
     dom.syncPreviewStatus.textContent =
-      `预览（未写入）：账号 ${localPayload.accounts.length}->${mergedPayload.accounts.length}，` +
-      `通行密钥 ${localPayload.passkeys.length}->${mergedPayload.passkeys.length}，` +
-      `文件夹 ${localPayload.folders.length}->${mergedPayload.folders.length}；远端源 ${targets.length} 个`;
+      `预览（未写入）：账号 ${visibleSyncCount(localPayload.accounts)}->${visibleSyncCount(mergedPayload.accounts)}，` +
+      `通行密钥 ${visibleSyncCount(localPayload.passkeys)}->${visibleSyncCount(mergedPayload.passkeys)}，` +
+      `文件夹 ${visibleSyncCount(localPayload.folders)}->${visibleSyncCount(mergedPayload.folders)}；主源 ${targets.find((target) => target.isPrimary)?.label || "未指定"}`;
   } catch (error) {
     dom.syncPreviewStatus.textContent = `预览失败：${error.message}`;
   }
@@ -1601,6 +1646,7 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
   let mergedPayload = localPayload;
   let conflictCount = 0;
   let primaryRemotePayload = null;
+  const pullErrors = [];
 
   {
     for (const target of targets) {
@@ -1612,8 +1658,12 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
         target.remoteEncrypted = remoteResponse.encrypted;
         remotePayload = remoteResponse.payload;
       } catch (error) {
-        setStatus(`${target.label} 拉取失败: ${error.message}`);
-        return;
+        if (target.isPrimary) {
+          setStatus(`${target.label} 拉取失败: ${error.message}`);
+          return;
+        }
+        pullErrors.push(`${target.label}: ${error.message}`);
+        continue;
       }
 
       if (target.isPrimary) {
@@ -1621,6 +1671,12 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
           ? normalizeSyncPayloadShape(remotePayload)
           : null;
       }
+    }
+
+    const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+    if (!syncPayloadEquals(currentLocalPayload, localPayload)) {
+      setStatus("同步期间本地数据已变化，本次同步已取消，请重新同步");
+      return;
     }
 
     const primaryTarget = targets.find((target) => target.isPrimary) || targets[0];
@@ -1635,11 +1691,11 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
     } else if (normalizedSyncMode === SYNC_MODE_REMOTE_OVERWRITE_LOCAL) {
       const primaryPayload = primaryTarget?.remotePayload || null;
       const remoteIsEmpty = !primaryPayload || (
-        primaryPayload.accounts.length === 0 &&
-        primaryPayload.passkeys.length === 0 &&
-        primaryPayload.folders.length === 0
+        visibleSyncCount(primaryPayload.accounts) === 0 &&
+        visibleSyncCount(primaryPayload.passkeys) === 0 &&
+        visibleSyncCount(primaryPayload.folders) === 0
       );
-      const localIsNonEmpty = localAccounts.length > 0 || localPasskeys.length > 0 || localFolders.length > 0;
+      const localIsNonEmpty = visibleSyncCount(localAccounts) > 0 || visibleSyncCount(localPasskeys) > 0 || visibleSyncCount(localFolders) > 0;
       if (remoteIsEmpty && localIsNonEmpty) {
         setStatus("云端覆盖本地已停止：主同步源为空，避免清空本地数据");
         return;
@@ -1663,11 +1719,11 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
 
   await writeBusinessDataToStore(mergedPayload);
   await appendHistory(
-    `${getSyncModeHistoryLabel(normalizedSyncMode)}：账号 ${localAccounts.length}->${mergedPayload.accounts.length}，通行密钥 ${localPasskeys.length}->${mergedPayload.passkeys.length}` +
+    `${getSyncModeHistoryLabel(normalizedSyncMode)}：账号 ${visibleSyncCount(localAccounts)}->${visibleSyncCount(mergedPayload.accounts)}，通行密钥 ${visibleSyncCount(localPasskeys)}->${visibleSyncCount(mergedPayload.passkeys)}` +
       (conflictCount > 0 ? `，检测到 ${conflictCount} 个字段冲突并按时间/设备规则裁决` : "")
   );
 
-  const pushErrors = [];
+  const pushErrors = [...pullErrors];
   const pushTargets = [...targets].sort((left, right) =>
     Number(right.isPrimary) - Number(left.isPrimary)
       || Number(right.supportsEtag) - Number(left.supportsEtag)
@@ -1691,14 +1747,14 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
   const sourceSummary = targets.map((item) => item.label).join(" + ");
   if (pushErrors.length > 0) {
     setStatus(
-      `${getSyncModeStatusLabel(normalizedSyncMode)}，但部分源上传失败（${sourceSummary}）：${pushErrors.join("；")}（账号 ${localAccounts.length}->${mergedPayload.accounts.length}，` +
-        `通行密钥 ${localPasskeys.length}->${mergedPayload.passkeys.length}，文件夹 ${localFolders.length}->${mergedPayload.folders.length}）`
+      `${getSyncModeStatusLabel(normalizedSyncMode)}，但部分源上传失败（${sourceSummary}）：${pushErrors.join("；")}（账号 ${visibleSyncCount(localAccounts)}->${visibleSyncCount(mergedPayload.accounts)}，` +
+        `通行密钥 ${visibleSyncCount(localPasskeys)}->${visibleSyncCount(mergedPayload.passkeys)}，文件夹 ${visibleSyncCount(localFolders)}->${visibleSyncCount(mergedPayload.folders)}）`
     );
     return;
   }
   setStatus(
-    `${getSyncModeStatusLabel(normalizedSyncMode)}（${sourceSummary}）：账号 ${localAccounts.length}->${mergedPayload.accounts.length}，` +
-      `通行密钥 ${localPasskeys.length}->${mergedPayload.passkeys.length}，文件夹 ${localPayload.folders.length}->${mergedPayload.folders.length}` +
+    `${getSyncModeStatusLabel(normalizedSyncMode)}（${sourceSummary}）：账号 ${visibleSyncCount(localAccounts)}->${visibleSyncCount(mergedPayload.accounts)}，` +
+      `通行密钥 ${visibleSyncCount(localPasskeys)}->${visibleSyncCount(mergedPayload.passkeys)}，文件夹 ${visibleSyncCount(localPayload.folders)}->${visibleSyncCount(mergedPayload.folders)}` +
       (conflictCount > 0 ? `，字段冲突 ${conflictCount} 个` : "")
   );
 }
@@ -1712,7 +1768,12 @@ async function confirmRemoteOverwriteLocalIfNeeded() {
   for (const target of targets) {
     try {
       const remoteResponse = await pullRemotePayload(target);
-      if (!remoteResponse.payload) {
+      const remotePayload = remoteResponse.payload ? normalizeSyncPayloadShape(remoteResponse.payload) : null;
+      if (!remotePayload || (
+        visibleSyncCount(remotePayload.accounts) === 0 &&
+        visibleSyncCount(remotePayload.passkeys) === 0 &&
+        visibleSyncCount(remotePayload.folders) === 0
+      )) {
         emptyTargets.push(target.label);
       }
     } catch (error) {
@@ -1740,7 +1801,7 @@ async function confirmLocalOverwriteRemoteIfNeeded() {
   const localAccounts = Array.isArray(localStored.accounts) ? localStored.accounts : [];
   const localPasskeys = Array.isArray(localStored.passkeys) ? localStored.passkeys : [];
   const localFolders = Array.isArray(localStored.folders) ? localStored.folders : [];
-  const isEmpty = localAccounts.length === 0 && localPasskeys.length === 0 && localFolders.length === 0;
+  const isEmpty = visibleSyncCount(localAccounts) === 0 && visibleSyncCount(localPasskeys) === 0 && visibleSyncCount(localFolders) === 0;
   if (!isEmpty) {
     return true;
   }
@@ -1752,7 +1813,7 @@ function buildRemoteSyncTargetsFromDom() {
   const primarySource = normalizeSyncPrimarySource(dom.syncPrimarySource.value);
   if (dom.syncEnableWebdav.checked) {
     const baseUrl = String(dom.syncWebdavBaseUrl.value || "").trim();
-    const remotePath = String(dom.syncWebdavPath.value || "").trim() || "pass-sync-bundle-v2.json";
+    const remotePath = normalizeWebdavRemotePath(String(dom.syncWebdavPath.value || "").trim() || "pass-sync-bundle-v2.json");
     if (!baseUrl || !remotePath) {
       setStatus("WebDAV 配置不完整：请填写地址和远端路径");
       return null;
@@ -1760,7 +1821,9 @@ function buildRemoteSyncTargetsFromDom() {
     let url;
     try {
       const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-      url = new URL(remotePath.replace(/^\/+/g, ""), normalizedBase).toString();
+      const base = new URL(normalizedBase);
+      if (base.username || base.password || base.search || base.hash) throw new Error("WebDAV 地址不能包含账号、查询串或锚点");
+      url = new URL(remotePath, normalizedBase).toString();
     } catch {
       setStatus("WebDAV 地址格式不正确");
       return null;
@@ -1821,7 +1884,7 @@ async function pullRemotePayload(target) {
   if (target.authHeader) {
     headers.Authorization = target.authHeader;
   }
-  const response = await fetch(target.url, {
+  const response = await fetchWithSyncTimeout(target.url, {
     method: "GET",
     headers,
     cache: "no-store",
@@ -1869,7 +1932,7 @@ async function loadServerSyncVersions() {
     if (!target) throw new Error("请先启用并配置自建服务器");
     const headers = { Accept: "application/json" };
     if (target.authHeader) headers.Authorization = target.authHeader;
-    const response = await fetch(target.versionsUrl, { method: "GET", headers, cache: "no-store" });
+    const response = await fetchWithSyncTimeout(target.versionsUrl, { method: "GET", headers, cache: "no-store" }, "读取服务器快照");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const parsed = await response.json();
     const versions = Array.isArray(parsed?.versions) ? parsed.versions : [];
@@ -1919,7 +1982,7 @@ async function runStorageSelfCheck() {
     const snapshots = await getSafetySnapshots();
     const invalidSnapshots = snapshots.filter((item) => !item || !item.payload || !Number(item.createdAtMs));
     if (invalidSnapshots.length > 0) throw new Error(`发现 ${invalidSnapshots.length} 个损坏本地快照`);
-    dom.storageDiagnosticsStatus.textContent = `自检通过：账号 ${data.accounts.length}、通行密钥 ${data.passkeys.length}、文件夹 ${data.folders.length}、快照 ${snapshots.length}、同步密钥 ${secrets.encryptionKey ? "已配置" : "未配置"}`;
+    dom.storageDiagnosticsStatus.textContent = `自检通过：账号 ${visibleSyncCount(data.accounts)}、通行密钥 ${visibleSyncCount(data.passkeys)}、文件夹 ${visibleSyncCount(data.folders)}、快照 ${snapshots.length}、同步密钥 ${secrets.encryptionKey ? "已配置" : "未配置"}`;
   } catch (error) {
     dom.storageDiagnosticsStatus.textContent = `自检失败${error.code ? `（${error.code}）` : ""}：${error.message}；未修改数据`;
   }
@@ -1934,9 +1997,9 @@ async function exportStorageDiagnostics() {
       exportedAtMs: Date.now(),
       deviceId: String(result[STORAGE_KEY_SYNC_DEVICE_ID] || ""),
       counts: {
-        accounts: data.accounts.length,
-        passkeys: data.passkeys.length,
-        folders: data.folders.length,
+        accounts: visibleSyncCount(data.accounts),
+        passkeys: visibleSyncCount(data.passkeys),
+        folders: visibleSyncCount(data.folders),
       },
       snapshotCount: snapshots.length,
       note: "诊断导出不包含密码字段、同步令牌或同步加密密钥",
@@ -1965,9 +2028,9 @@ async function restoreLatestSafetySnapshot() {
   try {
     await saveLocalSafetySnapshot("恢复最近快照前");
     await writeBusinessDataToStore(latest.payload);
-    await appendHistory(`恢复最近本地安全快照：账号 ${latest.payload.accounts.length}`);
+    await appendHistory(`恢复最近本地安全快照：账号 ${visibleSyncCount(latest.payload.accounts)}`);
     await refresh({ silent: true });
-    dom.storageDiagnosticsStatus.textContent = `已恢复快照：账号 ${latest.payload.accounts.length}、通行密钥 ${latest.payload.passkeys.length}`;
+    dom.storageDiagnosticsStatus.textContent = `已恢复快照：账号 ${visibleSyncCount(latest.payload.accounts)}、通行密钥 ${visibleSyncCount(latest.payload.passkeys)}`;
   } catch (error) {
     dom.storageDiagnosticsStatus.textContent = `恢复失败：${error.message}`;
   }
@@ -1990,14 +2053,17 @@ async function restoreServerSyncVersion(target, version) {
     const headers = { Accept: "application/json", "If-Match": currentResponse.etag };
     if (target.authHeader) headers.Authorization = target.authHeader;
     const restoreUrl = `${target.versionsUrl}/${encodeURIComponent(versionId)}/restore`;
-    const response = await fetch(restoreUrl, { method: "POST", headers, cache: "no-store" });
+    const idempotencyKey = createSyncIdempotencyKey();
+    headers["Idempotency-Key"] = idempotencyKey;
+    const response = await fetchWithSyncTimeout(restoreUrl, { method: "POST", headers, cache: "no-store" }, "恢复服务器快照");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    await verifySelfHostedWriteReceipt(response, idempotencyKey);
     const restoredRemote = await pullRemotePayload(target);
     if (!restoredRemote.payload) throw new Error("恢复后服务器没有返回有效数据");
     const before = await readBusinessDataFromStore();
     await writeBusinessDataToStore(restoredRemote.payload);
     await appendHistory(
-      `恢复服务器快照版本 ${versionId}：账号 ${before.accounts.length}->${restoredRemote.payload.accounts.length}，通行密钥 ${before.passkeys.length}->${restoredRemote.payload.passkeys.length}`
+      `恢复服务器快照版本 ${versionId}：账号 ${visibleSyncCount(before.accounts)}->${visibleSyncCount(restoredRemote.payload.accounts)}，通行密钥 ${visibleSyncCount(before.passkeys)}->${visibleSyncCount(restoredRemote.payload.passkeys)}`
     );
     await refresh({ silent: true });
     dom.syncVersionsStatus.textContent = `版本 ${versionId} 恢复完成`;
@@ -2018,6 +2084,8 @@ async function verifySelfHostedWriteReceipt(response, idempotencyKey) {
   const scope = response.headers.get("X-Sync-Scope");
   const etag = response.headers.get("ETag");
   const payloadSha256 = response.headers.get("X-Payload-Sha256");
+  const revisionHeader = Number(response.headers.get("X-Sync-Revision"));
+  const idempotencyHeader = response.headers.get("X-Sync-Idempotency-Key");
   if (!scope || !etag || !payloadSha256) {
     throw new Error("服务器未返回可验证的同步提交回执");
   }
@@ -2032,6 +2100,8 @@ async function verifySelfHostedWriteReceipt(response, idempotencyKey) {
       || receipt.etag !== etag
       || receipt.payloadSha256 !== payloadSha256
       || !Number.isInteger(receipt.revision) || receipt.revision < 1
+      || receipt.revision !== revisionHeader
+      || (idempotencyKey && idempotencyHeader !== idempotencyKey)
       || (idempotencyKey && receipt.idempotencyKey !== idempotencyKey)) {
     throw new Error("服务器提交回执校验失败");
   }
@@ -2057,7 +2127,7 @@ async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey
     headers["If-None-Match"] = "*";
   }
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
-  const response = await fetch(target.url, {
+  const response = await fetchWithSyncTimeout(target.url, {
     method: "PUT",
     headers,
     body: JSON.stringify(encryptedBundle, null, 2),
@@ -2096,6 +2166,11 @@ async function pushRemotePayloadWithRetry(target, payload) {
     updateRemoteConcurrencyState(target, latestResponse.etag);
     target.remotePayload = latestResponse.payload;
     target.remoteEncrypted = latestResponse.encrypted;
+    if (target.isPrimary === false) {
+      // Mirrors never participate in merge or safety decisions. The refreshed
+      // ETag is enough to retry the already-decided primary result.
+      continue;
+    }
     const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
     const localAccounts = Array.isArray(candidate.accounts)
       ? candidate.accounts.map(normalizeAccountShape)
@@ -2113,7 +2188,12 @@ async function pushRemotePayloadWithRetry(target, payload) {
       passkeys: localPasskeys,
       folders: localFolders,
     };
-    candidate = mergeSyncPayloads(localBeforeMerge, remotePayload);
+    // A mirror is a write target, never an authority. On a mirror conflict we
+    // refresh its ETag and retry the already-decided primary result. Only the
+    // primary source may participate in conflict merging.
+    if (target.isPrimary !== false) {
+      candidate = mergeSyncPayloads(localBeforeMerge, remotePayload);
+    }
     const safety = validateSyncSafety(
       localBeforeMerge,
       remotePayload,
@@ -2123,7 +2203,9 @@ async function pushRemotePayloadWithRetry(target, payload) {
     if (!safety.safe) {
       throw new Error(`并发重试合并被安全检查阻止：${safety.reasons.join("、")}`);
     }
-    await writeBusinessDataToStore(candidate);
+    if (target.isPrimary !== false) {
+      await writeBusinessDataToStore(candidate);
+    }
   }
   throw new Error("远端并发冲突重试次数已用尽");
 }
@@ -2143,6 +2225,11 @@ async function pushRemotePayloadRemotePreferred(target, payload) {
     }
     const latestResponse = await pullRemotePayload(target);
     updateRemoteConcurrencyState(target, latestResponse.etag);
+    if (target.isPrimary === false) {
+      target.remotePayload = latestResponse.payload;
+      target.remoteEncrypted = latestResponse.encrypted;
+      continue;
+    }
     const latestPayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
     const safety = validateSyncSafety(
       candidate,
@@ -2153,10 +2240,14 @@ async function pushRemotePayloadRemotePreferred(target, payload) {
     if (!safety.safe) {
       throw new Error(`并发重试的云端覆盖被安全检查阻止: ${safety.reasons.join(",")}`);
     }
-    candidate = latestPayload;
+    if (target.isPrimary !== false) {
+      candidate = latestPayload;
+    }
     target.remotePayload = candidate;
     target.remoteEncrypted = true;
-    await writeBusinessDataToStore(candidate);
+    if (target.isPrimary !== false) {
+      await writeBusinessDataToStore(candidate);
+    }
   }
   throw new Error("远端并发冲突重试次数已用尽");
 }

@@ -1,6 +1,7 @@
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, ETAG, IF_MATCH};
 use reqwest::StatusCode;
+use serde_json::Value;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -159,12 +160,52 @@ pub fn put_sync_state(
         let text = resp.text().unwrap_or_default();
         return Err(format!("推送同步状态失败 HTTP {code}: {text}"));
     }
-    let etag = resp
-        .headers()
+    let response_headers = resp.headers().clone();
+    let body = resp
+        .bytes()
+        .map_err(|e| format!("读取同步提交回执失败: {e}"))?;
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&body).map_err(|e| format!("同步提交回执不是有效 JSON: {e}"))?;
+    let etag = response_headers
         .get(ETAG)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
+    let scope = response_headers
+        .get("X-Sync-Scope")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let payload_sha256 = response_headers
+        .get("X-Payload-Sha256")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let revision_header = response_headers
+        .get("X-Sync-Revision")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<i64>().ok());
+    let idempotency_header = response_headers
+        .get("X-Sync-Idempotency-Key")
+        .and_then(|v| v.to_str().ok());
+    let receipt_idempotency = receipt.get("idempotencyKey").and_then(Value::as_str);
+    let expected_idempotency = idempotency_key.filter(|value| !value.trim().is_empty());
+    let valid_receipt = receipt.get("ok").and_then(Value::as_bool) == Some(true)
+        && receipt.get("committed").and_then(Value::as_bool) == Some(true)
+        && !scope.is_empty()
+        && receipt.get("scope").and_then(Value::as_str) == Some(scope)
+        && !etag.is_empty()
+        && receipt.get("etag").and_then(Value::as_str) == Some(etag.as_str())
+        && !payload_sha256.is_empty()
+        && receipt.get("payloadSha256").and_then(Value::as_str) == Some(payload_sha256)
+        && receipt
+            .get("revision")
+            .and_then(Value::as_i64)
+            .filter(|v| *v > 0)
+            == revision_header
+        && expected_idempotency.map_or(true, |expected| idempotency_header == Some(expected))
+        && expected_idempotency.map_or(true, |expected| receipt_idempotency == Some(expected));
+    if !valid_receipt {
+        return Err("服务器未返回可验证的同步提交回执".into());
+    }
     Ok(etag)
 }
 

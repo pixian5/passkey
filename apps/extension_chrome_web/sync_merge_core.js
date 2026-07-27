@@ -322,10 +322,14 @@ function mergeSameAccount(lhs, rhs, h) {
     isPinned: Boolean(newerAccount.isPinned),
     pinnedSortOrder: newerAccount.pinnedSortOrder == null ? null : asNumber(newerAccount.pinnedSortOrder),
     regularSortOrder: newerAccount.regularSortOrder == null ? null : asNumber(newerAccount.regularSortOrder),
-    // Pinned state is UI metadata, but it is still synchronized account state.
-    // Keep the newest complete map instead of accidentally dropping it during
-    // a field merge; the native client follows the same last-writer rule.
-    pinnedViews: newerAccount.pinnedViews || olderAccount.pinnedViews || null,
+    // Pinned state is synchronized per view scope. Keep views that only exist
+    // on one side, while the newer account wins when both sides edited the
+    // same scope.
+    pinnedViews: mergePinnedViews(
+      left.pinnedViews,
+      right.pinnedViews,
+      newerAccount === right
+    ),
     folderId: mergedFolderIds[0] || (newerAccount.folderId == null ? null : h.normalizeFolderId(newerAccount.folderId)),
     folderIds: mergedFolderIds,
     folderMembershipStates,
@@ -484,7 +488,11 @@ export function mergeAccountCollections(local, remote, helpers) {
     const existingIndex = merged.findIndex((candidate) => {
       const candidateAccountId = asString(candidate.accountId).trim();
       const candidateRecordId = asString(candidate.recordId || candidate.id).trim().toLowerCase();
-      return (accountId && candidateAccountId === accountId) || (recordId && candidateRecordId === recordId);
+      // A stable recordId is authoritative. Only records that genuinely lack
+      // both stable ids may use the historical accountId fallback; otherwise
+      // two re-created records with the same accountId would be fused.
+      if (recordId) return candidateRecordId === recordId;
+      return !candidateRecordId && accountId && candidateAccountId === accountId;
     });
     if (existingIndex >= 0) {
       merged[existingIndex] = mergeSameAccount(merged[existingIndex], normalized, h);
@@ -804,6 +812,22 @@ function identitySet(values, identityFn) {
   return result;
 }
 
+function mergePinnedViews(leftValue, rightValue, preferRight) {
+  const left = leftValue && typeof leftValue === "object" && !Array.isArray(leftValue) ? leftValue : {};
+  const right = rightValue && typeof rightValue === "object" && !Array.isArray(rightValue) ? rightValue : {};
+  const merged = {};
+  for (const key of new Set([...Object.keys(left), ...Object.keys(right)])) {
+    if (Object.prototype.hasOwnProperty.call(left, key) && Object.prototype.hasOwnProperty.call(right, key)) {
+      merged[key] = preferRight ? right[key] : left[key];
+    } else if (Object.prototype.hasOwnProperty.call(left, key)) {
+      merged[key] = left[key];
+    } else {
+      merged[key] = right[key];
+    }
+  }
+  return Object.keys(merged).length > 0 ? merged : null;
+}
+
 function missingIdentities(source, target, identityFn) {
   const sourceIds = identitySet(source, identityFn);
   const targetIds = identitySet(target, identityFn);
@@ -823,8 +847,8 @@ export function summarizeSyncPayload(payload, helpers) {
     : [];
   return {
     accounts: accounts.filter((item) => !item?.isPermanentlyDeleted).length,
-    activeAccounts: accounts.filter((item) => !item?.isDeleted).length,
-    deletedAccounts: accounts.filter((item) => Boolean(item?.isDeleted)).length,
+    activeAccounts: accounts.filter((item) => !item?.isDeleted && !item?.isPermanentlyDeleted).length,
+    deletedAccounts: accounts.filter((item) => Boolean(item?.isDeleted) && !item?.isPermanentlyDeleted).length,
     folders: folders.filter((item) => !item?.isPermanentlyDeleted).length,
     passkeys: passkeys.filter((item) => !item?.isPermanentlyDeleted).length,
     accountIds: identitySet(accounts, (item) => asString(item?.recordId || item?.id || item?.accountId).trim().toLowerCase()),

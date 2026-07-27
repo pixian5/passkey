@@ -969,6 +969,16 @@ fn visible_accounts(payload: &SyncPayload) -> usize {
         .count()
 }
 
+fn canonicalize_sync_aliases(mut payload: SyncPayload, device_name: &str) -> SyncPayload {
+    let device = if device_name.trim().is_empty() {
+        "pass-web-sync"
+    } else {
+        device_name
+    };
+    let _ = sync_alias_groups(&mut payload.accounts, now_ms(), device);
+    payload
+}
+
 fn visible_folders(payload: &SyncPayload) -> usize {
     payload
         .folders
@@ -1197,13 +1207,15 @@ fn self_hosted_put(
     token: &str,
     body: &[u8],
     etag: Option<&str>,
+    idempotency_key: &str,
 ) -> Result<String, String> {
     let url = format!("{}/v2/sync/state", sync_base_url(base)?);
     let mut headers = auth_headers(token)?;
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
         "Idempotency-Key",
-        HeaderValue::from_str(&Uuid::new_v4().to_string()).unwrap(),
+        HeaderValue::from_str(idempotency_key.trim())
+            .map_err(|_| "Idempotency-Key 非法".to_string())?,
     );
     if let Some(tag) = etag.filter(|v| !v.trim().is_empty()) {
         headers.insert(
@@ -1229,12 +1241,48 @@ fn self_hosted_put(
             response.text().unwrap_or_default()
         ));
     }
-    Ok(response
-        .headers()
+    let response_headers = response.headers().clone();
+    let receipt: Value = response
+        .json()
+        .map_err(|e| format!("同步提交回执不是有效 JSON：{e}"))?;
+    let etag = response_headers
         .get(ETAG)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string())
+        .unwrap_or("");
+    let scope = response_headers
+        .get("X-Sync-Scope")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let payload_sha256 = response_headers
+        .get("X-Payload-Sha256")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let revision = response_headers
+        .get("X-Sync-Revision")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<i64>().ok());
+    let idempotency_header = response_headers
+        .get("X-Sync-Idempotency-Key")
+        .and_then(|v| v.to_str().ok());
+    let valid = receipt.get("ok").and_then(Value::as_bool) == Some(true)
+        && receipt.get("committed").and_then(Value::as_bool) == Some(true)
+        && !scope.is_empty()
+        && receipt.get("scope").and_then(Value::as_str) == Some(scope)
+        && !etag.is_empty()
+        && receipt.get("etag").and_then(Value::as_str) == Some(etag)
+        && !payload_sha256.is_empty()
+        && receipt.get("payloadSha256").and_then(Value::as_str) == Some(payload_sha256)
+        && receipt
+            .get("revision")
+            .and_then(Value::as_i64)
+            .filter(|v| *v > 0)
+            == revision
+        && idempotency_header == Some(idempotency_key)
+        && receipt.get("idempotencyKey").and_then(Value::as_str) == Some(idempotency_key);
+    if !valid {
+        return Err("服务器未返回可验证的同步提交回执".into());
+    }
+    Ok(etag.to_string())
 }
 
 fn self_hosted_versions(base: &str, token: &str) -> Result<Vec<Value>, String> {
@@ -1302,6 +1350,11 @@ fn self_hosted_restore_version(
         IF_MATCH,
         HeaderValue::from_str(&etag).map_err(|_| "ETag 非法".to_string())?,
     );
+    let idempotency_key = format!("pass-web-restore-{}", Uuid::new_v4());
+    headers.insert(
+        "Idempotency-Key",
+        HeaderValue::from_str(&idempotency_key).map_err(|_| "Idempotency-Key 非法".to_string())?,
+    );
     let response = http_client()?
         .post(url)
         .headers(headers)
@@ -1313,6 +1366,44 @@ fn self_hosted_restore_version(
             response.status().as_u16(),
             response.text().unwrap_or_default()
         ));
+    }
+    let response_headers = response.headers().clone();
+    let receipt: Value = response
+        .json()
+        .map_err(|e| format!("恢复提交回执不是有效 JSON：{e}"))?;
+    let scope = response_headers
+        .get("X-Sync-Scope")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let receipt_etag = response_headers
+        .get(ETAG)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let payload_sha256 = response_headers
+        .get("X-Payload-Sha256")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let revision = response_headers
+        .get("X-Sync-Revision")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<i64>().ok());
+    if receipt.get("ok").and_then(Value::as_bool) != Some(true)
+        || receipt.get("committed").and_then(Value::as_bool) != Some(true)
+        || receipt.get("scope").and_then(Value::as_str) != Some(scope)
+        || receipt.get("etag").and_then(Value::as_str) != Some(receipt_etag)
+        || receipt.get("payloadSha256").and_then(Value::as_str) != Some(payload_sha256)
+        || receipt
+            .get("revision")
+            .and_then(Value::as_i64)
+            .filter(|value| *value > 0)
+            != revision
+        || receipt.get("idempotencyKey").and_then(Value::as_str) != Some(idempotency_key.as_str())
+        || response_headers
+            .get("X-Sync-Idempotency-Key")
+            .and_then(|v| v.to_str().ok())
+            != Some(idempotency_key.as_str())
+    {
+        return Err("服务器未返回可验证的恢复提交回执".into());
     }
     let restored = self_hosted_get(base, token)?
         .body
@@ -1327,6 +1418,9 @@ fn self_hosted_restore_version(
 fn webdav_resource_url(base: &str, remote_path: &str) -> Result<String, String> {
     let path = remote_path.trim().trim_start_matches('/');
     if path.is_empty()
+        || path.contains('?')
+        || path.contains('#')
+        || path.contains("://")
         || path
             .split('/')
             .any(|part| part.is_empty() || part == "." || part == "..")
@@ -1430,7 +1524,9 @@ fn webdav_put(
         .body(body.to_vec())
         .send()
         .map_err(|e| format!("写入 WebDAV 同步包失败：{e}"))?;
-    if response.status() == ReqwestStatusCode::PRECONDITION_FAILED {
+    if response.status() == ReqwestStatusCode::PRECONDITION_FAILED
+        || response.status() == ReqwestStatusCode::PRECONDITION_REQUIRED
+    {
         return Err("PRECONDITION_FAILED".into());
     }
     if !response.status().is_success() {
@@ -1485,7 +1581,7 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let local = v.payload();
+    let local = canonicalize_sync_aliases(v.payload(), &v.data.device_name);
     let fetched = webdav_get(base, path, username, password)?;
     let mut remote = fetched
         .body
@@ -1493,6 +1589,7 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
         .map(|body| decrypt_sync_document_with_fallback(body, &key, &previous_key))
         .transpose()?
         .map(extract_payload)
+        .map(|result| result.map(|payload| canonicalize_sync_aliases(payload, &v.data.device_name)))
         .transpose()?;
     let remote_for_mode = remote.clone().unwrap_or_default();
     let merged = match mode {
@@ -1500,6 +1597,7 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
         SyncMode::RemoteOverwriteLocal => remote_for_mode,
         SyncMode::LocalOverwriteRemote => local.clone(),
     };
+    let merged = canonicalize_sync_aliases(merged, &v.data.device_name);
     let safety = evaluate_sync_safety(&local, remote.as_ref(), &merged, mode.as_str());
     let local_count = visible_accounts(&local);
     let remote_count = remote.as_ref().map(visible_accounts).unwrap_or(0);
@@ -1586,6 +1684,10 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
                     .map(|body| decrypt_sync_document_with_fallback(body, &key, &previous_key))
                     .transpose()?
                     .map(extract_payload)
+                    .map(|result| {
+                        result
+                            .map(|payload| canonicalize_sync_aliases(payload, &v.data.device_name))
+                    })
                     .transpose()?;
                 let remote_for_mode = remote.clone().unwrap_or_default();
                 let merged = match mode {
@@ -1615,7 +1717,7 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
                 to_store = if mode == SyncMode::LocalOverwriteRemote {
                     local.clone()
                 } else {
-                    merged
+                    canonicalize_sync_aliases(merged, &v.data.device_name)
                 };
                 remote_count = remote.as_ref().map(visible_accounts).unwrap_or(0);
                 wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), &key)?;
@@ -1682,7 +1784,7 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let local = v.payload();
+    let local = canonicalize_sync_aliases(v.payload(), &v.data.device_name);
     let fetched = self_hosted_get(&base, &token)?;
     let mut remote = fetched
         .body
@@ -1690,6 +1792,7 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
         .map(|body| decrypt_sync_document_with_fallback(body, &key, &previous_key))
         .transpose()?
         .map(extract_payload)
+        .map(|result| result.map(|payload| canonicalize_sync_aliases(payload, &v.data.device_name)))
         .transpose()?;
     let remote_for_mode = remote.clone().unwrap_or_default();
     let merged = match mode {
@@ -1697,6 +1800,7 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
         SyncMode::RemoteOverwriteLocal => remote_for_mode,
         SyncMode::LocalOverwriteRemote => local.clone(),
     };
+    let merged = canonicalize_sync_aliases(merged, &v.data.device_name);
     let safety = evaluate_sync_safety(&local, remote.as_ref(), &merged, mode.as_str());
     let local_count = visible_accounts(&local);
     let remote_count = remote.as_ref().map(visible_accounts).unwrap_or(0);
@@ -1741,6 +1845,7 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
     let mut wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), &key)?;
     let mut attempt = 0;
     let mut current_etag = fetched.etag;
+    let idempotency_key = format!("pass-web-{}", Uuid::new_v4());
     let mut local_applied = false;
     loop {
         attempt += 1;
@@ -1756,7 +1861,13 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
             save_result.map_err(|error| format!("合并结果写入本地失败，未推送远端：{error}"))?;
             local_applied = true;
         }
-        match self_hosted_put(&base, &token, &wire, current_etag.as_deref()) {
+        match self_hosted_put(
+            &base,
+            &token,
+            &wire,
+            current_etag.as_deref(),
+            &idempotency_key,
+        ) {
             Ok(new_etag) => {
                 return Ok(json!({
                     "report": SyncReport {
@@ -1784,6 +1895,10 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
                     .map(|body| decrypt_sync_document_with_fallback(body, &key, &previous_key))
                     .transpose()?
                     .map(extract_payload)
+                    .map(|result| {
+                        result
+                            .map(|payload| canonicalize_sync_aliases(payload, &v.data.device_name))
+                    })
                     .transpose()?;
                 let remote_for_mode = remote.clone().unwrap_or_default();
                 let merged = match mode {
@@ -1813,7 +1928,7 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
                 to_store = if mode == SyncMode::LocalOverwriteRemote {
                     local.clone()
                 } else {
-                    merged
+                    canonicalize_sync_aliases(merged, &v.data.device_name)
                 };
                 let device = v.data.device_name.clone();
                 for account in &mut to_store.accounts {

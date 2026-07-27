@@ -9,6 +9,7 @@ import {
   mergeFolderCollections,
   mergePasskeyCollections,
   reconcileAccountFolders,
+  summarizeSyncPayload,
 } from "../../../core/pass_core/js/sync_merge_core.js";
 
 const helpers = {
@@ -238,6 +239,21 @@ test("同一稳定 recordId 但历史 accountId 不同的记录会合并", () =>
   assert.equal(merged[0].password, "right");
 });
 
+test("不同稳定 recordId 即使历史 accountId 相同也不能合并", () => {
+  const left = helpers.normalizeAccountShape({
+    accountId: "legacy-shared",
+    recordId: "00000000-0000-0000-0000-000000000001",
+    password: "left",
+  });
+  const right = helpers.normalizeAccountShape({
+    accountId: "legacy-shared",
+    recordId: "00000000-0000-0000-0000-000000000002",
+    password: "right",
+  });
+  const merged = mergeAccountCollections([left], [right], helpers);
+  assert.equal(merged.length, 2);
+});
+
 test("合并账号会保留最新的 pinnedViews，而不是丢失视图置顶状态", () => {
   const local = helpers.normalizeAccountShape({
     pinnedViews: {
@@ -252,6 +268,22 @@ test("合并账号会保留最新的 pinnedViews，而不是丢失视图置顶�
     pinnedViews: {
       folder: { pinned: true, pinnedSortOrder: 2, regularSortOrder: null },
     },
+  });
+  const merged = mergeAccountCollections([local], [remote], helpers)[0];
+  assert.deepEqual(merged.pinnedViews, {
+    all: local.pinnedViews.all,
+    folder: remote.pinnedViews.folder,
+  });
+});
+
+test("同一 pinnedViews 作用域由较新的账号裁决", () => {
+  const local = helpers.normalizeAccountShape({
+    updatedAtMs: 10,
+    pinnedViews: { all: { pinned: false } },
+  });
+  const remote = helpers.normalizeAccountShape({
+    updatedAtMs: 20,
+    pinnedViews: { all: { pinned: true } },
   });
   const merged = mergeAccountCollections([local], [remote], helpers)[0];
   assert.deepEqual(merged.pinnedViews, remote.pinnedViews);
@@ -503,6 +535,28 @@ test("仅有永久删除账号墓碑时，空远端同步不应被误判为空�
   );
   assert.equal(safety.safe, true);
   assert.equal(merged[0].isPermanentlyDeleted, true);
+});
+
+test("同步摘要不把永久删除墓碑计入活动或回收站数量", () => {
+  const tombstone = helpers.normalizeAccountShape({
+    recordId: "record-tombstone-summary",
+    isDeleted: true,
+    isPermanentlyDeleted: true,
+  });
+  const recycle = helpers.normalizeAccountShape({
+    recordId: "record-recycle-summary",
+    isDeleted: true,
+    isPermanentlyDeleted: false,
+  });
+  const active = helpers.normalizeAccountShape({
+    recordId: "record-active-summary",
+    isDeleted: false,
+    isPermanentlyDeleted: false,
+  });
+  const summary = summarizeSyncPayload({ accounts: [tombstone, recycle, active] }, helpers);
+  assert.equal(summary.accounts, 2);
+  assert.equal(summary.activeAccounts, 1);
+  assert.equal(summary.deletedAccounts, 1);
 });
 
 test("普通可见账号面对空远端仍然触发安全闸门", () => {

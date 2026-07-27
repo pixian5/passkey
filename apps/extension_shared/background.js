@@ -80,6 +80,12 @@ function logSyncFlow(event, details = {}) {
   }
 }
 
+function visibleSyncCount(values) {
+  return (Array.isArray(values) ? values : [])
+    .filter((item) => item?.isPermanentlyDeleted !== true)
+    .length;
+}
+
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
 const STORAGE_KEY_SYNC_ENABLE_WEBDAV = "pass.sync.enableWebDAV.v3";
 const STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER = "pass.sync.enableSelfHostedServer.v3";
@@ -143,6 +149,33 @@ const SENSITIVE_MESSAGE_TYPES = new Set([
 ]);
 
 let webBridgeSyncChain = Promise.resolve();
+const SYNC_HTTP_TIMEOUT_MS = 30_000;
+
+async function fetchWithSyncTimeout(url, options = {}, stage = "同步请求") {
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), SYNC_HTTP_TIMEOUT_MS) : null;
+  try {
+    return await fetch(url, controller ? { ...options, signal: controller.signal } : options);
+  } catch (error) {
+    if (controller?.signal.aborted) throw new Error(`${stage}超时（${SYNC_HTTP_TIMEOUT_MS / 1000} 秒）`);
+    throw error;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+function normalizeWebdavRemotePath(value) {
+  const raw = String(value || "").trim();
+  if (!raw || /^[a-z][a-z\d+.-]*:/i.test(raw) || raw.includes("?") || raw.includes("#")) {
+    throw new Error("WebDAV 远端路径必须是相对路径，且不能包含查询串或锚点");
+  }
+  const path = raw.replace(/^\/+/, "");
+  const parts = path.split("/");
+  if (parts.some((part) => !part || part === "." || part === "..")) {
+    throw new Error("WebDAV 远端路径包含非法路径段");
+  }
+  return parts.join("/");
+}
 
 function normalizeLegacySelfHostedServerBaseUrl(value) {
   const trimmed = String(value || "").trim();
@@ -407,6 +440,7 @@ async function runAutoSyncInternal() {
   let mergedFolders = localFolders;
   let finalPayload = null;
   let primaryRemotePayload = null;
+  const pullErrors = [];
 
   for (const target of targets) {
     logSyncFlow("pull-start", {
@@ -418,11 +452,13 @@ async function runAutoSyncInternal() {
     try {
       remoteResponse = await pullRemotePayload(target);
     } catch (error) {
-      logSyncFlow("auto-sync-aborted-pull-failed", {
+      logSyncFlow("auto-sync-pull-failed", {
         label: target.label,
         message: error?.message || String(error || ""),
       });
-      return;
+      if (target.isPrimary) return;
+      pullErrors.push(`${target.label}: ${error?.message || String(error || "")}`);
+      continue;
     }
     logSyncFlow("pull-success", {
       label: target.label,
@@ -442,17 +478,31 @@ async function runAutoSyncInternal() {
   }
 
   const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+  const pulledLocalPayload = {
+    ...currentPayload,
+    accounts: localAccounts,
+    folders: localFolders,
+    passkeys: localPasskeys,
+  };
+  if (!syncPayloadEquals(currentPayload, pulledLocalPayload)) {
+    logSyncFlow("auto-sync-aborted-local-changed-during-pull");
+    return;
+  }
   if (primaryRemotePayload) {
+    const canonicalLocalPayload = {
+      ...pulledLocalPayload,
+      accounts: syncAliasGroups(pulledLocalPayload.accounts),
+    };
+    const canonicalRemotePayload = {
+      ...primaryRemotePayload,
+      accounts: syncAliasGroups(primaryRemotePayload.accounts),
+    };
     const mergedPayload = mergeSyncPayloadsCore(
-      {
-        ...currentPayload,
-        accounts: localAccounts,
-        folders: localFolders,
-        passkeys: localPasskeys,
-      },
-      primaryRemotePayload,
+      canonicalLocalPayload,
+      canonicalRemotePayload,
       syncMergeHelpers(),
     );
+    mergedPayload.accounts = syncAliasGroups(mergedPayload.accounts);
     ({ accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys } = mergedPayload);
     finalPayload = mergedPayload;
   } else {
@@ -461,8 +511,8 @@ async function runAutoSyncInternal() {
 
   if (primaryRemotePayload) {
     const safety = validateSyncSafety(
-      { accounts: localAccounts, folders: localFolders, passkeys: localPasskeys },
-      primaryRemotePayload,
+      { accounts: syncAliasGroups(localAccounts), folders: localFolders, passkeys: localPasskeys },
+      { ...primaryRemotePayload, accounts: syncAliasGroups(primaryRemotePayload.accounts) },
       { accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys },
       SYNC_MODE_MERGE
     );
@@ -488,7 +538,7 @@ async function runAutoSyncInternal() {
     Number(right.isPrimary) - Number(left.isPrimary)
       || Number(right.supportsEtag) - Number(left.supportsEtag)
   );
-  const pushErrors = [];
+  const pushErrors = [...pullErrors];
   const outboxByTarget = new Map((await getSyncOutbox()).map((item) => [item.targetKey, item]));
   for (const target of pushTargets) {
     const targetKey = syncTargetKey(target);
@@ -537,9 +587,9 @@ async function runAutoSyncInternal() {
       label: target.label,
       url: target.url,
       itemCounts: {
-        accounts: Array.isArray(result?.payload?.accounts) ? result.payload.accounts.length : 0,
-        passkeys: Array.isArray(result?.payload?.passkeys) ? result.payload.passkeys.length : 0,
-        folders: Array.isArray(result?.payload?.folders) ? result.payload.folders.length : 0,
+        accounts: visibleSyncCount(result?.payload?.accounts),
+        passkeys: visibleSyncCount(result?.payload?.passkeys),
+        folders: visibleSyncCount(result?.payload?.folders),
       },
     });
     mergedAccounts = result.payload.accounts.map(normalizeAccountShape);
@@ -679,7 +729,7 @@ async function buildRemoteSyncTargetsFromStorage() {
   const targets = [];
   if (Boolean(result[STORAGE_KEY_SYNC_ENABLE_WEBDAV])) {
     const baseUrl = String(result[STORAGE_KEY_SYNC_WEBDAV_BASE_URL] || "").trim();
-    const remotePath = String(result[STORAGE_KEY_SYNC_WEBDAV_PATH] || "").trim() || "pass-sync-bundle-v2.json";
+    const remotePath = normalizeWebdavRemotePath(String(result[STORAGE_KEY_SYNC_WEBDAV_PATH] || "").trim() || "pass-sync-bundle-v2.json");
     if (!baseUrl) return null;
     let parsedBaseUrl;
     try {
@@ -691,7 +741,9 @@ async function buildRemoteSyncTargetsFromStorage() {
       throw new Error("WebDAV 同步地址必须使用 HTTPS（本机回环地址可使用 HTTP）");
     }
     const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-    const url = new URL(remotePath.replace(/^\/+/g, ""), normalizedBase).toString();
+    const base = new URL(normalizedBase);
+    if (base.username || base.password || base.search || base.hash) throw new Error("WebDAV 地址不能包含账号、查询串或锚点");
+    const url = new URL(remotePath, normalizedBase).toString();
     const username = String(result[STORAGE_KEY_SYNC_WEBDAV_USERNAME] || "");
     const password = secrets.webdavPassword;
     let authHeader = null;
@@ -1112,9 +1164,9 @@ function handleWebBridgeSyncData(payload) {
     });
     return {
       ok: true,
-      accounts: accounts.length,
-      folders: folders.length,
-      passkeys: passkeys.length,
+      accounts: visibleSyncCount(accounts),
+      folders: visibleSyncCount(folders),
+      passkeys: visibleSyncCount(passkeys),
     };
   });
   webBridgeSyncChain = run.catch(() => {});
@@ -1971,7 +2023,7 @@ async function pullRemotePayload(target) {
   if (target.authHeader) headers.Authorization = target.authHeader;
   let response;
   try {
-    response = await fetch(target.url, { method: "GET", headers, cache: "no-store" });
+    response = await fetchWithSyncTimeout(target.url, { method: "GET", headers, cache: "no-store" }, `拉取${target.label}`);
   } catch (error) {
     logSyncFlow("pull-fetch-error", {
       label: target.label,
@@ -2017,6 +2069,8 @@ async function verifySelfHostedWriteReceipt(response, idempotencyKey) {
   const scope = response.headers.get("X-Sync-Scope");
   const etag = response.headers.get("ETag");
   const payloadSha256 = response.headers.get("X-Payload-Sha256");
+  const revisionHeader = Number(response.headers.get("X-Sync-Revision"));
+  const idempotencyHeader = response.headers.get("X-Sync-Idempotency-Key");
   if (!scope || !etag || !payloadSha256) {
     throw new Error("服务器未返回可验证的同步提交回执");
   }
@@ -2031,6 +2085,8 @@ async function verifySelfHostedWriteReceipt(response, idempotencyKey) {
       || receipt.etag !== etag
       || receipt.payloadSha256 !== payloadSha256
       || !Number.isInteger(receipt.revision) || receipt.revision < 1
+      || receipt.revision !== revisionHeader
+      || (idempotencyKey && idempotencyHeader !== idempotencyKey)
       || (idempotencyKey && receipt.idempotencyKey !== idempotencyKey)) {
     throw new Error("服务器提交回执校验失败");
   }
@@ -2053,7 +2109,7 @@ async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   let response;
   try {
-    response = await fetch(target.url, {
+    response = await fetchWithSyncTimeout(target.url, {
       method: "PUT",
       headers,
       body: JSON.stringify(encryptedBundle, null, 2),
@@ -2119,21 +2175,28 @@ async function pushRemotePayloadWithRetry(target, payload) {
     updateRemoteConcurrencyState(target, latestResponse.etag);
     target.remotePayload = latestResponse.payload;
     target.remoteEncrypted = latestResponse.encrypted;
+    if (target.isPrimary === false) {
+      continue;
+    }
     const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
     const localAccounts = Array.isArray(candidate.accounts) ? candidate.accounts.map(normalizeAccountShape) : [];
     const localPasskeys = buildUnifiedPasskeys(localAccounts, Array.isArray(candidate.passkeys) ? candidate.passkeys.map(normalizePasskeyShape) : []);
     const localFolders = Array.isArray(candidate.folders) ? candidate.folders.map(normalizeFolderShape) : [];
-    const remoteAccounts = remotePayload.accounts.map(normalizeAccountShape);
+    const remoteAccounts = syncAliasGroups(remotePayload.accounts.map(normalizeAccountShape));
+    const canonicalLocalAccounts = syncAliasGroups(localAccounts);
     const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys);
     const remoteFolders = remotePayload.folders.map(normalizeFolderShape);
-    candidate = mergeSyncPayloadsCore(
-      { ...candidate, accounts: localAccounts, passkeys: localPasskeys, folders: localFolders },
-      { ...remotePayload, accounts: remoteAccounts, passkeys: remotePasskeys, folders: remoteFolders },
-      syncMergeHelpers(),
-    );
+    if (target.isPrimary !== false) {
+      candidate = mergeSyncPayloadsCore(
+        { ...candidate, accounts: canonicalLocalAccounts, passkeys: localPasskeys, folders: localFolders },
+        { ...remotePayload, accounts: remoteAccounts, passkeys: remotePasskeys, folders: remoteFolders },
+        syncMergeHelpers(),
+      );
+      candidate.accounts = syncAliasGroups(candidate.accounts);
+    }
     const safety = validateSyncSafety(
-      { ...candidate, accounts: localAccounts, folders: localFolders, passkeys: localPasskeys },
-      remotePayload,
+      { ...candidate, accounts: canonicalLocalAccounts, folders: localFolders, passkeys: localPasskeys },
+      { ...remotePayload, accounts: remoteAccounts },
       candidate,
       SYNC_MODE_MERGE
     );
@@ -2141,7 +2204,9 @@ async function pushRemotePayloadWithRetry(target, payload) {
       logSyncFlow("push-retry-aborted-safety-check", { reasons: safety.reasons });
       throw new Error(`并发重试合并被安全检查阻止: ${safety.reasons.join(",")}`);
     }
-    await writeBusinessDataToStore(candidate);
+    if (target.isPrimary !== false) {
+      await writeBusinessDataToStore(candidate);
+    }
   }
   throw new Error("远端并发冲突重试次数已用尽");
 }

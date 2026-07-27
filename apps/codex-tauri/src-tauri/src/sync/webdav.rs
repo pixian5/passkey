@@ -40,6 +40,9 @@ pub fn resource_url(base_url: &str, remote_path: &str) -> Result<String, String>
     if base.is_empty() || path.is_empty() {
         return Err("请填写 WebDAV 地址和远端路径".into());
     }
+    if path.contains('?') || path.contains('#') || path.contains("://") {
+        return Err("WebDAV 远端路径必须是相对路径且不能包含查询串或锚点".into());
+    }
     if path
         .split('/')
         .any(|part| part.is_empty() || part == "." || part == "..")
@@ -147,7 +150,9 @@ pub fn put(
         .body(body.to_vec())
         .send()
         .map_err(|e| format!("写入 WebDAV 同步包失败: {e}"))?;
-    if response.status() == StatusCode::PRECONDITION_FAILED {
+    if response.status() == StatusCode::PRECONDITION_FAILED
+        || response.status() == StatusCode::PRECONDITION_REQUIRED
+    {
         return Err("PRECONDITION_FAILED".into());
     }
     if !response.status().is_success() {
@@ -233,13 +238,14 @@ pub fn preview(
     settings: &WebDavSettings,
     mode: SyncMode,
     local: SyncPayload,
+    device_name: &str,
     encryption_key: &str,
 ) -> Result<(pipeline::SyncReport, SyncPayload), String> {
     if !settings.enabled {
         return Err("WebDAV 同步未启用".into());
     }
     let _ = resource_url(&settings.base_url, &settings.remote_path)?;
-    pipeline::preview_with_transport(mode, local, || {
+    pipeline::preview_with_transport(mode, local, device_name, || {
         let fetched = get(
             &settings.base_url,
             &settings.remote_path,
