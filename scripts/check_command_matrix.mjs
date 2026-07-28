@@ -19,6 +19,8 @@ for (const m of webSrc.matchAll(/"([a-zA-Z0-9_]+)"(?:\s*\|\s*"([a-zA-Z0-9_]+)")*
   for (const token of m[0].matchAll(/"([a-zA-Z0-9_]+)"/g)) web.add(token[1]);
 }
 const tauriSrc = read("apps/codex-tauri/src-tauri/src/main.rs");
+const syncReportSrc = read("core/pass_core/crates/merge/src/v2/report.rs");
+const syncReportSchema = JSON.parse(read("docs/schemas/sync-operation-report-v1.schema.json"));
 const handler = tauriSrc.match(/generate_handler!\[([\s\S]*?)\]/)?.[1] || "";
 const tauri = new Set([...handler.matchAll(/([a-zA-Z0-9_]+)/g)].map((m) => m[1]));
 
@@ -31,6 +33,54 @@ const missing = {
 const errors = [];
 for (const [surface, list] of Object.entries(missing)) {
   if (list.length) errors.push(`UI commands missing in ${surface}: ${list.join(", ")}`);
+}
+
+// A sync result is consumed by all surfaces, so keep its on-wire JSON shape
+// explicit. This is intentionally dependency-free: the gate checks the Rust
+// source fields against the JSON Schema and validates a representative report.
+const requiredSyncReport = [
+  ["reportVersion", "report_version"],
+  ["ok", "ok"],
+  ["dryRun", "dry_run"],
+  ["mode", "mode"],
+  ["message", "message"],
+  ["safe", "safe"],
+  ["safety", "safety"],
+  ["reasons", "reasons"],
+  ["localAccounts", "local_accounts"],
+  ["remoteAccounts", "remote_accounts"],
+  ["mergedAccounts", "merged_accounts"],
+  ["applied", "applied"],
+  ["pushed", "pushed"],
+  ["remotePulled", "remote_pulled"],
+  ["pendingRetry", "pending_retry"],
+  ["retryable", "retryable"],
+  ["stage", "stage"],
+  ["source", "source"],
+  ["syncSessionId", "sync_session_id"],
+  ["operationId", "operation_id"],
+];
+if (syncReportSchema.additionalProperties !== false) {
+  errors.push("sync operation report schema must reject undeclared fields");
+}
+for (const [jsonField, rustField] of requiredSyncReport) {
+  if (!syncReportSchema.required?.includes(jsonField)) {
+    errors.push(`sync operation report schema missing required field: ${jsonField}`);
+  }
+  if (!Object.hasOwn(syncReportSchema.properties || {}, jsonField)) {
+    errors.push(`sync operation report schema missing property: ${jsonField}`);
+  }
+  if (!new RegExp(`pub ${rustField}:`).test(syncReportSrc)) {
+    errors.push(`SyncOperationReport missing Rust field: ${rustField}`);
+  }
+}
+for (const optionalField of ["code", "etag", "revision"]) {
+  if (!Object.hasOwn(syncReportSchema.properties || {}, optionalField)) {
+    errors.push(`sync operation report schema missing optional property: ${optionalField}`);
+  }
+}
+if (!/pub const SYNC_REPORT_VERSION:\s*u32\s*=\s*1;/.test(syncReportSrc)) {
+  errors.push("sync operation report version must remain 1 until a coordinated protocol bump");
 }
 
 // Extension must not fake unsupported platform features.

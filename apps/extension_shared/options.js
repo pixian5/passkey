@@ -331,7 +331,7 @@ async function init() {
   startTotpRefreshTicker();
 
   dom.syncMergeBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE));
-  dom.syncRetryOutboxBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE));
+  dom.syncRetryOutboxBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE, true));
   dom.syncClearOrphanedOutboxBtn.addEventListener("click", () => void clearOrphanedSyncOutbox());
   dom.storageSelfCheckBtn.addEventListener("click", () => void runStorageSelfCheck());
   dom.exportDiagnosticsBtn.addEventListener("click", () => void exportStorageDiagnostics());
@@ -902,7 +902,8 @@ async function refreshSyncOutboxStatus() {
       return;
     }
     const now = Date.now();
-    const waiting = items.filter((item) => Number(item.nextRetryAtMs || 0) > now).length;
+    const waiting = items.filter((item) => item.status !== "paused" && Number(item.nextRetryAtMs || 0) > now).length;
+    const paused = items.filter((item) => item.status === "paused").length;
     const details = items.map((item) => {
       const [kind, ...targetParts] = String(item.targetKey || "").split("|");
       const target = targetParts.join("|");
@@ -910,11 +911,13 @@ async function refreshSyncOutboxStatus() {
       try { host = new URL(target).host || target; } catch { /* Keep raw target. */ }
       const label = kind === "server" ? "服务器" : kind === "webdav" ? "WebDAV" : kind;
       const retryAt = Number(item.nextRetryAtMs || 0);
-      const retry = retryAt > now ? `下次 ${new Date(retryAt).toLocaleTimeString()}` : "可立即重试";
+      const retry = item.status === "paused"
+        ? "已暂停，点击立即重试补偿任务恢复"
+        : retryAt > now ? `下次 ${new Date(retryAt).toLocaleTimeString()}` : "可立即重试";
       const error = String(item.lastError || "").trim();
       return `${label} ${host}：失败 ${Number(item.attempts || 0)} 次，${retry}${error ? `，${error}` : ""}`;
     });
-    dom.syncOutboxStatus.textContent = `补偿任务 ${items.length} 个（等待 ${waiting} 个）：${details.join("；")}`;
+    dom.syncOutboxStatus.textContent = `补偿任务 ${items.length} 个（等待 ${waiting} 个${paused > 0 ? `，已暂停 ${paused} 个` : ""}）：${details.join("；")}`;
     dom.syncOutboxStatus.title = details.join("\n");
   } catch (error) {
     dom.syncOutboxStatus.textContent = `同步补偿队列读取失败：${error.message}`;
@@ -936,7 +939,7 @@ async function clearOrphanedSyncOutbox() {
   }
 }
 
-async function recordSyncOutboxFailure(target, payload, error) {
+async function recordSyncOutboxFailure(target, payload, error, forceResume = false) {
   const targetKey = syncTargetKey(target);
   const items = await getSyncOutbox();
   const payloadSha256 = await syncPayloadSha256(payload);
@@ -952,6 +955,7 @@ async function recordSyncOutboxFailure(target, payload, error) {
     operationId: error?.operationId || "",
     sourceType: target.kind,
     scope: error?.scope || "",
+    forceResume,
   }));
 }
 
@@ -1705,7 +1709,7 @@ async function previewSyncWithRemote() {
   }
 }
 
-async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
+async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE, forceOutboxRetry = false) {
   if (syncInFlight) {
     setStatus("同步进行中，请稍候；本次请求未重复执行");
     return false;
@@ -1717,14 +1721,18 @@ async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
   }
   syncInFlight = true;
   try {
-    return await performSyncNowWithRemote(syncMode, lockOwner);
+    return await performSyncNowWithRemote(syncMode, lockOwner, forceOutboxRetry);
   } finally {
     syncInFlight = false;
     await releaseSyncOperationLock(lockOwner);
   }
 }
 
-async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE, syncSessionId = createSyncIdempotencyKey()) {
+async function performSyncNowWithRemote(
+  syncMode = SYNC_MODE_MERGE,
+  syncSessionId = createSyncIdempotencyKey(),
+  forceOutboxRetry = false,
+) {
   if (!(await saveSyncSettings())) return;
   const targets = buildRemoteSyncTargetsFromDom();
   if (!targets || targets.length === 0) return;
@@ -1862,7 +1870,7 @@ async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE, syncSessionI
       await clearSyncOutbox(target);
     } catch (error) {
       pushErrors.push(`${target.label}: ${error.message}`);
-      await recordSyncOutboxFailure(target, mergedPayload, error);
+      await recordSyncOutboxFailure(target, mergedPayload, error, forceOutboxRetry);
       if (target.isPrimary) primaryPushFailed = true;
     }
   }

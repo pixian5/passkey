@@ -562,9 +562,12 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey()) {
     const targetKey = syncTargetKey(target);
     const pendingOutbox = outboxByTarget.get(targetKey);
     if (pendingOutbox && !isSyncOutboxReady(pendingOutbox)) {
+      const paused = pendingOutbox.status === "paused";
       const waitSeconds = Math.max(1, Math.ceil((pendingOutbox.nextRetryAtMs - Date.now()) / 1000));
-      pushErrors.push(`${target.label}: 补偿任务将在 ${waitSeconds} 秒后重试`);
-      logSyncFlow("push-skipped-backoff", {
+      pushErrors.push(paused
+        ? `${target.label}: 补偿任务已暂停，等待用户手动重试`
+        : `${target.label}: 补偿任务将在 ${waitSeconds} 秒后重试`);
+      logSyncFlow(paused ? "push-skipped-paused" : "push-skipped-backoff", {
         label: target.label,
         nextRetryAtMs: pendingOutbox.nextRetryAtMs,
         attempts: pendingOutbox.attempts,

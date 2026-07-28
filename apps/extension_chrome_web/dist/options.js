@@ -1,6 +1,6 @@
 (() => {
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.3.7";
+  var PASS_EXTENSION_VERSION = "1.3.8";
 
   // ../../core/pass_core/js/sync_policy.js
   var DEFAULT_DEVICE_NAME = "PassDevice";
@@ -1289,15 +1289,17 @@
     operationId = "",
     sourceType = "",
     scope = "",
+    forceResume = false,
     nowMs = Date.now()
   }) {
     const current = normalizeSyncOutbox(value, nowMs);
     const previous = current.find((item) => item.targetKey === targetKey);
     const normalizedHash = String(payloadSha256 || "").trim().toLowerCase();
     const sameLogicalWrite = Boolean(previous && normalizedHash && previous.payloadSha256 === normalizedHash);
+    const wasPaused = previous?.status === "paused";
     const attempts = Math.min(
       SYNC_OUTBOX_MAX_ATTEMPTS,
-      (sameLogicalWrite ? Number(previous?.attempts || 0) : 0) + 1
+      (sameLogicalWrite ? forceResume && wasPaused ? 0 : Number(previous?.attempts || 0) : 0) + 1
     );
     const next = normalizeSyncOutboxItem({
       targetKey,
@@ -1310,7 +1312,7 @@
       operationId: operationId || (sameLogicalWrite ? previous.operationId : ""),
       sourceType,
       scope,
-      status: "pendingRetry",
+      status: attempts >= SYNC_OUTBOX_MAX_ATTEMPTS ? "paused" : "pendingRetry",
       createdAtMs: sameLogicalWrite ? previous.createdAtMs : nowMs,
       attempts,
       lastAttemptAtMs: nowMs,
@@ -2322,7 +2324,7 @@
     await refresh();
     startTotpRefreshTicker();
     dom.syncMergeBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE));
-    dom.syncRetryOutboxBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE));
+    dom.syncRetryOutboxBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE, true));
     dom.syncClearOrphanedOutboxBtn.addEventListener("click", () => void clearOrphanedSyncOutbox());
     dom.storageSelfCheckBtn.addEventListener("click", () => void runStorageSelfCheck());
     dom.exportDiagnosticsBtn.addEventListener("click", () => void exportStorageDiagnostics());
@@ -2814,7 +2816,8 @@
         return;
       }
       const now = Date.now();
-      const waiting = items.filter((item) => Number(item.nextRetryAtMs || 0) > now).length;
+      const waiting = items.filter((item) => item.status !== "paused" && Number(item.nextRetryAtMs || 0) > now).length;
+      const paused = items.filter((item) => item.status === "paused").length;
       const details = items.map((item) => {
         const [kind, ...targetParts] = String(item.targetKey || "").split("|");
         const target = targetParts.join("|");
@@ -2825,11 +2828,11 @@
         }
         const label = kind === "server" ? "\u670D\u52A1\u5668" : kind === "webdav" ? "WebDAV" : kind;
         const retryAt = Number(item.nextRetryAtMs || 0);
-        const retry = retryAt > now ? `\u4E0B\u6B21 ${new Date(retryAt).toLocaleTimeString()}` : "\u53EF\u7ACB\u5373\u91CD\u8BD5";
+        const retry = item.status === "paused" ? "\u5DF2\u6682\u505C\uFF0C\u70B9\u51FB\u7ACB\u5373\u91CD\u8BD5\u8865\u507F\u4EFB\u52A1\u6062\u590D" : retryAt > now ? `\u4E0B\u6B21 ${new Date(retryAt).toLocaleTimeString()}` : "\u53EF\u7ACB\u5373\u91CD\u8BD5";
         const error = String(item.lastError || "").trim();
         return `${label} ${host}\uFF1A\u5931\u8D25 ${Number(item.attempts || 0)} \u6B21\uFF0C${retry}${error ? `\uFF0C${error}` : ""}`;
       });
-      dom.syncOutboxStatus.textContent = `\u8865\u507F\u4EFB\u52A1 ${items.length} \u4E2A\uFF08\u7B49\u5F85 ${waiting} \u4E2A\uFF09\uFF1A${details.join("\uFF1B")}`;
+      dom.syncOutboxStatus.textContent = `\u8865\u507F\u4EFB\u52A1 ${items.length} \u4E2A\uFF08\u7B49\u5F85 ${waiting} \u4E2A${paused > 0 ? `\uFF0C\u5DF2\u6682\u505C ${paused} \u4E2A` : ""}\uFF09\uFF1A${details.join("\uFF1B")}`;
       dom.syncOutboxStatus.title = details.join("\n");
     } catch (error) {
       dom.syncOutboxStatus.textContent = `\u540C\u6B65\u8865\u507F\u961F\u5217\u8BFB\u53D6\u5931\u8D25\uFF1A${error.message}`;
@@ -2849,7 +2852,7 @@
       setStatus(`\u6E05\u7406\u540C\u6B65\u8865\u507F\u4EFB\u52A1\u5931\u8D25\uFF1A${error.message}`);
     }
   }
-  async function recordSyncOutboxFailure(target, payload, error) {
+  async function recordSyncOutboxFailure(target, payload, error, forceResume = false) {
     const targetKey = syncTargetKey(target);
     const items = await getSyncOutbox();
     const payloadSha256 = await syncPayloadSha256(payload);
@@ -2864,7 +2867,8 @@
       syncSessionId: error?.syncSessionId || "",
       operationId: error?.operationId || "",
       sourceType: target.kind,
-      scope: error?.scope || ""
+      scope: error?.scope || "",
+      forceResume
     }));
   }
   async function clearSyncOutbox(target) {
@@ -3512,7 +3516,7 @@
       dom.syncPreviewStatus.textContent = `\u9884\u89C8\u5931\u8D25\uFF1A${error.message}`;
     }
   }
-  async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
+  async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE, forceOutboxRetry = false) {
     if (syncInFlight) {
       setStatus("\u540C\u6B65\u8FDB\u884C\u4E2D\uFF0C\u8BF7\u7A0D\u5019\uFF1B\u672C\u6B21\u8BF7\u6C42\u672A\u91CD\u590D\u6267\u884C");
       return false;
@@ -3524,13 +3528,13 @@
     }
     syncInFlight = true;
     try {
-      return await performSyncNowWithRemote(syncMode, lockOwner);
+      return await performSyncNowWithRemote(syncMode, lockOwner, forceOutboxRetry);
     } finally {
       syncInFlight = false;
       await releaseSyncOperationLock(lockOwner);
     }
   }
-  async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE, syncSessionId = createSyncIdempotencyKey()) {
+  async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE, syncSessionId = createSyncIdempotencyKey(), forceOutboxRetry = false) {
     if (!await saveSyncSettings()) return;
     const targets = buildRemoteSyncTargetsFromDom();
     if (!targets || targets.length === 0) return;
@@ -3646,7 +3650,7 @@
         await clearSyncOutbox(target);
       } catch (error) {
         pushErrors.push(`${target.label}: ${error.message}`);
-        await recordSyncOutboxFailure(target, mergedPayload, error);
+        await recordSyncOutboxFailure(target, mergedPayload, error, forceOutboxRetry);
         if (target.isPrimary) primaryPushFailed = true;
       }
     }

@@ -179,7 +179,7 @@
     return [...byTarget.values()].sort((left, right) => left.createdAtMs - right.createdAtMs);
   }
   function isSyncOutboxReady(item, nowMs = Date.now()) {
-    return !item || Number(item.nextRetryAtMs || 0) <= nowMs;
+    return !item || String(item.status || "pendingRetry") !== "paused" && Number(item.nextRetryAtMs || 0) <= nowMs;
   }
   function upsertSyncOutbox(value, {
     targetKey,
@@ -193,15 +193,17 @@
     operationId = "",
     sourceType = "",
     scope = "",
+    forceResume = false,
     nowMs = Date.now()
   }) {
     const current = normalizeSyncOutbox(value, nowMs);
     const previous = current.find((item) => item.targetKey === targetKey);
     const normalizedHash = String(payloadSha256 || "").trim().toLowerCase();
     const sameLogicalWrite = Boolean(previous && normalizedHash && previous.payloadSha256 === normalizedHash);
+    const wasPaused = previous?.status === "paused";
     const attempts = Math.min(
       SYNC_OUTBOX_MAX_ATTEMPTS,
-      (sameLogicalWrite ? Number(previous?.attempts || 0) : 0) + 1
+      (sameLogicalWrite ? forceResume && wasPaused ? 0 : Number(previous?.attempts || 0) : 0) + 1
     );
     const next = normalizeSyncOutboxItem({
       targetKey,
@@ -214,7 +216,7 @@
       operationId: operationId || (sameLogicalWrite ? previous.operationId : ""),
       sourceType,
       scope,
-      status: "pendingRetry",
+      status: attempts >= SYNC_OUTBOX_MAX_ATTEMPTS ? "paused" : "pendingRetry",
       createdAtMs: sameLogicalWrite ? previous.createdAtMs : nowMs,
       attempts,
       lastAttemptAtMs: nowMs,
@@ -1673,7 +1675,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.3.7";
+  var PASS_EXTENSION_VERSION = "1.3.8";
 
   // ../../core/pass_core/js/sync_alias_core.js
   function syncAliasGroups(accounts, helpers, options = {}) {
@@ -3329,9 +3331,10 @@
       const targetKey = syncTargetKey(target);
       const pendingOutbox = outboxByTarget.get(targetKey);
       if (pendingOutbox && !isSyncOutboxReady(pendingOutbox)) {
+        const paused = pendingOutbox.status === "paused";
         const waitSeconds = Math.max(1, Math.ceil((pendingOutbox.nextRetryAtMs - Date.now()) / 1e3));
-        pushErrors.push(`${target.label}: \u8865\u507F\u4EFB\u52A1\u5C06\u5728 ${waitSeconds} \u79D2\u540E\u91CD\u8BD5`);
-        logSyncFlow("push-skipped-backoff", {
+        pushErrors.push(paused ? `${target.label}: \u8865\u507F\u4EFB\u52A1\u5DF2\u6682\u505C\uFF0C\u7B49\u5F85\u7528\u6237\u624B\u52A8\u91CD\u8BD5` : `${target.label}: \u8865\u507F\u4EFB\u52A1\u5C06\u5728 ${waitSeconds} \u79D2\u540E\u91CD\u8BD5`);
+        logSyncFlow(paused ? "push-skipped-paused" : "push-skipped-backoff", {
           label: target.label,
           nextRetryAtMs: pendingOutbox.nextRetryAtMs,
           attempts: pendingOutbox.attempts

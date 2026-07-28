@@ -107,7 +107,7 @@ stage (`pull`, `merge`, `push`, or `restore`) when available.
   treats them as authentication or secret material. Older clients and old
   SQLite audit rows remain valid with null trace fields.
 
-### Tauri local outbox (1.3.7)
+### 三端补偿队列与结果契约（1.3.8）
 
 - Tauri stores failed self-hosted and WebDAV writes in an encrypted
   `sync_outbox.json` beside the vault. The queue contains the payload, its
@@ -123,9 +123,17 @@ stage (`pull`, `merge`, `push`, or `restore`) when available.
   an equivalent URL cannot leave duplicate retry records. Loading an older
   queue also normalizes and de-duplicates entries by target.
 - Automatic retries use the shared policy: 12 recorded attempts, delays of
-  5/10/20/40/80/160/320/640/1280 seconds, then 1280 seconds thereafter.
-  Automatic and timer-driven sync obey `nextRetryAtMs`; an explicit user retry
-  may bypass the wait but reuses the same logical-write identifiers.
+  5/10/20/40/80/160/320/640/1280 seconds. On the twelfth failure a task enters
+  terminal automatic state `paused`: timers must never retry it merely because
+  `nextRetryAtMs` has elapsed. The user must explicitly choose “立即重试补偿任务”;
+  that resets only attempt/backoff accounting and preserves the payload hash,
+  ETag/revision and idempotency/session/operation identifiers.
+- Tauri, Swift and Chrome extension persist the `pendingRetry`/`paused` status.
+  A changed payload hash starts a new logical write and is therefore not held by
+  an old paused task. Docker Web still has no independent persisted outbox.
+- `docs/schemas/sync-operation-report-v1.schema.json` is the machine contract
+  for `SyncOperationReport`. `scripts/check_command_matrix.mjs` verifies its
+  required JSON fields against the Rust source before extension tests run.
 - The Tauri sync page lists pending targets, attempts, next retry time and the
   bounded last error. It can retry immediately or remove entries whose target
   is no longer enabled. Docker Web exposes the shared UI command surface but

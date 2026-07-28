@@ -1,4 +1,5 @@
 import { normalizeDomain } from "./account_core.js";
+import { fillCredentialFields } from "./credential_fill_core.js";
 import { PASS_EXTENSION_VERSION } from "./extension_version.js";
 import { claimFillChooserActivation } from "./fill_chooser_activation.js";
 
@@ -456,54 +457,17 @@ function setNativeInputValue(input, value) {
 }
 
 function fillFocusedCredentialFields(username, password) {
-  const active = fillChooserActiveInput;
-  let usernameInput = null;
-  let passwordInput = null;
-  const wantedUsername = String(username || "");
-  const wantedPassword = String(password || "");
-
-  if (active instanceof HTMLInputElement) {
-    if (isPasswordInput(active)) {
-      passwordInput = active;
-      usernameInput = findRelatedUsernameInput(active);
-    } else {
-      usernameInput = active;
-      passwordInput = findRelatedPasswordInput(active);
-    }
-  }
-
-  // Always resolve the pair so selecting from either field fills both.
-  if (!passwordInput) {
-    passwordInput = collectVisiblePasswordInputs(document)[0] || null;
-  }
-  if (!usernameInput && passwordInput) {
-    usernameInput = findRelatedUsernameInput(passwordInput);
-  }
-  if (usernameInput && !passwordInput) {
-    passwordInput = findRelatedPasswordInput(usernameInput);
-  }
-
-  let filledUsername = false;
-  let filledPassword = false;
-  // Always write when the target field exists — including empty strings — so vault
-  // empty passwords clear site autofill/old values instead of leaving them behind.
-  if (usernameInput) {
-    setNativeInputValue(usernameInput, wantedUsername);
-    filledUsername = usernameInput.value === wantedUsername;
-  }
-  if (passwordInput) {
-    setNativeInputValue(passwordInput, wantedPassword);
-    filledPassword = passwordInput.value === wantedPassword;
-  }
-
-  return {
-    filledUsername,
-    filledPassword,
-    filledAny: filledUsername || filledPassword,
-    filledBoth: Boolean(usernameInput ? filledUsername : !wantedUsername)
-      && Boolean(passwordInput ? filledPassword : !wantedPassword)
-      && (filledUsername || filledPassword || Boolean(usernameInput || passwordInput)),
-  };
+  return fillCredentialFields({
+    activeInput: fillChooserActiveInput instanceof HTMLInputElement ? fillChooserActiveInput : null,
+    username,
+    password,
+    isPasswordInput,
+    findRelatedUsername: findRelatedUsernameInput,
+    findRelatedPassword: findRelatedPasswordInput,
+    findFallbackPassword: () => collectVisiblePasswordInputs(document)[0] || null,
+    // Writes empty strings too, clearing stale website autofill values.
+    writeValue: setNativeInputValue,
+  });
 }
 
 // Popup / background "fill active tab" path: reuse the same field discovery + setter.

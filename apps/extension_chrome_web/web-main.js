@@ -649,7 +649,9 @@ const scheduleSyncOutboxRetry = (items) => {
     syncOutboxTimer = null;
   }
   if (lockState.locked || syncOutboxRetryRunning) return;
-  const enabledItems = (Array.isArray(items) ? items : []).filter(isOutboxSourceEnabled);
+  const enabledItems = (Array.isArray(items) ? items : [])
+    .filter(isOutboxSourceEnabled)
+    .filter((item) => item?.status !== "paused");
   if (!enabledItems.length) return;
   const nextRetryAt = Math.min(...enabledItems.map((item) => Number(item.nextRetryAtMs || 0)));
   const delay = Math.min(Math.max(250, nextRetryAt - Date.now()), 2_147_000_000);
@@ -680,9 +682,10 @@ const refreshSyncOutboxStatus = async () => {
     const list = Array.isArray(items) ? items : [];
     if (els.syncOutboxPanel) els.syncOutboxPanel.hidden = list.length === 0;
     if (els.syncOutboxStatus) {
-      const waiting = list.filter((item) => Number(item.nextRetryAtMs || 0) > Date.now()).length;
+      const waiting = list.filter((item) => item.status !== "paused" && Number(item.nextRetryAtMs || 0) > Date.now()).length;
+      const paused = list.filter((item) => item.status === "paused").length;
       els.syncOutboxStatus.textContent = list.length
-        ? `补偿任务 ${list.length} 个（等待退避 ${waiting} 个）`
+        ? `补偿任务 ${list.length} 个（等待退避 ${waiting} 个${paused ? `，已暂停 ${paused} 个` : ""}）`
         : "";
     }
     if (els.syncOutboxList) {
@@ -691,7 +694,9 @@ const refreshSyncOutboxStatus = async () => {
         const row = document.createElement("div");
         row.className = "sync-outbox-row";
         const retryAt = Number(item.nextRetryAtMs || 0);
-        const retryText = retryAt > Date.now() ? `下次 ${formatTimeMs(retryAt)}` : "可立即重试";
+        const retryText = item.status === "paused"
+          ? "已暂停，点击上方按钮恢复"
+          : retryAt > Date.now() ? `下次 ${formatTimeMs(retryAt)}` : "可立即重试";
         const errorText = String(item.lastError || "同步失败").replace(/\s+/g, " ").slice(0, 220);
         row.textContent = `${syncOutboxSourceLabel(item.sourceKey)} · 失败 ${item.attempts || 0} 次 · ${retryText} · ${errorText}`;
         els.syncOutboxList.appendChild(row);
@@ -2816,7 +2821,12 @@ const runSyncMode = async (mode, { quiet = false, forceOutboxRetry = !quiet } = 
     throw new Error(`${failures.join("；")}。已完成 ${reports.length} 个来源`);
   }
   const report = reports[reports.length - 1] || {};
-  if (!quiet) toastSuccess(reports.map((item) => `${item.source}：${item.message || "完成"}${formatSyncPushState(item) ? `（${formatSyncPushState(item)}）` : ""}`).join("；"));
+  if (!quiet) {
+    const summary = reports.map((item) => `${item.source}：${item.message || "完成"}${formatSyncPushState(item) ? `（${formatSyncPushState(item)}）` : ""}`).join("；");
+    const hasPartialFailure = reports.some((item) => item?.ok === false || item?.pendingRetry);
+    if (hasPartialFailure) toastWarn(`同步部分完成：${summary}`);
+    else toastSuccess(summary);
+  }
   if (els.syncPreviewOut) {
     els.syncPreviewOut.hidden = false;
     els.syncPreviewOut.textContent = JSON.stringify(reports, null, 2);

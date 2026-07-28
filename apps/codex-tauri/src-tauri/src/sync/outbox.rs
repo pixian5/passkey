@@ -14,6 +14,10 @@ const MAX_ATTEMPTS: u32 = 12;
 const BASE_DELAY_MS: i64 = 5_000;
 const MAX_DELAY_MS: i64 = 60 * 60 * 1_000;
 
+fn default_status() -> String {
+    "pendingRetry".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncOutboxItem {
@@ -29,6 +33,10 @@ pub struct SyncOutboxItem {
     pub attempts: u32,
     pub next_retry_at_ms: i64,
     pub last_error: String,
+    /// `paused` is a terminal automatic-retry state. A user-forced retry
+    /// explicitly resets it to `pendingRetry`.
+    #[serde(default = "default_status")]
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -39,6 +47,7 @@ pub struct SyncOutboxSummary {
     pub attempts: u32,
     pub next_retry_at_ms: i64,
     pub last_error: String,
+    pub status: String,
 }
 
 fn path(data_dir: &Path) -> PathBuf {
@@ -145,7 +154,7 @@ pub fn matching_item(
 }
 
 pub fn is_ready(item: &SyncOutboxItem, force: bool) -> bool {
-    force || item.next_retry_at_ms <= now_ms()
+    force || (item.status != "paused" && item.next_retry_at_ms <= now_ms())
 }
 
 pub fn wait_seconds(item: &SyncOutboxItem) -> i64 {
@@ -164,6 +173,7 @@ pub fn summaries(data_dir: &Path) -> Result<Vec<SyncOutboxSummary>, String> {
             attempts: item.attempts,
             next_retry_at_ms: item.next_retry_at_ms,
             last_error: item.last_error,
+            status: item.status,
         })
         .collect())
 }
@@ -196,6 +206,11 @@ pub fn record_failure(
         .map(|item| item.attempts + 1)
         .unwrap_or(1)
         .min(MAX_ATTEMPTS);
+    let status = if attempts >= MAX_ATTEMPTS {
+        "paused"
+    } else {
+        "pendingRetry"
+    };
     let exponent = attempts.saturating_sub(1).min(8);
     let delay_ms = BASE_DELAY_MS
         .saturating_mul(1_i64 << exponent)
@@ -215,10 +230,34 @@ pub fn record_failure(
         attempts,
         next_retry_at_ms: now.saturating_add(delay_ms),
         last_error: error.to_string(),
+        status: status.into(),
     };
     items.retain(|old| old.source_key != source_key);
     items.push(item);
     save(data_dir, &items)
+}
+
+/// Resume a paused task after an explicit user action. The logical write
+/// identifiers remain unchanged; only automatic backoff/attempt accounting is
+/// reset so the next failure can be observed as a fresh retry cycle.
+pub fn resume(data_dir: &Path, source_key: &str, payload: &SyncPayload) -> Result<bool, String> {
+    let source_key = normalize_source_key(source_key);
+    let hash = payload_sha256(payload);
+    let mut items = load(data_dir)?;
+    let Some(item) = items
+        .iter_mut()
+        .find(|item| item.source_key == source_key && item.payload_sha256 == hash)
+    else {
+        return Ok(false);
+    };
+    if item.status != "paused" {
+        return Ok(false);
+    }
+    item.status = "pendingRetry".into();
+    item.attempts = 0;
+    item.next_retry_at_ms = 0;
+    save(data_dir, &items)?;
+    Ok(true)
 }
 
 pub fn clear(data_dir: &Path, source_key: &str) -> Result<(), String> {
@@ -311,6 +350,16 @@ mod tests {
         assert_eq!(item.attempts, MAX_ATTEMPTS);
         assert!(item.next_retry_at_ms - now_ms() <= 1_280_000);
         assert!(item.next_retry_at_ms - now_ms() >= 1_275_000);
+        assert_eq!(item.status, "paused");
+        assert!(!is_ready(&item, false));
+        assert!(is_ready(&item, true));
+        assert!(resume(&path, "server|https://sync.example", &payload).unwrap());
+        let resumed = matching_item(&path, "server|https://sync.example", &payload)
+            .unwrap()
+            .unwrap();
+        assert_eq!(resumed.status, "pendingRetry");
+        assert_eq!(resumed.attempts, 0);
+        assert_eq!(resumed.next_retry_at_ms, 0);
         let _ = fs::remove_dir_all(path);
     }
 }

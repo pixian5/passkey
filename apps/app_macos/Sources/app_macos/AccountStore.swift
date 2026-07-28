@@ -383,19 +383,21 @@ final class AccountStore: ObservableObject {
         let syncSessionId: String
         let operationId: String
         let lastErrorCode: String
+        let status: String
 
         private enum CodingKeys: String, CodingKey {
             case sourceKey, payload, createdAtMs, attempts, nextRetryAtMs, lastError
-            case payloadSha256, expectedEtag, expectedRevision, idempotencyKey, syncSessionId, operationId, lastErrorCode
+            case payloadSha256, expectedEtag, expectedRevision, idempotencyKey, syncSessionId, operationId, lastErrorCode, status
         }
 
         init(sourceKey: String, payload: SyncBundlePayload, createdAtMs: Int64, attempts: Int, nextRetryAtMs: Int64,
              lastError: String, payloadSha256: String = "", expectedEtag: String = "", expectedRevision: Int = 0,
-             idempotencyKey: String = "", syncSessionId: String = "", operationId: String = "", lastErrorCode: String = "") {
+             idempotencyKey: String = "", syncSessionId: String = "", operationId: String = "", lastErrorCode: String = "", status: String = "pendingRetry") {
             self.sourceKey = sourceKey; self.payload = payload; self.createdAtMs = createdAtMs; self.attempts = attempts
             self.nextRetryAtMs = nextRetryAtMs; self.lastError = lastError; self.payloadSha256 = payloadSha256
             self.expectedEtag = expectedEtag; self.expectedRevision = expectedRevision; self.idempotencyKey = idempotencyKey
             self.syncSessionId = syncSessionId; self.operationId = operationId; self.lastErrorCode = lastErrorCode
+            self.status = status
         }
 
         init(from decoder: Decoder) throws {
@@ -413,6 +415,7 @@ final class AccountStore: ObservableObject {
             syncSessionId = try c.decodeIfPresent(String.self, forKey: .syncSessionId) ?? ""
             operationId = try c.decodeIfPresent(String.self, forKey: .operationId) ?? ""
             lastErrorCode = try c.decodeIfPresent(String.self, forKey: .lastErrorCode) ?? ""
+            status = try c.decodeIfPresent(String.self, forKey: .status) ?? "pendingRetry"
         }
     }
 
@@ -5139,14 +5142,15 @@ final class AccountStore: ObservableObject {
 
     private func syncOutboxStatusText(_ items: [SyncOutboxItem]) -> String {
         guard !items.isEmpty else { return "" }
-        let waiting = items.filter { $0.nextRetryAtMs > nowMs() }.count
+        let waiting = items.filter { $0.status != "paused" && $0.nextRetryAtMs > nowMs() }.count
+        let paused = items.filter { $0.status == "paused" }.count
         let details = items.map { item in
             let kind = item.sourceKey.split(separator: "|", maxSplits: 1).first.map(String.init) ?? "同步源"
             let label = kind == "server" ? "服务器" : kind == "webdav" ? "WebDAV" : kind == "icloud" ? "iCloud" : kind
-            let retry = item.nextRetryAtMs > nowMs() ? "下次 \(displayTime(item.nextRetryAtMs))" : "可立即重试"
+            let retry = item.status == "paused" ? "已暂停，点击立即重试恢复" : item.nextRetryAtMs > nowMs() ? "下次 \(displayTime(item.nextRetryAtMs))" : "可立即重试"
             return "\(label)：失败 \(item.attempts) 次，\(retry)，\(item.lastError)"
         }
-        return "补偿任务 \(items.count) 个（等待 \(waiting) 个）\n\(details.joined(separator: "\n"))"
+        return "补偿任务 \(items.count) 个（等待 \(waiting) 个\(paused > 0 ? "，已暂停 \(paused) 个" : "")）\n\(details.joined(separator: "\n"))"
     }
 
     func retrySyncOutboxNow() {
@@ -5195,13 +5199,32 @@ final class AccountStore: ObservableObject {
     }
 
     private func shouldAttemptSyncOutbox(sourceKey: String, force: Bool) -> Bool {
-        guard !force else { return true }
         do {
             guard let data = try localSQLiteStore.readData(for: LocalDatabaseKeys.syncOutbox),
                   let items = try? decoder.decode([SyncOutboxItem].self, from: data),
                   let item = items.first(where: { $0.sourceKey == sourceKey })
             else { return true }
-            return item.nextRetryAtMs <= nowMs()
+            if force, item.status == "paused" {
+                let resumed = SyncOutboxItem(
+                    sourceKey: item.sourceKey,
+                    payload: item.payload,
+                    createdAtMs: item.createdAtMs,
+                    attempts: 0,
+                    nextRetryAtMs: 0,
+                    lastError: item.lastError,
+                    payloadSha256: item.payloadSha256,
+                    expectedEtag: item.expectedEtag,
+                    expectedRevision: item.expectedRevision,
+                    idempotencyKey: item.idempotencyKey,
+                    syncSessionId: item.syncSessionId,
+                    operationId: item.operationId,
+                    lastErrorCode: item.lastErrorCode,
+                    status: "pendingRetry"
+                )
+                saveSyncOutbox(items.filter { $0.sourceKey != sourceKey } + [resumed])
+            }
+            if force { return true }
+            return item.status != "paused" && item.nextRetryAtMs <= nowMs()
         } catch {
             return true
         }
@@ -5224,6 +5247,7 @@ final class AccountStore: ObservableObject {
         let sameLogicalWrite = previous?.payloadSha256 == payloadHash && !payloadHash.isEmpty
         let previousAttempts = sameLogicalWrite ? (previous?.attempts ?? 0) : 0
         let attempts = min(previousAttempts + 1, PassSyncPolicy.syncOutboxMaxAttempts)
+        let status = attempts >= PassSyncPolicy.syncOutboxMaxAttempts ? "paused" : "pendingRetry"
         let delaySeconds = PassSyncPolicy.syncOutboxRetryDelaySeconds(attempts: attempts)
         let item = SyncOutboxItem(
             sourceKey: sourceKey,
@@ -5238,7 +5262,8 @@ final class AccountStore: ObservableObject {
             idempotencyKey: (error as NSError).userInfo["idempotencyKey"] as? String ?? (sameLogicalWrite ? previous?.idempotencyKey : nil) ?? "pass-\(syncDeviceId())-\(UUID().uuidString)",
             syncSessionId: (error as NSError).userInfo["syncSessionId"] as? String ?? (sameLogicalWrite ? previous?.syncSessionId : nil) ?? "pass-session-\(UUID().uuidString)",
             operationId: (error as NSError).userInfo["operationId"] as? String ?? (sameLogicalWrite ? previous?.operationId : nil) ?? "pass-op-\(UUID().uuidString)",
-            lastErrorCode: "\((error as NSError).code)"
+            lastErrorCode: "\((error as NSError).code)",
+            status: status
         )
         saveSyncOutbox(items.filter { $0.sourceKey != sourceKey } + [item])
     }

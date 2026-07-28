@@ -69,7 +69,31 @@ export function normalizeSyncOutbox(value, nowMs = Date.now()) {
 }
 
 export function isSyncOutboxReady(item, nowMs = Date.now()) {
-  return !item || Number(item.nextRetryAtMs || 0) <= nowMs;
+  return !item
+    || (String(item.status || "pendingRetry") !== "paused"
+      && Number(item.nextRetryAtMs || 0) <= nowMs);
+}
+
+/**
+ * Explicitly resume a permanently paused task.  The payload hash guard keeps
+ * a stale manual retry from reviving a newer task written for the same target.
+ */
+export function resumeSyncOutbox(value, targetKey, payloadSha256 = "") {
+  const normalizedKey = String(targetKey || "").trim();
+  const hash = String(payloadSha256 || "").trim().toLowerCase();
+  return normalizeSyncOutbox(value).map((item) => {
+    if (item.targetKey !== normalizedKey || item.status !== "paused") return item;
+    if (hash && item.payloadSha256 && item.payloadSha256 !== hash) return item;
+    return {
+      ...item,
+      status: "pendingRetry",
+      attempts: 0,
+      lastAttemptAtMs: 0,
+      nextRetryAtMs: 0,
+      lastErrorCode: "",
+      lastError: "",
+    };
+  });
 }
 
 export function upsertSyncOutbox(value, {
@@ -84,15 +108,17 @@ export function upsertSyncOutbox(value, {
   operationId = "",
   sourceType = "",
   scope = "",
+  forceResume = false,
   nowMs = Date.now(),
 }) {
   const current = normalizeSyncOutbox(value, nowMs);
   const previous = current.find((item) => item.targetKey === targetKey);
   const normalizedHash = String(payloadSha256 || "").trim().toLowerCase();
   const sameLogicalWrite = Boolean(previous && normalizedHash && previous.payloadSha256 === normalizedHash);
+  const wasPaused = previous?.status === "paused";
   const attempts = Math.min(
     SYNC_OUTBOX_MAX_ATTEMPTS,
-    (sameLogicalWrite ? Number(previous?.attempts || 0) : 0) + 1,
+    (sameLogicalWrite ? (forceResume && wasPaused ? 0 : Number(previous?.attempts || 0)) : 0) + 1,
   );
   const next = normalizeSyncOutboxItem({
     targetKey,
@@ -105,7 +131,7 @@ export function upsertSyncOutbox(value, {
     operationId: operationId || (sameLogicalWrite ? previous.operationId : ""),
     sourceType,
     scope,
-    status: "pendingRetry",
+    status: attempts >= SYNC_OUTBOX_MAX_ATTEMPTS ? "paused" : "pendingRetry",
     createdAtMs: sameLogicalWrite ? previous.createdAtMs : nowMs,
     attempts,
     lastAttemptAtMs: nowMs,

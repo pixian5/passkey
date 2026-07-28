@@ -1639,21 +1639,40 @@ fn prepare_outbox_attempt(
     let Some(item) = outbox::matching_item(data_dir, source_key, local)? else {
         return Ok(OutboxAttempt::Ready(outbox::new_context(local)));
     };
+    if force && item.status == "paused" {
+        outbox::resume(data_dir, source_key, local)?;
+        return Ok(OutboxAttempt::Ready(outbox::retry_context(
+            &outbox::matching_item(data_dir, source_key, local)?
+                .ok_or_else(|| "恢复同步补偿任务后任务已丢失".to_string())?,
+        )));
+    }
     if outbox::is_ready(&item, force) {
         return Ok(OutboxAttempt::Ready(outbox::retry_context(&item)));
     }
     let wait_seconds = outbox::wait_seconds(&item).max(1);
+    let paused = item.status == "paused";
     let report = SyncOperationReport {
         mode: mode.as_str().to_string(),
-        message: format!("同步补偿任务仍在退避，约 {wait_seconds} 秒后自动重试"),
+        message: if paused {
+            "同步补偿任务已暂停，请点击“立即重试补偿任务”恢复".into()
+        } else {
+            format!("同步补偿任务仍在退避，约 {wait_seconds} 秒后自动重试")
+        },
         local_accounts: visible_account_count(local),
         pending_retry: true,
         retryable: true,
-        stage: "waitingRetry".into(),
+        stage: if paused { "paused" } else { "waitingRetry" }.into(),
         source: source.into(),
         sync_session_id: item.sync_session_id.clone(),
         operation_id: item.operation_id.clone(),
-        code: Some("RETRY_BACKOFF".into()),
+        code: Some(
+            if paused {
+                "RETRY_PAUSED"
+            } else {
+                "RETRY_BACKOFF"
+            }
+            .into(),
+        ),
         ..Default::default()
     };
     Ok(OutboxAttempt::Waiting(report))

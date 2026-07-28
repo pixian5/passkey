@@ -7,6 +7,7 @@ import {
   normalizeSyncOutbox,
   removeOrphanedSyncOutbox,
   removeSyncOutbox,
+  resumeSyncOutbox,
   syncOutboxRetryDelayMs,
   syncTargetKey,
   upsertSyncOutbox,
@@ -81,6 +82,30 @@ test("相同 payload 摘要会保留幂等、会话与操作上下文", () => {
   assert.equal(second[0].idempotencyKey, "idem-1");
   assert.equal(second[0].syncSessionId, "session-1");
   assert.equal(second[0].operationId, "operation-1");
+});
+
+test("补偿任务达到最大次数后暂停，手动恢复会从零开始", () => {
+  const targetKey = "server|https://paused.example";
+  const payloadSha256 = "b".repeat(64);
+  let outbox = [];
+  for (let attempt = 1; attempt <= SYNC_OUTBOX_MAX_ATTEMPTS; attempt += 1) {
+    outbox = upsertSyncOutbox(outbox, {
+      targetKey,
+      payload: { accounts: [{ id: "one" }] },
+      payloadSha256,
+      error: new Error("HTTP 503"),
+      nowMs: attempt * 1_000,
+    });
+  }
+  assert.equal(outbox[0].attempts, SYNC_OUTBOX_MAX_ATTEMPTS);
+  assert.equal(outbox[0].status, "paused");
+  assert.equal(isSyncOutboxReady(outbox[0], 99_999_999), false);
+
+  const resumed = resumeSyncOutbox(outbox, targetKey, payloadSha256);
+  assert.equal(resumed[0].status, "pendingRetry");
+  assert.equal(resumed[0].attempts, 0);
+  assert.equal(resumed[0].nextRetryAtMs, 0);
+  assert.equal(isSyncOutboxReady(resumed[0], 0), true);
 });
 
 test("同步 outbox 只清理当前已失效的远端目标", () => {

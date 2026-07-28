@@ -139,8 +139,53 @@
     return value;
   }
 
+  // credential_fill_core.js
+  function fillCredentialFields({
+    activeInput,
+    username,
+    password,
+    isPasswordInput: isPasswordInput2,
+    findRelatedUsername,
+    findRelatedPassword,
+    findFallbackPassword,
+    writeValue
+  }) {
+    let usernameInput = null;
+    let passwordInput = null;
+    const wantedUsername = String(username || "");
+    const wantedPassword = String(password || "");
+    if (activeInput) {
+      if (isPasswordInput2(activeInput)) {
+        passwordInput = activeInput;
+        usernameInput = findRelatedUsername(activeInput);
+      } else {
+        usernameInput = activeInput;
+        passwordInput = findRelatedPassword(activeInput);
+      }
+    }
+    if (!passwordInput) passwordInput = findFallbackPassword();
+    if (!usernameInput && passwordInput) usernameInput = findRelatedUsername(passwordInput);
+    if (usernameInput && !passwordInput) passwordInput = findRelatedPassword(usernameInput);
+    let filledUsername = false;
+    let filledPassword = false;
+    if (usernameInput) {
+      writeValue(usernameInput, wantedUsername);
+      filledUsername = usernameInput.value === wantedUsername;
+    }
+    if (passwordInput) {
+      writeValue(passwordInput, wantedPassword);
+      filledPassword = passwordInput.value === wantedPassword;
+    }
+    return {
+      filledUsername,
+      filledPassword,
+      filledAny: filledUsername || filledPassword,
+      filledBoth: Boolean(usernameInput ? filledUsername : !wantedUsername) && Boolean(passwordInput ? filledPassword : !wantedPassword) && (filledUsername || filledPassword || Boolean(usernameInput || passwordInput))
+    };
+  }
+
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.3.7";
+  var PASS_EXTENSION_VERSION = "1.3.8";
 
   // fill_chooser_activation.js
   var FILL_CHOOSER_ACTIVATION_DEDUPE_MS = 650;
@@ -530,45 +575,17 @@
     noteFillChooserRecentValue(value);
   }
   function fillFocusedCredentialFields(username, password) {
-    const active = fillChooserActiveInput;
-    let usernameInput = null;
-    let passwordInput = null;
-    const wantedUsername = String(username || "");
-    const wantedPassword = String(password || "");
-    if (active instanceof HTMLInputElement) {
-      if (isPasswordInput(active)) {
-        passwordInput = active;
-        usernameInput = findRelatedUsernameInput(active);
-      } else {
-        usernameInput = active;
-        passwordInput = findRelatedPasswordInput(active);
-      }
-    }
-    if (!passwordInput) {
-      passwordInput = collectVisiblePasswordInputs(document)[0] || null;
-    }
-    if (!usernameInput && passwordInput) {
-      usernameInput = findRelatedUsernameInput(passwordInput);
-    }
-    if (usernameInput && !passwordInput) {
-      passwordInput = findRelatedPasswordInput(usernameInput);
-    }
-    let filledUsername = false;
-    let filledPassword = false;
-    if (usernameInput) {
-      setNativeInputValue(usernameInput, wantedUsername);
-      filledUsername = usernameInput.value === wantedUsername;
-    }
-    if (passwordInput) {
-      setNativeInputValue(passwordInput, wantedPassword);
-      filledPassword = passwordInput.value === wantedPassword;
-    }
-    return {
-      filledUsername,
-      filledPassword,
-      filledAny: filledUsername || filledPassword,
-      filledBoth: Boolean(usernameInput ? filledUsername : !wantedUsername) && Boolean(passwordInput ? filledPassword : !wantedPassword) && (filledUsername || filledPassword || Boolean(usernameInput || passwordInput))
-    };
+    return fillCredentialFields({
+      activeInput: fillChooserActiveInput instanceof HTMLInputElement ? fillChooserActiveInput : null,
+      username,
+      password,
+      isPasswordInput,
+      findRelatedUsername: findRelatedUsernameInput,
+      findRelatedPassword: findRelatedPasswordInput,
+      findFallbackPassword: () => collectVisiblePasswordInputs(document)[0] || null,
+      // Writes empty strings too, clearing stale website autofill values.
+      writeValue: setNativeInputValue
+    });
   }
   function applyExternalFillCredentials(payload) {
     const username = String(payload?.username || "");
