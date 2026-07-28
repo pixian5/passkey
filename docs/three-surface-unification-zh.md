@@ -242,7 +242,7 @@ cd apps/pass-web && cargo test && cargo build --release
 
 旧 Chrome 壳和专用构建入口已移除；Chrome 只加载 `apps/extension_chrome_web`。
 
-## 8. 当前对齐结论（版本 1.3.6）
+## 8. 当前对齐结论（版本 1.3.7）
 
 已对齐并必须保持：
 
@@ -254,8 +254,10 @@ cd apps/pass-web && cargo test && cargo build --release
 6. 操作历史脱敏；撤销忽略 no-op。
 7. 同步服务器每次成功写入只产生 1 个新版本；审计/限流有上限。
 8. SSH 远端路径 shell quote；部署健康检查正常 TLS 校验。
+9. Tauri 补偿队列与扩展/Swift 共用 12 次计数和 5 秒至 1280 秒退避；Tauri 额外提供队列明细、到期自动重试、手动强制重试和失效目标清理。
+10. 扩展内容脚本把一次点击密码框的 `pointerdown/focusin/click` 视为一次用户激活，不再重复查询或重复提示。
 
-Chrome 的锁定状态已由后台 Service Worker 收口：popup 和管理页收到锁定通知后清除内存业务视图与本地数据密钥，解锁后重新读取加密存储。仍未对齐：Web/Tauri 跨进程 revision、旧 Swift 文件夹内独立顺序、全部命令返回 Schema。不得把本节“已对齐”扩写为所有运行细节完全一致。
+Chrome 的锁定状态已由后台 Service Worker 收口：popup 和管理页收到锁定通知后清除内存业务视图与本地数据密钥，解锁后重新读取加密存储。仍未对齐：Docker Web 没有独立持久化 outbox；Web/Tauri 跨进程 revision、旧 Swift 文件夹内独立顺序、全部命令返回 Schema 也未完全统一。不得把共享的 `get_sync_outbox_status` 空结果适配描述成 Web 已拥有补偿队列，也不得把本节“已对齐”扩写为所有运行细节完全一致。
 
 详细规则见 [local-write-durability-and-history-consistency-zh.md](./local-write-durability-and-history-consistency-zh.md) 与 [current-app-extension-implementation-reference-zh.md](./current-app-extension-implementation-reference-zh.md)。
 

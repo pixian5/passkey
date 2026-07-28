@@ -186,6 +186,7 @@ fn require_etag_for_existing(body: &Option<Vec<u8>>, etag: &Option<String>) -> R
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // Public adapter boundary mirrors the shared sync context.
 pub fn run_sync_with_context<A>(
     settings: &WebDavSettings,
     mode: SyncMode,

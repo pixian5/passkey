@@ -228,6 +228,11 @@ const els = {
   btnSyncMerge: $("#btn-sync-merge"),
   btnSyncRemoteOverwrite: $("#btn-sync-remote-overwrite"),
   btnSyncLocalOverwrite: $("#btn-sync-local-overwrite"),
+  btnSyncRetryOutbox: $("#btn-sync-retry-outbox"),
+  btnSyncClearInactiveOutbox: $("#btn-sync-clear-inactive-outbox"),
+  syncOutboxPanel: $("#syncOutboxPanel"),
+  syncOutboxStatus: $("#syncOutboxStatus"),
+  syncOutboxList: $("#syncOutboxList"),
   btnSyncNow: $("#btn-sync-now"),
   btnLoadVersions: $("#btn-load-versions"),
   syncVersionsStatus: $("#syncVersionsStatus"),
@@ -328,6 +333,8 @@ let lockState = {
 let activityTimer = null;
 let totpTimer = null;
 let autoSyncTimer = null;
+let syncOutboxTimer = null;
+let syncOutboxRetryRunning = false;
 let filter = { type: "all" };
 let selectedId = "";
 let selectedAccountIds = new Set();
@@ -620,6 +627,83 @@ const scheduleAutoSync = () => {
       await runSyncNow({ quiet: true });
     } catch (_) {}
   }, m * 60 * 1000);
+};
+
+const syncOutboxSourceLabel = (sourceKey) => {
+  const kind = String(sourceKey || "").split("|", 1)[0];
+  if (kind === "server") return "自建服务器";
+  if (kind === "webdav") return "WebDAV";
+  return kind || "同步目标";
+};
+
+const isOutboxSourceEnabled = (item) => {
+  const kind = String(item?.sourceKey || "").split("|", 1)[0];
+  if (kind === "server") return Boolean(els.syncEnabled?.checked);
+  if (kind === "webdav") return Boolean(els.webdavEnabled?.checked);
+  return false;
+};
+
+const scheduleSyncOutboxRetry = (items) => {
+  if (syncOutboxTimer) {
+    clearTimeout(syncOutboxTimer);
+    syncOutboxTimer = null;
+  }
+  if (lockState.locked || syncOutboxRetryRunning) return;
+  const enabledItems = (Array.isArray(items) ? items : []).filter(isOutboxSourceEnabled);
+  if (!enabledItems.length) return;
+  const nextRetryAt = Math.min(...enabledItems.map((item) => Number(item.nextRetryAtMs || 0)));
+  const delay = Math.min(Math.max(250, nextRetryAt - Date.now()), 2_147_000_000);
+  syncOutboxTimer = setTimeout(async () => {
+    syncOutboxTimer = null;
+    if (lockState.locked || syncOutboxRetryRunning) return;
+    syncOutboxRetryRunning = true;
+    try {
+      await runSyncNow({ quiet: true, forceOutboxRetry: false });
+    } catch (_) {
+      // The updated queue status below carries the actionable failure detail.
+    } finally {
+      syncOutboxRetryRunning = false;
+      await refreshSyncOutboxStatus();
+    }
+  }, delay);
+};
+
+const refreshSyncOutboxStatus = async () => {
+  if (lockState.locked) {
+    if (syncOutboxTimer) clearTimeout(syncOutboxTimer);
+    syncOutboxTimer = null;
+    if (els.syncOutboxPanel) els.syncOutboxPanel.hidden = true;
+    return [];
+  }
+  try {
+    const items = await invoke("get_sync_outbox_status");
+    const list = Array.isArray(items) ? items : [];
+    if (els.syncOutboxPanel) els.syncOutboxPanel.hidden = list.length === 0;
+    if (els.syncOutboxStatus) {
+      const waiting = list.filter((item) => Number(item.nextRetryAtMs || 0) > Date.now()).length;
+      els.syncOutboxStatus.textContent = list.length
+        ? `补偿任务 ${list.length} 个（等待退避 ${waiting} 个）`
+        : "";
+    }
+    if (els.syncOutboxList) {
+      els.syncOutboxList.innerHTML = "";
+      for (const item of list) {
+        const row = document.createElement("div");
+        row.className = "sync-outbox-row";
+        const retryAt = Number(item.nextRetryAtMs || 0);
+        const retryText = retryAt > Date.now() ? `下次 ${formatTimeMs(retryAt)}` : "可立即重试";
+        const errorText = String(item.lastError || "同步失败").replace(/\s+/g, " ").slice(0, 220);
+        row.textContent = `${syncOutboxSourceLabel(item.sourceKey)} · 失败 ${item.attempts || 0} 次 · ${retryText} · ${errorText}`;
+        els.syncOutboxList.appendChild(row);
+      }
+    }
+    scheduleSyncOutboxRetry(list);
+    return list;
+  } catch (error) {
+    if (els.syncOutboxPanel) els.syncOutboxPanel.hidden = false;
+    if (els.syncOutboxStatus) els.syncOutboxStatus.textContent = `读取补偿队列失败：${error}`;
+    return [];
+  }
 };
 
 const refreshSyncKeyHints = async () => {
@@ -2407,6 +2491,7 @@ const loadSyncSettings = async () => {
     if (els.syncBaseUrl) els.syncBaseUrl.value = s.baseUrl || "";
     if (els.syncToken) els.syncToken.value = s.authToken || "";
     if (els.syncEncKey) els.syncEncKey.value = s.encryptionKey || "";
+    await refreshSyncOutboxStatus();
   } catch (err) {
     toastError(`读取同步设置失败：${err}`);
   }
@@ -2434,6 +2519,7 @@ const scheduleSyncSettingsSave = () => {
   syncSettingsSaveTimer = setTimeout(async () => {
     try {
       await saveAllSyncRelated();
+      await refreshSyncOutboxStatus();
     } catch (err) {
       console.warn("auto-save sync settings", err);
     }
@@ -2470,8 +2556,8 @@ const extractPayload = (text, label) => {
   return obj?.payload ?? obj;
 };
 
-const runSyncNow = async ({ quiet = false } = {}) => {
-  return runSyncMode("merge", { quiet });
+const runSyncNow = async ({ quiet = false, forceOutboxRetry = !quiet } = {}) => {
+  return runSyncMode("merge", { quiet, forceOutboxRetry });
 };
 
 const renderSyncDecisionSummary = (reports) => {
@@ -2671,7 +2757,7 @@ const renderSyncPreviewDiff = (localPayload, mergedPayload) => {
   }
 };
 
-const runSyncMode = async (mode, { quiet = false } = {}) => {
+const runSyncMode = async (mode, { quiet = false, forceOutboxRetry = !quiet } = {}) => {
   await saveAllSyncRelated();
   if (!quiet && !confirmPlaintextSync()) return [];
   if (!quiet && !confirmOverwriteSync(mode)) return [];
@@ -2704,7 +2790,7 @@ const runSyncMode = async (mode, { quiet = false } = {}) => {
     try {
       const raw = await invoke(
         source === "selfHosted" ? "sync_now_mode" : "sync_webdav_now_mode",
-        { mode: sourceMode }
+        { mode: sourceMode, forceOutboxRetry }
       );
       const result = typeof raw === "string" ? JSON.parse(raw) : raw;
       const report = { source: source === "selfHosted" ? "自建服务器" : "WebDAV", ...(result.report || {}) };
@@ -2725,6 +2811,7 @@ const runSyncMode = async (mode, { quiet = false } = {}) => {
     }
   }
   await refreshState();
+  await refreshSyncOutboxStatus();
   if (failures.length) {
     throw new Error(`${failures.join("；")}。已完成 ${reports.length} 个来源`);
   }
@@ -4021,6 +4108,30 @@ els.btnSyncMerge?.addEventListener("click", async () => {
   } catch (err) {
     toastError(`同步失败：${err}`);
   } finally {
+    restore();
+  }
+});
+els.btnSyncRetryOutbox?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnSyncRetryOutbox, "正在重试…");
+  try {
+    await runSyncMode("merge", { forceOutboxRetry: true });
+  } catch (err) {
+    toastError(`补偿重试失败：${err}`);
+  } finally {
+    await refreshSyncOutboxStatus();
+    restore();
+  }
+});
+els.btnSyncClearInactiveOutbox?.addEventListener("click", async () => {
+  const restore = setButtonBusy(els.btnSyncClearInactiveOutbox, "正在清理…");
+  try {
+    await saveAllSyncRelated();
+    const removed = Number(await invoke("clear_inactive_sync_outbox")) || 0;
+    toastSuccess(removed > 0 ? `已清理 ${removed} 个失效目标任务` : "没有失效目标任务");
+  } catch (err) {
+    toastError(`清理失败：${err}`);
+  } finally {
+    await refreshSyncOutboxStatus();
     restore();
   }
 });

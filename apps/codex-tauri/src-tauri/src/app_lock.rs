@@ -11,7 +11,7 @@ use pbkdf2::pbkdf2;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -35,22 +35,17 @@ type HmacSha256 = Hmac<Sha256>;
 ///
 /// Values are camel-cased on disk and over Tauri IPC so the frontend does not
 /// need platform-specific translations.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum AppLockPolicy {
     /// Keep the current session unlocked until the application exits or the
     /// user explicitly locks it.
+    #[default]
     OnceUntilQuit,
     /// Lock after a configured period without user activity.
     IdleTimeout,
     /// Lock immediately when the main window is no longer focused.
     OnBackground,
-}
-
-impl Default for AppLockPolicy {
-    fn default() -> Self {
-        Self::OnceUntilQuit
-    }
 }
 
 // Tauri builds before lock policies existed always used an idle timeout.
@@ -138,18 +133,18 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn lock_path(data_dir: &PathBuf) -> PathBuf {
+fn lock_path(data_dir: &Path) -> PathBuf {
     data_dir.join(LOCK_FILE)
 }
 
-fn secrets_path(data_dir: &PathBuf) -> PathBuf {
+fn secrets_path(data_dir: &Path) -> PathBuf {
     data_dir.join(SECRETS_FILE)
 }
 
 /// Replace a private state file only after its complete new contents have been
 /// written. Both lock records and wrapped sync credentials use this helper so
 /// a crash cannot leave a truncated JSON document behind.
-fn write_private_file_atomic(path: &PathBuf, bytes: &[u8]) -> Result<(), String> {
+fn write_private_file_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -188,12 +183,12 @@ fn write_private_file_atomic(path: &PathBuf, bytes: &[u8]) -> Result<(), String>
     Ok(())
 }
 
-fn load_record(data_dir: &PathBuf) -> Option<AppLockRecord> {
+fn load_record(data_dir: &Path) -> Option<AppLockRecord> {
     let raw = std::fs::read_to_string(lock_path(data_dir)).ok()?;
     serde_json::from_str(&raw).ok()
 }
 
-fn save_record(data_dir: &PathBuf, record: &AppLockRecord) -> Result<(), String> {
+fn save_record(data_dir: &Path, record: &AppLockRecord) -> Result<(), String> {
     std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
     let path = lock_path(data_dir);
     let raw = serde_json::to_string_pretty(record).map_err(|e| e.to_string())?;
@@ -224,7 +219,7 @@ fn timing_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 impl AppLockState {
-    pub fn public_state(&self, data_dir: &PathBuf) -> AppLockPublicState {
+    pub fn public_state(&self, data_dir: &Path) -> AppLockPublicState {
         let record = load_record(data_dir);
         let enabled = record.as_ref().map(|r| r.enabled).unwrap_or(false);
         let has_password = record.is_some();
@@ -291,7 +286,7 @@ impl AppLockState {
         }
     }
 
-    pub fn require_unlocked(&self, data_dir: &PathBuf) -> Result<(), String> {
+    pub fn require_unlocked(&self, data_dir: &Path) -> Result<(), String> {
         let st = self.public_state(data_dir);
         if st.locked {
             return Err("应用已锁定，请先解锁".into());
@@ -300,9 +295,10 @@ impl AppLockState {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn enable(
         &self,
-        data_dir: &PathBuf,
+        data_dir: &Path,
         password: &str,
         confirm: &str,
         idle_lock_minutes: u32,
@@ -345,7 +341,7 @@ impl AppLockState {
 
     /// Disable after the caller has already verified the password and safely
     /// migrated any session-key-encrypted data out of the lock domain.
-    pub fn disable_unlocked(&self, data_dir: &PathBuf) -> Result<AppLockPublicState, String> {
+    pub fn disable_unlocked(&self, data_dir: &Path) -> Result<AppLockPublicState, String> {
         if let Some(mut record) = load_record(data_dir) {
             record.enabled = false;
             save_record(data_dir, &record)?;
@@ -356,7 +352,7 @@ impl AppLockState {
         Ok(self.public_state(data_dir))
     }
 
-    pub fn unlock(&self, data_dir: &PathBuf, password: &str) -> Result<AppLockPublicState, String> {
+    pub fn unlock(&self, data_dir: &Path, password: &str) -> Result<AppLockPublicState, String> {
         let record = load_record(data_dir).ok_or_else(|| "尚未设置主密码".to_string())?;
         if !record.enabled {
             let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
@@ -407,7 +403,7 @@ impl AppLockState {
     pub fn unlock_biometric(
         &self,
         app: &AppHandle,
-        data_dir: &PathBuf,
+        data_dir: &Path,
     ) -> Result<AppLockPublicState, String> {
         let raw = local_vault::read_text(
             data_dir,
@@ -440,7 +436,7 @@ impl AppLockState {
     pub fn unlock_biometric(
         &self,
         _app: &tauri::AppHandle,
-        _data_dir: &PathBuf,
+        _data_dir: &Path,
     ) -> Result<AppLockPublicState, String> {
         Err("当前平台不支持指纹解锁".into())
     }
@@ -460,7 +456,7 @@ impl AppLockState {
         Ok(())
     }
 
-    pub fn lock_now(&self, data_dir: &PathBuf) -> AppLockPublicState {
+    pub fn lock_now(&self, data_dir: &Path) -> AppLockPublicState {
         let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         guard.unlocked = false;
         guard.session_key = None;
@@ -470,7 +466,7 @@ impl AppLockState {
 
     pub fn set_preferences(
         &self,
-        data_dir: &PathBuf,
+        data_dir: &Path,
         lock_policy: AppLockPolicy,
         idle_lock_minutes: u32,
         prefer_biometrics: bool,
@@ -489,7 +485,7 @@ impl AppLockState {
     /// otherwise it just records when focus was lost so `public_state` can lock
     /// after the grace period elapses. Transient focus loss (Spotlight, quick
     /// copy-paste) that regains focus before the delay never locks.
-    pub fn note_window_blurred(&self, data_dir: &PathBuf) -> AppLockPublicState {
+    pub fn note_window_blurred(&self, data_dir: &Path) -> AppLockPublicState {
         let record = load_record(data_dir);
         let policy = record.as_ref().map(|r| r.lock_policy).unwrap_or_default();
         if policy != AppLockPolicy::OnBackground {
@@ -514,7 +510,7 @@ impl AppLockState {
 
     /// Called when the main window regains focus: cancels a pending background
     /// lock so a brief switch away does not force a re-unlock.
-    pub fn note_window_focused(&self, data_dir: &PathBuf) -> AppLockPublicState {
+    pub fn note_window_focused(&self, data_dir: &Path) -> AppLockPublicState {
         {
             let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             guard.blurred_since_ms = None;
@@ -529,7 +525,7 @@ impl AppLockState {
     /// session, so there is no disable→enable round-trip and no plaintext window.
     pub fn change_password(
         &self,
-        data_dir: &PathBuf,
+        data_dir: &Path,
         old_password: &str,
         new_password: &str,
         confirm: &str,
@@ -603,7 +599,7 @@ impl AppLockState {
 
     /// Delete secrets that were encrypted with the session key after their
     /// plaintext replacement has been durably saved by the caller.
-    pub fn clear_sync_secrets(&self, data_dir: &PathBuf) -> Result<(), String> {
+    pub fn clear_sync_secrets(&self, data_dir: &Path) -> Result<(), String> {
         let path = secrets_path(data_dir);
         if path.exists() {
             std::fs::remove_file(path).map_err(|e| format!("删除旧同步密钥失败: {e}"))?;
@@ -621,7 +617,7 @@ impl AppLockState {
     /// Encrypt sensitive sync fields for disk when lock is enabled.
     pub fn seal_sync_secrets(
         &self,
-        data_dir: &PathBuf,
+        data_dir: &Path,
         auth_token: &str,
         encryption_key: &str,
     ) -> Result<(), String> {
@@ -637,7 +633,7 @@ impl AppLockState {
         Ok(())
     }
 
-    pub fn open_sync_secrets(&self, data_dir: &PathBuf) -> Result<(String, String), String> {
+    pub fn open_sync_secrets(&self, data_dir: &Path) -> Result<(String, String), String> {
         let path = secrets_path(data_dir);
         if !path.exists() {
             return Ok((String::new(), String::new()));

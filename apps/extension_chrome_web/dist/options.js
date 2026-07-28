@@ -1,4 +1,7 @@
 (() => {
+  // extension_version.js
+  var PASS_EXTENSION_VERSION = "1.3.7";
+
   // ../../core/pass_core/js/sync_policy.js
   var DEFAULT_DEVICE_NAME = "PassDevice";
   var FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
@@ -1224,6 +1227,19 @@
   function syncTargetKey(target) {
     return `${String(target?.kind || "").trim()}|${String(target?.url || "").trim()}`;
   }
+  function canonicalJson(value) {
+    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+    if (value && typeof value === "object") {
+      return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+    }
+    return JSON.stringify(value ?? null);
+  }
+  async function syncPayloadSha256(payload, cryptoApi = globalThis.crypto) {
+    if (!cryptoApi?.subtle?.digest) throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u540C\u6B65 payload \u6458\u8981\u8BA1\u7B97");
+    const bytes = new TextEncoder().encode(canonicalJson(payload));
+    const digest = new Uint8Array(await cryptoApi.subtle.digest("SHA-256", bytes));
+    return Array.from(digest, (value) => value.toString(16).padStart(2, "0")).join("");
+  }
   function normalizeSyncOutboxItem(item, nowMs = Date.now()) {
     const targetKey = String(item?.targetKey || "").trim();
     const payload = item?.payload;
@@ -1235,10 +1251,20 @@
     return {
       targetKey,
       payload,
+      payloadSha256: String(item?.payloadSha256 || "").trim().toLowerCase(),
+      expectedEtag: String(item?.expectedEtag || "").trim(),
+      expectedRevision: Math.floor(nonNegativeNumber(item?.expectedRevision, 0)),
+      idempotencyKey: String(item?.idempotencyKey || "").trim(),
+      syncSessionId: String(item?.syncSessionId || "").trim(),
+      operationId: String(item?.operationId || "").trim(),
+      sourceType: String(item?.sourceType || targetKey.split("|", 1)[0] || "").trim(),
+      scope: String(item?.scope || "").trim(),
+      status: String(item?.status || "pendingRetry").trim() || "pendingRetry",
       createdAtMs: nonNegativeNumber(item?.createdAtMs, nowMs),
       attempts: Math.min(SYNC_OUTBOX_MAX_ATTEMPTS, Math.floor(nonNegativeNumber(item?.attempts, 0))),
       lastAttemptAtMs: nonNegativeNumber(item?.lastAttemptAtMs, 0),
       nextRetryAtMs: nonNegativeNumber(item?.nextRetryAtMs, 0),
+      lastErrorCode: String(item?.lastErrorCode || "").trim(),
       lastError: String(item?.lastError || "")
     };
   }
@@ -1251,17 +1277,45 @@
     }
     return [...byTarget.values()].sort((left, right) => left.createdAtMs - right.createdAtMs);
   }
-  function upsertSyncOutbox(value, { targetKey, payload, error, nowMs = Date.now() }) {
+  function upsertSyncOutbox(value, {
+    targetKey,
+    payload,
+    error,
+    payloadSha256 = "",
+    expectedEtag = "",
+    expectedRevision = 0,
+    idempotencyKey = "",
+    syncSessionId = "",
+    operationId = "",
+    sourceType = "",
+    scope = "",
+    nowMs = Date.now()
+  }) {
     const current = normalizeSyncOutbox(value, nowMs);
     const previous = current.find((item) => item.targetKey === targetKey);
-    const attempts = Math.min(SYNC_OUTBOX_MAX_ATTEMPTS, Number(previous?.attempts || 0) + 1);
+    const normalizedHash = String(payloadSha256 || "").trim().toLowerCase();
+    const sameLogicalWrite = Boolean(previous && normalizedHash && previous.payloadSha256 === normalizedHash);
+    const attempts = Math.min(
+      SYNC_OUTBOX_MAX_ATTEMPTS,
+      (sameLogicalWrite ? Number(previous?.attempts || 0) : 0) + 1
+    );
     const next = normalizeSyncOutboxItem({
       targetKey,
       payload,
-      createdAtMs: previous?.createdAtMs || nowMs,
+      payloadSha256: normalizedHash,
+      expectedEtag,
+      expectedRevision,
+      idempotencyKey: idempotencyKey || (sameLogicalWrite ? previous.idempotencyKey : ""),
+      syncSessionId: syncSessionId || (sameLogicalWrite ? previous.syncSessionId : ""),
+      operationId: operationId || (sameLogicalWrite ? previous.operationId : ""),
+      sourceType,
+      scope,
+      status: "pendingRetry",
+      createdAtMs: sameLogicalWrite ? previous.createdAtMs : nowMs,
       attempts,
       lastAttemptAtMs: nowMs,
       nextRetryAtMs: nowMs + syncOutboxRetryDelayMs(attempts),
+      lastErrorCode: String(error?.code || ""),
       lastError: String(error?.message || error || "")
     }, nowMs);
     return normalizeSyncOutbox(current.filter((item) => item.targetKey !== targetKey).concat(next), nowMs);
@@ -2798,10 +2852,19 @@
   async function recordSyncOutboxFailure(target, payload, error) {
     const targetKey = syncTargetKey(target);
     const items = await getSyncOutbox();
+    const payloadSha256 = await syncPayloadSha256(payload);
     await setSyncOutbox(upsertSyncOutbox(items, {
       targetKey,
       payload: normalizeSyncPayloadShape(payload),
-      error
+      error,
+      payloadSha256,
+      expectedEtag: error?.expectedEtag || target.remoteEtag || "",
+      expectedRevision: error?.expectedRevision || target.remoteRevision || 0,
+      idempotencyKey: error?.idempotencyKey || "",
+      syncSessionId: error?.syncSessionId || "",
+      operationId: error?.operationId || "",
+      sourceType: target.kind,
+      scope: error?.scope || ""
     }));
   }
   async function clearSyncOutbox(target) {
@@ -3461,13 +3524,13 @@
     }
     syncInFlight = true;
     try {
-      return await performSyncNowWithRemote(syncMode);
+      return await performSyncNowWithRemote(syncMode, lockOwner);
     } finally {
       syncInFlight = false;
       await releaseSyncOperationLock(lockOwner);
     }
   }
-  async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE) {
+  async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE, syncSessionId = createSyncIdempotencyKey()) {
     if (!await saveSyncSettings()) return;
     const targets = buildRemoteSyncTargetsFromDom();
     if (!targets || targets.length === 0) return;
@@ -3568,9 +3631,17 @@
         continue;
       }
       try {
+        const candidatePayload = { ...mergedPayload };
+        const candidateHash = await syncPayloadSha256(candidatePayload);
+        const pendingItems = await getSyncOutbox();
+        const pending = pendingItems.find((item) => item.targetKey === syncTargetKey(target) && item.payloadSha256 === candidateHash);
         const result = await pushRemotePayloadWithMode(target, {
-          ...mergedPayload
-        }, normalizedSyncMode);
+          ...candidatePayload
+        }, normalizedSyncMode, {
+          syncSessionId: pending?.syncSessionId || syncSessionId,
+          operationId: pending?.operationId || "",
+          idempotencyKey: pending?.idempotencyKey || ""
+        });
         mergedPayload = normalizeSyncPayloadShape(result.payload);
         await clearSyncOutbox(target);
       } catch (error) {
@@ -3709,8 +3780,10 @@
       headers,
       cache: "no-store"
     });
+    const revision = Number(response.headers.get("X-Sync-Revision")) || 0;
+    target.remoteRevision = revision;
     if (response.status === 404) {
-      return { payload: null, etag: null, encrypted: false };
+      return { payload: null, etag: null, encrypted: false, revision: 0 };
     }
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -3720,7 +3793,8 @@
       return {
         payload: null,
         etag: response.headers.get("ETag"),
-        encrypted: false
+        encrypted: false,
+        revision
       };
     }
     let parsed;
@@ -3735,7 +3809,8 @@
       return {
         payload,
         etag: response.headers.get("ETag"),
-        encrypted
+        encrypted,
+        revision
       };
     } catch (error) {
       throw new Error(`\u8FDC\u7AEF JSON \u89E3\u6790\u5931\u8D25: ${error.message}`);
@@ -3932,6 +4007,9 @@
       headers["If-None-Match"] = "*";
     }
     if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+    if (target.syncSessionId) headers["X-Sync-Session-Id"] = target.syncSessionId;
+    if (target.operationId) headers["X-Sync-Operation-Id"] = target.operationId;
+    headers["X-Sync-Client-Version"] = PASS_EXTENSION_VERSION;
     const response = await fetchWithSyncTimeout(target.url, {
       method: "PUT",
       headers,
@@ -3949,9 +4027,28 @@
       etag: confirmedEtag
     };
   }
-  async function pushRemotePayloadWithRetry(target, payload) {
+  function annotateSyncRetryError(error, target, context) {
+    const annotated = error instanceof Error ? error : new Error(String(error || "\u540C\u6B65\u5931\u8D25"));
+    annotated.idempotencyKey = context.idempotencyKey;
+    annotated.syncSessionId = context.syncSessionId;
+    annotated.operationId = context.operationId;
+    annotated.expectedEtag = target.remoteEtag || "";
+    annotated.expectedRevision = target.remoteRevision || 0;
+    return annotated;
+  }
+  function createSyncOperationContext(context = {}) {
+    return {
+      syncSessionId: String(context.syncSessionId || createSyncIdempotencyKey()),
+      operationId: String(context.operationId || createSyncIdempotencyKey()),
+      idempotencyKey: String(context.idempotencyKey || createSyncIdempotencyKey())
+    };
+  }
+  async function pushRemotePayloadWithRetry(target, payload, context = {}) {
     let candidate = payload;
-    const idempotencyKey = createSyncIdempotencyKey();
+    const operation = createSyncOperationContext(context);
+    target.syncSessionId = operation.syncSessionId;
+    target.operationId = operation.operationId;
+    const { idempotencyKey } = operation;
     for (let attempt = 0; attempt < SYNC_PUSH_CONFLICT_MAX_ATTEMPTS; attempt += 1) {
       try {
         const pushResult = await pushRemotePayload(target, candidate, target.remoteEtag, idempotencyKey);
@@ -3971,9 +4068,11 @@
             }
           } catch (_) {
           }
-          throw error;
+          throw annotateSyncRetryError(error, target, operation);
         }
-        if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw error;
+        if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) {
+          throw annotateSyncRetryError(error, target, operation);
+        }
       }
       const latestResponse = await pullRemotePayload(target);
       updateRemoteConcurrencyState(target, latestResponse.etag);
@@ -3985,7 +4084,7 @@
       const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
       const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
       if (!syncPayloadEquals(currentLocalPayload, candidate)) {
-        throw new Error("\u672C\u5730\u6570\u636E\u5728\u8FDC\u7AEF\u51B2\u7A81\u91CD\u8BD5\u671F\u95F4\u53D1\u751F\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u5199\u5165\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65");
+        throw annotateSyncRetryError(new Error("\u672C\u5730\u6570\u636E\u5728\u8FDC\u7AEF\u51B2\u7A81\u91CD\u8BD5\u671F\u95F4\u53D1\u751F\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u5199\u5165\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65"), target, operation);
       }
       const localAccounts = Array.isArray(candidate.accounts) ? candidate.accounts.map(normalizeAccountShape) : [];
       const localPasskeys = buildUnifiedPasskeys(
@@ -4009,17 +4108,20 @@
         SYNC_MODE_MERGE
       );
       if (!safety.safe) {
-        throw new Error(`\u5E76\u53D1\u91CD\u8BD5\u5408\u5E76\u88AB\u5B89\u5168\u68C0\u67E5\u963B\u6B62\uFF1A${safety.reasons.join("\u3001")}`);
+        throw annotateSyncRetryError(new Error(`\u5E76\u53D1\u91CD\u8BD5\u5408\u5E76\u88AB\u5B89\u5168\u68C0\u67E5\u963B\u6B62\uFF1A${safety.reasons.join("\u3001")}`), target, operation);
       }
       if (target.isPrimary !== false) {
         await writeBusinessDataToStore(candidate);
       }
     }
-    throw new Error("\u8FDC\u7AEF\u5E76\u53D1\u51B2\u7A81\u91CD\u8BD5\u6B21\u6570\u5DF2\u7528\u5C3D");
+    throw annotateSyncRetryError(new Error("\u8FDC\u7AEF\u5E76\u53D1\u51B2\u7A81\u91CD\u8BD5\u6B21\u6570\u5DF2\u7528\u5C3D"), target, operation);
   }
-  async function pushRemotePayloadRemotePreferred(target, payload) {
+  async function pushRemotePayloadRemotePreferred(target, payload, context = {}) {
     let candidate = payload;
-    const idempotencyKey = createSyncIdempotencyKey();
+    const operation = createSyncOperationContext(context);
+    target.syncSessionId = operation.syncSessionId;
+    target.operationId = operation.operationId;
+    const { idempotencyKey } = operation;
     for (let attempt = 0; attempt < SYNC_PUSH_CONFLICT_MAX_ATTEMPTS; attempt += 1) {
       try {
         const pushResult = await pushRemotePayload(target, candidate, target.remoteEtag, idempotencyKey);
@@ -4038,9 +4140,11 @@
             }
           } catch (_) {
           }
-          throw error;
+          throw annotateSyncRetryError(error, target, operation);
         }
-        if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw error;
+        if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) {
+          throw annotateSyncRetryError(error, target, operation);
+        }
       }
       const latestResponse = await pullRemotePayload(target);
       updateRemoteConcurrencyState(target, latestResponse.etag);
@@ -4052,7 +4156,7 @@
       const latestPayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
       const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
       if (!syncPayloadEquals(currentLocalPayload, candidate)) {
-        throw new Error("\u672C\u5730\u6570\u636E\u5728\u8FDC\u7AEF\u51B2\u7A81\u91CD\u8BD5\u671F\u95F4\u53D1\u751F\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u5199\u5165\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65");
+        throw annotateSyncRetryError(new Error("\u672C\u5730\u6570\u636E\u5728\u8FDC\u7AEF\u51B2\u7A81\u91CD\u8BD5\u671F\u95F4\u53D1\u751F\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u5199\u5165\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65"), target, operation);
       }
       const safety = validateSyncSafety(
         candidate,
@@ -4061,7 +4165,7 @@
         SYNC_MODE_REMOTE_OVERWRITE_LOCAL
       );
       if (!safety.safe) {
-        throw new Error(`\u5E76\u53D1\u91CD\u8BD5\u7684\u4E91\u7AEF\u8986\u76D6\u88AB\u5B89\u5168\u68C0\u67E5\u963B\u6B62: ${safety.reasons.join(",")}`);
+        throw annotateSyncRetryError(new Error(`\u5E76\u53D1\u91CD\u8BD5\u7684\u4E91\u7AEF\u8986\u76D6\u88AB\u5B89\u5168\u68C0\u67E5\u963B\u6B62: ${safety.reasons.join(",")}`), target, operation);
       }
       if (target.isPrimary !== false) {
         candidate = latestPayload;
@@ -4072,20 +4176,27 @@
         await writeBusinessDataToStore(candidate);
       }
     }
-    throw new Error("\u8FDC\u7AEF\u5E76\u53D1\u51B2\u7A81\u91CD\u8BD5\u6B21\u6570\u5DF2\u7528\u5C3D");
+    throw annotateSyncRetryError(new Error("\u8FDC\u7AEF\u5E76\u53D1\u51B2\u7A81\u91CD\u8BD5\u6B21\u6570\u5DF2\u7528\u5C3D"), target, operation);
   }
-  async function pushRemotePayloadWithMode(target, payload, syncMode) {
+  async function pushRemotePayloadWithMode(target, payload, syncMode, context = {}) {
     switch (syncMode) {
       case SYNC_MODE_LOCAL_OVERWRITE_REMOTE: {
-        const pushResult = await pushRemotePayload(target, payload, target.remoteEtag, createSyncIdempotencyKey());
-        updateRemoteConcurrencyState(target, pushResult.etag);
-        return { payload };
+        const operation = createSyncOperationContext(context);
+        target.syncSessionId = operation.syncSessionId;
+        target.operationId = operation.operationId;
+        try {
+          const pushResult = await pushRemotePayload(target, payload, target.remoteEtag, operation.idempotencyKey);
+          updateRemoteConcurrencyState(target, pushResult.etag);
+          return { payload };
+        } catch (error) {
+          throw annotateSyncRetryError(error, target, operation);
+        }
       }
       case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:
-        return pushRemotePayloadRemotePreferred(target, payload);
+        return pushRemotePayloadRemotePreferred(target, payload, context);
       case SYNC_MODE_MERGE:
       default:
-        return pushRemotePayloadWithRetry(target, payload);
+        return pushRemotePayloadWithRetry(target, payload, context);
     }
   }
   function normalizeSyncMode(value) {

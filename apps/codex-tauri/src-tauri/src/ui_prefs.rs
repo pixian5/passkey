@@ -1,7 +1,7 @@
 //! UI preferences persisted under app data dir (parity with PassMac Settings).
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::local_vault;
 
@@ -93,11 +93,11 @@ impl Default for UiPrefs {
     }
 }
 
-pub fn prefs_path(data_dir: &PathBuf) -> PathBuf {
+pub fn prefs_path(data_dir: &Path) -> PathBuf {
     data_dir.join(PREFS_FILE)
 }
 
-pub fn load_ui_prefs(data_dir: &PathBuf) -> UiPrefs {
+pub fn load_ui_prefs(data_dir: &Path) -> UiPrefs {
     let path = prefs_path(data_dir);
     local_vault::read_text(data_dir, &path, "pass.tauri.ui_prefs.v1")
         .ok()
@@ -106,7 +106,7 @@ pub fn load_ui_prefs(data_dir: &PathBuf) -> UiPrefs {
         .unwrap_or_default()
 }
 
-pub fn save_ui_prefs(data_dir: &PathBuf, prefs: &UiPrefs) -> Result<(), String> {
+pub fn save_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<(), String> {
     let path = prefs_path(data_dir);
     let raw =
         serde_json::to_string_pretty(prefs).map_err(|e| format!("序列化界面设置失败: {e}"))?;

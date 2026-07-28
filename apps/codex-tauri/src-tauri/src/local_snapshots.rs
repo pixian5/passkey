@@ -58,14 +58,14 @@ pub fn create(data_dir: &Path, payload: &SyncPayload, reason: &str) -> Result<()
         reason: reason.to_string(),
         payload: payload.clone(),
     });
-    snapshots.sort_by(|a, b| b.created_at_ms.cmp(&a.created_at_ms));
+    snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.created_at_ms));
     snapshots.truncate(MAX_SNAPSHOTS);
     save(data_dir, &snapshots)
 }
 
 pub fn list(data_dir: &Path) -> Result<Vec<LocalSnapshotSummary>, String> {
     let mut snapshots = load(data_dir)?;
-    snapshots.sort_by(|a, b| b.created_at_ms.cmp(&a.created_at_ms));
+    snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.created_at_ms));
     Ok(snapshots
         .into_iter()
         .map(|snapshot| LocalSnapshotSummary {

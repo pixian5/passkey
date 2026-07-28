@@ -140,7 +140,20 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.3.4";
+  var PASS_EXTENSION_VERSION = "1.3.7";
+
+  // fill_chooser_activation.js
+  var FILL_CHOOSER_ACTIVATION_DEDUPE_MS = 650;
+  function claimFillChooserActivation(state, input, nowMs = Date.now()) {
+    if (!state || !input) return false;
+    const now = Number(nowMs || 0);
+    if (state.input === input && now >= Number(state.at || 0) && now - Number(state.at || 0) < FILL_CHOOSER_ACTIVATION_DEDUPE_MS) {
+      return false;
+    }
+    state.input = input;
+    state.at = now;
+    return true;
+  }
 
   // content.js
   var PASS_LOGIN_COOLDOWN_MS = 5e3;
@@ -183,6 +196,7 @@
   var fillChooserListGeneration = 0;
   var fillChooserPointerActivation = { input: null, at: 0 };
   var fillChooserKeyboardNavAt = 0;
+  var fillChooserActivationClaim = { input: null, at: 0 };
   function logPasskeyContent(event, details = {}) {
     try {
       console.info(PASSKEY_LOG_PREFIX, event, details);
@@ -808,6 +822,7 @@
     if (!ownsPageUi() || fillChooserLocked || isFillChooserBlocked() || !isFillableCredentialInput(input)) return;
     if (shouldSkipChooserForFilledInput(input, { userInitiated })) return;
     const now = Date.now();
+    if (userInitiated && !claimFillChooserActivation(fillChooserActivationClaim, input, now)) return;
     if (fillChooserListInFlight) return;
     if (now - fillChooserLastListAt < PASS_FILL_LIST_COOLDOWN_MS && fillChooserHost) {
       positionFillChooserNear(input);

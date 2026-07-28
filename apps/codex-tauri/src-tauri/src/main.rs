@@ -29,7 +29,7 @@ use pass_merge::v2::{
     restore_account_fields as restore_account_mutation,
     set_account_pinned as set_account_pinned_mutation,
     soft_delete_account as soft_delete_account_mutation, sync_alias_groups, Folder, Passkey,
-    PasswordAccount, SyncPayload,
+    PasswordAccount, SyncOperationReport, SyncPayload,
 };
 
 use app_lock::{AppLockPolicy, AppLockPublicState, AppLockState};
@@ -50,7 +50,7 @@ use sync::crypto::key_id;
 use sync::outbox;
 use sync::pipeline::{
     local_payload_from_vault_with_order, preview_sync, run_sync_with_context,
-    visible_account_count, visible_folder_count, visible_passkey_count, SyncMode,
+    visible_account_count, visible_folder_count, visible_passkey_count, SyncMode, SyncRetryContext,
 };
 use sync::settings::{load_sync_settings, save_sync_settings, SyncSettings};
 use sync::webdav::{self, WebDavSettings};
@@ -924,7 +924,7 @@ fn restore_account(
     let now = now_ms();
     let mut restored_folder_ids = Vec::new();
     if let Some(item) = accounts.iter_mut().find(|a| account_matches_id(a, &id)) {
-        restore_account_mutation(item, now, &device_name).map_err(|e| e)?;
+        restore_account_mutation(item, now, &device_name)?;
         restored_folder_ids = item.folder_ids.clone();
     }
     sync_alias_sites(&mut accounts);
@@ -1315,6 +1315,7 @@ async fn sync_now(
     app: AppHandle,
     state: tauri::State<'_, AppLockState>,
     sync_lock: tauri::State<'_, SyncInFlightState>,
+    force_outbox_retry: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let _sync_guard = sync_lock.acquire()?;
     let dir = app_data_dir(&app)?;
@@ -1334,9 +1335,20 @@ async fn sync_now(
     settings.previous_encryption_key = load_ui_prefs(&dir).previous_encryption_key;
     let device = load_device_name(&conn)?;
     let local = local_payload_from_conn(&conn, &device)?;
-    let source_key = format!("server|{}", settings.base_url.trim());
-    let retry_context = outbox::matching_context(&dir, &source_key, &local)?
-        .unwrap_or_else(|| outbox::new_context(&local));
+    let source_key = self_hosted_outbox_source_key(&settings)?;
+    let retry_context = match prepare_outbox_attempt(
+        &dir,
+        &source_key,
+        &local,
+        SyncMode::Merge,
+        "selfHosted",
+        force_outbox_retry.unwrap_or(false),
+    )? {
+        OutboxAttempt::Ready(context) => context,
+        OutboxAttempt::Waiting(report) => {
+            return Ok(serde_json::json!({ "report": report }));
+        }
+    };
     let platform = current_platform().to_string();
     let worker_app = app.clone();
     let worker_dir = dir.clone();
@@ -1424,15 +1436,27 @@ async fn sync_now_mode(
     state: tauri::State<'_, AppLockState>,
     sync_lock: tauri::State<'_, SyncInFlightState>,
     mode: String,
+    force_outbox_retry: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let _sync_guard = sync_lock.acquire()?;
     let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
     let device = load_device_name(&conn)?;
     let local = local_payload_from_conn(&conn, &device)?;
-    let source_key = format!("server|{}", settings.base_url.trim());
-    let retry_context = outbox::matching_context(&dir, &source_key, &local)?
-        .unwrap_or_else(|| outbox::new_context(&local));
     let mode = SyncMode::parse(&mode);
+    let source_key = self_hosted_outbox_source_key(&settings)?;
+    let retry_context = match prepare_outbox_attempt(
+        &dir,
+        &source_key,
+        &local,
+        mode,
+        "selfHosted",
+        force_outbox_retry.unwrap_or(false),
+    )? {
+        OutboxAttempt::Ready(context) => context,
+        OutboxAttempt::Waiting(report) => {
+            return Ok(serde_json::json!({ "report": report }));
+        }
+    };
     let platform = current_platform().to_string();
     let worker_app = app.clone();
     let worker_dir = dir.clone();
@@ -1498,6 +1522,7 @@ async fn sync_webdav_now_mode(
     state: tauri::State<'_, AppLockState>,
     sync_lock: tauri::State<'_, SyncInFlightState>,
     mode: String,
+    force_outbox_retry: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let _sync_guard = sync_lock.acquire()?;
     let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
@@ -1512,14 +1537,21 @@ async fn sync_webdav_now_mode(
     };
     let device = load_device_name(&conn)?;
     let local = local_payload_from_conn(&conn, &device)?;
-    let source_key = format!(
-        "webdav|{}/{}",
-        webdav_settings.base_url.trim(),
-        webdav_settings.remote_path.trim()
-    );
-    let retry_context = outbox::matching_context(&dir, &source_key, &local)?
-        .unwrap_or_else(|| outbox::new_context(&local));
     let parsed_mode = SyncMode::parse(&mode);
+    let source_key = webdav_outbox_source_key(&webdav_settings)?;
+    let retry_context = match prepare_outbox_attempt(
+        &dir,
+        &source_key,
+        &local,
+        parsed_mode,
+        "webdav",
+        force_outbox_retry.unwrap_or(false),
+    )? {
+        OutboxAttempt::Ready(context) => context,
+        OutboxAttempt::Waiting(report) => {
+            return Ok(serde_json::json!({ "report": report }));
+        }
+    };
     let platform = current_platform().to_string();
     let encryption_key = settings.encryption_key.clone();
     let worker_app = app.clone();
@@ -1579,6 +1611,88 @@ async fn sync_webdav_now_mode(
         .await
         .map_err(|e| format!("WebDAV 同步任务异常: {e}"))??;
     Ok(result)
+}
+
+enum OutboxAttempt {
+    Ready(SyncRetryContext),
+    Waiting(SyncOperationReport),
+}
+
+fn self_hosted_outbox_source_key(settings: &SyncSettings) -> Result<String, String> {
+    let base_url = sync::http::validate_base_url(&settings.base_url)?;
+    outbox::source_key("server", &base_url)
+}
+
+fn webdav_outbox_source_key(settings: &WebDavSettings) -> Result<String, String> {
+    let resource_url = webdav::resource_url(&settings.base_url, &settings.remote_path)?;
+    outbox::source_key("webdav", &resource_url)
+}
+
+fn prepare_outbox_attempt(
+    data_dir: &std::path::Path,
+    source_key: &str,
+    local: &SyncPayload,
+    mode: SyncMode,
+    source: &str,
+    force: bool,
+) -> Result<OutboxAttempt, String> {
+    let Some(item) = outbox::matching_item(data_dir, source_key, local)? else {
+        return Ok(OutboxAttempt::Ready(outbox::new_context(local)));
+    };
+    if outbox::is_ready(&item, force) {
+        return Ok(OutboxAttempt::Ready(outbox::retry_context(&item)));
+    }
+    let wait_seconds = outbox::wait_seconds(&item).max(1);
+    let report = SyncOperationReport {
+        mode: mode.as_str().to_string(),
+        message: format!("同步补偿任务仍在退避，约 {wait_seconds} 秒后自动重试"),
+        local_accounts: visible_account_count(local),
+        pending_retry: true,
+        retryable: true,
+        stage: "waitingRetry".into(),
+        source: source.into(),
+        sync_session_id: item.sync_session_id.clone(),
+        operation_id: item.operation_id.clone(),
+        code: Some("RETRY_BACKOFF".into()),
+        ..Default::default()
+    };
+    Ok(OutboxAttempt::Waiting(report))
+}
+
+#[tauri::command]
+fn get_sync_outbox_status(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<Vec<outbox::SyncOutboxSummary>, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    outbox::summaries(&dir)
+}
+
+#[tauri::command]
+fn clear_inactive_sync_outbox(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+) -> Result<usize, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    let settings = load_sync_settings(&dir);
+    let prefs = load_ui_prefs(&dir);
+    let mut active = Vec::new();
+    if settings.enabled {
+        active.push(self_hosted_outbox_source_key(&settings)?);
+    }
+    if prefs.webdav_enabled {
+        active.push(webdav_outbox_source_key(&WebDavSettings {
+            enabled: true,
+            base_url: prefs.webdav_base_url,
+            remote_path: prefs.webdav_remote_path,
+            username: prefs.webdav_username,
+            password: prefs.webdav_password,
+            previous_encryption_key: prefs.previous_encryption_key,
+        })?);
+    }
+    outbox::remove_inactive(&dir, &active)
 }
 
 #[tauri::command]
@@ -1732,7 +1846,7 @@ fn export_browser_csv_cmd(
     let (dir, _settings, conn) = load_settings_unlocked(&app, &state)?;
     let accounts = load_accounts(&conn)?;
     let (headers, rows) = export_browser_csv(&accounts, &format)?;
-    let header_refs: Vec<&str> = headers.iter().copied().collect();
+    let header_refs = headers.to_vec();
     let csv = build_csv_string(&header_refs, &rows);
     let out = if let Some(p) = path.filter(|s| !s.trim().is_empty()) {
         PathBuf::from(p)
@@ -2039,7 +2153,7 @@ fn commit_undo_point(
     reason: &str,
     pre_payload: SyncPayload,
 ) -> Result<(), String> {
-    operation_history::push(&data_dir.to_path_buf(), reason, pre_payload)
+    operation_history::push(data_dir, reason, pre_payload)
 }
 
 #[tauri::command]
@@ -2138,6 +2252,7 @@ async fn detect_existing_sync_service(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri IPC parameters are part of the frontend command contract.
 async fn provision_self_hosted_server(
     app: AppHandle,
     state: tauri::State<'_, AppLockState>,
@@ -2987,6 +3102,7 @@ fn get_lock_state(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri IPC parameters are part of the frontend command contract.
 fn lock_enable(
     app: AppHandle,
     state: tauri::State<AppLockState>,
@@ -3850,10 +3966,11 @@ fn deduplicate_folder(
     let mut deleted_count = 0;
     for account in accounts.iter_mut() {
         let id = account.resolved_record_id();
-        if duplicate_ids.contains(&id) && !keep_ids.contains(&id) {
-            if soft_delete_account_mutation(account, now, &device_name) {
-                deleted_count += 1;
-            }
+        if duplicate_ids.contains(&id)
+            && !keep_ids.contains(&id)
+            && soft_delete_account_mutation(account, now, &device_name)
+        {
+            deleted_count += 1;
         }
     }
     if deleted_count > 0 {
@@ -3891,13 +4008,13 @@ fn main() {
                 let state_window = window.clone();
                 window.on_window_event(move |event| {
                     if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-                        if let Ok(data_dir) = app_data_dir(&state_window.app_handle()) {
+                        if let Ok(data_dir) = app_data_dir(state_window.app_handle()) {
                             let _ = window_state::save(&state_window, &data_dir);
                         }
                     }
                     if let tauri::WindowEvent::Focused(focused) = event {
                         let handle = state_window.app_handle();
-                        if let Ok(data_dir) = app_data_dir(&handle) {
+                        if let Ok(data_dir) = app_data_dir(handle) {
                             let state = handle.state::<AppLockState>();
                             if *focused {
                                 let _ = state.note_window_focused(&data_dir);
@@ -4008,6 +4125,8 @@ fn main() {
             sync_now,
             sync_now_mode,
             sync_webdav_now_mode,
+            get_sync_outbox_status,
+            clear_inactive_sync_outbox,
             get_ui_prefs,
             set_ui_prefs,
             export_sync_bundle,

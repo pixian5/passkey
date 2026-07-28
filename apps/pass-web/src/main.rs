@@ -2524,6 +2524,11 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             v.save()?;
             Ok(json!(null))
         }
+        // Docker Web currently retries through its normal sync command and has
+        // no separate persisted compensation queue. Keep the shared UI command
+        // surface explicit without claiming that tasks exist.
+        "get_sync_outbox_status" => Ok(json!([])),
+        "clear_inactive_sync_outbox" => Ok(json!(0)),
         "set_device_name" => {
             let name: String = arg(&args, "deviceName")?;
             if name.trim().is_empty() {

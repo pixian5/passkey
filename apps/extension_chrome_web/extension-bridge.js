@@ -685,6 +685,10 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
       case "set_ui_prefs": return savePrefs({ ...(await getPrefs()), ...(args.prefs || {}) });
       case "get_sync_settings": { const settings = await getSync(); return lock.enabled && lock.locked ? { ...settings, authToken: "", encryptionKey: "" } : settings; }
       case "set_sync_settings": return saveSync({ ...(await getSync()), ...(args.settings || {}) });
+      // This Web-workspace adapter does not own the background/options outbox.
+      // The native extension options page already exposes that encrypted queue.
+      case "get_sync_outbox_status": return [];
+      case "clear_inactive_sync_outbox": return 0;
       case "set_device_name": return mutate("修改设备名称", (data) => { data.deviceName = text(args.deviceName); return data.deviceName; });
       case "get_lock_state": return getLock();
       case "lock_biometric_available": return false;

@@ -1,7 +1,7 @@
 //! Encrypted draft values for the self-hosted service provisioning form.
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::local_vault;
 
@@ -23,11 +23,11 @@ pub struct ProvisionDraft {
     pub sync_encryption_key: String,
 }
 
-fn path(data_dir: &PathBuf) -> PathBuf {
+fn path(data_dir: &Path) -> PathBuf {
     data_dir.join(FILE_NAME)
 }
 
-pub fn load(data_dir: &PathBuf) -> ProvisionDraft {
+pub fn load(data_dir: &Path) -> ProvisionDraft {
     local_vault::read_text(data_dir, &path(data_dir), SCOPE)
         .ok()
         .flatten()
@@ -35,7 +35,7 @@ pub fn load(data_dir: &PathBuf) -> ProvisionDraft {
         .unwrap_or_default()
 }
 
-pub fn save(data_dir: &PathBuf, draft: &ProvisionDraft) -> Result<(), String> {
+pub fn save(data_dir: &Path, draft: &ProvisionDraft) -> Result<(), String> {
     let raw = serde_json::to_string(draft).map_err(|e| format!("序列化创建服务草稿失败: {e}"))?;
     local_vault::write_text(data_dir, &path(data_dir), SCOPE, &raw)
 }

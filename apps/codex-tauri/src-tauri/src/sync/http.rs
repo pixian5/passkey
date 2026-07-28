@@ -212,8 +212,8 @@ pub fn put_sync_state(
             .and_then(Value::as_i64)
             .filter(|v| *v > 0)
             == revision_header
-        && expected_idempotency.map_or(true, |expected| idempotency_header == Some(expected))
-        && expected_idempotency.map_or(true, |expected| receipt_idempotency == Some(expected));
+        && expected_idempotency.is_none_or(|expected| idempotency_header == Some(expected))
+        && expected_idempotency.is_none_or(|expected| receipt_idempotency == Some(expected));
     if !valid_receipt {
         return Err("服务器未返回可验证的同步提交回执".into());
     }

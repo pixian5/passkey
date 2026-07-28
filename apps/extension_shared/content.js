@@ -1,5 +1,6 @@
 import { normalizeDomain } from "./account_core.js";
 import { PASS_EXTENSION_VERSION } from "./extension_version.js";
+import { claimFillChooserActivation } from "./fill_chooser_activation.js";
 
 const PASS_LOGIN_COOLDOWN_MS = 5000;
 const WEB_AUTHN_BRIDGE_SOURCE = "pass-webauthn-bridge";
@@ -49,6 +50,7 @@ let fillChooserListGeneration = 0;
 /** @type {{ input: EventTarget | null, at: number }} */
 let fillChooserPointerActivation = { input: null, at: 0 };
 let fillChooserKeyboardNavAt = 0;
+const fillChooserActivationClaim = { input: null, at: 0 };
 
 function logPasskeyContent(event, details = {}) {
   try {
@@ -794,6 +796,7 @@ async function showFillChooserForInput(input, { userInitiated = false } = {}) {
   if (!ownsPageUi() || fillChooserLocked || isFillChooserBlocked() || !isFillableCredentialInput(input)) return;
   if (shouldSkipChooserForFilledInput(input, { userInitiated })) return;
   const now = Date.now();
+  if (userInitiated && !claimFillChooserActivation(fillChooserActivationClaim, input, now)) return;
   if (fillChooserListInFlight) return;
   if (now - fillChooserLastListAt < PASS_FILL_LIST_COOLDOWN_MS && fillChooserHost) {
     positionFillChooserNear(input);

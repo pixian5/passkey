@@ -57,7 +57,10 @@ npm run tauri dev
 ```bash
 npm run tauri build
 # 产物：src-tauri/target/release/bundle/
+codesign --verify --deep --strict src-tauri/target/release/bundle/macos/PassDesktop.app
 ```
+
+macOS 开发包在 `tauri.conf.json` 中使用临时签名身份 `-`，使 `Info.plist`、可执行文件和资源一起封装，避免只有链接器签名但资源未封装。该签名只用于本机开发测试；对外发布仍必须换成 Apple Developer ID 并完成公证。
 
 ## 数据
 

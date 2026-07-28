@@ -329,6 +329,14 @@
                 <button type="button" class="sync-action sync-remote-overwrite" id="btn-sync-remote-overwrite">云端覆盖本地</button>
                 <button type="button" class="sync-action sync-local-overwrite" id="btn-sync-local-overwrite">本地覆盖云端</button>
               </div>
+              <div id="syncOutboxPanel" class="sync-outbox-panel" hidden>
+                <div class="form-actions wrap">
+                  <button type="button" id="btn-sync-retry-outbox">立即重试补偿任务</button>
+                  <button type="button" id="btn-sync-clear-inactive-outbox">清理失效目标任务</button>
+                </div>
+                <div id="syncOutboxStatus" class="hint"></div>
+                <div id="syncOutboxList" class="sync-outbox-list"></div>
+              </div>
               <p class="hint">预览合并只读取远端并展示裁决结果，不写入本地或服务器。默认请用“合并”。覆盖模式会丢弃一侧独有修改，执行前会二次确认。空同步加密密钥=明文模式，同步前也会确认。WebDAV 若远端有文件但不返回 ETag，将拒绝同步。设置会在输入后自动保存。</p>
               <div id="syncDecisionSummary" class="sync-decision-summary" hidden></div>
               <div id="syncPreviewDiff" class="sync-preview-diff" hidden></div>

@@ -107,7 +107,7 @@ stage (`pull`, `merge`, `push`, or `restore`) when available.
   treats them as authentication or secret material. Older clients and old
   SQLite audit rows remain valid with null trace fields.
 
-### Tauri local outbox (1.3.6)
+### Tauri local outbox (1.3.7)
 
 - Tauri stores failed self-hosted and WebDAV writes in an encrypted
   `sync_outbox.json` beside the vault. The queue contains the payload, its
@@ -119,3 +119,14 @@ stage (`pull`, `merge`, `push`, or `restore`) when available.
 - A successful push removes the target entry. Safety-blocked previews do not
   create queue entries. Existing settings and vault records remain compatible;
   an absent queue is treated as empty.
+- Target keys canonicalize host casing, default ports and trailing slashes, so
+  an equivalent URL cannot leave duplicate retry records. Loading an older
+  queue also normalizes and de-duplicates entries by target.
+- Automatic retries use the shared policy: 12 recorded attempts, delays of
+  5/10/20/40/80/160/320/640/1280 seconds, then 1280 seconds thereafter.
+  Automatic and timer-driven sync obey `nextRetryAtMs`; an explicit user retry
+  may bypass the wait but reuses the same logical-write identifiers.
+- The Tauri sync page lists pending targets, attempts, next retry time and the
+  bounded last error. It can retry immediately or remove entries whose target
+  is no longer enabled. Docker Web exposes the shared UI command surface but
+  currently has no independent persisted outbox; it must not claim otherwise.

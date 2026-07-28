@@ -169,6 +169,7 @@ pub fn local_payload_from_vault(
     payload
 }
 
+#[allow(clippy::too_many_arguments)] // Stable vault/order conversion boundary.
 pub fn local_payload_from_vault_with_order(
     accounts: &[pass_merge::v2::PasswordAccount],
     folders: &[pass_merge::v2::Folder],
@@ -361,6 +362,7 @@ fn pull_remote(settings: &SyncSettings) -> Result<(Option<SyncPayload>, Option<S
 /// Shared merge/safety/write loop for non-server transports such as WebDAV.
 /// The transport owns conditional reads/writes; this layer remains the only
 /// authority for merge, encryption envelope and safety decisions.
+#[allow(clippy::too_many_arguments)] // Shared transport boundary for server and WebDAV adapters.
 pub(crate) fn run_sync_with_transport_context<P, U, A>(
     mode: SyncMode,
     local: SyncPayload,
@@ -529,8 +531,10 @@ mod tests {
 
     #[test]
     fn visible_account_count_excludes_permanent_deletion_tombstones() {
-        let mut tombstone = PasswordAccount::default();
-        tombstone.is_permanently_deleted = true;
+        let tombstone = PasswordAccount {
+            is_permanently_deleted: true,
+            ..Default::default()
+        };
         let payload = SyncPayload {
             accounts: vec![PasswordAccount::default(), tombstone],
             ..SyncPayload::default()
@@ -541,10 +545,14 @@ mod tests {
 
     #[test]
     fn visible_counts_exclude_all_permanent_deletion_tombstones() {
-        let mut deleted_folder = Folder::default();
-        deleted_folder.is_permanently_deleted = true;
-        let mut deleted_passkey = Passkey::default();
-        deleted_passkey.is_permanently_deleted = true;
+        let deleted_folder = Folder {
+            is_permanently_deleted: true,
+            ..Default::default()
+        };
+        let deleted_passkey = Passkey {
+            is_permanently_deleted: true,
+            ..Default::default()
+        };
         let payload = SyncPayload {
             folders: vec![Folder::default(), deleted_folder],
             passkeys: vec![Passkey::default(), deleted_passkey],
@@ -562,7 +570,6 @@ mod tests {
             idempotency_key: "idem-existing".into(),
             sync_session_id: "sync-existing".into(),
             operation_id: "op-existing".into(),
-            ..Default::default()
         };
         let (report, _) = run_sync_with_transport_context(
             SyncMode::Merge,

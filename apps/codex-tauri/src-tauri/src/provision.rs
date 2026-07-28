@@ -868,6 +868,7 @@ pub fn detect_existing_service(
     })
 }
 
+#[allow(clippy::too_many_arguments)] // Provisioning inputs map directly to the settings UI contract.
 pub fn provision_server(
     data_dir: &Path,
     server_url: &str,

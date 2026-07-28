@@ -2,7 +2,7 @@
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use pass_merge::v2::SyncPayload;
@@ -28,11 +28,11 @@ struct HistoryFile {
     redo: Vec<HistoryEntry>,
 }
 
-fn path(data_dir: &PathBuf) -> PathBuf {
+fn path(data_dir: &Path) -> PathBuf {
     data_dir.join(HISTORY_FILE)
 }
 
-fn load(data_dir: &PathBuf) -> HistoryFile {
+fn load(data_dir: &Path) -> HistoryFile {
     let raw = local_vault::read_text(data_dir, &path(data_dir), HISTORY_SCOPE)
         .ok()
         .flatten()
@@ -46,16 +46,12 @@ fn load(data_dir: &PathBuf) -> HistoryFile {
     serde_json::from_str(&raw).unwrap_or_default()
 }
 
-fn save(data_dir: &PathBuf, file: &HistoryFile) -> Result<(), String> {
+fn save(data_dir: &Path, file: &HistoryFile) -> Result<(), String> {
     let raw = serde_json::to_string(file).map_err(|e| format!("序列化操作历史失败: {e}"))?;
     local_vault::write_text(data_dir, &path(data_dir), HISTORY_SCOPE, &raw)
 }
 
-pub fn push(
-    data_dir: &PathBuf,
-    title: impl Into<String>,
-    payload: SyncPayload,
-) -> Result<(), String> {
+pub fn push(data_dir: &Path, title: impl Into<String>, payload: SyncPayload) -> Result<(), String> {
     let mut file = load(data_dir);
     file.undo.push(HistoryEntry {
         id: Uuid::new_v4().to_string(),
@@ -70,16 +66,16 @@ pub fn push(
     save(data_dir, &file)
 }
 
-pub fn undo_entries(data_dir: &PathBuf) -> Vec<HistoryEntry> {
+pub fn undo_entries(data_dir: &Path) -> Vec<HistoryEntry> {
     load(data_dir).undo
 }
 
-pub fn redo_entries(data_dir: &PathBuf) -> Vec<HistoryEntry> {
+pub fn redo_entries(data_dir: &Path) -> Vec<HistoryEntry> {
     load(data_dir).redo
 }
 
 pub fn latest_distinct_undo(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     current_payload: &SyncPayload,
 ) -> Result<Option<HistoryEntry>, String> {
     let mut file = load(data_dir);
@@ -97,12 +93,12 @@ pub fn latest_distinct_undo(
     Ok(file.undo.last().cloned())
 }
 
-pub fn latest_redo(data_dir: &PathBuf) -> Option<HistoryEntry> {
+pub fn latest_redo(data_dir: &Path) -> Option<HistoryEntry> {
     load(data_dir).redo.last().cloned()
 }
 
 pub fn move_undo_to_redo(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     id: &str,
     current_payload: SyncPayload,
 ) -> Result<(), String> {
@@ -119,7 +115,7 @@ pub fn move_undo_to_redo(
 }
 
 pub fn move_redo_to_undo(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     id: &str,
     current_payload: SyncPayload,
 ) -> Result<(), String> {
@@ -150,8 +146,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pass-history-{}", Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         let current = SyncPayload::default();
-        let mut older = SyncPayload::default();
-        older.all_regular_order_updated_at_ms = 7;
+        let older = SyncPayload {
+            all_regular_order_updated_at_ms: 7,
+            ..Default::default()
+        };
         push(&dir, "真实修改", older.clone()).unwrap();
         push(&dir, "失败操作残留", current.clone()).unwrap();
         let entry = latest_distinct_undo(&dir, &current)

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::local_vault;
 
@@ -42,11 +42,11 @@ impl Default for SyncSettings {
     }
 }
 
-pub fn settings_path(data_dir: &PathBuf) -> PathBuf {
+pub fn settings_path(data_dir: &Path) -> PathBuf {
     data_dir.join(SETTINGS_FILE)
 }
 
-pub fn load_sync_settings(data_dir: &PathBuf) -> SyncSettings {
+pub fn load_sync_settings(data_dir: &Path) -> SyncSettings {
     let path = settings_path(data_dir);
     local_vault::read_text(data_dir, &path, "pass.tauri.sync_settings.v1")
         .ok()
@@ -55,7 +55,7 @@ pub fn load_sync_settings(data_dir: &PathBuf) -> SyncSettings {
         .unwrap_or_default()
 }
 
-pub fn save_sync_settings(data_dir: &PathBuf, settings: &SyncSettings) -> Result<(), String> {
+pub fn save_sync_settings(data_dir: &Path, settings: &SyncSettings) -> Result<(), String> {
     let path = settings_path(data_dir);
     let raw =
         serde_json::to_string_pretty(settings).map_err(|e| format!("序列化同步设置失败: {e}"))?;

@@ -14,7 +14,7 @@
 // the single command-line path.
 
 use rusqlite::{params, Connection};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[path = "../src/local_vault.rs"]
 mod local_vault;
@@ -47,7 +47,7 @@ fn open_db(dir: &PathBuf) -> Connection {
     conn
 }
 
-fn read_kv(conn: &Connection, data_dir: &PathBuf, key: &str) -> Option<String> {
+fn read_kv(conn: &Connection, data_dir: &Path, key: &str) -> Option<String> {
     let stored: String = conn
         .query_row("SELECT value FROM kv WHERE key = ?1", params![key], |row| {
             row.get(0)
@@ -59,7 +59,7 @@ fn read_kv(conn: &Connection, data_dir: &PathBuf, key: &str) -> Option<String> {
     }
 }
 
-fn write_kv(conn: &Connection, data_dir: &PathBuf, key: &str, value: &str) {
+fn write_kv(conn: &Connection, data_dir: &Path, key: &str, value: &str) {
     let encrypted =
         local_vault::encrypt_text(data_dir, "pass.tauri.sqlite.kv.v1", value).expect("encrypt kv");
     conn.execute(
@@ -72,7 +72,7 @@ fn write_kv(conn: &Connection, data_dir: &PathBuf, key: &str, value: &str) {
 
 fn load_json_vec<T: serde::de::DeserializeOwned>(
     conn: &Connection,
-    data_dir: &PathBuf,
+    data_dir: &Path,
     key: &str,
 ) -> Vec<T> {
     match read_kv(conn, data_dir, key) {
