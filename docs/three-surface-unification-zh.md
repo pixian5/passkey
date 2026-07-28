@@ -242,7 +242,7 @@ cd apps/pass-web && cargo test && cargo build --release
 
 旧 Chrome 壳和专用构建入口已移除；Chrome 只加载 `apps/extension_chrome_web`。
 
-## 8. 当前对齐结论（版本 1.3.8）
+## 8. 当前对齐结论（版本 1.3.9）
 
 已对齐并必须保持：
 
@@ -258,7 +258,7 @@ cd apps/pass-web && cargo test && cargo build --release
 10. 扩展内容脚本把一次点击密码框的 `pointerdown/focusin/click` 视为一次用户激活，不再重复查询或重复提示。
 11. 同步结果的统一机器 Schema 位于 `docs/schemas/sync-operation-report-v1.schema.json`；命令矩阵门禁检查其必要字段与 Rust `SyncOperationReport` 保持一致。
 
-Chrome 的锁定状态已由后台 Service Worker 收口：popup 和管理页收到锁定通知后清除内存业务视图与本地数据密钥，解锁后重新读取加密存储。仍未对齐：Docker Web 没有独立持久化 outbox；Web/Tauri 跨进程 revision、旧 Swift 文件夹内独立顺序、以及除同步报告外的全部命令返回 Schema 仍未完全统一。不得把共享的 `get_sync_outbox_status` 空结果适配描述成 Web 已拥有补偿队列，也不得把本节“已对齐”扩写为所有运行细节完全一致。
+Chrome 的锁定状态已由后台 Service Worker 收口：popup 和管理页收到锁定通知后清除内存业务视图与本地数据密钥，解锁后重新读取加密存储。Docker Web 现把 outbox 加密存入 vault，但只在 Web UI 自动同步计时器运行时调度，桌面端仍额外具有独立的到期调度。仍未对齐：Web/Tauri 跨进程 revision、旧 Swift 文件夹内独立顺序、以及除同步报告外的全部命令返回 Schema 仍未完全统一。不得把本节“已对齐”扩写为所有运行细节完全一致。
 
 详细规则见 [local-write-durability-and-history-consistency-zh.md](./local-write-durability-and-history-consistency-zh.md) 与 [current-app-extension-implementation-reference-zh.md](./current-app-extension-implementation-reference-zh.md)。
 

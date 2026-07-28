@@ -54,6 +54,9 @@ const VAULT_KEY_WRAP_AAD: &[u8] = b"pass.web.vault-key-wrapper.v1";
 const FIXED_FOLDER_ID: &str = pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_ID;
 const FIXED_FOLDER_NAME: &str = pass_merge::v2::FIXED_NEW_ACCOUNT_FOLDER_NAME;
 const LOCK_PBKDF2_ITERS: u32 = 310_000;
+const SYNC_OUTBOX_MAX_ATTEMPTS: u32 = 12;
+const SYNC_OUTBOX_BASE_DELAY_MS: i64 = 5_000;
+const SYNC_OUTBOX_MAX_DELAY_MS: i64 = 60 * 60 * 1_000;
 
 #[derive(Clone)]
 struct AppState {
@@ -105,6 +108,41 @@ struct LocalSnapshotSummary {
     passkeys: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncOutboxItem {
+    source_key: String,
+    payload: SyncPayload,
+    payload_sha256: String,
+    expected_etag: Option<String>,
+    #[serde(default)]
+    expected_revision: Option<i64>,
+    idempotency_key: String,
+    sync_session_id: String,
+    operation_id: String,
+    created_at_ms: i64,
+    attempts: u32,
+    next_retry_at_ms: i64,
+    last_error: String,
+    #[serde(default = "default_sync_outbox_status")]
+    status: String,
+}
+
+fn default_sync_outbox_status() -> String {
+    "pendingRetry".into()
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncOutboxSummary {
+    source_key: String,
+    created_at_ms: i64,
+    attempts: u32,
+    next_retry_at_ms: i64,
+    last_error: String,
+    status: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct VaultData {
@@ -130,6 +168,8 @@ struct VaultData {
     redo: Vec<HistoryItem>,
     #[serde(default)]
     snapshots: Vec<LocalSnapshot>,
+    #[serde(default)]
+    sync_outbox: Vec<SyncOutboxItem>,
     #[serde(default)]
     lock: WebLockData,
 }
@@ -798,7 +838,7 @@ impl Vault {
         });
         self.data
             .snapshots
-            .sort_by(|a, b| b.created_at_ms.cmp(&a.created_at_ms));
+            .sort_by_key(|item| std::cmp::Reverse(item.created_at_ms));
         if self.data.snapshots.len() > 20 {
             self.data.snapshots.truncate(20);
         }
@@ -946,8 +986,138 @@ impl SyncMode {
 
 type SyncReport = SyncOperationReport;
 
+#[derive(Debug, Clone)]
+struct SyncRetryContext {
+    idempotency_key: String,
+    sync_session_id: String,
+    operation_id: String,
+}
+
 fn new_sync_trace_id(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4())
+}
+
+fn sync_outbox_payload_sha256(payload: &SyncPayload) -> String {
+    serde_json::to_vec(payload)
+        .map(Sha256::digest)
+        .unwrap_or_default()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn sync_outbox_retry_delay_ms(attempts: u32) -> i64 {
+    let exponent = attempts.saturating_sub(1).min(8);
+    SYNC_OUTBOX_BASE_DELAY_MS
+        .saturating_mul(1_i64 << exponent)
+        .min(SYNC_OUTBOX_MAX_DELAY_MS)
+}
+
+fn sync_outbox_source_key(kind: &str, raw: &str) -> Result<String, String> {
+    let mut url = Url::parse(raw.trim()).map_err(|_| "同步目标 URL 无效".to_string())?;
+    let default_port = match url.scheme() {
+        "https" => Some(443),
+        "http" => Some(80),
+        _ => None,
+    };
+    if url.port().is_some() && url.port() == default_port {
+        let _ = url.set_port(None);
+    }
+    let normalized = url.to_string().trim_end_matches('/').to_string();
+    if kind.trim().is_empty() || normalized.is_empty() {
+        return Err("同步目标无效".into());
+    }
+    Ok(format!("{}|{}", kind.trim(), normalized))
+}
+
+fn new_sync_retry_context() -> SyncRetryContext {
+    SyncRetryContext {
+        idempotency_key: format!("pass-web-{}", Uuid::new_v4()),
+        sync_session_id: new_sync_trace_id("sync"),
+        operation_id: new_sync_trace_id("op"),
+    }
+}
+
+fn sync_outbox_context_or_wait(
+    v: &mut Vault,
+    source_key: &str,
+    payload: &SyncPayload,
+    force: bool,
+) -> Result<Result<SyncRetryContext, SyncOutboxItem>, String> {
+    let hash = sync_outbox_payload_sha256(payload);
+    let Some(item) = v
+        .data
+        .sync_outbox
+        .iter_mut()
+        .find(|item| item.source_key == source_key && item.payload_sha256 == hash)
+    else {
+        return Ok(Ok(new_sync_retry_context()));
+    };
+    if force && item.status == "paused" {
+        item.status = "pendingRetry".into();
+        item.attempts = 0;
+        item.next_retry_at_ms = 0;
+    }
+    if !force && (item.status == "paused" || item.next_retry_at_ms > now_ms()) {
+        return Ok(Err(item.clone()));
+    }
+    Ok(Ok(SyncRetryContext {
+        idempotency_key: item.idempotency_key.clone(),
+        sync_session_id: item.sync_session_id.clone(),
+        operation_id: item.operation_id.clone(),
+    }))
+}
+
+fn record_sync_outbox_failure(
+    v: &mut Vault,
+    source_key: &str,
+    payload: &SyncPayload,
+    context: &SyncRetryContext,
+    expected_etag: Option<String>,
+    error: &str,
+) {
+    let hash = sync_outbox_payload_sha256(payload);
+    let now = now_ms();
+    let previous = v
+        .data
+        .sync_outbox
+        .iter()
+        .find(|item| item.source_key == source_key && item.payload_sha256 == hash);
+    let attempts = previous
+        .map(|item| item.attempts.saturating_add(1))
+        .unwrap_or(1)
+        .min(SYNC_OUTBOX_MAX_ATTEMPTS);
+    let item = SyncOutboxItem {
+        source_key: source_key.into(),
+        payload: payload.clone(),
+        payload_sha256: hash,
+        expected_etag: expected_etag
+            .or_else(|| previous.and_then(|item| item.expected_etag.clone())),
+        expected_revision: previous.and_then(|item| item.expected_revision),
+        idempotency_key: context.idempotency_key.clone(),
+        sync_session_id: context.sync_session_id.clone(),
+        operation_id: context.operation_id.clone(),
+        created_at_ms: previous.map(|item| item.created_at_ms).unwrap_or(now),
+        attempts,
+        next_retry_at_ms: now.saturating_add(sync_outbox_retry_delay_ms(attempts)),
+        last_error: error.into(),
+        status: if attempts >= SYNC_OUTBOX_MAX_ATTEMPTS {
+            "paused"
+        } else {
+            "pendingRetry"
+        }
+        .into(),
+    };
+    v.data
+        .sync_outbox
+        .retain(|item| item.source_key != source_key);
+    v.data.sync_outbox.push(item);
+}
+
+fn clear_sync_outbox(v: &mut Vault, source_key: &str) {
+    v.data
+        .sync_outbox
+        .retain(|item| item.source_key != source_key);
 }
 
 fn sync_report_base(
@@ -1617,7 +1787,12 @@ fn webdav_put(
         .to_string())
 }
 
-fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value, String> {
+fn run_webdav_sync(
+    v: &mut Vault,
+    mode: SyncMode,
+    dry_run: bool,
+    force_outbox_retry: bool,
+) -> Result<Value, String> {
     let sync_session_id = new_sync_trace_id("sync");
     let operation_id = new_sync_trace_id("op");
     let prefs = v.data.ui_prefs.clone();
@@ -1716,6 +1891,33 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
     } else {
         merged.clone()
     };
+    let source_key = sync_outbox_source_key("webdav", &webdav_resource_url(base, path)?)?;
+    let retry_context = match sync_outbox_context_or_wait(
+        v,
+        &source_key,
+        &to_store,
+        force_outbox_retry,
+    )? {
+        Ok(context) => context,
+        Err(item) => {
+            let paused = item.status == "paused";
+            return Ok(json!({"report": SyncReport {
+                message: if paused {
+                    "同步补偿任务已暂停，请点击“立即重试补偿任务”恢复".into()
+                } else {
+                    format!("同步补偿任务仍在退避，约 {} 秒后自动重试", (item.next_retry_at_ms.saturating_sub(now_ms()) + 999) / 1000)
+                },
+                local_accounts: local_count,
+                merged_accounts: visible_accounts(&to_store),
+                applied: true,
+                pending_retry: true,
+                retryable: true,
+                stage: if paused { "paused" } else { "waitingRetry" }.into(),
+                code: Some(if paused { "RETRY_PAUSED" } else { "RETRY_BACKOFF" }.into()),
+                ..sync_report_base(mode, false, "webdav", true, &item.sync_session_id, &item.operation_id)
+            }}));
+        }
+    };
     let mut wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), &key)?;
     let mut current_etag = fetched.etag;
     let mut remote_count = remote.as_ref().map(visible_accounts).unwrap_or(0);
@@ -1745,6 +1947,7 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
             current_etag.as_deref(),
         ) {
             Ok(new_etag) => {
+                clear_sync_outbox(v, &source_key);
                 return Ok(json!({"report": SyncReport {
                     ok: true,
                     message: format!("WebDAV 同步完成：账号 {}→{}", local_count, visible_accounts(&to_store)),
@@ -1755,7 +1958,7 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
                     pushed: true,
                     stage: "completed".into(),
                     etag: Some(new_etag),
-                    ..sync_report_base(mode, false, "webdav", true, &sync_session_id, &operation_id)
+                    ..sync_report_base(mode, false, "webdav", true, &retry_context.sync_session_id, &retry_context.operation_id)
                 }}));
             }
             Err(error) if error == "PRECONDITION_FAILED" => {
@@ -1805,6 +2008,14 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
             }
             Err(error) => {
                 let (code, retryable) = classify_sync_error(&error);
+                record_sync_outbox_failure(
+                    v,
+                    &source_key,
+                    &to_store,
+                    &retry_context,
+                    current_etag.clone(),
+                    &error,
+                );
                 return Ok(json!({"report": SyncReport {
                     message: format!("本地已更新为合并结果，但 WebDAV 推送失败，请重试同步：{error}"),
                     reasons: vec![error],
@@ -1817,11 +2028,19 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
                     stage: "pushingRemote".into(),
                     code: Some(code.into()),
                     etag: current_etag.clone(),
-                    ..sync_report_base(mode, false, "webdav", true, &sync_session_id, &operation_id)
+                    ..sync_report_base(mode, false, "webdav", true, &retry_context.sync_session_id, &retry_context.operation_id)
                 }}));
             }
         }
     }
+    record_sync_outbox_failure(
+        v,
+        &source_key,
+        &to_store,
+        &retry_context,
+        current_etag.clone(),
+        "PRECONDITION_FAILED",
+    );
     Ok(json!({"report": SyncReport {
         message: "本地已更新为合并结果，但 WebDAV 同步冲突重试次数已用尽，请重试同步".into(),
         reasons: vec!["PRECONDITION_FAILED".into()],
@@ -1834,11 +2053,16 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
         stage: "pushingRemote".into(),
         code: Some("ETAG_CONFLICT".into()),
         etag: current_etag.clone(),
-        ..sync_report_base(mode, false, "webdav", true, &sync_session_id, &operation_id)
+        ..sync_report_base(mode, false, "webdav", true, &retry_context.sync_session_id, &retry_context.operation_id)
     }}))
 }
 
-fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value, String> {
+fn run_self_hosted_sync(
+    v: &mut Vault,
+    mode: SyncMode,
+    dry_run: bool,
+    force_outbox_retry: bool,
+) -> Result<Value, String> {
     let sync_session_id = new_sync_trace_id("sync");
     let operation_id = new_sync_trace_id("op");
     let settings = v.data.sync_settings.clone();
@@ -1869,11 +2093,11 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
         .unwrap_or("")
         .to_string();
     let local = canonicalize_sync_aliases(v.payload(), &v.data.device_name);
-    let fetched = self_hosted_get(&base, &token)?;
+    let fetched = self_hosted_get(base, token)?;
     let mut remote = fetched
         .body
         .as_deref()
-        .map(|body| decrypt_sync_document_with_fallback(body, &key, &previous_key))
+        .map(|body| decrypt_sync_document_with_fallback(body, key, &previous_key))
         .transpose()?
         .map(extract_payload)
         .map(|result| result.map(|payload| canonicalize_sync_aliases(payload, &v.data.device_name)))
@@ -1936,10 +2160,36 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
         }
     }
     let _ = sync_alias_groups(&mut to_store.accounts, now_ms(), &device);
-    let mut wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), &key)?;
+    let source_key = sync_outbox_source_key("server", base)?;
+    let retry_context = match sync_outbox_context_or_wait(
+        v,
+        &source_key,
+        &to_store,
+        force_outbox_retry,
+    )? {
+        Ok(context) => context,
+        Err(item) => {
+            let paused = item.status == "paused";
+            return Ok(json!({"report": SyncReport {
+                message: if paused {
+                    "同步补偿任务已暂停，请点击“立即重试补偿任务”恢复".into()
+                } else {
+                    format!("同步补偿任务仍在退避，约 {} 秒后自动重试", (item.next_retry_at_ms.saturating_sub(now_ms()) + 999) / 1000)
+                },
+                local_accounts: local_count,
+                merged_accounts: visible_accounts(&to_store),
+                applied: true,
+                pending_retry: true,
+                retryable: true,
+                stage: if paused { "paused" } else { "waitingRetry" }.into(),
+                code: Some(if paused { "RETRY_PAUSED" } else { "RETRY_BACKOFF" }.into()),
+                ..sync_report_base(mode, false, "selfHosted", true, &item.sync_session_id, &item.operation_id)
+            }}));
+        }
+    };
+    let mut wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), key)?;
     let mut attempt = 0;
     let mut current_etag = fetched.etag;
-    let idempotency_key = format!("pass-web-{}", Uuid::new_v4());
     let mut local_applied = false;
     loop {
         attempt += 1;
@@ -1956,13 +2206,14 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
             local_applied = true;
         }
         match self_hosted_put(
-            &base,
-            &token,
+            base,
+            token,
             &wire,
             current_etag.as_deref(),
-            &idempotency_key,
+            &retry_context.idempotency_key,
         ) {
             Ok(new_etag) => {
+                clear_sync_outbox(v, &source_key);
                 return Ok(json!({
                     "report": SyncReport {
                         ok: true,
@@ -1974,17 +2225,17 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
                         pushed: true,
                         stage: "completed".into(),
                         etag: Some(new_etag),
-                        ..sync_report_base(mode, false, "selfHosted", true, &sync_session_id, &operation_id)
+                        ..sync_report_base(mode, false, "selfHosted", true, &retry_context.sync_session_id, &retry_context.operation_id)
                     }
                 }));
             }
             Err(error) if error == "PRECONDITION_FAILED" && attempt < 5 => {
-                let latest = self_hosted_get(&base, &token)?;
+                let latest = self_hosted_get(base, token)?;
                 current_etag = latest.etag;
                 remote = latest
                     .body
                     .as_deref()
-                    .map(|body| decrypt_sync_document_with_fallback(body, &key, &previous_key))
+                    .map(|body| decrypt_sync_document_with_fallback(body, key, &previous_key))
                     .transpose()?
                     .map(extract_payload)
                     .map(|result| {
@@ -2027,10 +2278,18 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
                     }
                 }
                 let _ = sync_alias_groups(&mut to_store.accounts, now_ms(), &device);
-                wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), &key)?;
+                wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), key)?;
             }
             Err(error) => {
                 let (code, retryable) = classify_sync_error(&error);
+                record_sync_outbox_failure(
+                    v,
+                    &source_key,
+                    &to_store,
+                    &retry_context,
+                    current_etag.clone(),
+                    &error,
+                );
                 return Ok(json!({
                     "report": SyncReport {
                         message: format!("本地已更新为合并结果，但推送远端失败，请重试同步：{error}"),
@@ -2044,7 +2303,7 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
                         stage: "pushingRemote".into(),
                         code: Some(code.into()),
                         etag: current_etag.clone(),
-                        ..sync_report_base(mode, false, "selfHosted", true, &sync_session_id, &operation_id)
+                        ..sync_report_base(mode, false, "selfHosted", true, &retry_context.sync_session_id, &retry_context.operation_id)
                     }
                 }));
             }
@@ -2224,7 +2483,7 @@ fn duplicate_groups(accounts: &[PasswordAccount], folder_id: &str) -> Vec<Folder
         .into_values()
         .filter(|accounts| accounts.len() > 1)
         .map(|mut accounts| {
-            accounts.sort_by(|left, right| right.updated_at_ms.cmp(&left.updated_at_ms));
+            accounts.sort_by_key(|item| std::cmp::Reverse(item.updated_at_ms));
             let mut aliases = accounts
                 .iter()
                 .flat_map(|account| account.sites.clone())
@@ -2524,11 +2783,36 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             v.save()?;
             Ok(json!(null))
         }
-        // Docker Web currently retries through its normal sync command and has
-        // no separate persisted compensation queue. Keep the shared UI command
-        // surface explicit without claiming that tasks exist.
-        "get_sync_outbox_status" => Ok(json!([])),
-        "clear_inactive_sync_outbox" => Ok(json!(0)),
+        "get_sync_outbox_status" => Ok(serde_json::to_value(
+            v.data.sync_outbox.iter().map(|item| SyncOutboxSummary {
+                source_key: item.source_key.clone(),
+                created_at_ms: item.created_at_ms,
+                attempts: item.attempts,
+                next_retry_at_ms: item.next_retry_at_ms,
+                last_error: item.last_error.clone(),
+                status: item.status.clone(),
+            }).collect::<Vec<_>>(),
+        ).map_err(|error| error.to_string())?),
+        "clear_inactive_sync_outbox" => {
+            let mut active = BTreeSet::new();
+            if v.data.sync_settings.get("enabled").and_then(Value::as_bool).unwrap_or(false) {
+                if let Some(base) = v.data.sync_settings.get("baseUrl").and_then(Value::as_str) {
+                    if let Ok(key) = sync_outbox_source_key("server", base) { active.insert(key); }
+                }
+            }
+            if v.data.ui_prefs.get("webdavEnabled").and_then(Value::as_bool).unwrap_or(false) {
+                let base = v.data.ui_prefs.get("webdavBaseUrl").and_then(Value::as_str).unwrap_or("");
+                let path = v.data.ui_prefs.get("webdavRemotePath").and_then(Value::as_str).unwrap_or("pass-sync-bundle-v2.json");
+                if let Ok(url) = webdav_resource_url(base, path) {
+                    if let Ok(key) = sync_outbox_source_key("webdav", &url) { active.insert(key); }
+                }
+            }
+            let original = v.data.sync_outbox.len();
+            v.data.sync_outbox.retain(|item| active.contains(&item.source_key));
+            let removed = original.saturating_sub(v.data.sync_outbox.len());
+            if removed > 0 { v.save()?; }
+            Ok(json!(removed))
+        }
         "set_device_name" => {
             let name: String = arg(&args, "deviceName")?;
             if name.trim().is_empty() {
@@ -3153,11 +3437,12 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             let mut count = 0;
             let mut restored = Vec::new();
             for a in &mut v.data.accounts {
-                if a.is_deleted && !a.is_permanently_deleted {
-                    if restore_account_fields(a, now, &device).unwrap_or(false) {
-                        restored.push((account_key(a), a.folder_ids.clone()));
-                        count += 1;
-                    }
+                if a.is_deleted
+                    && !a.is_permanently_deleted
+                    && restore_account_fields(a, now, &device).unwrap_or(false)
+                {
+                    restored.push((account_key(a), a.folder_ids.clone()));
+                    count += 1;
                 }
             }
             for (restored_id, folder_ids) in restored.into_iter().rev() {
@@ -3383,10 +3668,11 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             let mut deleted_count = 0;
             for account in &mut v.data.accounts {
                 let id = account_key(account);
-                if duplicate_ids.contains(&id) && !keep.contains(&id) {
-                    if soft_delete_account(account, now, &device) {
-                        deleted_count += 1;
-                    }
+                if duplicate_ids.contains(&id)
+                    && !keep.contains(&id)
+                    && soft_delete_account(account, now, &device)
+                {
+                    deleted_count += 1;
                 }
             }
             v.save()?;
@@ -3629,16 +3915,16 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                         .and_then(Value::as_bool)
                         .unwrap_or(false));
             if use_webdav {
-                run_webdav_sync(v, mode, true)
+                run_webdav_sync(v, mode, true, false)
             } else if v.data
                 .sync_settings
                 .get("enabled")
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
             {
-                run_self_hosted_sync(v, mode, true)
+                run_self_hosted_sync(v, mode, true, false)
             } else {
-                run_webdav_sync(v, mode, true)
+                run_webdav_sync(v, mode, true, false)
             }
         }
         "sync_now" | "sync_now_mode" => {
@@ -3653,11 +3939,19 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             } else {
                 SyncMode::parse(&arg::<String>(&args, "mode")?)
             };
-            run_self_hosted_sync(v, mode, false)
+            let force_outbox_retry = args
+                .get("forceOutboxRetry")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            run_self_hosted_sync(v, mode, false, force_outbox_retry)
         }
         "sync_webdav_now_mode" => {
             let mode = SyncMode::parse(&arg::<String>(&args, "mode")?);
-            run_webdav_sync(v, mode, false)
+            let force_outbox_retry = args
+                .get("forceOutboxRetry")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            run_webdav_sync(v, mode, false, force_outbox_retry)
         }
         "list_server_versions" => {
             let settings = &v.data.sync_settings;
@@ -4210,6 +4504,44 @@ mod tests {
             document
         );
         assert!(decrypt_sync_document_with_fallback(&encrypted, &current, &current).is_err());
+    }
+
+    #[test]
+    fn web_sync_outbox_pauses_after_twelve_failures_and_manual_retry_recovers_context() {
+        let dir = std::env::temp_dir().join(format!("pass-web-outbox-{}", Uuid::new_v4()));
+        let mut vault = Vault::open(dir.clone()).unwrap();
+        let payload = SyncPayload::default();
+        let source_key = "server|https://sync.example";
+        let context = new_sync_retry_context();
+        for _ in 0..SYNC_OUTBOX_MAX_ATTEMPTS {
+            record_sync_outbox_failure(
+                &mut vault, source_key, &payload, &context, None, "HTTP 503",
+            );
+        }
+        let paused = vault.data.sync_outbox.first().unwrap().clone();
+        assert_eq!(paused.attempts, SYNC_OUTBOX_MAX_ATTEMPTS);
+        assert_eq!(paused.status, "paused");
+        assert!(
+            sync_outbox_context_or_wait(&mut vault, source_key, &payload, false)
+                .unwrap()
+                .is_err()
+        );
+        let resumed = sync_outbox_context_or_wait(&mut vault, source_key, &payload, true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(resumed.idempotency_key, context.idempotency_key);
+        let item = vault.data.sync_outbox.first().unwrap();
+        assert_eq!(item.status, "pendingRetry");
+        assert_eq!(item.attempts, 0);
+        assert_eq!(item.next_retry_at_ms, 0);
+        vault.save().unwrap();
+        let restarted = Vault::open(dir.clone()).unwrap();
+        assert_eq!(restarted.data.sync_outbox.len(), 1);
+        assert_eq!(
+            restarted.data.sync_outbox[0].idempotency_key,
+            context.idempotency_key
+        );
+        let _ = fs::remove_dir_all(dir);
     }
     #[test]
     fn web_lock_blocks_vault_commands_until_password_unlock() {

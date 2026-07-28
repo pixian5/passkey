@@ -107,7 +107,7 @@ stage (`pull`, `merge`, `push`, or `restore`) when available.
   treats them as authentication or secret material. Older clients and old
   SQLite audit rows remain valid with null trace fields.
 
-### 三端补偿队列与结果契约（1.3.8）
+### 三端补偿队列与结果契约（1.3.9）
 
 - Tauri stores failed self-hosted and WebDAV writes in an encrypted
   `sync_outbox.json` beside the vault. The queue contains the payload, its
@@ -128,13 +128,23 @@ stage (`pull`, `merge`, `push`, or `restore`) when available.
   `nextRetryAtMs` has elapsed. The user must explicitly choose “立即重试补偿任务”;
   that resets only attempt/backoff accounting and preserves the payload hash,
   ETag/revision and idempotency/session/operation identifiers.
-- Tauri, Swift and Chrome extension persist the `pendingRetry`/`paused` status.
+- Tauri, Swift, Chrome extension and Docker Web persist the `pendingRetry`/`paused` status.
   A changed payload hash starts a new logical write and is therefore not held by
-  an old paused task. Docker Web still has no independent persisted outbox.
+  an old paused task. Docker Web stores its queue inside the encrypted vault
+  and exposes the same status/clear commands as the desktop UI.
 - `docs/schemas/sync-operation-report-v1.schema.json` is the machine contract
   for `SyncOperationReport`. `scripts/check_command_matrix.mjs` verifies its
   required JSON fields against the Rust source before extension tests run.
-- The Tauri sync page lists pending targets, attempts, next retry time and the
-  bounded last error. It can retry immediately or remove entries whose target
-  is no longer enabled. Docker Web exposes the shared UI command surface but
-  currently has no independent persisted outbox; it must not claim otherwise.
+- The shared Tauri/Docker Web sync page lists pending targets, attempts, next
+  retry time and the bounded last error. It can retry immediately or remove
+  entries whose target is no longer enabled. Docker retries while its Web UI is
+  open; unlike the desktop app, it has no independent background scheduler.
+
+### Docker 容器替换与单实例锁
+
+- Pass Web 在 `/data/pass-web-instance.lock` 持有单实例锁，避免两个进程同时
+  写入同一加密 vault。正常退出会自动清除该锁。
+- 若 `docker compose up` 替换或异常终止后，新容器明确报告该锁仍被占用，先
+  `docker compose stop pass-web`，确认没有其他挂载同一 named volume 的 Pass
+  Web 容器，再只读取并删除这个精确的锁文件，最后重新启动并检查 `/healthz`。
+  不得删除 `/data`、vault、vault key 或 outbox；它们均是持久化用户数据。
