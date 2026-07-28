@@ -3,6 +3,7 @@
 
 pub mod crypto;
 pub mod http;
+pub mod outbox;
 pub mod pipeline;
 pub mod settings;
 pub mod webdav;

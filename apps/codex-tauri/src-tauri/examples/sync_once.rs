@@ -1,4 +1,4 @@
-//! One-shot sync harness: same pipeline as the Tauri app (`run_sync`).
+//! One-shot sync harness: same pipeline as the Tauri app (`run_sync_with_context`).
 //!
 //! ```bash
 //! cd apps/codex-tauri/src-tauri
@@ -23,7 +23,7 @@ mod sync;
 
 use pass_merge::v2::{Folder, Passkey, PasswordAccount};
 use sync::pipeline::{
-    local_payload_from_vault, run_sync, visible_account_count, visible_folder_count,
+    local_payload_from_vault, run_sync_with_context, visible_account_count, visible_folder_count,
     visible_passkey_count,
 };
 use sync::settings::load_sync_settings;
@@ -122,7 +122,7 @@ fn main() {
         "linux"
     };
 
-    match run_sync(&settings, local, &device, platform, |_payload| Ok(())) {
+    match run_sync_with_context(&settings, local, &device, platform, None, |_payload| Ok(())) {
         Ok((report, applied)) => {
             eprintln!(
                 "report ok={} applied={} pushed={} msg={} local={} remote={} merged={}",

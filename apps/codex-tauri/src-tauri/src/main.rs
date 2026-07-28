@@ -36,7 +36,7 @@ use app_lock::{AppLockPolicy, AppLockPublicState, AppLockState};
 use exchange::{
     browser_entries_from_csv, build_bundle_bytes, build_csv_string, export_browser_csv,
     import_bundle_content, list_sync_versions, merge_imported_accounts, restore_sync_version,
-    run_sync_with_mode, ImportResult, PathResult, SyncVersionSummary,
+    run_sync_with_mode_context, ImportResult, PathResult, SyncVersionSummary,
 };
 use local_snapshots::LocalSnapshotSummary;
 use operation_history::HistoryEntry;
@@ -47,9 +47,10 @@ use provision::{
 };
 use provision_settings::ProvisionDraft;
 use sync::crypto::key_id;
+use sync::outbox;
 use sync::pipeline::{
-    local_payload_from_vault_with_order, preview_sync, run_sync, visible_account_count,
-    visible_folder_count, visible_passkey_count, SyncMode,
+    local_payload_from_vault_with_order, preview_sync, run_sync_with_context,
+    visible_account_count, visible_folder_count, visible_passkey_count, SyncMode,
 };
 use sync::settings::{load_sync_settings, save_sync_settings, SyncSettings};
 use sync::webdav::{self, WebDavSettings};
@@ -1333,6 +1334,9 @@ async fn sync_now(
     settings.previous_encryption_key = load_ui_prefs(&dir).previous_encryption_key;
     let device = load_device_name(&conn)?;
     let local = local_payload_from_conn(&conn, &device)?;
+    let source_key = format!("server|{}", settings.base_url.trim());
+    let retry_context = outbox::matching_context(&dir, &source_key, &local)?
+        .unwrap_or_else(|| outbox::new_context(&local));
     let platform = current_platform().to_string();
     let worker_app = app.clone();
     let worker_dir = dir.clone();
@@ -1343,8 +1347,13 @@ async fn sync_now(
             let worker_dir_for_apply = worker_dir.clone();
             let mut snapshot_created = false;
             let mut last_applied_local: Option<SyncPayload> = None;
-            let (report, _applied) =
-                run_sync(&settings, local.clone(), &device, &platform, |payload| {
+            let (report, applied) = run_sync_with_context(
+                &settings,
+                local.clone(),
+                &device,
+                &platform,
+                Some(retry_context.clone()),
+                |payload| {
                     let expected = last_applied_local.as_ref().unwrap_or(&local_for_apply);
                     // Compare and write in one SQLite transaction.  A separate
                     // read followed by save_payload_atomic() still allowed a
@@ -1367,7 +1376,21 @@ async fn sync_now(
                     }
                     last_applied_local = Some(payload.clone());
                     Ok(())
-                })?;
+                },
+            )?;
+            if report.pending_retry {
+                outbox::record_failure(
+                    &worker_dir_for_apply,
+                    &source_key,
+                    &applied,
+                    &retry_context,
+                    report.etag.clone(),
+                    None,
+                    &report.message,
+                )?;
+            } else if report.pushed {
+                outbox::clear(&worker_dir_for_apply, &source_key)?;
+            }
             Ok(serde_json::json!({ "report": report }))
         })
         .await
@@ -1406,6 +1429,9 @@ async fn sync_now_mode(
     let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
     let device = load_device_name(&conn)?;
     let local = local_payload_from_conn(&conn, &device)?;
+    let source_key = format!("server|{}", settings.base_url.trim());
+    let retry_context = outbox::matching_context(&dir, &source_key, &local)?
+        .unwrap_or_else(|| outbox::new_context(&local));
     let mode = SyncMode::parse(&mode);
     let platform = current_platform().to_string();
     let worker_app = app.clone();
@@ -1417,12 +1443,13 @@ async fn sync_now_mode(
             let worker_dir_for_apply = worker_dir.clone();
             let mut snapshot_created = false;
             let mut last_applied_local: Option<SyncPayload> = None;
-            let (report, _applied) = run_sync_with_mode(
+            let (report, applied) = run_sync_with_mode_context(
                 &settings,
                 local.clone(),
                 &device,
                 &platform,
                 mode,
+                Some(retry_context.clone()),
                 |payload| {
                     let expected = last_applied_local.as_ref().unwrap_or(&local_for_apply);
                     if !snapshot_created {
@@ -1445,6 +1472,19 @@ async fn sync_now_mode(
                     Ok(())
                 },
             )?;
+            if report.pending_retry {
+                outbox::record_failure(
+                    &worker_dir_for_apply,
+                    &source_key,
+                    &applied,
+                    &retry_context,
+                    report.etag.clone(),
+                    None,
+                    &report.message,
+                )?;
+            } else if report.pushed {
+                outbox::clear(&worker_dir_for_apply, &source_key)?;
+            }
             Ok(serde_json::json!({ "report": report }))
         })
         .await
@@ -1472,6 +1512,13 @@ async fn sync_webdav_now_mode(
     };
     let device = load_device_name(&conn)?;
     let local = local_payload_from_conn(&conn, &device)?;
+    let source_key = format!(
+        "webdav|{}/{}",
+        webdav_settings.base_url.trim(),
+        webdav_settings.remote_path.trim()
+    );
+    let retry_context = outbox::matching_context(&dir, &source_key, &local)?
+        .unwrap_or_else(|| outbox::new_context(&local));
     let parsed_mode = SyncMode::parse(&mode);
     let platform = current_platform().to_string();
     let encryption_key = settings.encryption_key.clone();
@@ -1484,13 +1531,14 @@ async fn sync_webdav_now_mode(
             let worker_dir_for_apply = worker_dir.clone();
             let mut snapshot_created = false;
             let mut last_applied_local: Option<SyncPayload> = None;
-            let (report, _applied) = webdav::run_sync(
+            let (report, applied) = webdav::run_sync_with_context(
                 &webdav_settings,
                 parsed_mode,
                 local.clone(),
                 &device,
                 &platform,
                 &encryption_key,
+                Some(retry_context.clone()),
                 |payload| {
                     let expected = last_applied_local.as_ref().unwrap_or(&local_for_apply);
                     if !snapshot_created {
@@ -1513,6 +1561,19 @@ async fn sync_webdav_now_mode(
                     Ok(())
                 },
             )?;
+            if report.pending_retry {
+                outbox::record_failure(
+                    &worker_dir_for_apply,
+                    &source_key,
+                    &applied,
+                    &retry_context,
+                    report.etag.clone(),
+                    None,
+                    &report.message,
+                )?;
+            } else if report.pushed {
+                outbox::clear(&worker_dir_for_apply, &source_key)?;
+            }
             Ok(serde_json::json!({ "report": report }))
         })
         .await

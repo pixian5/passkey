@@ -106,3 +106,16 @@ stage (`pull`, `merge`, `push`, or `restore`) when available.
   these optional headers, records them in bounded audit history, and never
   treats them as authentication or secret material. Older clients and old
   SQLite audit rows remain valid with null trace fields.
+
+### Tauri local outbox (1.3.6)
+
+- Tauri stores failed self-hosted and WebDAV writes in an encrypted
+  `sync_outbox.json` beside the vault. The queue contains the payload, its
+  SHA-256, expected concurrency metadata, retry counters and the complete
+  session/operation/idempotency context.
+- A later sync only reuses a queued context when the current local payload has
+  the same digest. Editing the vault creates a new logical write and cannot
+  accidentally replay an old payload under an old idempotency key.
+- A successful push removes the target entry. Safety-blocked previews do not
+  create queue entries. Existing settings and vault records remain compatible;
+  an absent queue is treated as empty.

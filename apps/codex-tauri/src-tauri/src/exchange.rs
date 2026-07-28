@@ -9,6 +9,7 @@ use crate::sync::crypto::{
     decrypt_wire_body, decrypt_wire_body_with_fallback, encrypt_bundle_document, PLAINTEXT_SCHEMA,
 };
 use crate::sync::http::{get_sync_state, put_sync_state, validate_base_url};
+use crate::sync::pipeline::SyncRetryContext;
 use crate::sync::pipeline::{visible_account_count, SyncMode};
 use crate::sync::settings::SyncSettings;
 
@@ -441,12 +442,13 @@ pub fn restore_sync_version(
     Ok((payload, Some(new_etag)))
 }
 
-pub fn run_sync_with_mode<A>(
+pub fn run_sync_with_mode_context<A>(
     settings: &SyncSettings,
     local: SyncPayload,
     device_name: &str,
     platform: &str,
     mode: SyncMode,
+    retry_context: Option<SyncRetryContext>,
     apply_local: A,
 ) -> Result<(crate::sync::pipeline::SyncReport, SyncPayload), String>
 where
@@ -454,5 +456,12 @@ where
 {
     let mut s = settings.clone();
     s.mode = mode.as_str().to_string();
-    crate::sync::pipeline::run_sync(&s, local, device_name, platform, apply_local)
+    crate::sync::pipeline::run_sync_with_context(
+        &s,
+        local,
+        device_name,
+        platform,
+        retry_context,
+        apply_local,
+    )
 }

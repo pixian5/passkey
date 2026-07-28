@@ -41,6 +41,13 @@ impl SyncMode {
 
 pub type SyncReport = SyncOperationReport;
 
+#[derive(Debug, Clone, Default)]
+pub struct SyncRetryContext {
+    pub idempotency_key: String,
+    pub sync_session_id: String,
+    pub operation_id: String,
+}
+
 fn new_trace_id(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4())
 }
@@ -354,13 +361,14 @@ fn pull_remote(settings: &SyncSettings) -> Result<(Option<SyncPayload>, Option<S
 /// Shared merge/safety/write loop for non-server transports such as WebDAV.
 /// The transport owns conditional reads/writes; this layer remains the only
 /// authority for merge, encryption envelope and safety decisions.
-pub(crate) fn run_sync_with_transport<P, U, A>(
+pub(crate) fn run_sync_with_transport_context<P, U, A>(
     mode: SyncMode,
     local: SyncPayload,
     device_name: &str,
     platform: &str,
     encryption_key: &str,
     source: &str,
+    retry_context: Option<SyncRetryContext>,
     mut pull: P,
     mut apply_local: A,
     mut push: U,
@@ -372,9 +380,22 @@ where
 {
     let mut attempt = 0;
     let mut last_applied: Option<SyncPayload> = None;
-    let idempotency_key = Uuid::new_v4().to_string();
-    let sync_session_id = new_trace_id("sync");
-    let operation_id = new_trace_id("op");
+    let retry_context = retry_context.unwrap_or_default();
+    let idempotency_key = if retry_context.idempotency_key.trim().is_empty() {
+        Uuid::new_v4().to_string()
+    } else {
+        retry_context.idempotency_key.clone()
+    };
+    let sync_session_id = if retry_context.sync_session_id.trim().is_empty() {
+        new_trace_id("sync")
+    } else {
+        retry_context.sync_session_id.clone()
+    };
+    let operation_id = if retry_context.operation_id.trim().is_empty() {
+        new_trace_id("op")
+    } else {
+        retry_context.operation_id.clone()
+    };
     loop {
         attempt += 1;
         let (remote_opt, etag) = pull()?;
@@ -466,11 +487,12 @@ where
 
 /// Full sync: pull → merge → safety → apply local → push.
 /// `apply_local` must persist the merged payload before the remote PUT.
-pub fn run_sync<A>(
+pub fn run_sync_with_context<A>(
     settings: &SyncSettings,
     local: SyncPayload,
     device_name: &str,
     platform: &str,
+    retry_context: Option<SyncRetryContext>,
     apply_local: A,
 ) -> Result<(SyncReport, SyncPayload), String>
 where
@@ -483,13 +505,14 @@ where
     let encryption_key = settings.encryption_key.clone();
     let base_url = settings.base_url.clone();
     let auth_token = settings.auth_token.clone();
-    run_sync_with_transport(
+    run_sync_with_transport_context(
         mode,
         local,
         device_name,
         platform,
         &encryption_key,
         "selfHosted",
+        retry_context,
         || pull_remote(settings),
         apply_local,
         |wire, etag, idempotency_key| {
@@ -502,6 +525,7 @@ where
 mod tests {
     use super::*;
     use pass_merge::v2::{Folder, Passkey, PasswordAccount};
+    use std::cell::RefCell;
 
     #[test]
     fn visible_account_count_excludes_permanent_deletion_tombstones() {
@@ -529,5 +553,36 @@ mod tests {
 
         assert_eq!(visible_folder_count(&payload), 1);
         assert_eq!(visible_passkey_count(&payload), 1);
+    }
+
+    #[test]
+    fn retry_context_reuses_trace_and_idempotency_ids() {
+        let seen_key = RefCell::new(String::new());
+        let context = SyncRetryContext {
+            idempotency_key: "idem-existing".into(),
+            sync_session_id: "sync-existing".into(),
+            operation_id: "op-existing".into(),
+            ..Default::default()
+        };
+        let (report, _) = run_sync_with_transport_context(
+            SyncMode::Merge,
+            SyncPayload::default(),
+            "test-device",
+            "test",
+            "",
+            "selfHosted",
+            Some(context),
+            || Ok((None, None)),
+            |_| Ok(()),
+            |_, _, key| {
+                *seen_key.borrow_mut() = key.to_string();
+                Ok("etag-new".into())
+            },
+        )
+        .unwrap();
+        assert_eq!(&*seen_key.borrow(), "idem-existing");
+        assert_eq!(report.sync_session_id, "sync-existing");
+        assert_eq!(report.operation_id, "op-existing");
+        assert!(report.pushed);
     }
 }

@@ -5,6 +5,10 @@ RUN npm ci --ignore-scripts
 COPY apps/codex-tauri/index.html ./index.html
 COPY apps/codex-tauri/src ./src
 COPY apps/codex-tauri/scripts ./scripts
+# The shared web build synchronizes the same merge/CSV/mutation modules into
+# the Chrome Web surface. Keep this copy in the asset stage; the Rust stage
+# already copies the complete core tree independently.
+COPY core/pass_core/js /src/core/pass_core/js
 RUN npm run prepare:dist
 
 FROM rust:1.86-bookworm AS rust-build

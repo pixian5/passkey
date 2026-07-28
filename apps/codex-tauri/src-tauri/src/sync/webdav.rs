@@ -14,7 +14,11 @@ use std::time::Duration;
 use url::Url;
 
 use super::http::FetchResult;
-use super::{crypto::decrypt_wire_body_with_fallback, pipeline, pipeline::SyncMode};
+use super::{
+    crypto::decrypt_wire_body_with_fallback,
+    pipeline,
+    pipeline::{SyncMode, SyncRetryContext},
+};
 use pass_merge::v2::SyncPayload;
 
 #[derive(Debug, Clone)]
@@ -182,13 +186,14 @@ fn require_etag_for_existing(body: &Option<Vec<u8>>, etag: &Option<String>) -> R
     Ok(())
 }
 
-pub fn run_sync<A>(
+pub fn run_sync_with_context<A>(
     settings: &WebDavSettings,
     mode: SyncMode,
     local: SyncPayload,
     device_name: &str,
     platform: &str,
     encryption_key: &str,
+    retry_context: Option<SyncRetryContext>,
     apply_local: A,
 ) -> Result<(pipeline::SyncReport, SyncPayload), String>
 where
@@ -200,13 +205,14 @@ where
     // Validate once before the retry loop so an invalid configuration does not
     // look like a network conflict.
     let _ = resource_url(&settings.base_url, &settings.remote_path)?;
-    pipeline::run_sync_with_transport(
+    pipeline::run_sync_with_transport_context(
         mode,
         local,
         device_name,
         platform,
         encryption_key,
         "webdav",
+        retry_context,
         || {
             let fetched = get(
                 &settings.base_url,

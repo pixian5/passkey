@@ -103,7 +103,7 @@ pass-web-vault-key-v1
 *.log
 ```
 
-排除规则不能影响 Dockerfile 中明确复制的 `apps/codex-tauri/src`、前端脚本和 `core/pass_core`。
+排除规则不能影响 Dockerfile 中明确复制的 `apps/codex-tauri/src`、前端脚本和 `core/pass_core`。`web-assets` 阶段也必须复制 `core/pass_core/js`：`prepare-dist.mjs` 会调用 `sync-web-ui.mjs`，后者需要五个共享 JS 模块。只在 Rust 构建阶段复制 Core 会导致真实 Docker 构建在前端阶段以 `ENOENT sync_merge_core.js` 失败。
 
 ## 4. 镜像设计
 
@@ -317,6 +317,10 @@ docker compose build --pull pass-web
 docker compose up -d pass-web
 curl --fail http://127.0.0.1:53335/healthz
 ```
+
+直接用 `docker run` 冒烟时，镜像默认监听容器内 `0.0.0.0`，因此必须提供网页访问 Token；若宿主机端口明确只映射到 `127.0.0.1`，也可以与 Compose 一样设置 `PASS_WEB_TRUSTED_LOOPBACK_PROXY=1`。缺少二者时容器退出是安全策略，不是启动故障。
+
+版本 `1.3.6` 已在 macOS Docker Desktop `linux/arm64` 上完成真实镜像构建和运行验证：`/healthz` 返回 200、首页可读取、容器进程为 `passweb` 非 root 用户。构建产物本地标签为 `pass-web:1.3.6`；该本地验证不等于镜像已经推送到公共仓库，也不代替 `linux/amd64` 的 buildx 构建。
 
 查看日志：
 
