@@ -9,6 +9,7 @@ mod merge;
 pub mod mutate;
 pub mod normalize;
 mod policy;
+mod report;
 mod safety;
 mod types;
 
@@ -21,6 +22,7 @@ pub use merge::{
 pub use policy::{
     DEFAULT_DEVICE_NAME, ETLD2_SUFFIXES, FIXED_NEW_ACCOUNT_FOLDER_ID, FIXED_NEW_ACCOUNT_FOLDER_NAME,
 };
+pub use report::{SyncOperationReport, SyncSafetyStatus, SYNC_REPORT_VERSION};
 pub use safety::{evaluate_sync_safety, SyncSafetyReport};
 pub use types::{AccountFolderMembershipState, Folder, Passkey, PasswordAccount, SyncPayload};
 

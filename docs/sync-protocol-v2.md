@@ -90,3 +90,19 @@ Sync UI exposes the available local/remote counts, safety reasons and source
 completion status. Revision/ETag are protocol diagnostics but are not currently
 shown in every surface. Error messages must preserve HTTP status and operation
 stage (`pull`, `merge`, `push`, or `restore`) when available.
+
+### Trace and retry contract (1.3.5)
+
+- Structured sync reports carry a report version, safety result, source, stage,
+  retryability, `syncSessionId`, `operationId`, error code, revision and the
+  legacy `safe`/`applied`/`pushed` fields for older UI consumers.
+- A retry outbox stores the canonical payload SHA-256, expected ETag/revision,
+  idempotency key, session and operation IDs. The same target plus the same
+  payload hash is one logical write and must reuse those IDs after restart.
+  A changed hash is a new logical write: it resets retry attempts and receives
+  new IDs, preventing an idempotency key from being reused for different data.
+- Self-hosted writes may include `X-Sync-Session-Id`, `X-Sync-Operation-Id`,
+  `X-Sync-Client-Device-Id`, and `X-Sync-Client-Version`. The server accepts
+  these optional headers, records them in bounded audit history, and never
+  treats them as authentication or secret material. Older clients and old
+  SQLite audit rows remain valid with null trace fields.

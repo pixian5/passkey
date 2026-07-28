@@ -53,9 +53,34 @@ test("同步 outbox 更新、到期判断和删除保持单目标单任务", () 
     nowMs: 10_000,
   });
   assert.equal(second.length, 1);
-  assert.equal(second[0].attempts, 2);
+  assert.equal(second[0].attempts, 1);
   assert.equal(second[0].payload.accounts[0].id, "two");
   assert.equal(removeSyncOutbox(second, targetKey).length, 0);
+});
+
+test("相同 payload 摘要会保留幂等、会话与操作上下文", () => {
+  const targetKey = "server|https://sync.example";
+  const first = upsertSyncOutbox([], {
+    targetKey,
+    payload: { accounts: [{ id: "one" }] },
+    payloadSha256: "a".repeat(64),
+    idempotencyKey: "idem-1",
+    syncSessionId: "session-1",
+    operationId: "operation-1",
+    error: new Error("offline"),
+    nowMs: 1_000,
+  });
+  const second = upsertSyncOutbox(first, {
+    targetKey,
+    payload: { accounts: [{ id: "one" }] },
+    payloadSha256: "a".repeat(64),
+    error: new Error("timeout"),
+    nowMs: 10_000,
+  });
+  assert.equal(second[0].attempts, 2);
+  assert.equal(second[0].idempotencyKey, "idem-1");
+  assert.equal(second[0].syncSessionId, "session-1");
+  assert.equal(second[0].operationId, "operation-1");
 });
 
 test("同步 outbox 只清理当前已失效的远端目标", () => {

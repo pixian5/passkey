@@ -206,6 +206,7 @@ where
         device_name,
         platform,
         encryption_key,
+        "webdav",
         || {
             let fetched = get(
                 &settings.base_url,
@@ -258,7 +259,7 @@ pub fn preview(
         return Err("WebDAV 同步未启用".into());
     }
     let _ = resource_url(&settings.base_url, &settings.remote_path)?;
-    pipeline::preview_with_transport(mode, local, device_name, || {
+    pipeline::preview_with_transport(mode, local, device_name, "webdav", || {
         let fetched = get(
             &settings.base_url,
             &settings.remote_path,

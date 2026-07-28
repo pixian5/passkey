@@ -79,6 +79,10 @@ class StoredOperation:
     etag: str | None
     version_id: int | None
     created_at_ms: int
+    sync_session_id: str | None = None
+    trace_operation_id: str | None = None
+    client_device_id: str | None = None
+    client_version: str | None = None
 
 
 class PayloadRepository:
@@ -134,10 +138,18 @@ class PayloadRepository:
                   status TEXT NOT NULL,
                   etag TEXT,
                   version_id INTEGER,
-                  created_at_ms INTEGER NOT NULL
+                  created_at_ms INTEGER NOT NULL,
+                  sync_session_id TEXT,
+                  trace_operation_id TEXT,
+                  client_device_id TEXT,
+                  client_version TEXT
                 );
                 """
             )
+            operation_columns = {row["name"] for row in connection.execute("PRAGMA table_info(sync_operations);").fetchall()}
+            for name in ("sync_session_id", "trace_operation_id", "client_device_id", "client_version"):
+                if name not in operation_columns:
+                    connection.execute(f"ALTER TABLE sync_operations ADD COLUMN {name} TEXT;")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS payload_versions (
@@ -378,6 +390,7 @@ class PayloadRepository:
         if_match: str | None,
         operation: str = "put",
         idempotency_key: str | None = None,
+        trace: dict[str, str | None] | None = None,
     ) -> StoredPayload:
         next_etag = f"\"{payload_sha256}\""
         now_ms = current_time_ms()
@@ -408,7 +421,7 @@ class PayloadRepository:
                             "IDEMPOTENCY_STALE",
                             "Idempotency-Key 对应的快照已被更新，请重新拉取合并后再上传。",
                         )
-                    self.record_operation_best_effort(scope, "idempotent_replay", "success", replay["etag"], None)
+                    self.record_operation_best_effort(scope, "idempotent_replay", "success", replay["etag"], None, trace)
                     return StoredPayload(
                         scope=scope,
                         etag=replay["etag"],
@@ -420,7 +433,7 @@ class PayloadRepository:
                     )
             current = self.get(scope)
             if current is not None and (if_match is None or not str(if_match).strip()):
-                self.record_operation_best_effort(scope, operation, "conflict", current.etag, None)
+                self.record_operation_best_effort(scope, operation, "conflict", current.etag, None, trace)
                 raise RequestError(
                     HTTPStatus.PRECONDITION_REQUIRED
                     if hasattr(HTTPStatus, "PRECONDITION_REQUIRED")
@@ -429,7 +442,7 @@ class PayloadRepository:
                     "更新已有同步数据必须提供 If-Match。",
                 )
             if not etag_matches(current.etag if current else None, if_match):
-                self.record_operation_best_effort(scope, operation, "conflict", current.etag if current else None, None)
+                self.record_operation_best_effort(scope, operation, "conflict", current.etag if current else None, None, trace)
                 raise PreconditionFailedError()
 
             scope_revision = self.current_revision(scope) + 1
@@ -512,7 +525,7 @@ class PayloadRepository:
                     (scope, scope),
                 )
 
-            self.record_operation_best_effort(scope, operation, "success", next_etag, None)
+            self.record_operation_best_effort(scope, operation, "success", next_etag, None, trace)
             return StoredPayload(
                 scope=scope,
                 etag=next_etag,
@@ -529,6 +542,7 @@ class PayloadRepository:
         version_id: int,
         if_match: str | None,
         idempotency_key: str | None = None,
+        trace: dict[str, str | None] | None = None,
     ) -> StoredPayload | None:
         version = self.get_version(scope, version_id)
         if version is None:
@@ -541,6 +555,7 @@ class PayloadRepository:
             if_match=if_match,
             operation="restore",
             idempotency_key=idempotency_key,
+            trace=trace,
         )
 
     def record_operation(
@@ -550,15 +565,20 @@ class PayloadRepository:
         status: str,
         etag: str | None,
         version_id: int | None,
+        sync_session_id: str | None = None,
+        trace_operation_id: str | None = None,
+        client_device_id: str | None = None,
+        client_version: str | None = None,
     ) -> None:
         with self._managed_connect() as connection:
             connection.execute(
                 """
                 INSERT INTO sync_operations (
-                  scope, operation, status, etag, version_id, created_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?);
+                  scope, operation, status, etag, version_id, created_at_ms,
+                  sync_session_id, trace_operation_id, client_device_id, client_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
-                (scope, operation, status, etag, version_id, current_time_ms()),
+                (scope, operation, status, etag, version_id, current_time_ms(), sync_session_id, trace_operation_id, client_device_id, client_version),
             )
             connection.execute(
                 """
@@ -581,9 +601,10 @@ class PayloadRepository:
         status: str,
         etag: str | None,
         version_id: int | None,
+        trace: dict[str, str | None] | None = None,
     ) -> None:
         try:
-            self.record_operation(scope, operation, status, etag, version_id)
+            self.record_operation(scope, operation, status, etag, version_id, **(trace or {}))
         except Exception:
             # Payload/version writes are already committed. Audit persistence must
             # not turn a successful sync into a client-visible 500 response.
@@ -594,7 +615,8 @@ class PayloadRepository:
         with self._managed_connect() as connection:
             rows = connection.execute(
                 """
-                SELECT operation_id, scope, operation, status, etag, version_id, created_at_ms
+                SELECT operation_id, scope, operation, status, etag, version_id, created_at_ms,
+                       sync_session_id, trace_operation_id, client_device_id, client_version
                 FROM sync_operations
                 WHERE scope = ?
                 ORDER BY operation_id DESC
@@ -611,6 +633,10 @@ class PayloadRepository:
                 etag=row["etag"],
                 version_id=row["version_id"],
                 created_at_ms=row["created_at_ms"],
+                sync_session_id=row["sync_session_id"],
+                trace_operation_id=row["trace_operation_id"],
+                client_device_id=row["client_device_id"],
+                client_version=row["client_version"],
             )
             for row in rows
         ]
@@ -835,6 +861,10 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                     "etag": item.etag,
                     "versionId": item.version_id,
                     "createdAtMs": item.created_at_ms,
+                    "syncSessionId": item.sync_session_id,
+                    "traceOperationId": item.trace_operation_id,
+                    "clientDeviceId": item.client_device_id,
+                    "clientVersion": item.client_version,
                 }
                 for item in operations
             ],
@@ -879,6 +909,7 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             version_id=version_id,
             if_match=if_match,
             idempotency_key=idempotency_key,
+            trace=self._trace_context(),
         )
         if restored is None:
             raise RequestError(HTTPStatus.NOT_FOUND, "VERSION_NOT_FOUND", "同步快照版本不存在。")
@@ -942,6 +973,7 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             exported_at_ms=exported_at_ms,
             if_match=self.headers.get("If-Match"),
             idempotency_key=idempotency_key,
+            trace=self._trace_context(),
         )
         self._send_json(
             HTTPStatus.OK,
@@ -1000,14 +1032,15 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
 
     def _allowed_cors_headers(self) -> str:
         requested = self.headers.get("Access-Control-Request-Headers", "")
-        allowlist = {"authorization", "content-type", "if-match", "idempotency-key", "accept"}
+        allowlist = {"authorization", "content-type", "if-match", "idempotency-key", "accept",
+                     "x-sync-session-id", "x-sync-operation-id", "x-sync-client-device-id", "x-sync-client-version"}
         normalized = []
         for item in requested.split(","):
             name = item.strip().lower()
             if name and name in allowlist and name not in normalized:
                 normalized.append(name)
         if not normalized:
-            normalized = ["authorization", "content-type", "if-match", "accept"]
+            normalized = ["authorization", "content-type", "if-match", "accept", "x-sync-session-id", "x-sync-operation-id", "x-sync-client-device-id", "x-sync-client-version"]
         return ", ".join(normalized)
 
     def _cors_response_headers(self) -> dict[str, str]:
@@ -1018,6 +1051,14 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             "Access-Control-Allow-Origin": origin,
             "Vary": "Origin",
             "Access-Control-Expose-Headers": "ETag, X-Payload-Sha256, X-Sync-Scope, X-Sync-Revision, X-Sync-Idempotency-Key",
+        }
+
+    def _trace_context(self) -> dict[str, str | None]:
+        return {
+            "sync_session_id": self.headers.get("X-Sync-Session-Id", "").strip() or None,
+            "trace_operation_id": self.headers.get("X-Sync-Operation-Id", "").strip() or None,
+            "client_device_id": self.headers.get("X-Sync-Client-Device-Id", "").strip() or None,
+            "client_version": self.headers.get("X-Sync-Client-Version", "").strip() or None,
         }
 
 

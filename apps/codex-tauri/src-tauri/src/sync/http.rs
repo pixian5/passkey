@@ -145,6 +145,17 @@ pub fn put_sync_state(
         "Idempotency-Key",
         HeaderValue::from_str(&idem).unwrap_or(HeaderValue::from_static("idem")),
     );
+    // The transport API predates the structured report callback. Until it
+    // carries the two IDs separately, the stable logical-write key remains a
+    // useful server-side trace for retries and response-loss recovery.
+    headers.insert(
+        "X-Sync-Operation-Id",
+        HeaderValue::from_str(&idem).unwrap_or(HeaderValue::from_static("idem")),
+    );
+    headers.insert(
+        "X-Sync-Client-Version",
+        HeaderValue::from_static(env!("CARGO_PKG_VERSION")),
+    );
     let resp = client
         .put(&url)
         .headers(headers)

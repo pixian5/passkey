@@ -2493,9 +2493,15 @@ const renderSyncDecisionSummary = (reports) => {
     ...valid.map((report) => {
       const source = report.source ? `${report.source}：` : "";
       const mode = modeNames[report.mode] || report.mode || "未知模式";
-      const safety = report.safe === false ? `安全检查未通过${report.reasons?.length ? `（${report.reasons.join("、")}）` : ""}` : "安全检查通过";
+      const safetyStatus = report.safety || (report.safe === false ? "blocked" : "passed");
+      const safety = safetyStatus === "blocked"
+        ? `安全检查未通过${report.reasons?.length ? `（${report.reasons.join("、")}）` : ""}`
+        : safetyStatus === "notEvaluated"
+          ? "尚未执行安全检查"
+          : "安全检查通过";
       const pushState = formatSyncPushState(report);
-      return `${source}${mode} · 本地 ${report.localAccounts ?? "-"} → 合并 ${report.mergedAccounts ?? "-"} · ${safety}${pushState ? ` · ${pushState}` : ""}`;
+      const trace = shortSyncTrace(report);
+      return `${source}${mode} · 本地 ${report.localAccounts ?? "-"} → 合并 ${report.mergedAccounts ?? "-"} · ${safety}${pushState ? ` · ${pushState}` : ""}${trace ? ` · ${trace}` : ""}`;
     }),
   ];
   els.syncDecisionSummary.hidden = false;
@@ -2537,9 +2543,16 @@ const formatSyncPushState = (report) => {
   if (!report) return "";
   if (report.dryRun) return "仅预览";
   if (report.applied && report.pushed) return "本地已写入 · 远端已推送";
-  if (report.applied && !report.pushed) return "本地已写入 · 远端未推送（待补偿）";
+  if (report.applied && !report.pushed && report.pendingRetry !== false) return "本地已写入 · 远端未推送（待补偿）";
+  if (report.applied && !report.pushed) return "本地已写入 · 远端未推送";
   if (!report.applied && report.ok) return "无需写入";
   return report.ok ? "已完成" : "未完成";
+};
+const shortSyncTrace = (report) => {
+  const raw = String(report?.syncSessionId || report?.operationId || "").trim();
+  if (!raw) return "";
+  const compact = raw.split("-").at(-1)?.replaceAll("-", "") || raw;
+  return `同步编号 ${compact.slice(0, 8).toUpperCase()}`;
 };
 const primaryFingerprint = () => {
   const primary = els.syncPrimarySource?.value || "selfHosted";
@@ -2697,7 +2710,9 @@ const runSyncMode = async (mode, { quiet = false } = {}) => {
       const report = { source: source === "selfHosted" ? "自建服务器" : "WebDAV", ...(result.report || {}) };
       reports.push(report);
       if (source === preferred && report.ok === false) {
-        failures.push(`${report.source}：${report.message || "主同步源未完成"}`);
+        const code = report.code ? ` [${report.code}]` : "";
+        const trace = shortSyncTrace(report);
+        failures.push(`${report.source}${code}：${report.message || "主同步源未完成"}${trace ? `（${trace}）` : ""}`);
         break;
       }
       if (source === preferred && report.ok !== false && (report.applied || report.pushed || report.dryRun === false)) {

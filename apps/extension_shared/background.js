@@ -51,6 +51,7 @@ import {
 } from "./lock_state.js";
 import {
   isSyncOutboxReady,
+  syncPayloadSha256,
   syncTargetKey,
   upsertSyncOutbox,
 } from "./sync_outbox.js";
@@ -396,14 +397,14 @@ async function runAutoSync() {
       logSyncFlow("auto-sync-skipped-in-flight");
       return;
     }
-    return await runAutoSyncInternal();
+    return await runAutoSyncInternal(lockOwner);
   } finally {
     await releaseSyncOperationLock(lockOwner);
     autoSyncInFlight = false;
   }
 }
 
-async function runAutoSyncInternal() {
+async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey()) {
   const lockStatus = await getBackgroundLockStatus();
   if (lockStatus.locked) {
     logSyncFlow("auto-sync-skipped-locked");
@@ -469,7 +470,7 @@ async function runAutoSyncInternal() {
       hasPayload: Boolean(remoteResponse.payload),
       etag: remoteResponse.etag,
     });
-    updateRemoteConcurrencyState(target, remoteResponse.etag);
+    updateRemoteConcurrencyState(target, remoteResponse.etag, remoteResponse.revision);
     target.remotePayload = remoteResponse.payload;
     target.remoteEncrypted = remoteResponse.encrypted;
     const remotePayload = remoteResponse.payload;
@@ -577,20 +578,41 @@ async function runAutoSyncInternal() {
       remoteEtag: target.remoteEtag,
     });
     let result;
+    const candidatePayload = {
+      ...finalPayload,
+      accounts: mergedAccounts,
+      passkeys: mergedPasskeys,
+      folders: mergedFolders,
+    };
+    const candidateHash = await syncPayloadSha256(candidatePayload);
+    const persistedContext = pendingOutbox && pendingOutbox.payloadSha256 === candidateHash
+      ? pendingOutbox
+      : null;
+    const operationId = persistedContext?.operationId || createSyncIdempotencyKey();
+    const idempotencyKey = persistedContext?.idempotencyKey || createSyncIdempotencyKey();
     try {
       result = await pushRemotePayloadWithMode(target, {
-        ...finalPayload,
-        accounts: mergedAccounts,
-        passkeys: mergedPasskeys,
-        folders: mergedFolders,
-      }, SYNC_MODE_MERGE);
+        ...candidatePayload,
+      }, SYNC_MODE_MERGE, {
+        syncSessionId: persistedContext?.syncSessionId || syncSessionId,
+        operationId,
+        idempotencyKey,
+      });
     } catch (error) {
       pushErrors.push(`${target.label}: ${error?.message || String(error || "")}`);
       if (target.isPrimary) primaryPushFailed = true;
       const nextOutbox = upsertSyncOutbox([...outboxByTarget.values()], {
         targetKey,
-        payload: { ...finalPayload, accounts: mergedAccounts, passkeys: mergedPasskeys, folders: mergedFolders },
+        payload: candidatePayload,
         error,
+        payloadSha256: candidateHash,
+        expectedEtag: error?.expectedEtag || target.remoteEtag || "",
+        expectedRevision: error?.expectedRevision || target.remoteRevision || 0,
+        idempotencyKey: error?.idempotencyKey || idempotencyKey,
+        syncSessionId: error?.syncSessionId || syncSessionId,
+        operationId: error?.operationId || operationId,
+        sourceType: target.kind,
+        scope: target.scope || "",
       });
       outboxByTarget.clear();
       for (const item of nextOutbox) outboxByTarget.set(item.targetKey, item);
@@ -2080,15 +2102,39 @@ async function pullRemotePayload(target) {
   const parsed = await decryptSyncBundleDocument(envelope, key, fallbackKeys);
   const payload = parseSyncBundlePayload(parsed, { requireBundleSchema: true });
   if (!payload) throw new Error("远端数据格式错误，仅支持 pass.sync.bundle.v2");
-  return { payload, etag: response.headers.get("ETag"), encrypted };
+  return {
+    payload,
+    etag: response.headers.get("ETag"),
+    revision: Number(response.headers.get("X-Sync-Revision")) || 0,
+    encrypted,
+  };
 }
 
-function updateRemoteConcurrencyState(target, etag) {
+function updateRemoteConcurrencyState(target, etag, revision = 0) {
   const normalizedEtag = typeof etag === "string" && etag.trim() ? etag : null;
   target.remoteEtag = normalizedEtag;
+  if (Number.isFinite(Number(revision)) && Number(revision) > 0) target.remoteRevision = Number(revision);
   if (target.kind === "webdav") {
     target.supportsEtag = Boolean(normalizedEtag);
   }
+}
+
+function createSyncOperationContext(context = {}) {
+  return {
+    syncSessionId: String(context.syncSessionId || createSyncIdempotencyKey()),
+    operationId: String(context.operationId || createSyncIdempotencyKey()),
+    idempotencyKey: String(context.idempotencyKey || createSyncIdempotencyKey()),
+  };
+}
+
+function annotateSyncRetryError(error, target, operation) {
+  const annotated = error instanceof Error ? error : new Error(String(error || "同步失败"));
+  annotated.idempotencyKey = operation.idempotencyKey;
+  annotated.syncSessionId = operation.syncSessionId;
+  annotated.operationId = operation.operationId;
+  annotated.expectedEtag = target.remoteEtag || "";
+  annotated.expectedRevision = target.remoteRevision || 0;
+  return annotated;
 }
 
 async function verifySelfHostedWriteReceipt(response, idempotencyKey) {
@@ -2133,6 +2179,9 @@ async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey
   if (ifMatch) headers["If-Match"] = ifMatch;
   else if (target.kind === "webdav") headers["If-None-Match"] = "*";
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+  if (target.syncSessionId) headers["X-Sync-Session-Id"] = target.syncSessionId;
+  if (target.operationId) headers["X-Sync-Operation-Id"] = target.operationId;
+  headers["X-Sync-Client-Version"] = PASS_EXTENSION_VERSION;
   let response;
   try {
     response = await fetchWithSyncTimeout(target.url, {
@@ -2183,9 +2232,12 @@ async function getSyncDecryptionFallbackKeys() {
   return previous && previous !== current ? [previous] : [];
 }
 
-async function pushRemotePayloadWithRetry(target, payload) {
+async function pushRemotePayloadWithRetry(target, payload, context = {}) {
   let candidate = payload;
-  const idempotencyKey = createSyncIdempotencyKey();
+  const operation = createSyncOperationContext(context);
+  target.syncSessionId = operation.syncSessionId;
+  target.operationId = operation.operationId;
+  const { idempotencyKey } = operation;
   for (let attempt = 0; attempt < SYNC_PUSH_CONFLICT_MAX_ATTEMPTS; attempt += 1) {
     try {
       const pushResult = await pushRemotePayload(target, candidate, target.remoteEtag, idempotencyKey);
@@ -2204,9 +2256,9 @@ async function pushRemotePayloadWithRetry(target, payload) {
             return { payload: candidate };
           }
         } catch (_) {}
-        throw error;
+        throw annotateSyncRetryError(error, target, operation);
       }
-      if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw error;
+      if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw annotateSyncRetryError(error, target, operation);
     }
     const latestResponse = await pullRemotePayload(target);
     updateRemoteConcurrencyState(target, latestResponse.etag);
@@ -2252,15 +2304,18 @@ async function pushRemotePayloadWithRetry(target, payload) {
   throw new Error("远端并发冲突重试次数已用尽");
 }
 
-async function pushRemotePayloadWithMode(target, payload, syncMode) {
+async function pushRemotePayloadWithMode(target, payload, syncMode, context = {}) {
   if (syncMode !== SYNC_MODE_MERGE) {
-    const pushResult = await pushRemotePayload(target, payload, target.remoteEtag, createSyncIdempotencyKey());
+    const operation = createSyncOperationContext(context);
+    target.syncSessionId = operation.syncSessionId;
+    target.operationId = operation.operationId;
+    const pushResult = await pushRemotePayload(target, payload, target.remoteEtag, operation.idempotencyKey);
     updateRemoteConcurrencyState(target, pushResult.etag);
     target.remotePayload = payload;
     target.remoteEncrypted = true;
     return { payload };
   }
-  return pushRemotePayloadWithRetry(target, payload);
+  return pushRemotePayloadWithRetry(target, payload, context);
 }
 
 function createAccount({ site, username, password, createdAtMs, deviceName }) {

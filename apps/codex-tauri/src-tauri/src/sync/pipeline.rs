@@ -2,8 +2,9 @@ use super::crypto::{decrypt_wire_body_with_fallback, encrypt_bundle_document, PL
 use super::http::{get_sync_state, put_sync_state};
 use super::settings::SyncSettings;
 use chrono::Utc;
-use pass_merge::v2::{evaluate_sync_safety, merge_sync_payloads, sync_alias_groups, SyncPayload};
-use serde::{Deserialize, Serialize};
+use pass_merge::v2::{
+    evaluate_sync_safety, merge_sync_payloads, sync_alias_groups, SyncOperationReport, SyncPayload,
+};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -38,22 +39,49 @@ impl SyncMode {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncReport {
-    pub ok: bool,
-    pub dry_run: bool,
-    pub mode: String,
-    pub message: String,
-    pub safe: bool,
-    pub reasons: Vec<String>,
-    pub local_accounts: usize,
-    pub remote_accounts: usize,
-    pub merged_accounts: usize,
-    pub applied: bool,
-    pub pushed: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub etag: Option<String>,
+pub type SyncReport = SyncOperationReport;
+
+fn new_trace_id(prefix: &str) -> String {
+    format!("{prefix}-{}", Uuid::new_v4())
+}
+
+fn classify_sync_error(error: &str) -> (&'static str, bool) {
+    let text = error.to_ascii_uppercase();
+    if text.contains("PRECONDITION_FAILED")
+        || text.contains("HTTP 412")
+        || text.contains("HTTP 428")
+    {
+        ("ETAG_CONFLICT", true)
+    } else if text.contains("HTTP 429") || text.contains("RATE_LIMIT") {
+        ("RATE_LIMITED", true)
+    } else if text.contains("HTTP 503") || text.contains("SERVER_BUSY") {
+        ("SERVER_BUSY", true)
+    } else if text.contains("HTTP 401") || text.contains("AUTH_REQUIRED") {
+        ("AUTH_REQUIRED", false)
+    } else if text.contains("HTTP 403") || text.contains("AUTH_FORBIDDEN") {
+        ("AUTH_FORBIDDEN", false)
+    } else if text.contains("解密") || text.contains("密钥") {
+        ("DECRYPT_FAILED", false)
+    } else if text.contains("SCHEMA") || text.contains("JSON") || text.contains("PAYLOAD") {
+        ("INVALID_SCHEMA", false)
+    } else if text.contains("ETAG") {
+        ("NO_ETAG", false)
+    } else if text.contains("本地") && text.contains("变化") {
+        ("LOCAL_CHANGED", false)
+    } else {
+        ("REMOTE_UNAVAILABLE", true)
+    }
+}
+
+fn report_base(mode: SyncMode, dry_run: bool, source: &str) -> SyncReport {
+    SyncReport {
+        dry_run,
+        mode: mode.as_str().into(),
+        source: source.into(),
+        sync_session_id: new_trace_id("sync"),
+        operation_id: new_trace_id("op"),
+        ..Default::default()
+    }
 }
 
 fn now_ms() -> i64 {
@@ -244,23 +272,23 @@ pub fn preview_sync(
         format!("预览停止：安全检查未通过（{}）", report.reasons.join(", "))
     };
     let _ = (device_name, platform);
-    Ok((
-        SyncReport {
-            ok: report.safe,
-            dry_run: true,
-            mode: mode.as_str().into(),
-            message,
-            safe: report.safe,
-            reasons: report.reasons.clone(),
-            local_accounts: local_count,
-            remote_accounts: remote_count,
-            merged_accounts: merged_count,
-            applied: false,
-            pushed: false,
-            etag: None,
-        },
-        merged,
-    ))
+    let mut result = report_base(mode, true, "selfHosted");
+    result.ok = report.safe;
+    result.message = message;
+    result.set_safety(report.safe);
+    result.reasons = report.reasons.clone();
+    result.local_accounts = local_count;
+    result.remote_accounts = remote_count;
+    result.merged_accounts = merged_count;
+    result.remote_pulled = true;
+    result.stage = if report.safe {
+        "completed"
+    } else {
+        "safetyChecking"
+    }
+    .into();
+    result.code = (!report.safe).then(|| "SAFETY_BLOCKED".into());
+    Ok((result, merged))
 }
 
 /// Preview a non-server transport without applying or pushing anything.
@@ -268,6 +296,7 @@ pub fn preview_with_transport<P>(
     mode: SyncMode,
     local: SyncPayload,
     device_name: &str,
+    source: &str,
     mut pull: P,
 ) -> Result<(SyncReport, SyncPayload), String>
 where
@@ -278,24 +307,27 @@ where
     let remote_count = remote_opt.as_ref().map(visible_account_count).unwrap_or(0);
     let (merged, safety) = decide_merged(mode, local.clone(), remote_opt, device_name);
     let merged_count = visible_account_count(&merged);
-    let report = SyncReport {
-        ok: safety.safe,
-        dry_run: true,
-        mode: mode.as_str().into(),
-        message: if safety.safe {
-            format!("预览（未写入）：账号 {local_count}->{merged_count}（远端 {remote_count}）")
-        } else {
-            format!("预览停止：安全检查未通过（{}）", safety.reasons.join(", "))
-        },
-        safe: safety.safe,
-        reasons: safety.reasons,
-        local_accounts: local_count,
-        remote_accounts: remote_count,
-        merged_accounts: merged_count,
-        applied: false,
-        pushed: false,
-        etag,
+    let mut report = report_base(mode, true, source);
+    report.ok = safety.safe;
+    report.message = if safety.safe {
+        format!("预览（未写入）：账号 {local_count}->{merged_count}（远端 {remote_count}）")
+    } else {
+        format!("预览停止：安全检查未通过（{}）", safety.reasons.join(", "))
     };
+    report.set_safety(safety.safe);
+    report.reasons = safety.reasons;
+    report.local_accounts = local_count;
+    report.remote_accounts = remote_count;
+    report.merged_accounts = merged_count;
+    report.remote_pulled = true;
+    report.stage = if report.safe {
+        "completed"
+    } else {
+        "safetyChecking"
+    }
+    .into();
+    report.code = (!report.safe).then(|| "SAFETY_BLOCKED".into());
+    report.etag = etag;
     Ok((report, merged))
 }
 
@@ -328,6 +360,7 @@ pub(crate) fn run_sync_with_transport<P, U, A>(
     device_name: &str,
     platform: &str,
     encryption_key: &str,
+    source: &str,
     mut pull: P,
     mut apply_local: A,
     mut push: U,
@@ -340,6 +373,8 @@ where
     let mut attempt = 0;
     let mut last_applied: Option<SyncPayload> = None;
     let idempotency_key = Uuid::new_v4().to_string();
+    let sync_session_id = new_trace_id("sync");
+    let operation_id = new_trace_id("op");
     loop {
         attempt += 1;
         let (remote_opt, etag) = pull()?;
@@ -348,21 +383,22 @@ where
         let (merged, report) = decide_merged(mode, local.clone(), remote_opt, device_name);
         let merged_count = visible_account_count(&merged);
         if !report.safe {
+            let mut failure = report_base(mode, false, source);
+            failure.sync_session_id = sync_session_id.clone();
+            failure.operation_id = operation_id.clone();
+            failure.message = format!("同步停止：安全检查未通过（{}）", report.reasons.join(", "));
+            failure.set_safety(false);
+            failure.reasons = report.reasons;
+            failure.local_accounts = local_count;
+            failure.remote_accounts = remote_count;
+            failure.merged_accounts = merged_count;
+            failure.applied = last_applied.is_some();
+            failure.remote_pulled = true;
+            failure.stage = "safetyChecking".into();
+            failure.code = Some("SAFETY_BLOCKED".into());
+            failure.etag = etag;
             return Ok((
-                SyncReport {
-                    ok: false,
-                    dry_run: false,
-                    mode: mode.as_str().into(),
-                    message: format!("同步停止：安全检查未通过（{}）", report.reasons.join(", ")),
-                    safe: false,
-                    reasons: report.reasons,
-                    local_accounts: local_count,
-                    remote_accounts: remote_count,
-                    merged_accounts: merged_count,
-                    applied: last_applied.is_some(),
-                    pushed: false,
-                    etag,
-                },
+                failure,
                 last_applied.clone().unwrap_or_else(|| local.clone()),
             ));
         }
@@ -383,47 +419,46 @@ where
         )?;
         match push(&wire, etag.as_deref(), &idempotency_key) {
             Ok(new_etag) => {
-                return Ok((
-                    SyncReport {
-                        ok: true,
-                        dry_run: false,
-                        mode: mode.as_str().into(),
-                        message: format!(
-                            "同步完成：账号 {}->{}（已写入本地并推送）",
-                            local_count,
-                            visible_account_count(&to_store)
-                        ),
-                        safe: true,
-                        reasons: vec![],
-                        local_accounts: local_count,
-                        remote_accounts: remote_count,
-                        merged_accounts: visible_account_count(&to_store),
-                        applied: true,
-                        pushed: true,
-                        etag: Some(new_etag),
-                    },
-                    to_store,
-                ));
+                let mut success = report_base(mode, false, source);
+                success.sync_session_id = sync_session_id.clone();
+                success.operation_id = operation_id.clone();
+                success.ok = true;
+                success.message = format!(
+                    "同步完成：账号 {}->{}（已写入本地并推送）",
+                    local_count,
+                    visible_account_count(&to_store)
+                );
+                success.set_safety(true);
+                success.local_accounts = local_count;
+                success.remote_accounts = remote_count;
+                success.merged_accounts = visible_account_count(&to_store);
+                success.applied = true;
+                success.pushed = true;
+                success.remote_pulled = true;
+                success.stage = "completed".into();
+                success.etag = Some(new_etag);
+                return Ok((success, to_store));
             }
             Err(e) if e == "PRECONDITION_FAILED" && attempt < MAX_CONFLICT_RETRIES => continue,
             Err(e) => {
-                return Ok((
-                    SyncReport {
-                        ok: false,
-                        dry_run: false,
-                        mode: mode.as_str().into(),
-                        message: format!("本地已更新为合并结果，但推送远端失败，请重试同步：{e}"),
-                        safe: true,
-                        reasons: vec![e],
-                        local_accounts: local_count,
-                        remote_accounts: remote_count,
-                        merged_accounts: visible_account_count(&to_store),
-                        applied: true,
-                        pushed: false,
-                        etag,
-                    },
-                    to_store,
-                ));
+                let (code, retryable) = classify_sync_error(&e);
+                let mut failure = report_base(mode, false, source);
+                failure.sync_session_id = sync_session_id.clone();
+                failure.operation_id = operation_id.clone();
+                failure.message = format!("本地已更新为合并结果，但推送远端失败，请重试同步：{e}");
+                failure.set_safety(true);
+                failure.reasons = vec![e];
+                failure.local_accounts = local_count;
+                failure.remote_accounts = remote_count;
+                failure.merged_accounts = visible_account_count(&to_store);
+                failure.applied = true;
+                failure.remote_pulled = true;
+                failure.pending_retry = true;
+                failure.retryable = retryable;
+                failure.stage = "pushingRemote".into();
+                failure.code = Some(code.into());
+                failure.etag = etag;
+                return Ok((failure, to_store));
             }
         }
     }
@@ -454,6 +489,7 @@ where
         device_name,
         platform,
         &encryption_key,
+        "selfHosted",
         || pull_remote(settings),
         apply_local,
         |wire, etag, idempotency_key| {

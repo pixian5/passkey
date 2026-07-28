@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import SwiftUI
 import Vision
@@ -375,6 +376,44 @@ final class AccountStore: ObservableObject {
         let attempts: Int
         let nextRetryAtMs: Int64
         let lastError: String
+        let payloadSha256: String
+        let expectedEtag: String
+        let expectedRevision: Int
+        let idempotencyKey: String
+        let syncSessionId: String
+        let operationId: String
+        let lastErrorCode: String
+
+        private enum CodingKeys: String, CodingKey {
+            case sourceKey, payload, createdAtMs, attempts, nextRetryAtMs, lastError
+            case payloadSha256, expectedEtag, expectedRevision, idempotencyKey, syncSessionId, operationId, lastErrorCode
+        }
+
+        init(sourceKey: String, payload: SyncBundlePayload, createdAtMs: Int64, attempts: Int, nextRetryAtMs: Int64,
+             lastError: String, payloadSha256: String = "", expectedEtag: String = "", expectedRevision: Int = 0,
+             idempotencyKey: String = "", syncSessionId: String = "", operationId: String = "", lastErrorCode: String = "") {
+            self.sourceKey = sourceKey; self.payload = payload; self.createdAtMs = createdAtMs; self.attempts = attempts
+            self.nextRetryAtMs = nextRetryAtMs; self.lastError = lastError; self.payloadSha256 = payloadSha256
+            self.expectedEtag = expectedEtag; self.expectedRevision = expectedRevision; self.idempotencyKey = idempotencyKey
+            self.syncSessionId = syncSessionId; self.operationId = operationId; self.lastErrorCode = lastErrorCode
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            sourceKey = try c.decode(String.self, forKey: .sourceKey)
+            payload = try c.decode(SyncBundlePayload.self, forKey: .payload)
+            createdAtMs = try c.decode(Int64.self, forKey: .createdAtMs)
+            attempts = try c.decode(Int.self, forKey: .attempts)
+            nextRetryAtMs = try c.decode(Int64.self, forKey: .nextRetryAtMs)
+            lastError = try c.decode(String.self, forKey: .lastError)
+            payloadSha256 = try c.decodeIfPresent(String.self, forKey: .payloadSha256) ?? ""
+            expectedEtag = try c.decodeIfPresent(String.self, forKey: .expectedEtag) ?? ""
+            expectedRevision = try c.decodeIfPresent(Int.self, forKey: .expectedRevision) ?? 0
+            idempotencyKey = try c.decodeIfPresent(String.self, forKey: .idempotencyKey) ?? ""
+            syncSessionId = try c.decodeIfPresent(String.self, forKey: .syncSessionId) ?? ""
+            operationId = try c.decodeIfPresent(String.self, forKey: .operationId) ?? ""
+            lastErrorCode = try c.decodeIfPresent(String.self, forKey: .lastErrorCode) ?? ""
+        }
     }
 
     struct SyncVersionSummary: Identifiable {
@@ -5180,18 +5219,33 @@ final class AccountStore: ObservableObject {
         {
             items = decoded
         }
-        let previousAttempts = items.first(where: { $0.sourceKey == sourceKey })?.attempts ?? 0
+        let payloadHash = syncOutboxPayloadHash(payload)
+        let previous = items.first(where: { $0.sourceKey == sourceKey })
+        let sameLogicalWrite = previous?.payloadSha256 == payloadHash && !payloadHash.isEmpty
+        let previousAttempts = sameLogicalWrite ? (previous?.attempts ?? 0) : 0
         let attempts = min(previousAttempts + 1, PassSyncPolicy.syncOutboxMaxAttempts)
         let delaySeconds = PassSyncPolicy.syncOutboxRetryDelaySeconds(attempts: attempts)
         let item = SyncOutboxItem(
             sourceKey: sourceKey,
             payload: canonicalSyncPayload(payload),
-            createdAtMs: items.first(where: { $0.sourceKey == sourceKey })?.createdAtMs ?? now,
+            createdAtMs: sameLogicalWrite ? (previous?.createdAtMs ?? now) : now,
             attempts: attempts,
             nextRetryAtMs: now + Int64(delaySeconds * 1000),
-            lastError: error.localizedDescription
+            lastError: error.localizedDescription,
+            payloadSha256: payloadHash,
+            expectedEtag: (error as NSError).userInfo["expectedEtag"] as? String ?? previous?.expectedEtag ?? "",
+            expectedRevision: (error as NSError).userInfo["expectedRevision"] as? Int ?? previous?.expectedRevision ?? 0,
+            idempotencyKey: (error as NSError).userInfo["idempotencyKey"] as? String ?? (sameLogicalWrite ? previous?.idempotencyKey : nil) ?? "pass-\(syncDeviceId())-\(UUID().uuidString)",
+            syncSessionId: (error as NSError).userInfo["syncSessionId"] as? String ?? (sameLogicalWrite ? previous?.syncSessionId : nil) ?? "pass-session-\(UUID().uuidString)",
+            operationId: (error as NSError).userInfo["operationId"] as? String ?? (sameLogicalWrite ? previous?.operationId : nil) ?? "pass-op-\(UUID().uuidString)",
+            lastErrorCode: "\((error as NSError).code)"
         )
         saveSyncOutbox(items.filter { $0.sourceKey != sourceKey } + [item])
+    }
+
+    private func syncOutboxPayloadHash(_ payload: SyncBundlePayload) -> String {
+        guard let data = try? encoder.encode(canonicalSyncPayload(payload)) else { return "" }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     private func clearSyncOutbox(sourceKey: String) {

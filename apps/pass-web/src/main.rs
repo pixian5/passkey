@@ -19,7 +19,8 @@ use pass_merge::v2::{
     evaluate_sync_safety, mark_folder_membership, normalize_all_regular_order,
     normalize_folder_regular_order, normalize_folder_regular_orders, permanently_delete_account,
     permanently_delete_folder, restore_account_fields, set_account_pinned, soft_delete_account,
-    sync_alias_groups, Folder, Passkey, PasswordAccount, SyncPayload,
+    sync_alias_groups, Folder, Passkey, PasswordAccount, SyncOperationReport, SyncPayload,
+    SyncSafetyStatus,
 };
 use pbkdf2::pbkdf2_hmac;
 use rand::RngCore;
@@ -943,22 +944,61 @@ impl SyncMode {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SyncReport {
-    ok: bool,
+type SyncReport = SyncOperationReport;
+
+fn new_sync_trace_id(prefix: &str) -> String {
+    format!("{prefix}-{}", Uuid::new_v4())
+}
+
+fn sync_report_base(
+    mode: SyncMode,
     dry_run: bool,
-    mode: String,
-    message: String,
+    source: &str,
     safe: bool,
-    reasons: Vec<String>,
-    local_accounts: usize,
-    remote_accounts: usize,
-    merged_accounts: usize,
-    applied: bool,
-    pushed: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    etag: Option<String>,
+    sync_session_id: &str,
+    operation_id: &str,
+) -> SyncReport {
+    SyncReport {
+        dry_run,
+        mode: mode.as_str().into(),
+        safe,
+        safety: if safe {
+            SyncSafetyStatus::Passed
+        } else {
+            SyncSafetyStatus::Blocked
+        },
+        source: source.into(),
+        sync_session_id: sync_session_id.into(),
+        operation_id: operation_id.into(),
+        remote_pulled: true,
+        ..Default::default()
+    }
+}
+
+fn classify_sync_error(error: &str) -> (&'static str, bool) {
+    let text = error.to_ascii_uppercase();
+    if text.contains("PRECONDITION_FAILED")
+        || text.contains("HTTP 412")
+        || text.contains("HTTP 428")
+    {
+        ("ETAG_CONFLICT", true)
+    } else if text.contains("HTTP 429") || text.contains("RATE_LIMIT") {
+        ("RATE_LIMITED", true)
+    } else if text.contains("HTTP 503") || text.contains("SERVER_BUSY") {
+        ("SERVER_BUSY", true)
+    } else if text.contains("HTTP 401") || text.contains("AUTH_REQUIRED") {
+        ("AUTH_REQUIRED", false)
+    } else if text.contains("HTTP 403") || text.contains("AUTH_FORBIDDEN") {
+        ("AUTH_FORBIDDEN", false)
+    } else if text.contains("解密") || text.contains("密钥") {
+        ("DECRYPT_FAILED", false)
+    } else if text.contains("SCHEMA") || text.contains("JSON") || text.contains("PAYLOAD") {
+        ("INVALID_SCHEMA", false)
+    } else if text.contains("ETAG") {
+        ("NO_ETAG", false)
+    } else {
+        ("REMOTE_UNAVAILABLE", true)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1223,6 +1263,15 @@ fn self_hosted_put(
         "Idempotency-Key",
         HeaderValue::from_str(idempotency_key.trim())
             .map_err(|_| "Idempotency-Key 非法".to_string())?,
+    );
+    headers.insert(
+        "X-Sync-Operation-Id",
+        HeaderValue::from_str(idempotency_key.trim())
+            .map_err(|_| "同步操作标识非法".to_string())?,
+    );
+    headers.insert(
+        "X-Sync-Client-Version",
+        HeaderValue::from_static(env!("CARGO_PKG_VERSION")),
     );
     if let Some(tag) = etag.filter(|v| !v.trim().is_empty()) {
         headers.insert(
@@ -1569,6 +1618,8 @@ fn webdav_put(
 }
 
 fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value, String> {
+    let sync_session_id = new_sync_trace_id("sync");
+    let operation_id = new_sync_trace_id("op");
     let prefs = v.data.ui_prefs.clone();
     if !prefs
         .get("webdavEnabled")
@@ -1628,8 +1679,6 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
     let merged_count = visible_accounts(&merged);
     let report = SyncReport {
         ok: safety.safe,
-        dry_run,
-        mode: mode.as_str().into(),
         message: if safety.safe {
             format!("WebDAV 预览：本地 {local_count} → 合并 {merged_count}（远端 {remote_count}）")
         } else {
@@ -1638,14 +1687,26 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
                 safety.reasons.join("、")
             )
         },
-        safe: safety.safe,
         reasons: safety.reasons,
         local_accounts: local_count,
         remote_accounts: remote_count,
         merged_accounts: merged_count,
-        applied: false,
-        pushed: false,
+        stage: if safety.safe {
+            "completed"
+        } else {
+            "safetyChecking"
+        }
+        .into(),
+        code: (!safety.safe).then(|| "SAFETY_BLOCKED".into()),
         etag: fetched.etag.clone(),
+        ..sync_report_base(
+            mode,
+            dry_run,
+            "webdav",
+            safety.safe,
+            &sync_session_id,
+            &operation_id,
+        )
     };
     if dry_run || !report.safe {
         return Ok(json!({"report": report, "localPayload": local, "payload": merged}));
@@ -1686,17 +1747,15 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
             Ok(new_etag) => {
                 return Ok(json!({"report": SyncReport {
                     ok: true,
-                    dry_run: false,
-                    mode: mode.as_str().into(),
                     message: format!("WebDAV 同步完成：账号 {}→{}", local_count, visible_accounts(&to_store)),
-                    safe: true,
-                    reasons: vec![],
                     local_accounts: local_count,
                     remote_accounts: remote_count,
                     merged_accounts: visible_accounts(&to_store),
                     applied: true,
                     pushed: true,
+                    stage: "completed".into(),
                     etag: Some(new_etag),
+                    ..sync_report_base(mode, false, "webdav", true, &sync_session_id, &operation_id)
                 }}));
             }
             Err(error) if error == "PRECONDITION_FAILED" => {
@@ -1724,18 +1783,16 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
                 let safety = evaluate_sync_safety(&local, remote.as_ref(), &merged, mode.as_str());
                 if !safety.safe {
                     return Ok(json!({"report": SyncReport {
-                        ok: false,
-                        dry_run: false,
-                        mode: mode.as_str().into(),
                         message: format!("WebDAV 同步停止：安全检查未通过（{}）", safety.reasons.join("、")),
-                        safe: false,
                         reasons: safety.reasons,
                         local_accounts: visible_accounts(&local),
                         remote_accounts: remote.as_ref().map(visible_accounts).unwrap_or(0),
                         merged_accounts: visible_accounts(&merged),
                         applied: local_applied,
-                        pushed: false,
+                        stage: "safetyChecking".into(),
+                        code: Some("SAFETY_BLOCKED".into()),
                         etag: current_etag.clone(),
+                        ..sync_report_base(mode, false, "webdav", false, &sync_session_id, &operation_id)
                     }}));
                 }
                 to_store = if mode == SyncMode::LocalOverwriteRemote {
@@ -1747,40 +1804,43 @@ fn run_webdav_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value
                 wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), &key)?;
             }
             Err(error) => {
+                let (code, retryable) = classify_sync_error(&error);
                 return Ok(json!({"report": SyncReport {
-                    ok: false,
-                    dry_run: false,
-                    mode: mode.as_str().into(),
                     message: format!("本地已更新为合并结果，但 WebDAV 推送失败，请重试同步：{error}"),
-                    safe: true,
                     reasons: vec![error],
                     local_accounts: local_count,
                     remote_accounts: remote_count,
                     merged_accounts: visible_accounts(&to_store),
                     applied: true,
-                    pushed: false,
+                    pending_retry: true,
+                    retryable,
+                    stage: "pushingRemote".into(),
+                    code: Some(code.into()),
                     etag: current_etag.clone(),
+                    ..sync_report_base(mode, false, "webdav", true, &sync_session_id, &operation_id)
                 }}));
             }
         }
     }
     Ok(json!({"report": SyncReport {
-        ok: false,
-        dry_run: false,
-        mode: mode.as_str().into(),
         message: "本地已更新为合并结果，但 WebDAV 同步冲突重试次数已用尽，请重试同步".into(),
-        safe: true,
         reasons: vec!["PRECONDITION_FAILED".into()],
         local_accounts: local_count,
         remote_accounts: remote_count,
         merged_accounts: visible_accounts(&to_store),
         applied: local_applied,
-        pushed: false,
+        pending_retry: true,
+        retryable: true,
+        stage: "pushingRemote".into(),
+        code: Some("ETAG_CONFLICT".into()),
         etag: current_etag.clone(),
+        ..sync_report_base(mode, false, "webdav", true, &sync_session_id, &operation_id)
     }}))
 }
 
 fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<Value, String> {
+    let sync_session_id = new_sync_trace_id("sync");
+    let operation_id = new_sync_trace_id("op");
     let settings = v.data.sync_settings.clone();
     if !settings
         .get("enabled")
@@ -1831,21 +1891,31 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
     let merged_count = visible_accounts(&merged);
     let report = SyncReport {
         ok: safety.safe,
-        dry_run,
-        mode: mode.as_str().into(),
         message: if safety.safe {
             format!("同步预览：本地 {local_count} → 合并 {merged_count}（远端 {remote_count}）")
         } else {
             format!("同步停止：安全检查未通过（{}）", safety.reasons.join("、"))
         },
-        safe: safety.safe,
         reasons: safety.reasons,
         local_accounts: local_count,
         remote_accounts: remote_count,
         merged_accounts: merged_count,
-        applied: false,
-        pushed: false,
+        stage: if safety.safe {
+            "completed"
+        } else {
+            "safetyChecking"
+        }
+        .into(),
+        code: (!safety.safe).then(|| "SAFETY_BLOCKED".into()),
         etag: fetched.etag.clone(),
+        ..sync_report_base(
+            mode,
+            dry_run,
+            "selfHosted",
+            safety.safe,
+            &sync_session_id,
+            &operation_id,
+        )
     };
     if dry_run || !report.safe {
         return Ok(json!({
@@ -1896,17 +1966,15 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
                 return Ok(json!({
                     "report": SyncReport {
                         ok: true,
-                        dry_run: false,
-                        mode: mode.as_str().into(),
                         message: format!("同步完成：账号 {local_count}→{}", visible_accounts(&to_store)),
-                        safe: true,
-                        reasons: vec![],
                         local_accounts: local_count,
                         remote_accounts: remote_count,
                         merged_accounts: visible_accounts(&to_store),
                         applied: true,
                         pushed: true,
+                        stage: "completed".into(),
                         etag: Some(new_etag),
+                        ..sync_report_base(mode, false, "selfHosted", true, &sync_session_id, &operation_id)
                     }
                 }));
             }
@@ -1935,18 +2003,16 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
                 let safety = evaluate_sync_safety(&local, remote.as_ref(), &merged, mode.as_str());
                 if !safety.safe {
                     return Ok(json!({"report": SyncReport {
-                        ok: false,
-                        dry_run: false,
-                        mode: mode.as_str().into(),
                         message: format!("同步停止：安全检查未通过（{}）", safety.reasons.join("、")),
-                        safe: false,
                         reasons: safety.reasons,
                         local_accounts: visible_accounts(&local),
                         remote_accounts: remote.as_ref().map(visible_accounts).unwrap_or(0),
                         merged_accounts: visible_accounts(&merged),
                         applied: local_applied,
-                        pushed: false,
+                        stage: "safetyChecking".into(),
+                        code: Some("SAFETY_BLOCKED".into()),
                         etag: current_etag.clone(),
+                        ..sync_report_base(mode, false, "selfHosted", false, &sync_session_id, &operation_id)
                     }}));
                 }
                 to_store = if mode == SyncMode::LocalOverwriteRemote {
@@ -1964,20 +2030,21 @@ fn run_self_hosted_sync(v: &mut Vault, mode: SyncMode, dry_run: bool) -> Result<
                 wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), &key)?;
             }
             Err(error) => {
+                let (code, retryable) = classify_sync_error(&error);
                 return Ok(json!({
                     "report": SyncReport {
-                        ok: false,
-                        dry_run: false,
-                        mode: mode.as_str().into(),
                         message: format!("本地已更新为合并结果，但推送远端失败，请重试同步：{error}"),
-                        safe: true,
                         reasons: vec![error],
                         local_accounts: local_count,
                         remote_accounts: remote_count,
                         merged_accounts: visible_accounts(&to_store),
                         applied: true,
-                        pushed: false,
+                        pending_retry: true,
+                        retryable,
+                        stage: "pushingRemote".into(),
+                        code: Some(code.into()),
                         etag: current_etag.clone(),
+                        ..sync_report_base(mode, false, "selfHosted", true, &sync_session_id, &operation_id)
                     }
                 }));
             }

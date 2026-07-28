@@ -802,6 +802,26 @@ class PassSyncServerTests(unittest.TestCase):
         self.assertEqual(operations[1]["operation"], "put")
         self.assertEqual(operations[1]["etag"], first_etag)
 
+    def test_audit_keeps_client_trace_headers(self) -> None:
+        headers = {
+            "Authorization": "Bearer secret-token",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Idempotency-Key": "trace-key-1",
+            "X-Sync-Session-Id": "session-1",
+            "X-Sync-Operation-Id": "operation-1",
+            "X-Sync-Client-Device-Id": "device-1",
+            "X-Sync-Client-Version": "1.3.5",
+        }
+        with self.request("PUT", "/v2/sync/state", body=sample_bundle(8100), headers=headers):
+            pass
+        with self.request("GET", "/v2/sync/audit", headers=headers) as response:
+            operation = json.loads(response.read().decode("utf-8"))["operations"][0]
+        self.assertEqual(operation["syncSessionId"], "session-1")
+        self.assertEqual(operation["traceOperationId"], "operation-1")
+        self.assertEqual(operation["clientDeviceId"], "device-1")
+        self.assertEqual(operation["clientVersion"], "1.3.5")
+
     def test_options_allows_audit_path(self) -> None:
         request = urllib.request.Request(
             f"{self.base_url}/v1/sync/audit",
