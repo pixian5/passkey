@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   SYNC_OUTBOX_MAX_ATTEMPTS,
   isSyncOutboxReady,
+  matchingSyncOutboxItem,
   normalizeSyncOutbox,
   removeOrphanedSyncOutbox,
   removeSyncOutbox,
@@ -106,6 +107,17 @@ test("补偿任务达到最大次数后暂停，手动恢复会从零开始", ()
   assert.equal(resumed[0].attempts, 0);
   assert.equal(resumed[0].nextRetryAtMs, 0);
   assert.equal(isSyncOutboxReady(resumed[0], 0), true);
+});
+
+test("旧暂停任务不能阻塞摘要已经变化的新逻辑写入", () => {
+  const paused = {
+    targetKey: "server|https://sync.example",
+    payloadSha256: "old-hash",
+    status: "paused",
+    nextRetryAtMs: 99_999_999,
+  };
+  assert.equal(matchingSyncOutboxItem(paused, "new-hash"), null);
+  assert.equal(matchingSyncOutboxItem(paused, "old-hash"), paused);
 });
 
 test("同步 outbox 只清理当前已失效的远端目标", () => {

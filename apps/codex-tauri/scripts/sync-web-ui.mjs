@@ -8,6 +8,7 @@ const extensionDir = resolve(repoRoot, "apps/extension_chrome_web");
 
 const sourceMain = resolve(root, "src/main.js");
 const sourceStyles = resolve(root, "src/styles.css");
+const sourceSyncOutboxScheduler = resolve(root, "src/sync_outbox_scheduler.js");
 const sourceHtml = resolve(root, "index.html");
 const coreJs = resolve(repoRoot, "core/pass_core/js/sync_merge_core.js");
 const csvCoreJs = resolve(repoRoot, "core/pass_core/js/csv_core.js");
@@ -20,6 +21,7 @@ async function syncExtensionUi() {
   // Single UI source: copy Tauri/Web management page into the Chrome web-options surface.
   await cp(sourceMain, resolve(extensionDir, "web-main.js"));
   await cp(sourceStyles, resolve(extensionDir, "web-options.css"));
+  await cp(sourceSyncOutboxScheduler, resolve(extensionDir, "sync_outbox_scheduler.js"));
   await cp(coreJs, resolve(extensionDir, "sync_merge_core.js"));
   await cp(csvCoreJs, resolve(extensionDir, "csv_core.js"));
   await cp(vaultMutateCoreJs, resolve(extensionDir, "vault_mutate_core.js"));

@@ -74,6 +74,13 @@ export function isSyncOutboxReady(item, nowMs = Date.now()) {
       && Number(item.nextRetryAtMs || 0) <= nowMs);
 }
 
+export function matchingSyncOutboxItem(item, payloadSha256) {
+  const hash = String(payloadSha256 || "").trim().toLowerCase();
+  return item && hash && String(item.payloadSha256 || "").trim().toLowerCase() === hash
+    ? item
+    : null;
+}
+
 /**
  * Explicitly resume a permanently paused task.  The payload hash guard keeps
  * a stale manual retry from reviving a newer task written for the same target.

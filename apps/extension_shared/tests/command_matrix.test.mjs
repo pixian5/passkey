@@ -17,6 +17,7 @@ test("三端命令矩阵检查通过", () => {
 });
 
 const storage = new Map();
+const backgroundMessages = [];
 globalThis.chrome = {
   storage: {
     local: {
@@ -34,7 +35,20 @@ globalThis.chrome = {
   },
   runtime: {
     lastError: null,
-    sendMessage(_message, callback) {
+    sendMessage(message, callback) {
+      backgroundMessages.push(message);
+      if (message?.type === "PASS_SYNC_OUTBOX_STATUS") {
+        callback({ ok: true, items: [{ sourceKey: "server|https://sync.example", attempts: 2, status: "pendingRetry" }] });
+        return;
+      }
+      if (message?.type === "PASS_SYNC_OUTBOX_CLEAR_INACTIVE") {
+        callback({ ok: true, removed: 2 });
+        return;
+      }
+      if (message?.type === "PASS_SYNC_RUN") {
+        callback({ ok: true, result: { report: { ok: true, dryRun: Boolean(message.payload?.dryRun) } } });
+        return;
+      }
       callback({ ok: true });
     },
   },
@@ -70,4 +84,18 @@ test("扩展不支持能力必须明确失败；服务器版本在已配置时�
   const health = await invoke("health_check");
   assert.equal(health.capabilities.serverVersions, true);
   assert.equal(health.capabilities.webdavSync, false);
+});
+
+test("Chrome Web 管理页把同步和补偿队列委托给后台", async () => {
+  await invoke("set_sync_settings", { settings: { enabled: true, baseUrl: "https://sync.example" } });
+  const items = await invoke("get_sync_outbox_status");
+  assert.equal(items.length, 1);
+  assert.equal(items[0].sourceKey, "server|https://sync.example");
+  assert.equal(await invoke("clear_inactive_sync_outbox"), 2);
+  const preview = await invoke("sync_preview");
+  assert.equal(preview.report.dryRun, true);
+  const sync = await invoke("sync_now_mode", { mode: "merge", forceOutboxRetry: true });
+  assert.equal(sync.report.ok, true);
+  assert.ok(backgroundMessages.some((message) => message.type === "PASS_WEB_SYNC_CONFIGURE"));
+  assert.ok(backgroundMessages.some((message) => message.type === "PASS_SYNC_RUN" && message.payload?.forceOutboxRetry === true));
 });

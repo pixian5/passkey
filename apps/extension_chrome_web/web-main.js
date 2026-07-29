@@ -1,3 +1,5 @@
+import { syncOutboxSchedulerDelayMs } from "./sync_outbox_scheduler.js";
+
 // This page is copied directly into the Tauri webview without a bundler, so a
 // bare npm import such as "@tauri-apps/api/core" cannot be resolved here.
 // Shared UI for Tauri desktop, Docker/Web headless, and Chrome web-options.
@@ -335,6 +337,8 @@ let totpTimer = null;
 let autoSyncTimer = null;
 let syncOutboxTimer = null;
 let syncOutboxRetryRunning = false;
+let syncOutboxSchedulerFailures = 0;
+let syncOutboxSchedulerNotBeforeMs = 0;
 let filter = { type: "all" };
 let selectedId = "";
 let selectedAccountIds = new Set();
@@ -654,16 +658,28 @@ const scheduleSyncOutboxRetry = (items) => {
     .filter((item) => item?.status !== "paused");
   if (!enabledItems.length) return;
   const nextRetryAt = Math.min(...enabledItems.map((item) => Number(item.nextRetryAtMs || 0)));
-  const delay = Math.min(Math.max(250, nextRetryAt - Date.now()), 2_147_000_000);
+  const effectiveRetryAt = Math.max(nextRetryAt, syncOutboxSchedulerNotBeforeMs);
+  const delay = Math.min(Math.max(1000, effectiveRetryAt - Date.now()), 2_147_000_000);
   syncOutboxTimer = setTimeout(async () => {
     syncOutboxTimer = null;
     if (lockState.locked || syncOutboxRetryRunning) return;
     syncOutboxRetryRunning = true;
     try {
-      await runSyncNow({ quiet: true, forceOutboxRetry: false });
+      const report = await runSyncNow({ quiet: true, forceOutboxRetry: false });
+      if (report?.pendingRetry || report?.ok === false) {
+        syncOutboxSchedulerFailures += 1;
+      } else {
+        syncOutboxSchedulerFailures = 0;
+        syncOutboxSchedulerNotBeforeMs = 0;
+      }
     } catch (_) {
+      syncOutboxSchedulerFailures += 1;
       // The updated queue status below carries the actionable failure detail.
     } finally {
+      if (syncOutboxSchedulerFailures > 0) {
+        const delayMs = syncOutboxSchedulerDelayMs(syncOutboxSchedulerFailures);
+        syncOutboxSchedulerNotBeforeMs = Date.now() + delayMs;
+      }
       syncOutboxRetryRunning = false;
       await refreshSyncOutboxStatus();
     }

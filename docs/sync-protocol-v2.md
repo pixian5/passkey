@@ -142,9 +142,11 @@ stage (`pull`, `merge`, `push`, or `restore`) when available.
 
 ### Docker 容器替换与单实例锁
 
-- Pass Web 在 `/data/pass-web-instance.lock` 持有单实例锁，避免两个进程同时
-  写入同一加密 vault。正常退出会自动清除该锁。
-- 若 `docker compose up` 替换或异常终止后，新容器明确报告该锁仍被占用，先
-  `docker compose stop pass-web`，确认没有其他挂载同一 named volume 的 Pass
-  Web 容器，再只读取并删除这个精确的锁文件，最后重新启动并检查 `/healthz`。
-  不得删除 `/data`、vault、vault key 或 outbox；它们均是持久化用户数据。
+- Pass Web 打开 `/data/pass-web-instance.lock` 后持有内核排他文件锁，避免两个
+  进程同时写入同一加密 vault。文件中的 PID/nonce 仅供诊断，不是占用判据。
+- 正常退出、`SIGKILL` 和容器崩溃都会由内核释放锁。遗留文件不会阻止新实例，
+  不得把“删除锁文件”写进恢复步骤；新实例仍报告占用时，说明确有另一个进程
+  持锁，应停止挂载同一 named volume 的旧实例后再启动并检查 `/healthz`。
+- `scripts/test_pass_web_container_lifecycle.sh` 使用独立 Compose project/volume，
+  验证首次启动、普通重启、容器内 PID 1 被 `SIGKILL` 后自动恢复和强制重建；
+  清理只作用于该次测试创建的临时 volume。

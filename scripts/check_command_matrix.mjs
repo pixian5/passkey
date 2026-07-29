@@ -11,6 +11,29 @@ const ui = new Set([...uiSrc.matchAll(/invoke\(\s*["']([a-zA-Z0-9_]+)["']/g)].ma
 for (const cmd of ["sync_now_mode", "sync_webdav_now_mode"]) {
   if (uiSrc.includes(cmd)) ui.add(cmd);
 }
+const commandCount = ui.size;
+
+const commandCountDocs = [
+  "docs/current-app-extension-implementation-reference-zh.md",
+  "docs/three-surface-command-matrix-zh.md",
+  "docs/three-surface-unification-zh.md",
+];
+const renderCommandCountDoc = (source) => source
+  .replace(/UI 当前调用 \d+ 个命令/g, `UI 当前调用 ${commandCount} 个命令`)
+  .replace(/统一管理 UI 与 \d+ 个 UI 命令入口/g, `统一管理 UI 与 ${commandCount} 个 UI 命令入口`)
+  .replace(/命令覆盖 \d+\/\d+/g, `命令覆盖 ${commandCount}/${commandCount}`)
+  .replace(/边界：\d+\/\d+/g, `边界：${commandCount}/${commandCount}`)
+  .replace(/UI 命令数：\d+/g, `UI 命令数：${commandCount}`)
+  .replace(/扩展覆盖：\d+\/\d+/g, `扩展覆盖：${commandCount}/${commandCount}`)
+  .replace(/Docker Web 覆盖：\d+\/\d+/g, `Docker Web 覆盖：${commandCount}/${commandCount}`)
+  .replace(/Tauri 覆盖：\d+\/\d+/g, `Tauri 覆盖：${commandCount}/${commandCount}`);
+
+if (process.argv.includes("--write-docs")) {
+  for (const rel of commandCountDocs) {
+    const source = read(rel);
+    fs.writeFileSync(path.join(root, rel), renderCommandCountDoc(source));
+  }
+}
 
 const ext = new Set([...read("apps/extension_chrome_web/extension-bridge.js").matchAll(/case\s+"([a-zA-Z0-9_]+)":/g)].map((m) => m[1]));
 const webSrc = read("apps/pass-web/src/main.rs");
@@ -31,6 +54,12 @@ const missing = {
 };
 
 const errors = [];
+for (const rel of commandCountDocs) {
+  const source = read(rel);
+  if (source !== renderCommandCountDoc(source)) {
+    errors.push(`${rel} command count is stale; run node scripts/check_command_matrix.mjs --write-docs`);
+  }
+}
 for (const [surface, list] of Object.entries(missing)) {
   if (list.length) errors.push(`UI commands missing in ${surface}: ${list.join(", ")}`);
 }
@@ -85,6 +114,7 @@ if (!/pub const SYNC_REPORT_VERSION:\s*u32\s*=\s*1;/.test(syncReportSrc)) {
 
 // Extension must not fake unsupported platform features.
 const extSrc = read("apps/extension_chrome_web/extension-bridge.js");
+const extensionBackgroundSrc = read("apps/extension_shared/background.js");
 const exchangeSrc = read("apps/codex-tauri/src-tauri/src/exchange.rs");
 const mustError = [
   ["sync_webdav_now_mode", /case "sync_webdav_now_mode":\s*throw new Error/],
@@ -110,6 +140,32 @@ if (!/serverVersions:\s*true/.test(extSrc)) {
 }
 if (!/case "verify_sync_endpoint":[\s\S]*?\/healthz/.test(extSrc)) {
   errors.push('extension verify_sync_endpoint must use the server /healthz endpoint');
+}
+if (/async function syncRemote\(/.test(extSrc)) {
+  errors.push("Chrome Web adapter must delegate sync to the background instead of keeping a second sync engine");
+}
+for (const messageType of [
+  "PASS_WEB_SYNC_CONFIGURE",
+  "PASS_SYNC_RUN",
+  "PASS_SYNC_OUTBOX_STATUS",
+  "PASS_SYNC_OUTBOX_CLEAR_INACTIVE",
+]) {
+  if (!extSrc.includes(messageType) || !extensionBackgroundSrc.includes(`case "${messageType}"`)) {
+    errors.push(`Chrome Web/background sync message contract missing: ${messageType}`);
+  }
+}
+if (/case "get_sync_outbox_status":\s*return \[\]/.test(extSrc)) {
+  errors.push("Chrome Web outbox status must come from the encrypted background queue");
+}
+const localConcurrencySyncBlock = extensionBackgroundSrc.match(
+  /if \(!syncPayloadEquals\(currentPayload, pulledLocalPayload\)\) \{[\s\S]*?\n  \}/,
+)?.[0] || "";
+if (!/stage:\s*"checkingLocalConcurrency"/.test(localConcurrencySyncBlock) || !/retryable:\s*true/.test(localConcurrencySyncBlock)) {
+  errors.push("Chrome background must return a retryable structured report when local data changes during pull");
+}
+if (!/const primaryReportSource = primaryTarget\.kind === "server" \? "selfHosted" : primaryTarget\.kind/.test(extensionBackgroundSrc)
+  || (extensionBackgroundSrc.match(/source:\s*primaryReportSource/g) || []).length < 4) {
+  errors.push("Chrome background sync reports must map and expose the actual primary target");
 }
 
 // Count-return contracts in extension.

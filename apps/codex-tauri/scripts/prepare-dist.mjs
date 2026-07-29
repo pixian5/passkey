@@ -10,6 +10,7 @@ await mkdir(resolve(dist, "src"), { recursive: true });
 await mkdir(resolve(dist, "vendor"), { recursive: true });
 await cp(resolve(root, "index.html"), resolve(dist, "index.html"));
 await cp(resolve(root, "src", "main.js"), resolve(dist, "src", "main.js"));
+await cp(resolve(root, "src", "sync_outbox_scheduler.js"), resolve(dist, "src", "sync_outbox_scheduler.js"));
 await cp(resolve(root, "src", "styles.css"), resolve(dist, "src", "styles.css"));
 await cp(resolve(root, "node_modules", "jsqr", "dist", "jsQR.js"), resolve(dist, "vendor", "jsQR.js"));
 

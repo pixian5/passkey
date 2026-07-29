@@ -181,6 +181,10 @@
   function isSyncOutboxReady(item, nowMs = Date.now()) {
     return !item || String(item.status || "pendingRetry") !== "paused" && Number(item.nextRetryAtMs || 0) <= nowMs;
   }
+  function matchingSyncOutboxItem(item, payloadSha256) {
+    const hash = String(payloadSha256 || "").trim().toLowerCase();
+    return item && hash && String(item.payloadSha256 || "").trim().toLowerCase() === hash ? item : null;
+  }
   function upsertSyncOutbox(value, {
     targetKey,
     payload,
@@ -225,6 +229,10 @@
       lastError: String(error?.message || error || "")
     }, nowMs);
     return normalizeSyncOutbox(current.filter((item) => item.targetKey !== targetKey).concat(next), nowMs);
+  }
+  function removeOrphanedSyncOutbox(value, activeTargetKeys) {
+    const active = new Set(Array.from(activeTargetKeys || [], (item) => String(item || "").trim()).filter(Boolean));
+    return normalizeSyncOutbox(value).filter((item) => active.has(item.targetKey));
   }
 
   // data_store.js
@@ -1675,7 +1683,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.3.9";
+  var PASS_EXTENSION_VERSION = "1.4.0";
 
   // ../../core/pass_core/js/sync_alias_core.js
   function syncAliasGroups(accounts, helpers, options = {}) {
@@ -2976,7 +2984,11 @@
     "PASS_CONTENT_CHECK_LOGIN",
     "PASS_CONTENT_LIST_FILL_ACCOUNTS",
     "PASS_CONTENT_FILL_ACCOUNT",
-    "PASS_WEB_BRIDGE_SYNC_DATA"
+    "PASS_WEB_BRIDGE_SYNC_DATA",
+    "PASS_WEB_SYNC_CONFIGURE",
+    "PASS_SYNC_RUN",
+    "PASS_SYNC_OUTBOX_STATUS",
+    "PASS_SYNC_OUTBOX_CLEAR_INACTIVE"
   ]);
   var webBridgeSyncChain = Promise.resolve();
   var SYNC_HTTP_TIMEOUT_MS = 3e4;
@@ -3177,31 +3189,51 @@
     });
   }
   async function runAutoSync() {
+    return runManagedSync({ automatic: true });
+  }
+  async function runManagedSync({
+    mode = SYNC_MODE_MERGE,
+    dryRun = false,
+    forceOutboxRetry = false,
+    automatic = false
+  } = {}) {
     if (autoSyncInFlight) {
       logSyncFlow("auto-sync-skipped-in-flight");
-      return;
+      if (automatic) return null;
+      throw new Error("\u5DF2\u6709\u540C\u6B65\u4EFB\u52A1\u6B63\u5728\u8FDB\u884C\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5");
     }
     autoSyncInFlight = true;
     const lockOwner = createSyncIdempotencyKey();
     try {
       if (!await acquireSyncOperationLock(lockOwner)) {
         logSyncFlow("auto-sync-skipped-in-flight");
-        return;
+        if (automatic) return null;
+        throw new Error("\u5DF2\u6709\u540C\u6B65\u4EFB\u52A1\u6B63\u5728\u8FDB\u884C\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5");
       }
-      return await runAutoSyncInternal(lockOwner);
+      return await runAutoSyncInternal(lockOwner, { mode, dryRun, forceOutboxRetry, automatic });
     } finally {
       await releaseSyncOperationLock(lockOwner);
       autoSyncInFlight = false;
     }
   }
-  async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey()) {
+  async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), options = {}) {
+    const mode = ["remoteOverwriteLocal", "localOverwriteRemote"].includes(options.mode) ? options.mode : SYNC_MODE_MERGE;
+    const dryRun = Boolean(options.dryRun);
+    const forceOutboxRetry = Boolean(options.forceOutboxRetry);
+    const automatic = Boolean(options.automatic);
     const lockStatus = await getBackgroundLockStatus();
     if (lockStatus.locked) {
       logSyncFlow("auto-sync-skipped-locked");
-      return;
+      if (automatic) return null;
+      throw new Error("\u6269\u5C55\u5DF2\u9501\u5B9A\uFF0C\u8BF7\u5148\u89E3\u9501");
     }
     const targets = await buildRemoteSyncTargetsFromStorage();
-    if (!targets || targets.length === 0) return;
+    if (!targets || targets.length === 0) {
+      if (automatic) return null;
+      throw new Error("\u8BF7\u5148\u542F\u7528\u5E76\u914D\u7F6E\u540C\u6B65\u6765\u6E90");
+    }
+    const primaryTarget = targets.find((target) => target.isPrimary) || targets[0];
+    const primaryReportSource = primaryTarget.kind === "server" ? "selfHosted" : primaryTarget.kind;
     const encryptionKey = await getOrCreateSyncEncryptionKey();
     logSyncFlow("auto-sync-start", {
       targetLabels: targets.map((item) => item.label),
@@ -3214,12 +3246,6 @@
     const localStoredPasskeys = Array.isArray(localStored.passkeys) ? localStored.passkeys.map(normalizePasskeyShape) : [];
     const localPasskeys = buildUnifiedPasskeys(localAccounts, localStoredPasskeys);
     const localFolders = Array.isArray(localStored.folders) ? localStored.folders.map(normalizeFolderShape) : [];
-    try {
-      await saveLocalSafetySnapshot("\u81EA\u52A8\u540C\u6B65\u524D\u81EA\u52A8\u5907\u4EFD");
-    } catch (error) {
-      logSyncFlow("auto-sync-aborted-backup-failed", { message: error?.message || String(error || "") });
-      return;
-    }
     let mergedAccounts = localAccounts;
     let mergedPasskeys = localPasskeys;
     let mergedFolders = localFolders;
@@ -3240,7 +3266,29 @@
           label: target.label,
           message: error?.message || String(error || "")
         });
-        if (target.isPrimary) return;
+        const queued = await advancePendingOutboxAfterPullFailure(target, error, forceOutboxRetry);
+        if (target.isPrimary) {
+          return {
+            report: {
+              ok: false,
+              safe: true,
+              reasons: [error?.message || String(error || "")],
+              dryRun,
+              mode,
+              message: `${target.label}\u62C9\u53D6\u5931\u8D25\uFF1A${error?.message || String(error || "")}`,
+              localAccounts: visibleSyncCount(localAccounts),
+              remoteAccounts: 0,
+              mergedAccounts: visibleSyncCount(localAccounts),
+              applied: false,
+              pushed: false,
+              pendingRetry: queued,
+              retryable: true,
+              stage: "pullingRemote",
+              source: target.kind === "server" ? "selfHosted" : target.kind,
+              syncSessionId
+            }
+          };
+        }
         pullErrors.push(`${target.label}: ${error?.message || String(error || "")}`);
         continue;
       }
@@ -3272,9 +3320,30 @@
     };
     if (!syncPayloadEquals(currentPayload, pulledLocalPayload)) {
       logSyncFlow("auto-sync-aborted-local-changed-during-pull");
-      return;
+      return {
+        report: {
+          ok: false,
+          safe: true,
+          reasons: ["\u62C9\u53D6\u8FDC\u7AEF\u6570\u636E\u671F\u95F4\u672C\u5730\u5185\u5BB9\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65"],
+          dryRun,
+          mode,
+          message: "\u62C9\u53D6\u8FDC\u7AEF\u6570\u636E\u671F\u95F4\u672C\u5730\u5185\u5BB9\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65",
+          localAccounts: visibleSyncCount(currentPayload.accounts),
+          remoteAccounts: visibleSyncCount(primaryRemotePayload?.accounts),
+          mergedAccounts: visibleSyncCount(currentPayload.accounts),
+          applied: false,
+          pushed: false,
+          pendingRetry: false,
+          retryable: true,
+          stage: "checkingLocalConcurrency",
+          source: primaryReportSource,
+          syncSessionId
+        },
+        localPayload: currentPayload,
+        payload: currentPayload
+      };
     }
-    if (primaryRemotePayload) {
+    if (primaryRemotePayload && mode === SYNC_MODE_MERGE) {
       const canonicalLocalPayload = {
         ...pulledLocalPayload,
         accounts: syncAliasGroups2(pulledLocalPayload.accounts)
@@ -3291,15 +3360,24 @@
       mergedPayload.accounts = syncAliasGroups2(mergedPayload.accounts);
       ({ accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys } = mergedPayload);
       finalPayload = mergedPayload;
+    } else if (mode === "remoteOverwriteLocal") {
+      finalPayload = normalizeSyncPayloadShape(primaryRemotePayload || {
+        accounts: [],
+        folders: [],
+        passkeys: [],
+        allRegularAccountIds: [],
+        folderOrderIds: []
+      });
+      ({ accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys } = finalPayload);
     } else {
       finalPayload = currentPayload;
     }
-    if (primaryRemotePayload) {
+    if (primaryRemotePayload || mode === "remoteOverwriteLocal") {
       const safety = validateSyncSafety(
         { accounts: syncAliasGroups2(localAccounts), folders: localFolders, passkeys: localPasskeys },
-        { ...primaryRemotePayload, accounts: syncAliasGroups2(primaryRemotePayload.accounts) },
+        { ...primaryRemotePayload || {}, accounts: syncAliasGroups2(primaryRemotePayload?.accounts || []) },
         { accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys },
-        SYNC_MODE_MERGE
+        mode
       );
       if (!safety.safe) {
         logSyncFlow("auto-sync-aborted-safety-check", {
@@ -3308,15 +3386,68 @@
           remote: safety.remote,
           merged: safety.merged
         });
-        return;
+        return {
+          report: {
+            ok: false,
+            safe: false,
+            reasons: safety.reasons,
+            dryRun,
+            mode,
+            message: `\u540C\u6B65\u5B89\u5168\u68C0\u67E5\u672A\u901A\u8FC7\uFF1A${safety.reasons.join("\u3001")}`,
+            localAccounts: visibleSyncCount(localAccounts),
+            remoteAccounts: visibleSyncCount(primaryRemotePayload?.accounts),
+            mergedAccounts: visibleSyncCount(mergedAccounts),
+            applied: false,
+            pushed: false,
+            pendingRetry: false,
+            retryable: false,
+            stage: "safetyChecking",
+            source: primaryReportSource,
+            syncSessionId
+          },
+          localPayload: currentPayload,
+          payload: finalPayload
+        };
       }
     }
-    await writeBusinessDataToStore({
-      ...finalPayload,
-      accounts: mergedAccounts,
-      passkeys: mergedPasskeys,
-      folders: mergedFolders
-    });
+    if (dryRun) {
+      return {
+        report: {
+          ok: true,
+          safe: true,
+          reasons: [],
+          dryRun: true,
+          mode,
+          message: "\u9884\u89C8\u5B8C\u6210\uFF08\u672A\u5199\u5165\uFF09",
+          localAccounts: visibleSyncCount(localAccounts),
+          remoteAccounts: visibleSyncCount(primaryRemotePayload?.accounts),
+          mergedAccounts: visibleSyncCount(mergedAccounts),
+          applied: false,
+          pushed: false,
+          pendingRetry: false,
+          retryable: false,
+          stage: "completed",
+          source: primaryReportSource,
+          syncSessionId
+        },
+        localPayload: currentPayload,
+        payload: finalPayload
+      };
+    }
+    try {
+      await saveLocalSafetySnapshot(automatic ? "\u81EA\u52A8\u540C\u6B65\u524D\u81EA\u52A8\u5907\u4EFD" : "\u540C\u6B65\u5199\u5165\u672C\u5730\u524D\u81EA\u52A8\u5907\u4EFD");
+    } catch (error) {
+      logSyncFlow("auto-sync-aborted-backup-failed", { message: error?.message || String(error || "") });
+      throw new Error(`\u540C\u6B65\u524D\u672C\u5730\u5B89\u5168\u5FEB\u7167\u5931\u8D25\uFF1A${error?.message || String(error || "")}`);
+    }
+    if (mode !== "localOverwriteRemote") {
+      await writeBusinessDataToStore({
+        ...finalPayload,
+        accounts: mergedAccounts,
+        passkeys: mergedPasskeys,
+        folders: mergedFolders
+      });
+    }
     const pushTargets = [...targets].sort(
       (left, right) => Number(right.isPrimary) - Number(left.isPrimary) || Number(right.supportsEtag) - Number(left.supportsEtag)
     );
@@ -3330,7 +3461,15 @@
       }
       const targetKey = syncTargetKey(target);
       const pendingOutbox = outboxByTarget.get(targetKey);
-      if (pendingOutbox && !isSyncOutboxReady(pendingOutbox)) {
+      const candidatePayload = {
+        ...finalPayload,
+        accounts: mergedAccounts,
+        passkeys: mergedPasskeys,
+        folders: mergedFolders
+      };
+      const candidateHash = await syncPayloadSha256(candidatePayload);
+      const persistedContext = matchingSyncOutboxItem(pendingOutbox, candidateHash);
+      if (persistedContext && !forceOutboxRetry && !isSyncOutboxReady(persistedContext)) {
         const paused = pendingOutbox.status === "paused";
         const waitSeconds = Math.max(1, Math.ceil((pendingOutbox.nextRetryAtMs - Date.now()) / 1e3));
         pushErrors.push(paused ? `${target.label}: \u8865\u507F\u4EFB\u52A1\u5DF2\u6682\u505C\uFF0C\u7B49\u5F85\u7528\u6237\u624B\u52A8\u91CD\u8BD5` : `${target.label}: \u8865\u507F\u4EFB\u52A1\u5C06\u5728 ${waitSeconds} \u79D2\u540E\u91CD\u8BD5`);
@@ -3348,20 +3487,12 @@
         remoteEtag: target.remoteEtag
       });
       let result;
-      const candidatePayload = {
-        ...finalPayload,
-        accounts: mergedAccounts,
-        passkeys: mergedPasskeys,
-        folders: mergedFolders
-      };
-      const candidateHash = await syncPayloadSha256(candidatePayload);
-      const persistedContext = pendingOutbox && pendingOutbox.payloadSha256 === candidateHash ? pendingOutbox : null;
       const operationId = persistedContext?.operationId || createSyncIdempotencyKey();
       const idempotencyKey = persistedContext?.idempotencyKey || createSyncIdempotencyKey();
       try {
         result = await pushRemotePayloadWithMode(target, {
           ...candidatePayload
-        }, SYNC_MODE_MERGE, {
+        }, target.isPrimary ? mode : "localOverwriteRemote", {
           syncSessionId: persistedContext?.syncSessionId || syncSessionId,
           operationId,
           idempotencyKey
@@ -3380,7 +3511,8 @@
           syncSessionId: error?.syncSessionId || syncSessionId,
           operationId: error?.operationId || operationId,
           sourceType: target.kind,
-          scope: target.scope || ""
+          scope: target.scope || "",
+          forceResume: forceOutboxRetry
         });
         outboxByTarget.clear();
         for (const item of nextOutbox) outboxByTarget.set(item.targetKey, item);
@@ -3412,13 +3544,33 @@
       folders: mergedFolders
     });
     await appendHistoryEntry({
-      action: pushErrors.length > 0 ? `\u81EA\u52A8\u540C\u6B65\u90E8\u5206\u5B8C\u6210\uFF08${pushErrors.join("\uFF1B")}\uFF09` : `\u81EA\u52A8\u540C\u6B65\u5B8C\u6210\uFF08${targets.map((item) => item.label).join(" + ")}\uFF09`,
+      action: pushErrors.length > 0 ? `${automatic ? "\u81EA\u52A8\u540C\u6B65" : "\u540C\u6B65"}\u90E8\u5206\u5B8C\u6210\uFF08${pushErrors.join("\uFF1B")}\uFF09` : `${automatic ? "\u81EA\u52A8\u540C\u6B65" : "\u540C\u6B65"}\u5B8C\u6210\uFF08${targets.map((item) => item.label).join(" + ")}\uFF09`,
       timestampMs: Date.now()
     });
     logSyncFlow("auto-sync-complete", {
       targetLabels: targets.map((item) => item.label),
       pushErrors
     });
+    return {
+      report: {
+        ok: pushErrors.length === 0,
+        safe: true,
+        reasons: pushErrors,
+        dryRun: false,
+        mode,
+        message: pushErrors.length > 0 ? `\u540C\u6B65\u90E8\u5206\u5B8C\u6210\uFF1A${pushErrors.join("\uFF1B")}` : "\u540C\u6B65\u5B8C\u6210",
+        localAccounts: visibleSyncCount(localAccounts),
+        remoteAccounts: visibleSyncCount(primaryRemotePayload?.accounts),
+        mergedAccounts: visibleSyncCount(mergedAccounts),
+        applied: mode !== "localOverwriteRemote",
+        pushed: pushErrors.length === 0,
+        pendingRetry: pushErrors.length > 0,
+        retryable: pushErrors.length > 0,
+        stage: pushErrors.length > 0 ? "pushingRemote" : "completed",
+        source: primaryReportSource,
+        syncSessionId
+      }
+    };
   }
   async function readBusinessDataFromStore() {
     const stored = await getAllData();
@@ -3605,6 +3757,26 @@
           return;
         case "PASS_WEB_BRIDGE_SYNC_DATA":
           sendResponse(await handleWebBridgeSyncData(message.payload));
+          return;
+        case "PASS_WEB_SYNC_CONFIGURE":
+          sendResponse(await configureWebSyncFromBridge(message.payload));
+          return;
+        case "PASS_SYNC_RUN":
+          sendResponse({
+            ok: true,
+            result: await runManagedSync({
+              mode: message.payload?.mode,
+              dryRun: Boolean(message.payload?.dryRun),
+              forceOutboxRetry: Boolean(message.payload?.forceOutboxRetry),
+              automatic: false
+            })
+          });
+          return;
+        case "PASS_SYNC_OUTBOX_STATUS":
+          sendResponse({ ok: true, items: await getSyncOutboxSummaries() });
+          return;
+        case "PASS_SYNC_OUTBOX_CLEAR_INACTIVE":
+          sendResponse({ ok: true, removed: await clearInactiveSyncOutboxItems() });
           return;
         case "PASS_CONTENT_LIST_FILL_ACCOUNTS":
           sendResponse(await handleContentListFillAccounts(sender));
@@ -3923,6 +4095,75 @@
       ok: false,
       error: error?.message || String(error || "\u540E\u53F0\u6570\u636E\u955C\u50CF\u5931\u8D25")
     }));
+  }
+  async function configureWebSyncFromBridge(payload) {
+    const settings = payload?.settings && typeof payload.settings === "object" ? payload.settings : {};
+    const prefs = payload?.prefs && typeof payload.prefs === "object" ? payload.prefs : {};
+    const serverBaseUrl = String(settings.baseUrl || "").trim();
+    const webdavBaseUrl = String(prefs.webdavBaseUrl || "").trim();
+    const webdavEnabled = Boolean(prefs.webdavEnabled);
+    const serverEnabled = Boolean(settings.enabled);
+    const primarySource = String(prefs.syncPrimarySource || "") === "webdav" ? SYNC_PRIMARY_WEBDAV : SYNC_PRIMARY_SERVER;
+    await chrome.storage.local.set({
+      [STORAGE_KEY_SYNC_ENABLE_WEBDAV]: webdavEnabled,
+      [STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]: serverEnabled,
+      [STORAGE_KEY_SYNC_WEBDAV_BASE_URL]: webdavBaseUrl,
+      [STORAGE_KEY_SYNC_WEBDAV_PATH]: String(prefs.webdavRemotePath || "").trim() || "pass-sync-bundle-v2.json",
+      [STORAGE_KEY_SYNC_WEBDAV_USERNAME]: String(prefs.webdavUsername || "").trim(),
+      [STORAGE_KEY_SYNC_SERVER_BASE_URL]: serverBaseUrl,
+      [STORAGE_KEY_SYNC_PRIMARY_SOURCE]: primarySource,
+      [STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]: normalizeAutoSyncIntervalMinutes(prefs.autoSyncIntervalMinutes)
+    });
+    await setSyncSecrets({
+      webdavPassword: String(prefs.webdavPassword || ""),
+      serverToken: String(settings.authToken || "").trim(),
+      encryptionKey: normalizeSyncEncryptionKey(settings.encryptionKey),
+      previousEncryptionKey: normalizeSyncEncryptionKey(prefs.previousEncryptionKey)
+    });
+    await scheduleAutoSyncAlarm();
+    return { ok: true };
+  }
+  async function getSyncOutboxSummaries() {
+    return (await getSyncOutbox()).map((item) => ({
+      sourceKey: item.targetKey,
+      createdAtMs: item.createdAtMs,
+      attempts: item.attempts,
+      nextRetryAtMs: item.nextRetryAtMs,
+      lastError: item.lastError,
+      status: item.status
+    }));
+  }
+  async function clearInactiveSyncOutboxItems() {
+    const targets = await buildRemoteSyncTargetsFromStorage() || [];
+    const activeKeys = new Set(targets.map(syncTargetKey));
+    const current = await getSyncOutbox();
+    const next = removeOrphanedSyncOutbox(current, activeKeys);
+    if (next.length !== current.length) await setSyncOutbox(next);
+    return current.length - next.length;
+  }
+  async function advancePendingOutboxAfterPullFailure(target, error, forceResume = false) {
+    const targetKey = syncTargetKey(target);
+    const items = await getSyncOutbox();
+    const pending = items.find((item) => item.targetKey === targetKey);
+    if (!pending) return false;
+    const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+    const currentHash = await syncPayloadSha256(currentPayload);
+    if (!matchingSyncOutboxItem(pending, currentHash)) return false;
+    await setSyncOutbox(upsertSyncOutbox(items, {
+      targetKey,
+      payload: pending.payload,
+      error,
+      payloadSha256: pending.payloadSha256,
+      expectedEtag: pending.expectedEtag,
+      expectedRevision: pending.expectedRevision,
+      idempotencyKey: pending.idempotencyKey,
+      syncSessionId: pending.syncSessionId,
+      operationId: pending.operationId,
+      sourceType: pending.sourceType || target.kind,
+      scope: pending.scope || target.scope || "",
+      forceResume
+    }));
+    return true;
   }
   async function handleContentListFillAccounts(sender) {
     const tabUrl = String(sender?.tab?.url || "");

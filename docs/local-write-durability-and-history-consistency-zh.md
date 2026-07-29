@@ -113,7 +113,7 @@
 
 - Chrome 扩展数据密钥包装升级为 v4。v4 的 PBKDF2 输入保留主密码全部字节，首尾空格与 Web/Tauri 语义一致；v2/v3 只作为一次性迁移读取路径，成功后立即写回 v4。
 - Docker Web 启用应用锁时，随机 vault key 从明文 `pass-web-vault-key-v1` 迁移至 `pass-web-vault-key-wrapper-v1.json`。包装文件只包含 salt、验证值、nonce 和密文 key；重启后必须先输入主密码才能读取 vault。旧安装会在首次成功解锁时迁移。
-- Docker Web 在 `/data/pass-web-instance.lock` 建立原子单实例锁，拒绝两个写进程共享同一数据卷。
+- Docker Web 在 `/data/pass-web-instance.lock` 上持有内核排他文件锁，拒绝两个写进程共享同一数据卷。文件内容只用于诊断；正常退出或崩溃后锁由内核释放，遗留文件不会阻止下次启动。
 - Ubuntu 部署脚本以及 Tauri/macOS SSH 创建服务的 TLS 健康检查均使用证书域名和 `curl --resolve ...:127.0.0.1`，不再跳过 TLS 校验。
 - Web 自建/WebDAV 若远端 PUT 成功但本地保存失败，返回明确错误，要求立即重新同步；不再把半成功状态伪装成同步完成。
 

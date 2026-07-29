@@ -1,5 +1,9 @@
 name: Deploy Pass Web
 
+permissions:
+  contents: read
+  packages: write
+
 on:
   push:
     branches: [master]
@@ -29,10 +33,80 @@ jobs:
       - run: cargo test --manifest-path apps/pass-web/Cargo.toml
       - run: node --check apps/codex-tauri/src/main.js
 
-  deploy:
+  scan-image:
+    needs: [verify, container-lifecycle]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/pass-web/Dockerfile
+          load: true
+          push: false
+          tags: pass-web:scan-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Block vulnerable image before publishing
+        uses: aquasecurity/trivy-action@0.32.0
+        with:
+          image-ref: pass-web:scan-${{ github.sha }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+  publish-image:
+    needs: [verify, container-lifecycle, scan-image]
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      image: ${{ steps.image.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: version
+        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+      - id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/pass-web" >> "$GITHUB_OUTPUT"
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/pass-web/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ steps.version.outputs.version }}
+            ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+            ${{ steps.image.outputs.name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  container-lifecycle:
     needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/test_pass_web_container_lifecycle.sh
+
+  deploy:
+    needs: [verify, container-lifecycle, publish-image]
     if: ${{ vars.PASS_WEB_DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
+    env:
+      PASS_WEB_RELEASE_IMAGE: ${{ needs.publish-image.outputs.image }}@${{ needs.publish-image.outputs.digest }}
+      PASS_WEB_GHCR_USER: ${{ secrets.PASS_WEB_GHCR_USER }}
+      PASS_WEB_GHCR_TOKEN: ${{ secrets.PASS_WEB_GHCR_TOKEN }}
     steps:
       - name: Deploy on Ubuntu host
         uses: appleboy/ssh-action@v1.2.1
@@ -40,15 +114,48 @@ jobs:
           host: ${{ secrets.PASS_WEB_SERVER_HOST }}
           username: ${{ secrets.PASS_WEB_SERVER_USER }}
           key: ${{ secrets.PASS_WEB_SERVER_SSH_KEY }}
+          envs: PASS_WEB_RELEASE_IMAGE,PASS_WEB_GHCR_USER,PASS_WEB_GHCR_TOKEN
           script: |
             set -eu
             cd /opt/pass
             git fetch origin master
             git checkout -f origin/master
-            docker compose -f apps/pass-web/docker-compose.yml up -d --build
+            if [ -n "${PASS_WEB_GHCR_TOKEN:-}" ]; then
+              printf '%s' "$PASS_WEB_GHCR_TOKEN" | docker login ghcr.io --username "$PASS_WEB_GHCR_USER" --password-stdin >/dev/null
+            fi
+            compose_file=apps/pass-web/docker-compose.yml
+            container_id=$(docker compose -f "$compose_file" ps -q pass-web || true)
+            previous_image=""
+            data_volume=""
+            if [ -n "$container_id" ]; then
+              previous_image=$(docker inspect "$container_id" --format '{{.Config.Image}}')
+              data_volume=$(docker inspect "$container_id" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}')
+            fi
+            if [ -n "$data_volume" ]; then
+              mkdir -p /opt/pass/backups
+              backup_name="pass-web-before-${GITHUB_RUN_ID:-manual}-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
+              docker run --rm -v "$data_volume:/data:ro" -v /opt/pass/backups:/backup debian:bookworm-slim \
+                tar -C /data -czf "/backup/$backup_name" .
+            fi
+            docker pull "$PASS_WEB_RELEASE_IMAGE"
+            PASS_WEB_IMAGE="$PASS_WEB_RELEASE_IMAGE" docker compose -f "$compose_file" up -d --no-build pass-web
             for attempt in $(seq 1 30); do
-              if curl --fail --silent http://127.0.0.1:53335/healthz >/dev/null; then exit 0; fi
+              if curl --fail --silent http://127.0.0.1:53335/healthz >/dev/null; then
+                docker image prune -f >/dev/null
+                exit 0
+              fi
               sleep 2
             done
-            docker compose -f apps/pass-web/docker-compose.yml logs --tail=100
+            docker compose -f "$compose_file" logs --tail=100
+            if [ -n "$previous_image" ]; then
+              PASS_WEB_IMAGE="$previous_image" docker compose -f "$compose_file" up -d --no-build pass-web
+              for attempt in $(seq 1 30); do
+                if curl --fail --silent http://127.0.0.1:53335/healthz >/dev/null; then
+                  echo "新版本健康检查失败，已恢复上一镜像" >&2
+                  exit 1
+                fi
+                sleep 2
+              done
+            fi
+            echo "新版本健康检查失败，且上一镜像未能恢复" >&2
             exit 1

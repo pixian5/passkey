@@ -14,6 +14,7 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
     Engine as _,
 };
+use fs2::FileExt;
 use pass_csvio::{browser_csv_to_account_drafts, build_csv, host_from_site_value};
 use pass_merge::v2::{
     evaluate_sync_safety, mark_folder_membership, normalize_all_regular_order,
@@ -36,7 +37,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
-    io::Write,
+    io::{Seek, SeekFrom, Write},
     path::{Path as FsPath, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -67,16 +68,7 @@ struct AppState {
 }
 
 struct InstanceGuard {
-    path: PathBuf,
-    contents: String,
-}
-
-impl Drop for InstanceGuard {
-    fn drop(&mut self) {
-        if fs::read_to_string(&self.path).ok().as_deref() == Some(self.contents.as_str()) {
-            let _ = fs::remove_file(&self.path);
-        }
-    }
+    _file: fs::File,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -374,20 +366,25 @@ fn acquire_instance_guard(dir: &FsPath) -> Result<InstanceGuard, String> {
     let path = dir.join(INSTANCE_LOCK_FILE);
     let contents = format!("pid={} nonce={}\n", std::process::id(), Uuid::new_v4());
     let mut file = fs::OpenOptions::new()
+        .read(true)
         .write(true)
-        .create_new(true)
+        .create(true)
+        .truncate(false)
         .open(&path)
-        .map_err(|_| {
-            format!(
-                "数据目录已被另一 Pass Web 实例占用：{}。确认旧进程已停止后再删除该锁文件。",
-                path.display()
-            )
-        })?;
-    file.write_all(contents.as_bytes())
+        .map_err(|error| format!("打开 Web 单实例锁失败：{error}"))?;
+    file.try_lock_exclusive().map_err(|_| {
+        format!(
+            "数据目录已被另一 Pass Web 实例占用：{}。请停止占用该数据卷的旧实例后重试。",
+            path.display()
+        )
+    })?;
+    file.set_len(0)
+        .and_then(|_| file.seek(SeekFrom::Start(0)).map(|_| ()))
+        .and_then(|_| file.write_all(contents.as_bytes()))
         .and_then(|_| file.sync_all())
         .map_err(|e| format!("写入 Web 单实例锁失败：{e}"))?;
     private_file(&path);
-    Ok(InstanceGuard { path, contents })
+    Ok(InstanceGuard { _file: file })
 }
 
 fn load_or_create_raw_key(dir: &FsPath) -> Result<[u8; 32], String> {
@@ -4460,6 +4457,24 @@ mod tests {
         assert!(validate_startup_security("0.0.0.0", "operator-token", false).is_ok());
         assert!(validate_startup_security("0.0.0.0", "", true).is_ok());
     }
+
+    #[test]
+    fn instance_guard_reuses_stale_marker_and_releases_kernel_lock() {
+        let dir = std::env::temp_dir().join(format!("pass-web-instance-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join(INSTANCE_LOCK_FILE);
+        fs::write(&marker, b"pid=1 nonce=stale\n").unwrap();
+
+        let first = acquire_instance_guard(&dir).unwrap();
+        assert!(acquire_instance_guard(&dir).is_err());
+        drop(first);
+
+        let second = acquire_instance_guard(&dir).unwrap();
+        drop(second);
+        assert!(marker.exists(), "标记文件可以保留，内核锁必须已经释放");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn encrypt_round_trip() {
         let dir = std::env::temp_dir().join(format!("pass-web-crypto-{}", Uuid::new_v4()));

@@ -3,7 +3,7 @@ services:
     build:
       context: ../..
       dockerfile: apps/pass-web/Dockerfile
-    image: pass-web:latest
+    image: ${PASS_WEB_IMAGE:-pass-web:latest}
     restart: unless-stopped
     ports:
       - "${PASS_WEB_BIND_ADDRESS:-127.0.0.1}:${PASS_WEB_PORT:-53335}:53335"

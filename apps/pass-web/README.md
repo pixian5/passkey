@@ -8,7 +8,7 @@
 - TOTP/同步设置的基础数据保存
 - AES-256-GCM 加密的数据文件和独立密钥文件
 
-当前版本定位为单用户网页保险库。`PASS_WEB_AUTH_TOKEN` 是网页访问令牌，不等同于同步 Bearer Token。仅绑定 `127.0.0.1`、`localhost` 或 `::1` 时可留空；绑定局域网或公网地址时程序会拒绝启动，必须设置该令牌并通过 HTTPS 反向代理访问。Docker 默认只发布宿主机回环端口，因此显式设置 `PASS_WEB_TRUSTED_LOOPBACK_PROXY=1` 保持一条命令本地启动；一旦把 `PASS_WEB_BIND_ADDRESS` 改为局域网或公网地址，必须把该值改为 `0` 并设置 `PASS_WEB_AUTH_TOKEN`。启动时会在 `/data/pass-web-instance.lock` 建立原子单实例锁，拒绝同一数据目录的第二个写实例；它仍没有多实例 revision/CAS。异常终止遗留锁文件时，必须确认旧进程已停止再人工删除。
+当前版本定位为单用户网页保险库。`PASS_WEB_AUTH_TOKEN` 是网页访问令牌，不等同于同步 Bearer Token。仅绑定 `127.0.0.1`、`localhost` 或 `::1` 时可留空；绑定局域网或公网地址时程序会拒绝启动，必须设置该令牌并通过 HTTPS 反向代理访问。Docker 默认只发布宿主机回环端口，因此显式设置 `PASS_WEB_TRUSTED_LOOPBACK_PROXY=1` 保持一条命令本地启动；一旦把 `PASS_WEB_BIND_ADDRESS` 改为局域网或公网地址，必须把该值改为 `0` 并设置 `PASS_WEB_AUTH_TOKEN`。启动时会打开 `/data/pass-web-instance.lock` 并持有内核排他文件锁，拒绝同一数据目录的第二个写实例；文件中的 PID/nonce 仅供诊断，它仍没有多实例 revision/CAS。进程退出或崩溃时内核自动释放锁，遗留的普通文件不会阻止下次启动，也不需要人工删除。
 
 ## 本机运行
 

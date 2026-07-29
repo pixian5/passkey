@@ -260,14 +260,41 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
     await syncWebBridgeData(snapshot.data);
   };
 
+  const sendBackgroundMessage = async (message) => {
+    if (typeof globalThis.chrome?.runtime?.sendMessage !== "function") {
+      throw new Error("Chrome 扩展后台不可用");
+    }
+    return new Promise((resolve, reject) => {
+      globalThis.chrome.runtime.sendMessage(message, (response) => {
+        const runtimeError = globalThis.chrome.runtime.lastError;
+        if (runtimeError) {
+          reject(new Error(runtimeError.message || "Chrome 扩展后台通信失败"));
+          return;
+        }
+        if (!response || response.ok === false) {
+          reject(new Error(response?.error || "Chrome 扩展后台没有返回结果"));
+          return;
+        }
+        resolve(response);
+      });
+    });
+  };
+
+  const syncBackgroundConfig = async () => {
+    const [settings, prefs] = await Promise.all([getSync(), getPrefs()]);
+    await sendBackgroundMessage({
+      type: "PASS_WEB_SYNC_CONFIGURE",
+      payload: { settings: clone(settings), prefs: clone(prefs) },
+    });
+  };
+
   // The web workspace and the content-script service worker have separate
   // vault implementations. Mirror only business records through an internal
   // extension message so autofill sees changes made in the web UI.
   const syncWebBridgeData = async (data) => {
     if (typeof globalThis.chrome?.runtime?.sendMessage !== "function") return;
     try {
-      const response = await new Promise((resolve) => {
-        globalThis.chrome.runtime.sendMessage({
+      const response = await sendBackgroundMessage({
           type: "PASS_WEB_BRIDGE_SYNC_DATA",
           payload: {
             accounts: clone(data?.accounts || []),
@@ -281,17 +308,8 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
             folderOrderUpdatedDeviceName: text(data?.folderOrderUpdatedDeviceName),
             deviceName: text(data?.deviceName),
           },
-        }, (result) => {
-          if (globalThis.chrome.runtime.lastError) {
-            resolve({ ok: false, error: globalThis.chrome.runtime.lastError.message || "后台数据镜像失败" });
-            return;
-          }
-          resolve(result || { ok: false, error: "后台数据镜像没有响应" });
         });
-      });
-      if (response?.ok === false) {
-        console.warn("Pass Web 数据镜像未完成", response.error || response);
-      }
+      if (response?.ok === false) console.warn("Pass Web 数据镜像未完成", response.error || response);
     } catch (error) {
       // This page can also run in Tauri or a normal browser without a listener.
       console.warn("Pass Web 数据镜像失败", error);
@@ -682,13 +700,25 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
         };
       }
       case "get_ui_prefs": return getPrefs();
-      case "set_ui_prefs": return savePrefs({ ...(await getPrefs()), ...(args.prefs || {}) });
+      case "set_ui_prefs": {
+        const saved = await savePrefs({ ...(await getPrefs()), ...(args.prefs || {}) });
+        await syncBackgroundConfig();
+        return saved;
+      }
       case "get_sync_settings": { const settings = await getSync(); return lock.enabled && lock.locked ? { ...settings, authToken: "", encryptionKey: "" } : settings; }
-      case "set_sync_settings": return saveSync({ ...(await getSync()), ...(args.settings || {}) });
-      // This Web-workspace adapter does not own the background/options outbox.
-      // The native extension options page already exposes that encrypted queue.
-      case "get_sync_outbox_status": return [];
-      case "clear_inactive_sync_outbox": return 0;
+      case "set_sync_settings": {
+        const saved = await saveSync({ ...(await getSync()), ...(args.settings || {}) });
+        await syncBackgroundConfig();
+        return saved;
+      }
+      case "get_sync_outbox_status": {
+        const response = await sendBackgroundMessage({ type: "PASS_SYNC_OUTBOX_STATUS" });
+        return Array.isArray(response.items) ? response.items : [];
+      }
+      case "clear_inactive_sync_outbox": {
+        const response = await sendBackgroundMessage({ type: "PASS_SYNC_OUTBOX_CLEAR_INACTIVE" });
+        return Number(response.removed || 0);
+      }
       case "set_device_name": return mutate("修改设备名称", (data) => { data.deviceName = text(args.deviceName); return data.deviceName; });
       case "get_lock_state": return getLock();
       case "lock_biometric_available": return false;
@@ -830,8 +860,26 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
       case "export_sync_bundle": { const payload = payloadFromData(store.data); const settings = await getSync(); const bundle = await encryptDocument({ schema: "pass.sync.bundle.v2", exportedAtMs: now(), source: { app: "pass-extension-chrome-web", formatVersion: 2 }, payload }, settings.encryptionKey); downloadJson(bundle, "pass-sync-bundle.json"); return { message: `同步包已导出：账号 ${payload.accounts.filter((a) => !a.isPermanentlyDeleted).length}，文件夹 ${payload.folders.filter((f) => !f.isPermanentlyDeleted).length}` }; }
       case "import_sync_bundle_text": { const settings = await getSync(); const documentValue = await decryptDocument(JSON.parse(text(args.content)), settings.encryptionKey, settings.previousEncryptionKey); const remote = normalizePayload(documentValue); const local = payloadFromData(store.data); const merged = mergePayload(local, remote); const safety = evaluateSyncSafety({ local, remote, merged, mode: "merge" }, syncMergeHelpers); const result = { safe: safety.safe, reasons: safety.reasons, localPayload: local, payload: merged, report: { safe: safety.safe, reasons: safety.reasons, message: safety.safe ? `同步包预览：本地 ${local.accounts.filter((a) => !a.isPermanentlyDeleted).length} → 合并 ${merged.accounts.filter((a) => !a.isPermanentlyDeleted).length}` : `同步包导入停止：安全检查未通过（${safety.reasons.join("、")}）` } }; if (args.apply && safety.safe) { await mutate("导入并合并同步包", (data) => { Object.assign(data, merged); return true; }); result.message = "同步包已合并写入"; } return result; }
       case "merge_sync_payloads": { const local = normalizePayload(JSON.parse(text(args.localJson))); const remote = normalizePayload(JSON.parse(text(args.remoteJson))); const payload = mergePayload(local, remote); const safety = evaluateSyncSafety({ local, remote, merged: payload, mode: "merge" }, syncMergeHelpers); return { ...safety, safe: safety.safe, reasons: safety.reasons, payload }; }
-      case "sync_preview": return syncRemote("merge", true);
-      case "sync_now_mode": return syncRemote(text(args.mode) || "merge", false);
+      case "sync_preview": {
+        await syncBackgroundConfig();
+        const response = await sendBackgroundMessage({
+          type: "PASS_SYNC_RUN",
+          payload: { mode: "merge", dryRun: true, forceOutboxRetry: false },
+        });
+        return response.result;
+      }
+      case "sync_now_mode": {
+        await syncBackgroundConfig();
+        const response = await sendBackgroundMessage({
+          type: "PASS_SYNC_RUN",
+          payload: {
+            mode: text(args.mode) || "merge",
+            dryRun: false,
+            forceOutboxRetry: Boolean(args.forceOutboxRetry),
+          },
+        });
+        return response.result;
+      }
       case "sync_webdav_now_mode": throw new Error("当前 Chrome 扩展表面尚未实现 WebDAV；请使用桌面端或 Docker Web，或改用自建服务器同步");
       case "list_server_versions": {
         const settings = await getSync();
@@ -951,129 +999,5 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
     await mutate("导入验证器账号", (data) => { const createdIds = []; for (const entry of entries) { const site = text(entry.site), username = String(entry.username || ""); if (!site || !text(entry.secret)) { skipped += 1; continue; } const existing = data.accounts.find((a) => a.username === username && a.sites.some((s) => s.toLowerCase() === site.toLowerCase())); if (existing) { existing.totpSecret = text(entry.secret); existing.updatedAtMs = now(); updated += 1; } else { const account = normalizeAccount({ recordId: id("account"), sites: [site], username, totpSecret: text(entry.secret), createdAtMs: now(), updatedAtMs: now() }); data.accounts.push(account); createdIds.push(account.recordId); created += 1; } } if (createdIds.length) { data.allRegularAccountIds = [...createdIds, ...data.allRegularAccountIds]; touchAllRegularOrder(data); } });
     return { created, updated, skipped };
   }
-  async function syncRemote(mode, dryRun) {
-    const settings = await getSync();
-    if (!settings.enabled) throw new Error("请先启用自建服务器同步");
-    if (!text(settings.baseUrl)) throw new Error("请先配置同步服务器 URL");
-
-    const base = syncBaseUrl(settings.baseUrl);
-    const headers = { Accept: "application/json" };
-    if (text(settings.authToken)) headers.Authorization = `Bearer ${text(settings.authToken)}`;
-
-    const pull = async () => {
-      const response = await fetchWithSyncTimeout(`${base}/v2/sync/state`, {
-        method: "GET",
-        headers,
-        cache: "no-store",
-      });
-      if (response.status === 404) {
-        return {
-          payload: { accounts: [], folders: [], passkeys: [], allRegularAccountIds: [] },
-          etag: null,
-          hasState: false,
-        };
-      }
-      if (!response.ok) {
-        throw new Error(`拉取同步状态失败 HTTP ${response.status}`);
-      }
-      const envelope = await response.json();
-      const etag = text(response.headers?.get?.("ETag")) || null;
-      if (!etag) {
-        throw new Error("服务器返回同步数据但没有 ETag，无法安全更新（请检查服务器版本）");
-      }
-      return {
-        payload: normalizePayload(await decryptDocument(envelope, settings.encryptionKey, settings.previousEncryptionKey)),
-        etag,
-        hasState: true,
-      };
-    };
-
-    const initialRemote = await pull();
-    const store = await loadStore();
-    const local = payloadFromData(store.data);
-    const choosePayload = (remote) => mode === "remoteOverwriteLocal"
-      ? remote
-      : mode === "localOverwriteRemote"
-        ? local
-        : mergePayload(local, remote);
-    let remoteState = initialRemote;
-    let payload = choosePayload(remoteState.payload);
-    const safety = evaluateSyncSafety({ local, remote: remoteState.payload, merged: payload, mode }, syncMergeHelpers);
-    const report = {
-      safe: safety.safe,
-      reasons: safety.reasons,
-      ok: true,
-      dryRun,
-      mode,
-      message: dryRun ? "预览完成（未写入）" : "同步完成",
-      localAccounts: local.accounts.filter((account) => !account.isPermanentlyDeleted).length,
-      remoteAccounts: remoteState.payload.accounts.filter((account) => !account.isPermanentlyDeleted).length,
-      mergedAccounts: payload.accounts.filter((account) => !account.isPermanentlyDeleted).length,
-      applied: false,
-      pushed: false,
-    };
-    if (dryRun) return { report, localPayload: local, payload };
-    if (!safety.safe) throw new Error(`同步安全检查未通过：${safety.reasons.join("、")}`);
-
-    if (mode !== "localOverwriteRemote") {
-      await mutate("同步写入本地", (data) => {
-        Object.assign(data, payload);
-      });
-    }
-
-    // Keep one key for the logical write. The server can safely replay it if a
-    // response is lost after it committed the payload.
-    const idempotencyKey = id("sync");
-    const maxAttempts = 5;
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const putHeaders = { ...headers, "Content-Type": "application/json", "Idempotency-Key": idempotencyKey };
-      if (remoteState.etag) putHeaders["If-Match"] = remoteState.etag;
-      const body = await encryptDocument({
-        schema: "pass.sync.bundle.v2",
-        exportedAtMs: now(),
-        source: { app: "pass-extension-chrome-web", formatVersion: 2 },
-        payload,
-      }, settings.encryptionKey);
-      const put = await fetchWithSyncTimeout(`${base}/v2/sync/state`, {
-        method: "PUT",
-        headers: putHeaders,
-        body: JSON.stringify(body),
-      });
-      if (put.ok) {
-        await verifyRestoreReceipt(put, idempotencyKey);
-        report.remoteAccounts = remoteState.payload.accounts.filter((account) => !account.isPermanentlyDeleted).length;
-        report.mergedAccounts = payload.accounts.filter((account) => !account.isPermanentlyDeleted).length;
-        report.applied = mode !== "localOverwriteRemote";
-        report.pushed = true;
-        return { report };
-      }
-      if (put.status !== 412) {
-        if (put.status === 428) {
-          throw new Error("推送同步状态失败 HTTP 428：服务器要求 If-Match，但当前远端状态没有可用 ETag");
-        }
-        throw new Error(`推送同步状态失败 HTTP ${put.status}`);
-      }
-      if (attempt === maxAttempts - 1) {
-        throw new Error("推送同步状态失败 HTTP 412：远端持续发生并发更新，已停止重试");
-      }
-
-      // The remote changed between GET and PUT. Pull its new ETag and merge
-      // again before retrying, so a concurrent device's fields are preserved.
-      const currentStore = await loadStore();
-      const currentLocal = payloadFromData(currentStore.data);
-      if (!syncPayloadEquals(currentLocal, payload)) {
-        throw new Error("本地数据在远端冲突重试期间发生变化，已停止写入，请重新同步");
-      }
-      remoteState = await pull();
-      payload = choosePayload(remoteState.payload);
-      if (mode !== "localOverwriteRemote") {
-        await mutate("同步冲突重试写入本地", (data) => {
-          Object.assign(data, payload);
-        });
-      }
-    }
-    throw new Error("远端并发冲突重试次数已用尽");
-  }
-
   globalThis.__PASS_EXTENSION_INVOKE__ = invokeCommand;
 })();

@@ -320,7 +320,7 @@ curl --fail http://127.0.0.1:53335/healthz
 
 直接用 `docker run` 冒烟时，镜像默认监听容器内 `0.0.0.0`，因此必须提供网页访问 Token；若宿主机端口明确只映射到 `127.0.0.1`，也可以与 Compose 一样设置 `PASS_WEB_TRUSTED_LOOPBACK_PROXY=1`。缺少二者时容器退出是安全策略，不是启动故障。
 
-版本 `1.3.6` 已在 macOS Docker Desktop `linux/arm64` 上完成真实镜像构建和运行验证：`/healthz` 返回 200、首页可读取、容器进程为 `passweb` 非 root 用户。构建产物本地标签为 `pass-web:1.3.6`；该本地验证不等于镜像已经推送到公共仓库，也不代替 `linux/amd64` 的 buildx 构建。
+版本 `1.4.0` 已在 macOS Docker Desktop `linux/arm64` 上完成真实镜像构建和生命周期验证：`/healthz` 返回 200，首次启动、普通重启、容器内 PID 1 被 `SIGKILL` 后按 `unless-stopped` 自动恢复、`--force-recreate` 后恢复均通过。测试脚本为 `scripts/test_pass_web_container_lifecycle.sh`，使用独立 Compose project 与临时 volume，不触碰现有 `pass-web_pass_web_data`。该本地验证不等于镜像已经推送到 GHCR；`linux/amd64` 与 `linux/arm64` 的正式构建由 GitHub Actions Buildx 完成。
 
 查看日志：
 
@@ -383,6 +383,16 @@ docker compose down
 - 健康检查失败能被 CI 和部署脚本识别。
 - 多次部署不会创建重复数据卷或覆盖其它 Compose 项目。
 
+仓库提供的真实门禁：
+
+```bash
+bash scripts/test_pass_web_container_lifecycle.sh
+```
+
+脚本从容器内部向 PID 1 发送 `SIGKILL` 来模拟进程崩溃。不要用
+`docker compose kill` 代替：它属于人工停止，Docker 会按设计抑制自动重启，
+不能用于验证 `restart: unless-stopped` 的崩溃恢复。
+
 ## 11. 多架构发布
 
 正式发布使用 Docker Buildx：
@@ -435,7 +445,7 @@ CI 必须验证：
                                       `-> 失败则恢复旧镜像
 ```
 
-当前工作流是远程主机重新构建并重启，后续应改为拉取已验证的镜像 digest，并在健康检查失败时自动恢复上一版本。
+当前工作流先在 Ubuntu runner 本地构建镜像并用 Trivy 阻断仍可修复的 HIGH/CRITICAL 漏洞；只有扫描通过后，才发布 `linux/amd64`、`linux/arm64` 镜像并记录不可变 digest，同时生成 SBOM/provenance，避免先污染 `latest` 再报告扫描失败。部署仅在仓库变量 `PASS_WEB_DEPLOY_ENABLED=true` 时执行：部署前备份现有 `/data` named volume，拉取已验证 digest，健康检查失败时恢复上一镜像。未启用该变量时，镜像发布任务仍可运行，但不能宣称已部署 Ubuntu 服务器。
 
 ## 13. 安全基线
 
