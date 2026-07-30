@@ -1,6 +1,6 @@
 (() => {
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.1";
+  var PASS_EXTENSION_VERSION = "1.4.2";
 
   // ../../core/pass_core/js/sync_policy.js
   var DEFAULT_DEVICE_NAME = "PassDevice";
