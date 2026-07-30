@@ -25,7 +25,7 @@
 
 ## 3. WebDAV
 
-Tauri 和 Docker Web 支持通过 HTTPS WebDAV 读写一个 JSON 资源，Basic Auth 可选，并使用 ETag/If-Match 做并发保护。Chrome Web 扩展明确不支持 WebDAV：桥接命令会返回中文错误，能力声明为 `webdavSync: false`，不能写成伪成功。
+Tauri、Docker Web 和 Chrome Web 扩展支持通过 HTTPS WebDAV 读写一个 JSON 资源，Basic Auth 可选，并使用 ETag/If-Match 做并发保护。Chrome 在后台 Service Worker 中发请求，依靠 manifest host permission 跨域；管理页只提交设置和一次同步意图，不直接请求 WebDAV。
 
 ## 4. 客户端流程
 
@@ -34,6 +34,8 @@ Tauri 和 Docker Web 支持通过 HTTPS WebDAV 读写一个 JSON 资源，Basic 
 3. 客户端按字段时间戳、设备名和值做确定性 LWW；文件夹归属、别名、Passkey 关联和永久删除使用关系墓碑。
 4. 合并结果通过安全闸门：空远端不能清空非空本地；稳定 ID 缺失、解密失败、版本冲突时停止写入。
 5. 主源写入成功后再写镜像源；失败源记录报告，不掩盖已完成/未完成来源。
+
+Chrome 后台一次处理全部启用来源，因此能力声明为 `managedMultiSourceSync: true`，共享 UI 只调用一次 `sync_now_mode`。其它表面声明为 false，由共享 UI 按来源调用。`sync_webdav_now_mode` 在 Chrome 也委托同一个后台入口，用于保持命令契约，不启动第二个同步引擎。
 
 同步模式：
 
@@ -51,10 +53,10 @@ Tauri 和 Docker Web 支持通过 HTTPS WebDAV 读写一个 JSON 资源，Basic 
 | 能力 | Tauri | Docker Web | Chrome Web |
 |---|---|---|---|
 | 自建服务器 | 已接入 | 已接入 | 已接入 |
-| WebDAV | 已接入 | 已接入 | 不支持，明确报错 |
+| WebDAV | 已接入 | 已接入 | 已接入（后台调度） |
 | 自建服务器版本列表/恢复 | 已接入 | 已接入 | 已接入 |
 | SSH 创建服务 | 实际执行 | 保存草稿/有限检测 | 保存草稿 |
-| 本地快照/导入预览 | 已接入 | 已接入 | 已接入 |
+| 本地快照/导入预览 | 已接入 | 已接入 | 已接入；管理页可恢复后台同步快照 |
 
 WebDAV 没有自建服务器的版本列表、审计和恢复接口。同步服务器限流按 TCP 对端 IP；反向代理场景当前没有可信 `X-Forwarded-For` 解析，必须在部署层单独评估。
 

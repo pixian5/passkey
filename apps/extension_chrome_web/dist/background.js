@@ -828,11 +828,17 @@
     return normalized;
   }
   function normalizeSafetySnapshots(value) {
-    return (Array.isArray(value) ? value : []).filter((item) => item && typeof item === "object" && item.payload && typeof item.payload === "object").map((item) => ({
+    const normalized = (Array.isArray(value) ? value : []).filter((item) => item && typeof item === "object" && item.payload && typeof item.payload === "object").map((item) => ({
+      id: String(item.id || `sync-snapshot-${Number(item.createdAtMs || 0)}`),
       createdAtMs: Number(item.createdAtMs || 0),
       reason: String(item.reason || "\u540C\u6B65\u524D\u5907\u4EFD"),
       payload: item.payload
-    })).filter((item) => Number.isFinite(item.createdAtMs) && item.createdAtMs > 0).sort((lhs, rhs) => rhs.createdAtMs - lhs.createdAtMs).slice(0, SAFETY_SNAPSHOT_MAX_ENTRIES);
+    })).filter((item) => Number.isFinite(item.createdAtMs) && item.createdAtMs > 0);
+    const unique = /* @__PURE__ */ new Map();
+    for (const snapshot of normalized) {
+      if (!unique.has(snapshot.id)) unique.set(snapshot.id, snapshot);
+    }
+    return [...unique.values()].sort((lhs, rhs) => rhs.createdAtMs - lhs.createdAtMs).slice(0, SAFETY_SNAPSHOT_MAX_ENTRIES);
   }
   async function getSafetySnapshots() {
     await ensureDataStorageReady();
@@ -1683,7 +1689,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.0";
+  var PASS_EXTENSION_VERSION = "1.4.1";
 
   // ../../core/pass_core/js/sync_alias_core.js
   function syncAliasGroups(accounts, helpers, options = {}) {
@@ -2916,6 +2922,41 @@
     return `pass-${Number(now)}-${secureRandomUuid(cryptoApi)}`;
   }
 
+  // sync_report.js
+  var SYNC_REPORT_VERSION = 1;
+  function buildSyncOperationReport(input = {}) {
+    const safe = input.safe !== false;
+    const safety = ["passed", "blocked", "notEvaluated"].includes(input.safety) ? input.safety : safe ? "passed" : "blocked";
+    const report = {
+      reportVersion: SYNC_REPORT_VERSION,
+      ok: Boolean(input.ok),
+      dryRun: Boolean(input.dryRun),
+      mode: ["remoteOverwriteLocal", "localOverwriteRemote"].includes(input.mode) ? input.mode : "merge",
+      message: String(input.message || ""),
+      safe,
+      safety,
+      reasons: (Array.isArray(input.reasons) ? input.reasons : []).map(String),
+      localAccounts: Math.max(0, Math.trunc(Number(input.localAccounts) || 0)),
+      remoteAccounts: Math.max(0, Math.trunc(Number(input.remoteAccounts) || 0)),
+      mergedAccounts: Math.max(0, Math.trunc(Number(input.mergedAccounts) || 0)),
+      applied: Boolean(input.applied),
+      pushed: Boolean(input.pushed),
+      remotePulled: Boolean(input.remotePulled),
+      pendingRetry: Boolean(input.pendingRetry),
+      retryable: Boolean(input.retryable),
+      stage: String(input.stage || "unknown"),
+      source: String(input.source || ""),
+      syncSessionId: String(input.syncSessionId || ""),
+      operationId: String(input.operationId || input.syncSessionId || "")
+    };
+    if (input.code != null && String(input.code)) report.code = String(input.code);
+    if (input.etag != null && String(input.etag)) report.etag = String(input.etag);
+    if (input.revision != null && Number.isFinite(Number(input.revision))) {
+      report.revision = Math.max(0, Math.trunc(Number(input.revision)));
+    }
+    return report;
+  }
+
   // background.js
   var PASSKEY_LOG_PREFIX2 = "[Pass background]";
   var SYNC_LOG_PREFIX = "[Pass sync]";
@@ -2988,7 +3029,9 @@
     "PASS_WEB_SYNC_CONFIGURE",
     "PASS_SYNC_RUN",
     "PASS_SYNC_OUTBOX_STATUS",
-    "PASS_SYNC_OUTBOX_CLEAR_INACTIVE"
+    "PASS_SYNC_OUTBOX_CLEAR_INACTIVE",
+    "PASS_SYNC_SNAPSHOTS_LIST",
+    "PASS_SYNC_SNAPSHOT_RESTORE"
   ]);
   var webBridgeSyncChain = Promise.resolve();
   var SYNC_HTTP_TIMEOUT_MS = 3e4;
@@ -3221,6 +3264,7 @@
     const dryRun = Boolean(options.dryRun);
     const forceOutboxRetry = Boolean(options.forceOutboxRetry);
     const automatic = Boolean(options.automatic);
+    const reportOperationId = createSyncIdempotencyKey();
     const lockStatus = await getBackgroundLockStatus();
     if (lockStatus.locked) {
       logSyncFlow("auto-sync-skipped-locked");
@@ -3269,10 +3313,11 @@
         const queued = await advancePendingOutboxAfterPullFailure(target, error, forceOutboxRetry);
         if (target.isPrimary) {
           return {
-            report: {
+            report: buildSyncOperationReport({
               ok: false,
               safe: true,
               reasons: [error?.message || String(error || "")],
+              safety: "notEvaluated",
               dryRun,
               mode,
               message: `${target.label}\u62C9\u53D6\u5931\u8D25\uFF1A${error?.message || String(error || "")}`,
@@ -3281,12 +3326,14 @@
               mergedAccounts: visibleSyncCount(localAccounts),
               applied: false,
               pushed: false,
+              remotePulled: false,
               pendingRetry: queued,
               retryable: true,
               stage: "pullingRemote",
               source: target.kind === "server" ? "selfHosted" : target.kind,
-              syncSessionId
-            }
+              syncSessionId,
+              operationId: reportOperationId
+            })
           };
         }
         pullErrors.push(`${target.label}: ${error?.message || String(error || "")}`);
@@ -3321,9 +3368,10 @@
     if (!syncPayloadEquals(currentPayload, pulledLocalPayload)) {
       logSyncFlow("auto-sync-aborted-local-changed-during-pull");
       return {
-        report: {
+        report: buildSyncOperationReport({
           ok: false,
           safe: true,
+          safety: "notEvaluated",
           reasons: ["\u62C9\u53D6\u8FDC\u7AEF\u6570\u636E\u671F\u95F4\u672C\u5730\u5185\u5BB9\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65"],
           dryRun,
           mode,
@@ -3333,12 +3381,14 @@
           mergedAccounts: visibleSyncCount(currentPayload.accounts),
           applied: false,
           pushed: false,
+          remotePulled: true,
           pendingRetry: false,
           retryable: true,
           stage: "checkingLocalConcurrency",
           source: primaryReportSource,
-          syncSessionId
-        },
+          syncSessionId,
+          operationId: reportOperationId
+        }),
         localPayload: currentPayload,
         payload: currentPayload
       };
@@ -3387,7 +3437,7 @@
           merged: safety.merged
         });
         return {
-          report: {
+          report: buildSyncOperationReport({
             ok: false,
             safe: false,
             reasons: safety.reasons,
@@ -3399,12 +3449,14 @@
             mergedAccounts: visibleSyncCount(mergedAccounts),
             applied: false,
             pushed: false,
+            remotePulled: true,
             pendingRetry: false,
             retryable: false,
             stage: "safetyChecking",
             source: primaryReportSource,
-            syncSessionId
-          },
+            syncSessionId,
+            operationId: reportOperationId
+          }),
           localPayload: currentPayload,
           payload: finalPayload
         };
@@ -3412,7 +3464,7 @@
     }
     if (dryRun) {
       return {
-        report: {
+        report: buildSyncOperationReport({
           ok: true,
           safe: true,
           reasons: [],
@@ -3424,12 +3476,14 @@
           mergedAccounts: visibleSyncCount(mergedAccounts),
           applied: false,
           pushed: false,
+          remotePulled: true,
           pendingRetry: false,
           retryable: false,
           stage: "completed",
           source: primaryReportSource,
-          syncSessionId
-        },
+          syncSessionId,
+          operationId: reportOperationId
+        }),
         localPayload: currentPayload,
         payload: finalPayload
       };
@@ -3453,6 +3507,7 @@
     );
     const pushErrors = [...pullErrors];
     let primaryPushFailed = false;
+    let primaryOperationId = reportOperationId;
     const outboxByTarget = new Map((await getSyncOutbox()).map((item) => [item.targetKey, item]));
     for (const target of pushTargets) {
       if (primaryPushFailed && target.isPrimary === false) {
@@ -3469,6 +3524,9 @@
       };
       const candidateHash = await syncPayloadSha256(candidatePayload);
       const persistedContext = matchingSyncOutboxItem(pendingOutbox, candidateHash);
+      if (target.isPrimary && persistedContext?.operationId) {
+        primaryOperationId = persistedContext.operationId;
+      }
       if (persistedContext && !forceOutboxRetry && !isSyncOutboxReady(persistedContext)) {
         const paused = pendingOutbox.status === "paused";
         const waitSeconds = Math.max(1, Math.ceil((pendingOutbox.nextRetryAtMs - Date.now()) / 1e3));
@@ -3487,7 +3545,8 @@
         remoteEtag: target.remoteEtag
       });
       let result;
-      const operationId = persistedContext?.operationId || createSyncIdempotencyKey();
+      const operationId = persistedContext?.operationId || (target.isPrimary ? reportOperationId : createSyncIdempotencyKey());
+      if (target.isPrimary) primaryOperationId = operationId;
       const idempotencyKey = persistedContext?.idempotencyKey || createSyncIdempotencyKey();
       try {
         result = await pushRemotePayloadWithMode(target, {
@@ -3552,7 +3611,7 @@
       pushErrors
     });
     return {
-      report: {
+      report: buildSyncOperationReport({
         ok: pushErrors.length === 0,
         safe: true,
         reasons: pushErrors,
@@ -3564,12 +3623,15 @@
         mergedAccounts: visibleSyncCount(mergedAccounts),
         applied: mode !== "localOverwriteRemote",
         pushed: pushErrors.length === 0,
+        remotePulled: true,
         pendingRetry: pushErrors.length > 0,
         retryable: pushErrors.length > 0,
         stage: pushErrors.length > 0 ? "pushingRemote" : "completed",
         source: primaryReportSource,
-        syncSessionId
-      }
+        syncSessionId,
+        operationId: primaryOperationId,
+        etag: primaryTarget.remoteEtag
+      })
     };
   }
   async function readBusinessDataFromStore() {
@@ -3590,8 +3652,27 @@
   async function saveLocalSafetySnapshot(reason) {
     const payload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
     const snapshots = await getSafetySnapshots();
-    snapshots.unshift({ createdAtMs: Date.now(), reason: String(reason || "\u540C\u6B65\u524D\u5907\u4EFD"), payload });
+    snapshots.unshift({ id: `sync-snapshot-${secureRandomUuid()}`, createdAtMs: Date.now(), reason: String(reason || "\u540C\u6B65\u524D\u5907\u4EFD"), payload });
     await setSafetySnapshots(snapshots);
+  }
+  async function listLocalSafetySnapshots() {
+    return (await getSafetySnapshots()).map((snapshot) => ({
+      id: snapshot.id,
+      reason: snapshot.reason,
+      createdAtMs: snapshot.createdAtMs,
+      accounts: visibleSyncCount(snapshot.payload?.accounts),
+      folders: visibleSyncCount(snapshot.payload?.folders),
+      passkeys: visibleSyncCount(snapshot.payload?.passkeys)
+    }));
+  }
+  async function restoreLocalSafetySnapshot(snapshotId) {
+    const snapshots = await getSafetySnapshots();
+    const snapshot = snapshots.find((item) => String(item.id) === String(snapshotId || ""));
+    if (!snapshot) throw new Error("\u540E\u53F0\u540C\u6B65\u5FEB\u7167\u4E0D\u5B58\u5728\u6216\u5DF2\u88AB\u6E05\u7406");
+    await saveLocalSafetySnapshot("\u6062\u590D\u672C\u5730\u5FEB\u7167\u524D\u81EA\u52A8\u5907\u4EFD");
+    await writeBusinessDataToStore(snapshot.payload);
+    await appendHistoryEntry({ action: `\u6062\u590D\u672C\u5730\u5B89\u5168\u5FEB\u7167\uFF08${snapshot.reason}\uFF09`, timestampMs: Date.now() });
+    return { message: "\u672C\u5730\u5B89\u5168\u5FEB\u7167\u5DF2\u6062\u590D" };
   }
   function normalizeSyncPayloadShape(payload) {
     const accounts = Array.isArray(payload?.accounts) ? payload.accounts.map(normalizeAccountShape) : [];
@@ -3777,6 +3858,12 @@
           return;
         case "PASS_SYNC_OUTBOX_CLEAR_INACTIVE":
           sendResponse({ ok: true, removed: await clearInactiveSyncOutboxItems() });
+          return;
+        case "PASS_SYNC_SNAPSHOTS_LIST":
+          sendResponse({ ok: true, items: await listLocalSafetySnapshots() });
+          return;
+        case "PASS_SYNC_SNAPSHOT_RESTORE":
+          sendResponse({ ok: true, result: await restoreLocalSafetySnapshot(message.payload?.snapshotId) });
           return;
         case "PASS_CONTENT_LIST_FILL_ACCOUNTS":
           sendResponse(await handleContentListFillAccounts(sender));

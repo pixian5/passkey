@@ -17,6 +17,7 @@ const platformCapabilities = {
   folderDedup: true,
   selfHostedSync: true,
   localSnapshots: true,
+  managedMultiSourceSync: false,
 };
 
 const applyPlatformCapabilities = (caps = {}) => {
@@ -2804,7 +2805,26 @@ const runSyncMode = async (mode, { quiet = false, forceOutboxRetry = !quiet } = 
     if (!ok) return [];
   }
   const ordered = [...sources].sort((left, right) => (right === preferred) - (left === preferred));
-  for (const source of ordered) {
+  if (platformCapabilities.managedMultiSourceSync) {
+    try {
+      const raw = await invoke("sync_now_mode", { mode, forceOutboxRetry });
+      const result = typeof raw === "string" ? JSON.parse(raw) : raw;
+      const sourceName = result?.report?.source === "webdav" ? "WebDAV" : "自建服务器";
+      const report = { source: sourceName, ...(result.report || {}) };
+      report.source = sourceName;
+      reports.push(report);
+      if (report.ok === false) {
+        const code = report.code ? ` [${report.code}]` : "";
+        const trace = shortSyncTrace(report);
+        failures.push(`${report.source}${code}：${report.message || "同步未完成"}${trace ? `（${trace}）` : ""}`);
+      } else if (report.applied || report.pushed || report.dryRun === false) {
+        uiPrefs.lastSyncPrimaryFingerprint = fingerprint;
+        try { await invoke("set_ui_prefs", { prefs: collectUiPrefs() }); } catch (_) {}
+      }
+    } catch (err) {
+      failures.push(`同步后台：${err}`);
+    }
+  } else for (const source of ordered) {
     // The primary source makes merge / overwrite decisions. Other enabled
     // targets are mirrors and only receive the post-primary local payload.
     const sourceMode = source === preferred ? mode : "localOverwriteRemote";
@@ -4500,6 +4520,7 @@ const boot = async () => {
       folderDedup: health?.capabilities?.folderDedup !== false,
       selfHostedSync: health?.capabilities?.selfHostedSync !== false,
       localSnapshots: health?.capabilities?.localSnapshots !== false,
+      managedMultiSourceSync: Boolean(health?.capabilities?.managedMultiSourceSync),
     });
   } catch (_) {
     applyPlatformCapabilities({});

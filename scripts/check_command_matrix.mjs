@@ -115,9 +115,9 @@ if (!/pub const SYNC_REPORT_VERSION:\s*u32\s*=\s*1;/.test(syncReportSrc)) {
 // Extension must not fake unsupported platform features.
 const extSrc = read("apps/extension_chrome_web/extension-bridge.js");
 const extensionBackgroundSrc = read("apps/extension_shared/background.js");
+const sharedUiSrc = read("apps/codex-tauri/src/main.js");
 const exchangeSrc = read("apps/codex-tauri/src-tauri/src/exchange.rs");
 const mustError = [
-  ["sync_webdav_now_mode", /case "sync_webdav_now_mode":\s*throw new Error/],
   ["provision_self_hosted_server", /case "provision_self_hosted_server":\s*throw new Error/],
   ["lock_unlock_biometric", /case "lock_unlock_biometric":\s*throw new Error/],
 ];
@@ -138,6 +138,15 @@ if (!/case "restore_server_version":[\s\S]*?\/v2\/sync\/versions\//.test(extSrc)
 if (!/serverVersions:\s*true/.test(extSrc)) {
   errors.push('extension health_check.capabilities.serverVersions must be true');
 }
+if (!/webdavSync:\s*true/.test(extSrc) || !/managedMultiSourceSync:\s*true/.test(extSrc)) {
+  errors.push('extension must advertise background-managed WebDAV and multi-source sync');
+}
+if (!/case "sync_webdav_now_mode":[\s\S]*?PASS_SYNC_RUN/.test(extSrc)) {
+  errors.push('extension sync_webdav_now_mode must delegate to the background sync engine');
+}
+if (!/if \(platformCapabilities\.managedMultiSourceSync\)[\s\S]*?invoke\("sync_now_mode"/.test(sharedUiSrc)) {
+  errors.push('shared UI must invoke managed multi-source backends exactly through sync_now_mode');
+}
 if (!/case "verify_sync_endpoint":[\s\S]*?\/healthz/.test(extSrc)) {
   errors.push('extension verify_sync_endpoint must use the server /healthz endpoint');
 }
@@ -149,6 +158,8 @@ for (const messageType of [
   "PASS_SYNC_RUN",
   "PASS_SYNC_OUTBOX_STATUS",
   "PASS_SYNC_OUTBOX_CLEAR_INACTIVE",
+  "PASS_SYNC_SNAPSHOTS_LIST",
+  "PASS_SYNC_SNAPSHOT_RESTORE",
 ]) {
   if (!extSrc.includes(messageType) || !extensionBackgroundSrc.includes(`case "${messageType}"`)) {
     errors.push(`Chrome Web/background sync message contract missing: ${messageType}`);

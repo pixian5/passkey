@@ -104,7 +104,8 @@ UI 当前调用 70 个命令。
     "folderDedup": true,
     "selfHostedSync": true,
     "localSnapshots": true,
-    "sharedWebUi": true
+    "sharedWebUi": true,
+    "managedMultiSourceSync": false
   }
 }
 ```
@@ -242,7 +243,7 @@ cd apps/pass-web && cargo test && cargo build --release
 
 旧 Chrome 壳和专用构建入口已移除；Chrome 只加载 `apps/extension_chrome_web`。
 
-## 8. 当前对齐结论（版本 1.4.0）
+## 8. 当前对齐结论（版本 1.4.1）
 
 已对齐并必须保持：
 
@@ -259,6 +260,8 @@ cd apps/pass-web && cargo test && cargo build --release
 11. 同步结果的统一机器 Schema 位于 `docs/schemas/sync-operation-report-v1.schema.json`；命令矩阵门禁检查其必要字段与 Rust `SyncOperationReport` 保持一致。
 12. Chrome 管理页不再维护独立同步引擎：设置写入后发送 `PASS_WEB_SYNC_CONFIGURE`，预览/手动/自动同步统一由后台 `PASS_SYNC_RUN` 执行，outbox 状态与清理也只读取后台加密队列。管理页不得重新出现第二个 `syncRemote` 或固定空队列。
 13. Chrome 后台拉取主源失败时会推进匹配当前 payload 摘要的既有 outbox 退避；拉取期间本地变化时返回 `checkingLocalConcurrency` 可重试报告；最终报告的 `source` 必须是实际主源，而不是固定服务器字符串。
+14. Chrome 声明 `managedMultiSourceSync=true`，自建服务器与 WebDAV 只由后台一次调度；管理页不得逐源重复调用。Tauri/Docker Web 保持 false，由 UI 按主源和镜像顺序调用。
+15. Chrome 管理页通过后台消息列出和恢复同步安全快照；快照 payload 留在后台加密 IndexedDB，恢复前先备份当前后台状态。
 
 Chrome 的锁定状态已由后台 Service Worker 收口：popup 和管理页收到锁定通知后清除内存业务视图与本地数据密钥，解锁后重新读取加密存储。Docker Web 现把 outbox 加密存入 vault，但只在 Web UI 自动同步计时器运行时调度，桌面端仍额外具有独立的到期调度。仍未对齐：Web/Tauri 跨进程 revision、旧 Swift 文件夹内独立顺序、以及除同步报告外的全部命令返回 Schema 仍未完全统一。不得把本节“已对齐”扩写为所有运行细节完全一致。
 

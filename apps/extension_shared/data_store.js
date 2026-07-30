@@ -710,14 +710,20 @@ export async function setSyncSecrets(value) {
 }
 
 function normalizeSafetySnapshots(value) {
-  return (Array.isArray(value) ? value : [])
+  const normalized = (Array.isArray(value) ? value : [])
     .filter((item) => item && typeof item === "object" && item.payload && typeof item.payload === "object")
     .map((item) => ({
+      id: String(item.id || `sync-snapshot-${Number(item.createdAtMs || 0)}`),
       createdAtMs: Number(item.createdAtMs || 0),
       reason: String(item.reason || "同步前备份"),
       payload: item.payload,
     }))
-    .filter((item) => Number.isFinite(item.createdAtMs) && item.createdAtMs > 0)
+    .filter((item) => Number.isFinite(item.createdAtMs) && item.createdAtMs > 0);
+  const unique = new Map();
+  for (const snapshot of normalized) {
+    if (!unique.has(snapshot.id)) unique.set(snapshot.id, snapshot);
+  }
+  return [...unique.values()]
     .sort((lhs, rhs) => rhs.createdAtMs - lhs.createdAtMs)
     .slice(0, SAFETY_SNAPSHOT_MAX_ENTRIES);
 }

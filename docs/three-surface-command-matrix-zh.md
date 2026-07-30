@@ -63,7 +63,7 @@ Tauri 以前将这些值序列化为字符串，Web 以前将导入结果再次�
 | 命令 | Tauri | Docker Web | Chrome 扩展 |
 |---|---|---|---|
 | `lock_unlock_biometric` | macos-only | error | error |
-| `sync_webdav_now_mode` | full | full | error |
+| `sync_webdav_now_mode` | full | full | full（委托后台统一多源同步） |
 | `list_server_versions` | full | full | full |
 | `restore_server_version` | full | full | full |
 | `provision_self_hosted_server` | full | error/draft | error/draft |
@@ -139,7 +139,7 @@ Tauri 以前将这些值序列化为字符串，Web 以前将导入结果再次�
 | `sync_key_id` | ✅ | ✅ | ✅ |  |
 | `sync_now_mode` | ✅ | ✅ | ✅ | object(report,...) |
 | `sync_preview` | ✅ | ✅ | ✅ | object(report,...) |
-| `sync_webdav_now_mode` | ✅ | ✅ | ✅ | platform={"tauri": "full", "web": "full", "ext": "error"} |
+| `sync_webdav_now_mode` | ✅ | ✅ | ✅ | platform={"tauri": "full", "web": "full", "ext": "full-managed"} |
 | `toggle_account_pin` | ✅ | ✅ | ✅ | account-object |
 | `undo_last_operation` | ✅ | ✅ | ✅ |  |
 | `update_account` | ✅ | ✅ | ✅ |  |

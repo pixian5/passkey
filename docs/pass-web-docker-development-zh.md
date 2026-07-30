@@ -320,7 +320,7 @@ curl --fail http://127.0.0.1:53335/healthz
 
 直接用 `docker run` 冒烟时，镜像默认监听容器内 `0.0.0.0`，因此必须提供网页访问 Token；若宿主机端口明确只映射到 `127.0.0.1`，也可以与 Compose 一样设置 `PASS_WEB_TRUSTED_LOOPBACK_PROXY=1`。缺少二者时容器退出是安全策略，不是启动故障。
 
-版本 `1.4.0` 已在 macOS Docker Desktop `linux/arm64` 上完成真实镜像构建和生命周期验证：`/healthz` 返回 200，首次启动、普通重启、容器内 PID 1 被 `SIGKILL` 后按 `unless-stopped` 自动恢复、`--force-recreate` 后恢复均通过。测试脚本为 `scripts/test_pass_web_container_lifecycle.sh`，使用独立 Compose project 与临时 volume，不触碰现有 `pass-web_pass_web_data`。该本地验证不等于镜像已经推送到 GHCR；`linux/amd64` 与 `linux/arm64` 的正式构建由 GitHub Actions Buildx 完成。
+版本 `1.4.1` 已在 macOS Docker Desktop `linux/arm64` 上完成真实镜像构建和生命周期验证：`/healthz` 返回 200，首次启动、普通重启、测试监护进程下的 `pass-web` 子进程被 `SIGKILL` 后按 `unless-stopped` 自动恢复且 `RestartCount` 确实增加、`--force-recreate` 后恢复均通过。崩溃探针仍运行同一生产镜像和同一二进制，只额外用 shell 作为测试容器 PID 1；不能用容器内 `kill -9 1`，因为 namespace init 的信号规则可能让命令返回成功却没有退出。测试脚本为 `scripts/test_pass_web_container_lifecycle.sh`，使用独立 Compose project、临时容器与临时 volume，不触碰现有 `pass-web_pass_web_data`。Actions 的路径过滤包含该脚本，并在构建前运行 actionlint；`.github/actionlint.yaml` 只声明当前 GitHub 支持但 actionlint 内置列表尚未识别的 `macos-26` runner。该本地验证不等于镜像已经推送到 GHCR；`linux/amd64` 与 `linux/arm64` 的正式构建由 GitHub Actions Buildx 完成。
 
 查看日志：
 

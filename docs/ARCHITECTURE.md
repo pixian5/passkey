@@ -42,7 +42,7 @@
 | P2 Core 变厚 | 完成（本阶段） | 别名并集、域名/UUID、CSV 导出进 Core；macOS/Tauri 已接 |
 | P3 扩展同源 | 完成（本阶段） | merge parity 入 CI；JS alias 模块 + 测试；扩展 test:core-parity |
 | P4 桌面壳 | 完成 | Win/macOS/Linux 统一为 `codex-tauri`；Docker Web 与 Chrome Web 扩展复用同一管理 UI |
-| P4b 桌面同步 | 完成 | Tauri/Web/扩展均接自建服务器；Tauri/Web 支持 WebDAV；命令矩阵与合并对拍进入测试门禁 |
+| P4b 桌面同步 | 完成 | Tauri/Web/扩展均接自建服务器与 WebDAV；Chrome 由后台统一调度多来源；命令矩阵与合并对拍进入测试门禁 |
 | P5 移动 | 延后 | 本阶段只做桌面；Android demo 保留不扩展 |
 
 ## 6. 回退开关

@@ -12,6 +12,8 @@ on:
       - "apps/codex-tauri/index.html"
       - "apps/codex-tauri/src/**"
       - "core/pass_core/crates/**"
+      - "scripts/test_pass_web_container_lifecycle.sh"
+      - ".github/actionlint.yaml"
       - ".github/workflows/deploy-pass-web.yml"
   workflow_dispatch:
 
@@ -20,6 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Lint GitHub Actions workflows
+        uses: docker://rhysd/actionlint:1.7.7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:

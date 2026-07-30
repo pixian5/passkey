@@ -818,7 +818,7 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
           nativeFilePicker: false,
           sshProvision: false,
           biometricUnlock: false,
-          webdavSync: false,
+          webdavSync: true,
           serverVersions: true,
           folderDedup: true,
           selfHostedSync: true,
@@ -828,6 +828,7 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
           relationTombstones: true,
           domainAliasSync: true,
           sharedWebUi: true,
+          managedMultiSourceSync: true,
         },
       };
       case "sync_key_id": return syncKeyId(args.key);
@@ -880,7 +881,18 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
         });
         return response.result;
       }
-      case "sync_webdav_now_mode": throw new Error("当前 Chrome 扩展表面尚未实现 WebDAV；请使用桌面端或 Docker Web，或改用自建服务器同步");
+      case "sync_webdav_now_mode": {
+        await syncBackgroundConfig();
+        const response = await sendBackgroundMessage({
+          type: "PASS_SYNC_RUN",
+          payload: {
+            mode: args.mode || "merge",
+            dryRun: false,
+            forceOutboxRetry: Boolean(args.forceOutboxRetry),
+          },
+        });
+        return response.result;
+      }
       case "list_server_versions": {
         const settings = await getSync();
         if (!text(settings.baseUrl)) return [];
@@ -946,8 +958,23 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
           return { message: `已恢复快照 ${versionId}：账号 ${accounts}，文件夹 ${folders}，通行密钥 ${passkeys}` };
         });
       }
-      case "list_local_snapshots": return store.snapshots.map((snapshot) => ({ id: snapshot.id, reason: snapshot.reason, createdAtMs: snapshot.createdAtMs, accounts: (snapshot.payload.accounts || []).filter((a) => !a.isPermanentlyDeleted).length, folders: (snapshot.payload.folders || []).filter((f) => !f.isPermanentlyDeleted).length, passkeys: (snapshot.payload.passkeys || []).filter((p) => !p.isPermanentlyDeleted).length }));
-      case "restore_local_snapshot": { const snapshot = store.snapshots.find((item) => sameId(item.id, args.snapshotId)); if (!snapshot) throw new Error("本地快照不存在"); return mutate("恢复本地安全快照", (data) => { const restored = normalizePayload(snapshot.payload); Object.assign(data, restored); return true; }).then(() => ({ message: "本地安全快照已恢复" })); }
+      case "list_local_snapshots": {
+        const response = await sendBackgroundMessage({ type: "PASS_SYNC_SNAPSHOTS_LIST" });
+        const workspaceSnapshots = store.snapshots.map((snapshot) => ({ id: `workspace:${snapshot.id}`, reason: snapshot.reason, createdAtMs: snapshot.createdAtMs, accounts: (snapshot.payload.accounts || []).filter((a) => !a.isPermanentlyDeleted).length, folders: (snapshot.payload.folders || []).filter((f) => !f.isPermanentlyDeleted).length, passkeys: (snapshot.payload.passkeys || []).filter((p) => !p.isPermanentlyDeleted).length }));
+        const backgroundSnapshots = (Array.isArray(response.items) ? response.items : []).map((snapshot) => ({ ...snapshot, id: `background:${snapshot.id}` }));
+        return [...workspaceSnapshots, ...backgroundSnapshots].sort((left, right) => Number(right.createdAtMs) - Number(left.createdAtMs));
+      }
+      case "restore_local_snapshot": {
+        const requestedId = text(args.snapshotId);
+        if (requestedId.startsWith("background:")) {
+          const response = await sendBackgroundMessage({ type: "PASS_SYNC_SNAPSHOT_RESTORE", payload: { snapshotId: requestedId.slice("background:".length) } });
+          return response.result;
+        }
+        const workspaceId = requestedId.startsWith("workspace:") ? requestedId.slice("workspace:".length) : requestedId;
+        const snapshot = store.snapshots.find((item) => sameId(item.id, workspaceId));
+        if (!snapshot) throw new Error("本地快照不存在");
+        return mutate("恢复本地安全快照", (data) => { const restored = normalizePayload(snapshot.payload); Object.assign(data, restored); return true; }).then(() => ({ message: "本地安全快照已恢复" }));
+      }
       default: throw new Error(`Chrome 扩展暂未实现命令：${command}`);
     }
   };

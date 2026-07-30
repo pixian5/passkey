@@ -49,6 +49,14 @@ globalThis.chrome = {
         callback({ ok: true, result: { report: { ok: true, dryRun: Boolean(message.payload?.dryRun) } } });
         return;
       }
+      if (message?.type === "PASS_SYNC_SNAPSHOTS_LIST") {
+        callback({ ok: true, items: [{ id: "sync-snapshot-1", reason: "同步写入本地前自动备份", createdAtMs: 20, accounts: 1, folders: 0, passkeys: 0 }] });
+        return;
+      }
+      if (message?.type === "PASS_SYNC_SNAPSHOT_RESTORE") {
+        callback({ ok: true, result: { message: "本地安全快照已恢复" } });
+        return;
+      }
       callback({ ok: true });
     },
   },
@@ -72,8 +80,7 @@ test("批量删除/恢复/清空返回数字 count", async () => {
   assert.equal(purged, 2);
 });
 
-test("扩展不支持能力必须明确失败；服务器版本在已配置时可用", async () => {
-  await assert.rejects(() => invoke("sync_webdav_now_mode", { mode: "merge" }), /WebDAV/);
+test("扩展能力声明与后台同步实现一致；桌面专属能力明确失败", async () => {
   await assert.rejects(() => invoke("provision_self_hosted_server", {}), /SSH|桌面/);
   await assert.rejects(() => invoke("lock_unlock_biometric", {}), /指纹|生物|不提供/);
   // 未配置 baseUrl 时列表为空；非法 versionId 明确报错
@@ -83,7 +90,8 @@ test("扩展不支持能力必须明确失败；服务器版本在已配置时�
   await assert.rejects(() => invoke("restore_server_version", { versionId: "1" }), /配置|URL|服务器/);
   const health = await invoke("health_check");
   assert.equal(health.capabilities.serverVersions, true);
-  assert.equal(health.capabilities.webdavSync, false);
+  assert.equal(health.capabilities.webdavSync, true);
+  assert.equal(health.capabilities.managedMultiSourceSync, true);
 });
 
 test("Chrome Web 管理页把同步和补偿队列委托给后台", async () => {
@@ -96,6 +104,17 @@ test("Chrome Web 管理页把同步和补偿队列委托给后台", async () => 
   assert.equal(preview.report.dryRun, true);
   const sync = await invoke("sync_now_mode", { mode: "merge", forceOutboxRetry: true });
   assert.equal(sync.report.ok, true);
+  const webdavSync = await invoke("sync_webdav_now_mode", { mode: "merge" });
+  assert.equal(webdavSync.report.ok, true);
   assert.ok(backgroundMessages.some((message) => message.type === "PASS_WEB_SYNC_CONFIGURE"));
   assert.ok(backgroundMessages.some((message) => message.type === "PASS_SYNC_RUN" && message.payload?.forceOutboxRetry === true));
+});
+
+test("Chrome Web 管理页可列出并恢复后台同步快照", async () => {
+  const snapshots = await invoke("list_local_snapshots");
+  const background = snapshots.find((snapshot) => snapshot.id === "background:sync-snapshot-1");
+  assert.ok(background);
+  const restored = await invoke("restore_local_snapshot", { snapshotId: background.id });
+  assert.equal(restored.message, "本地安全快照已恢复");
+  assert.ok(backgroundMessages.some((message) => message.type === "PASS_SYNC_SNAPSHOT_RESTORE" && message.payload?.snapshotId === "sync-snapshot-1"));
 });

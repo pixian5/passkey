@@ -65,6 +65,7 @@ import {
 } from "./sync_crypto.js";
 import { isTrustedExtensionMessageSender } from "./message_security.js";
 import { createSyncIdempotencyKey, secureRandomUuid } from "./secure_random.js";
+import { buildSyncOperationReport } from "./sync_report.js";
 
 import {
   DEFAULT_DEVICE_NAME,
@@ -156,6 +157,8 @@ const SENSITIVE_MESSAGE_TYPES = new Set([
   "PASS_SYNC_RUN",
   "PASS_SYNC_OUTBOX_STATUS",
   "PASS_SYNC_OUTBOX_CLEAR_INACTIVE",
+  "PASS_SYNC_SNAPSHOTS_LIST",
+  "PASS_SYNC_SNAPSHOT_RESTORE",
 ]);
 
 let webBridgeSyncChain = Promise.resolve();
@@ -428,6 +431,7 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
   const dryRun = Boolean(options.dryRun);
   const forceOutboxRetry = Boolean(options.forceOutboxRetry);
   const automatic = Boolean(options.automatic);
+  const reportOperationId = createSyncIdempotencyKey();
   const lockStatus = await getBackgroundLockStatus();
   if (lockStatus.locked) {
     logSyncFlow("auto-sync-skipped-locked");
@@ -485,15 +489,16 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
       const queued = await advancePendingOutboxAfterPullFailure(target, error, forceOutboxRetry);
       if (target.isPrimary) {
         return {
-          report: {
+          report: buildSyncOperationReport({
             ok: false, safe: true, reasons: [error?.message || String(error || "")],
+            safety: "notEvaluated",
             dryRun, mode, message: `${target.label}拉取失败：${error?.message || String(error || "")}`,
             localAccounts: visibleSyncCount(localAccounts), remoteAccounts: 0,
             mergedAccounts: visibleSyncCount(localAccounts), applied: false, pushed: false,
-            pendingRetry: queued, retryable: true, stage: "pullingRemote",
+            remotePulled: false, pendingRetry: queued, retryable: true, stage: "pullingRemote",
             source: target.kind === "server" ? "selfHosted" : target.kind,
-            syncSessionId,
-          },
+            syncSessionId, operationId: reportOperationId,
+          }),
         };
       }
       pullErrors.push(`${target.label}: ${error?.message || String(error || "")}`);
@@ -535,9 +540,10 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
   if (!syncPayloadEquals(currentPayload, pulledLocalPayload)) {
     logSyncFlow("auto-sync-aborted-local-changed-during-pull");
     return {
-      report: {
+      report: buildSyncOperationReport({
         ok: false,
         safe: true,
+        safety: "notEvaluated",
         reasons: ["拉取远端数据期间本地内容已变化，请重新同步"],
         dryRun,
         mode,
@@ -547,12 +553,14 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
         mergedAccounts: visibleSyncCount(currentPayload.accounts),
         applied: false,
         pushed: false,
+        remotePulled: true,
         pendingRetry: false,
         retryable: true,
         stage: "checkingLocalConcurrency",
         source: primaryReportSource,
         syncSessionId,
-      },
+        operationId: reportOperationId,
+      }),
       localPayload: currentPayload,
       payload: currentPayload,
     };
@@ -598,15 +606,15 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
         merged: safety.merged,
       });
       return {
-        report: {
+        report: buildSyncOperationReport({
           ok: false, safe: false, reasons: safety.reasons, dryRun, mode,
           message: `同步安全检查未通过：${safety.reasons.join("、")}`,
           localAccounts: visibleSyncCount(localAccounts),
           remoteAccounts: visibleSyncCount(primaryRemotePayload?.accounts),
           mergedAccounts: visibleSyncCount(mergedAccounts),
-          applied: false, pushed: false, pendingRetry: false, retryable: false,
-          stage: "safetyChecking", source: primaryReportSource, syncSessionId,
-        },
+          applied: false, pushed: false, remotePulled: true, pendingRetry: false, retryable: false,
+          stage: "safetyChecking", source: primaryReportSource, syncSessionId, operationId: reportOperationId,
+        }),
         localPayload: currentPayload,
         payload: finalPayload,
       };
@@ -615,15 +623,15 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
 
   if (dryRun) {
     return {
-      report: {
+      report: buildSyncOperationReport({
         ok: true, safe: true, reasons: [], dryRun: true, mode,
         message: "预览完成（未写入）",
         localAccounts: visibleSyncCount(localAccounts),
         remoteAccounts: visibleSyncCount(primaryRemotePayload?.accounts),
         mergedAccounts: visibleSyncCount(mergedAccounts),
-        applied: false, pushed: false, pendingRetry: false, retryable: false,
-        stage: "completed", source: primaryReportSource, syncSessionId,
-      },
+        applied: false, pushed: false, remotePulled: true, pendingRetry: false, retryable: false,
+        stage: "completed", source: primaryReportSource, syncSessionId, operationId: reportOperationId,
+      }),
       localPayload: currentPayload,
       payload: finalPayload,
     };
@@ -651,6 +659,7 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
   );
   const pushErrors = [...pullErrors];
   let primaryPushFailed = false;
+  let primaryOperationId = reportOperationId;
   const outboxByTarget = new Map((await getSyncOutbox()).map((item) => [item.targetKey, item]));
   for (const target of pushTargets) {
     if (primaryPushFailed && target.isPrimary === false) {
@@ -667,6 +676,9 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
     };
     const candidateHash = await syncPayloadSha256(candidatePayload);
     const persistedContext = matchingSyncOutboxItem(pendingOutbox, candidateHash);
+    if (target.isPrimary && persistedContext?.operationId) {
+      primaryOperationId = persistedContext.operationId;
+    }
     if (persistedContext && !forceOutboxRetry && !isSyncOutboxReady(persistedContext)) {
       const paused = pendingOutbox.status === "paused";
       const waitSeconds = Math.max(1, Math.ceil((pendingOutbox.nextRetryAtMs - Date.now()) / 1000));
@@ -687,7 +699,9 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
       remoteEtag: target.remoteEtag,
     });
     let result;
-    const operationId = persistedContext?.operationId || createSyncIdempotencyKey();
+    const operationId = persistedContext?.operationId
+      || (target.isPrimary ? reportOperationId : createSyncIdempotencyKey());
+    if (target.isPrimary) primaryOperationId = operationId;
     const idempotencyKey = persistedContext?.idempotencyKey || createSyncIdempotencyKey();
     try {
       result = await pushRemotePayloadWithMode(target, {
@@ -756,7 +770,7 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
     pushErrors,
   });
   return {
-    report: {
+    report: buildSyncOperationReport({
       ok: pushErrors.length === 0,
       safe: true,
       reasons: pushErrors,
@@ -768,12 +782,15 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
       mergedAccounts: visibleSyncCount(mergedAccounts),
       applied: mode !== "localOverwriteRemote",
       pushed: pushErrors.length === 0,
+      remotePulled: true,
       pendingRetry: pushErrors.length > 0,
       retryable: pushErrors.length > 0,
       stage: pushErrors.length > 0 ? "pushingRemote" : "completed",
       source: primaryReportSource,
       syncSessionId,
-    },
+      operationId: primaryOperationId,
+      etag: primaryTarget.remoteEtag,
+    }),
   };
 }
 
@@ -796,8 +813,29 @@ async function readBusinessDataFromStore() {
 async function saveLocalSafetySnapshot(reason) {
   const payload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
   const snapshots = await getSafetySnapshots();
-  snapshots.unshift({ createdAtMs: Date.now(), reason: String(reason || "同步前备份"), payload });
+  snapshots.unshift({ id: `sync-snapshot-${secureRandomUuid()}`, createdAtMs: Date.now(), reason: String(reason || "同步前备份"), payload });
   await setSafetySnapshots(snapshots);
+}
+
+async function listLocalSafetySnapshots() {
+  return (await getSafetySnapshots()).map((snapshot) => ({
+    id: snapshot.id,
+    reason: snapshot.reason,
+    createdAtMs: snapshot.createdAtMs,
+    accounts: visibleSyncCount(snapshot.payload?.accounts),
+    folders: visibleSyncCount(snapshot.payload?.folders),
+    passkeys: visibleSyncCount(snapshot.payload?.passkeys),
+  }));
+}
+
+async function restoreLocalSafetySnapshot(snapshotId) {
+  const snapshots = await getSafetySnapshots();
+  const snapshot = snapshots.find((item) => String(item.id) === String(snapshotId || ""));
+  if (!snapshot) throw new Error("后台同步快照不存在或已被清理");
+  await saveLocalSafetySnapshot("恢复本地快照前自动备份");
+  await writeBusinessDataToStore(snapshot.payload);
+  await appendHistoryEntry({ action: `恢复本地安全快照（${snapshot.reason}）`, timestampMs: Date.now() });
+  return { message: "本地安全快照已恢复" };
 }
 
 function normalizeSyncPayloadShape(payload) {
@@ -1006,6 +1044,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       case "PASS_SYNC_OUTBOX_CLEAR_INACTIVE":
         sendResponse({ ok: true, removed: await clearInactiveSyncOutboxItems() });
+        return;
+      case "PASS_SYNC_SNAPSHOTS_LIST":
+        sendResponse({ ok: true, items: await listLocalSafetySnapshots() });
+        return;
+      case "PASS_SYNC_SNAPSHOT_RESTORE":
+        sendResponse({ ok: true, result: await restoreLocalSafetySnapshot(message.payload?.snapshotId) });
         return;
       case "PASS_CONTENT_LIST_FILL_ACCOUNTS":
         sendResponse(await handleContentListFillAccounts(sender));

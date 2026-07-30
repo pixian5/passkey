@@ -1,6 +1,6 @@
 (() => {
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.0";
+  var PASS_EXTENSION_VERSION = "1.4.1";
 
   // ../../core/pass_core/js/sync_policy.js
   var DEFAULT_DEVICE_NAME = "PassDevice";
@@ -1746,11 +1746,17 @@
     return normalized;
   }
   function normalizeSafetySnapshots(value) {
-    return (Array.isArray(value) ? value : []).filter((item) => item && typeof item === "object" && item.payload && typeof item.payload === "object").map((item) => ({
+    const normalized = (Array.isArray(value) ? value : []).filter((item) => item && typeof item === "object" && item.payload && typeof item.payload === "object").map((item) => ({
+      id: String(item.id || `sync-snapshot-${Number(item.createdAtMs || 0)}`),
       createdAtMs: Number(item.createdAtMs || 0),
       reason: String(item.reason || "\u540C\u6B65\u524D\u5907\u4EFD"),
       payload: item.payload
-    })).filter((item) => Number.isFinite(item.createdAtMs) && item.createdAtMs > 0).sort((lhs, rhs) => rhs.createdAtMs - lhs.createdAtMs).slice(0, SAFETY_SNAPSHOT_MAX_ENTRIES);
+    })).filter((item) => Number.isFinite(item.createdAtMs) && item.createdAtMs > 0);
+    const unique = /* @__PURE__ */ new Map();
+    for (const snapshot of normalized) {
+      if (!unique.has(snapshot.id)) unique.set(snapshot.id, snapshot);
+    }
+    return [...unique.values()].sort((lhs, rhs) => rhs.createdAtMs - lhs.createdAtMs).slice(0, SAFETY_SNAPSHOT_MAX_ENTRIES);
   }
   async function getSafetySnapshots() {
     await ensureDataStorageReady();

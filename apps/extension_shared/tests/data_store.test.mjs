@@ -380,7 +380,9 @@ test("安全快照使用 IndexedDB 加密存储，并迁移后删除旧明文副
   const row = await readEncryptedCollectionRow("syncSafetySnapshots");
   assert.equal(row.version, 1);
   assert.equal(JSON.stringify(row).includes("do-not-leak"), false);
-  assert.deepEqual((await getSafetySnapshots())[0].payload, secretPayload);
+  const storedSnapshot = (await getSafetySnapshots())[0];
+  assert.deepEqual(storedSnapshot.payload, secretPayload);
+  assert.equal(storedSnapshot.id, "sync-snapshot-100");
   assert.equal((await local.get([LEGACY_SNAPSHOTS_KEY]))[LEGACY_SNAPSHOTS_KEY], undefined);
 
   await local.set({
@@ -388,6 +390,7 @@ test("安全快照使用 IndexedDB 加密存储，并迁移后删除旧明文副
   });
   const migrated = await getSafetySnapshots();
   assert.equal(migrated[0].createdAtMs, 200);
+  assert.equal(migrated[0].id, "sync-snapshot-200");
   assert.equal((await local.get([LEGACY_SNAPSHOTS_KEY]))[LEGACY_SNAPSHOTS_KEY], undefined);
   const migratedRow = await readEncryptedCollectionRow("syncSafetySnapshots");
   assert.equal(JSON.stringify(migratedRow).includes("do-not-leak"), false);
