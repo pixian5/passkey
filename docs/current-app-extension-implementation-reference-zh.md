@@ -1,7 +1,7 @@
 # Pass 当前实现与设计决策基准
 
 > 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源；本轮完成后由版本脚本递增。
-> 当前为 `1.4.3`。
+> 当前为 `1.4.4`。
 >
 > 使用规则：当历史设计稿、路线图、旧 Swift 代码或界面文字与本文冲突时，先以本文和自动化门禁为准，再回到代码核对。没有测试或代码依据时，不得写“完整”“完全一致”“所有端均支持”。
 
@@ -290,6 +290,14 @@ Chrome 有管理页工作区快照和后台同步安全快照两种本地来源�
 
 ## 13. 验证入口和当前基线
 
+推荐先运行根级统一入口；它默认使用临时 Cargo target，并在结尾区分代码失败与环境不可用。Docker/Android 可选套件和同步边界说明见 [`test-baseline-and-sync-e2e-zh.md`](./test-baseline-and-sync-e2e-zh.md)。
+
+```bash
+bash scripts/test_all.sh
+```
+
+完整手工/分模块命令仍保留如下：
+
 ```bash
 node scripts/version.mjs check
 node scripts/check_command_matrix.mjs
@@ -308,7 +316,7 @@ python3 -m http.server 8766 --bind 127.0.0.1
 # 点击手机号输入框，确认提示位于视口右上角且不继承测试页的冲突样式。
 ```
 
-版本 `1.4.3` 的当前复核基线：扩展测试 112 项、Core Rust 测试 41 项与 JS/Rust 合并对拍 48 组、Tauri 33 项、同步服务器 Python 测试 37 项及脚本/端到端测试 26 项、Docker Web 测试 17 项，以及 Swift `swift build`、Safari Xcode 构建、Android 4 项单元测试与 debug APK 构建、三套 Clippy/Rust fmt、三套 `cargo audit`、actionlint 和 72/72 命令矩阵均通过。Android 本机验证使用 JDK 17、Android SDK Platform 36；由于没有 Android 14+ 真机，不能宣称系统 Credential Manager 交互已实测。
+版本 `1.4.4` 的当前复核基线：扩展测试 112 项、Core Rust 测试 41 项与 JS/Rust 合并对拍 48 组、Tauri 33 项、同步服务器 Python 测试 37 项及脚本/端到端测试 26 项、Docker Web 测试 17 项，以及 Swift `swift build`、Safari Xcode 构建、Android 4 项单元测试与 debug APK 构建、三套 Clippy/Rust fmt、三套 `cargo audit`、actionlint 和 72/72 命令矩阵均通过。Android 本机验证使用 JDK 17、Android SDK Platform 36；由于没有 Android 14+ 真机，不能宣称系统 Credential Manager 交互已实测。
 
 Tauri 审计仍报告 Tauri/GTK 依赖树中的 20 条上游未维护/unsound warning，但没有已知 vulnerability；CI 的 `cargo audit` 为漏洞硬门禁，不使用 `continue-on-error`。Docker 镜像生命周期实测覆盖首次启动、普通重启、测试监护进程下的 `pass-web` 子进程被 `SIGKILL` 后容器 `RestartCount` 增加、强制重建和 `/healthz`。不能用容器内 `kill -9 1` 代替该验证，因为 PID namespace init 的信号语义可能让命令返回成功但主进程不退出。
 

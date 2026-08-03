@@ -452,7 +452,7 @@ class PassSyncServerTests(unittest.TestCase):
                 body=sample_bundle(11),
                 headers=headers,
             )
-        self.assertIn(context.exception.code, {412, 428})
+        self.assertEqual(context.exception.code, 428)
         context.exception.close()
 
     def test_idempotency_replay_rejects_stale_snapshot(self) -> None:

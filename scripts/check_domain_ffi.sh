@@ -9,7 +9,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 else
   # Linux CI has no Mach-O dylib. Test the native cdylib directly instead.
   cargo build --manifest-path "${ROOT}/core/pass_core/Cargo.toml" -p pass-core-ffi --release --quiet
-  DYLIB="${ROOT}/core/pass_core/target/release/libpass_core_ffi.so"
+  DYLIB="${CARGO_TARGET_DIR:-${ROOT}/core/pass_core/target}/release/libpass_core_ffi.so"
 fi
 
 if [[ ! -f "${DYLIB}" ]]; then

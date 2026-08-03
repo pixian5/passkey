@@ -18,10 +18,10 @@ echo "[pass-core-ffi] building (${PROFILE})..."
 cd "${CORE_DIR}"
 if [[ "${PROFILE}" == "debug" ]]; then
   cargo build -p pass-core-ffi
-  BUILT="${CORE_DIR}/target/debug/libpass_core_ffi.dylib"
+  BUILT="${CARGO_TARGET_DIR:-${CORE_DIR}/target}/debug/libpass_core_ffi.dylib"
 else
   cargo build -p pass-core-ffi --release
-  BUILT="${CORE_DIR}/target/release/libpass_core_ffi.dylib"
+  BUILT="${CARGO_TARGET_DIR:-${CORE_DIR}/target}/release/libpass_core_ffi.dylib"
 fi
 
 if [[ ! -f "${BUILT}" ]]; then

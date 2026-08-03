@@ -1,7 +1,9 @@
 import json
+import gc
 import sqlite3
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 
 import sys
@@ -29,14 +31,21 @@ class AuditSyncDataTests(unittest.TestCase):
     def test_sqlite_summary_counts_top_level_collections(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "pass.db"
-            with sqlite3.connect(path) as connection:
+            connection = sqlite3.connect(path)
+            try:
                 connection.execute("CREATE TABLE kv (key TEXT PRIMARY KEY, value BLOB NOT NULL, updated_at_ms INTEGER NOT NULL)")
                 connection.execute(
                     "INSERT INTO kv VALUES (?, ?, ?)",
                     ("accounts", json.dumps([{"accountId": "redacted", "updatedAtMs": 99}]).encode(), 100),
                 )
                 connection.commit()
-            report = audit_sync_data.summarize_sqlite(path)
+            finally:
+                connection.close()
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", ResourceWarning)
+                report = audit_sync_data.summarize_sqlite(path)
+                gc.collect()
+            self.assertFalse([warning for warning in caught if issubclass(warning.category, ResourceWarning)])
         self.assertEqual(report["collections"]["accounts"]["counts"], {"accounts": 1})
         self.assertEqual(report["collections"]["accounts"]["maxUpdatedAtMs"], 99)
         self.assertNotIn("redacted", json.dumps(report))
@@ -44,11 +53,18 @@ class AuditSyncDataTests(unittest.TestCase):
     def test_sqlite_integrity_reports_encrypted_row_shape(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "pass.db"
-            with sqlite3.connect(path) as connection:
+            connection = sqlite3.connect(path)
+            try:
                 connection.execute("CREATE TABLE kv (key TEXT PRIMARY KEY, value BLOB NOT NULL, updated_at_ms INTEGER NOT NULL)")
                 connection.execute("INSERT INTO kv VALUES (?, ?, ?)", ("accounts", b"\x01encrypted", 100))
                 connection.commit()
-            report = audit_sync_data.summarize_sqlite_integrity(path)
+            finally:
+                connection.close()
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", ResourceWarning)
+                report = audit_sync_data.summarize_sqlite_integrity(path)
+                gc.collect()
+            self.assertFalse([warning for warning in caught if issubclass(warning.category, ResourceWarning)])
         self.assertTrue(report["readable"])
         self.assertTrue(report["encryptedRows"])
         self.assertNotIn("redacted", json.dumps(report))
@@ -56,9 +72,12 @@ class AuditSyncDataTests(unittest.TestCase):
     def test_sqlite_integrity_rejects_empty_row_set(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "pass.db"
-            with sqlite3.connect(path) as connection:
+            connection = sqlite3.connect(path)
+            try:
                 connection.execute("CREATE TABLE kv (key TEXT PRIMARY KEY, value BLOB NOT NULL, updated_at_ms INTEGER NOT NULL)")
                 connection.commit()
+            finally:
+                connection.close()
             report = audit_sync_data.summarize_sqlite_integrity(path)
         self.assertTrue(report["readable"])
         self.assertFalse(report["encryptedRows"])

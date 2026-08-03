@@ -2,6 +2,28 @@
 # Gate for shared-core work: merge parity, domain FFI, unit tests, extension tests.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+  configured_target_dir="${CARGO_TARGET_DIR}"
+  if [[ "${configured_target_dir}" = /* ]]; then
+    mkdir -p "${configured_target_dir}"
+    CARGO_TARGET_DIR="$(cd "${configured_target_dir}" && pwd)"
+  else
+    mkdir -p "${ROOT}/${configured_target_dir}"
+    CARGO_TARGET_DIR="$(cd "${ROOT}/${configured_target_dir}" && pwd)"
+  fi
+  export CARGO_TARGET_DIR
+  CLEAN_TARGET_DIR=0
+else
+  CARGO_TARGET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pass-core-gate.XXXXXX")"
+  export CARGO_TARGET_DIR
+  CLEAN_TARGET_DIR=1
+fi
+cleanup() {
+  if [[ "${CLEAN_TARGET_DIR}" == "1" ]]; then
+    rm -rf "${CARGO_TARGET_DIR}"
+  fi
+}
+trap cleanup EXIT
 node "${ROOT}/scripts/version.mjs" check
 cd "${ROOT}/core/pass_core"
 cargo test --workspace --quiet

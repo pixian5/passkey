@@ -40,6 +40,7 @@
 - `schemas/pass-data-v2.schema.json`：统一数据模型 `pass.data.v2` 的机器可校验定义。
 - `schemas/pass-sync-bundle-v2.schema.json`：统一同步包 `pass.sync.bundle.v2` 的机器可校验定义。
 - `cross-platform-sync-backends-v2-zh.md`：WebDAV/自建服务器跨平台同步协议与接入清单。
+- `test-baseline-and-sync-e2e-zh.md`：统一测试入口、临时 Cargo 构建目录、资源关闭和同步边界测试约定。
 - `dev-roadmap-a-c-j-g-zh.md`：历史交付路线和阶段退出门；当前三端事实以实现参考与三端统一文档为准。
 - `pass-web-three-stage-design-zh.md`：无 GUI Web 版三阶段架构；前两阶段部分已落地，第三阶段多用户目标尚未完成。
 - `pass-web-docker-development-zh.md`：只聚焦 Docker/OCI 的开发、Compose、数据卷、发布、多架构、备份、回滚和排障规范。

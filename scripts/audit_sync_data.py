@@ -82,13 +82,17 @@ def summarize_json(path: Path) -> dict[str, Any]:
 def summarize_sqlite(path: Path) -> dict[str, Any]:
     result: dict[str, Any] = {"path": str(path), "sizeBytes": path.stat().st_size, "sha256": sha256_file(path)}
     entries: dict[str, Any] = {}
+    connection: sqlite3.Connection | None = None
     try:
-        with sqlite3.connect(path) as connection:
-            rows = connection.execute("SELECT key, value, updated_at_ms FROM kv ORDER BY key").fetchall()
+        connection = sqlite3.connect(path)
+        rows = connection.execute("SELECT key, value, updated_at_ms FROM kv ORDER BY key").fetchall()
     except (OSError, sqlite3.Error) as error:
         result["readable"] = False
         result["error"] = type(error).__name__
         return result
+    finally:
+        if connection is not None:
+            connection.close()
     for key, raw_value, updated_at_ms in rows:
         try:
             value = json.loads(bytes(raw_value).decode("utf-8"))
@@ -112,13 +116,17 @@ def summarize_sqlite(path: Path) -> dict[str, Any]:
 def summarize_sqlite_integrity(path: Path) -> dict[str, Any]:
     """Return encrypted-row structure and SQLite integrity without decryption."""
     result = {"path": str(path), "sha256": sha256_file(path), "readable": False}
+    connection: sqlite3.Connection | None = None
     try:
-        with sqlite3.connect(path) as connection:
-            integrity = connection.execute("PRAGMA integrity_check;").fetchone()[0]
-            rows = connection.execute("SELECT key, length(value), updated_at_ms FROM kv ORDER BY key").fetchall()
+        connection = sqlite3.connect(path)
+        integrity = connection.execute("PRAGMA integrity_check;").fetchone()[0]
+        rows = connection.execute("SELECT key, length(value), updated_at_ms FROM kv ORDER BY key").fetchall()
     except (OSError, sqlite3.Error) as error:
         result["error"] = type(error).__name__
         return result
+    finally:
+        if connection is not None:
+            connection.close()
     result["readable"] = integrity == "ok"
     result["integrity"] = integrity
     result["collections"] = {

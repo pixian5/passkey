@@ -29,9 +29,12 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../../..");
 const goldenPath = path.join(repoRoot, "docs/sync-golden-vectors.json");
+const cargoTargetDir = process.env.CARGO_TARGET_DIR
+  ? path.resolve(process.env.CARGO_TARGET_DIR)
+  : path.join(repoRoot, "core/pass_core/target");
 const cliCandidates = [
-  path.join(repoRoot, "core/pass_core/target/debug/pass-merge-cli"),
-  path.join(repoRoot, "core/pass_core/target/release/pass-merge-cli"),
+  path.join(cargoTargetDir, "debug/pass-merge-cli"),
+  path.join(cargoTargetDir, "release/pass-merge-cli"),
 ];
 
 function findCli() {
