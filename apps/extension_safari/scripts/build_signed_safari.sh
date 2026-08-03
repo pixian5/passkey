@@ -14,13 +14,12 @@ BUILD_APPEX_PATH="${DERIVED_DATA}/Build/Products/Debug/${APP_NAME} Extension.app
 "${ROOT_DIR}/../../scripts/sync-pass-icons.sh"
 
 pkill -9 -x "${APP_NAME}" >/dev/null 2>&1 || true
-pkill -9 -x "Safari" >/dev/null 2>&1 || true
 chmod -R u+w "${DERIVED_DATA}" 2>/dev/null || true
 find "${DERIVED_DATA}" -depth -exec rm -rf {} + 2>/dev/null || true
 rm -rf "${DERIVED_DATA}"
 
 cd "${SHARED_DIR}"
-npm install
+npm ci
 npm run build
 
 cd "${PROJECT_DIR}"

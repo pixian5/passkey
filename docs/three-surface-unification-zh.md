@@ -34,7 +34,7 @@
 
 ### 2.2 命令覆盖
 
-UI 当前调用 70 个命令。
+UI 当前调用 72 个命令。
 重叠能力：账号/文件夹 CRUD、排序、置顶、回收站、撤销重做、历史、同步设置、同步预览/合并、同步包导入导出、CSV、快照、主密码锁。
 
 | 能力 | Tauri | Docker Web | Chrome Web 扩展 |
@@ -243,7 +243,7 @@ cd apps/pass-web && cargo test && cargo build --release
 
 旧 Chrome 壳和专用构建入口已移除；Chrome 只加载 `apps/extension_chrome_web`。
 
-## 8. 当前对齐结论（版本 1.4.2）
+## 8. 当前对齐结论（版本 1.4.3）
 
 已对齐并必须保持：
 
@@ -257,11 +257,12 @@ cd apps/pass-web && cargo test && cargo build --release
 8. SSH 远端路径 shell quote；部署健康检查正常 TLS 校验。
 9. Tauri 补偿队列与扩展/Swift 共用 12 次计数和 5 秒至 1280 秒退避；第 12 次失败进入 `paused`，自动调度必须跳过暂停任务，用户手动重试才恢复并保留幂等上下文。Tauri 额外提供队列明细、到期自动重试、手动重试和失效目标清理。
 10. 扩展内容脚本把一次点击密码框的 `pointerdown/focusin/click` 视为一次用户激活，不再重复查询或重复提示。
-11. 同步结果的统一机器 Schema 位于 `docs/schemas/sync-operation-report-v1.schema.json`；命令矩阵门禁检查其必要字段与 Rust `SyncOperationReport` 保持一致。
-12. Chrome 管理页不再维护独立同步引擎：设置写入后发送 `PASS_WEB_SYNC_CONFIGURE`，预览/手动/自动同步统一由后台 `PASS_SYNC_RUN` 执行，outbox 状态与清理也只读取后台加密队列。管理页不得重新出现第二个 `syncRemote` 或固定空队列。
-13. Chrome 后台拉取主源失败时会推进匹配当前 payload 摘要的既有 outbox 退避；拉取期间本地变化时返回 `checkingLocalConcurrency` 可重试报告；最终报告的 `source` 必须是实际主源，而不是固定服务器字符串。
-14. Chrome 声明 `managedMultiSourceSync=true`，自建服务器与 WebDAV 只由后台一次调度；管理页不得逐源重复调用。Tauri/Docker Web 保持 false，由 UI 按主源和镜像顺序调用。
-15. Chrome 管理页通过后台消息列出和恢复同步安全快照；快照 payload 留在后台加密 IndexedDB，恢复前先备份当前后台状态。
+11. 扩展内容脚本的所有网页提示使用 closed Shadow DOM 与 manual Popover top layer，固定在视口右上角，不得直接继承站点表单或弹窗 CSS；并行安装多个 Pass 扩展时，新语义版本始终取得页面 UI 所有权。
+12. 同步结果的统一机器 Schema 位于 `docs/schemas/sync-operation-report-v1.schema.json`；命令矩阵门禁检查其必要字段与 Rust `SyncOperationReport` 保持一致。
+13. Chrome 管理页不再维护独立同步引擎：设置写入后发送 `PASS_WEB_SYNC_CONFIGURE`，预览/手动/自动同步统一由后台 `PASS_SYNC_RUN` 执行，outbox 状态与清理也只读取后台加密队列。管理页不得重新出现第二个 `syncRemote` 或固定空队列。
+14. Chrome 后台拉取主源失败时会推进匹配当前 payload 摘要的既有 outbox 退避；拉取期间本地变化时返回 `checkingLocalConcurrency` 可重试报告；最终报告的 `source` 必须是实际主源，而不是固定服务器字符串。
+15. Chrome 声明 `managedMultiSourceSync=true`，自建服务器与 WebDAV 只由后台一次调度；管理页不得逐源重复调用。Tauri/Docker Web 保持 false，由 UI 按主源和镜像顺序调用。
+16. Chrome 管理页通过后台消息列出和恢复同步安全快照；快照 payload 留在后台加密 IndexedDB，恢复前先备份当前后台状态。
 
 Chrome 的锁定状态已由后台 Service Worker 收口：popup 和管理页收到锁定通知后清除内存业务视图与本地数据密钥，解锁后重新读取加密存储。Docker Web 现把 outbox 加密存入 vault，但只在 Web UI 自动同步计时器运行时调度，桌面端仍额外具有独立的到期调度。仍未对齐：Web/Tauri 跨进程 revision、旧 Swift 文件夹内独立顺序、以及除同步报告外的全部命令返回 Schema 仍未完全统一。不得把本节“已对齐”扩写为所有运行细节完全一致。
 

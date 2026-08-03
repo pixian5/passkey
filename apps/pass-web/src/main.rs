@@ -49,6 +49,9 @@ use uuid::Uuid;
 
 const KEY_FILE: &str = "pass-web-vault-key-v1";
 const KEY_WRAPPER_FILE: &str = "pass-web-vault-key-wrapper-v1.json";
+const LOCK_TRANSACTION_FILE: &str = "pass-web-lock-transaction-v1.json";
+const LOCK_TRANSACTION_VAULT_FILE: &str = ".pass-web-lock-transaction-vault.enc";
+const LOCK_TRANSACTION_CREDENTIAL_FILE: &str = ".pass-web-lock-transaction-credential";
 const INSTANCE_LOCK_FILE: &str = "pass-web-instance.lock";
 const VAULT_FILE: &str = "pass-web-vault-v1.enc";
 const VAULT_KEY_WRAP_AAD: &[u8] = b"pass.web.vault-key-wrapper.v1";
@@ -199,6 +202,15 @@ struct VaultKeyWrapper {
     nonce_b64: String,
     ciphertext_b64: String,
     iterations: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LockTransaction {
+    version: u8,
+    wrapped: bool,
+    vault_sha256: String,
+    credential_sha256: String,
 }
 
 impl Default for WebLockData {
@@ -427,6 +439,142 @@ fn write_private_atomic(dir: &FsPath, name: &str, bytes: &[u8]) -> Result<(), St
         .map_err(|e| format!("持久化 Web vault 目录失败：{e}"))
 }
 
+fn write_private_staged(dir: &FsPath, name: &str, bytes: &[u8]) -> Result<(), String> {
+    private_dir_result(dir)?;
+    let path = dir.join(name);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&path)
+        .map_err(|e| format!("创建 {name} 暂存文件失败：{e}"))?;
+    file.write_all(bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|e| format!("持久化 {name} 暂存文件失败：{e}"))?;
+    drop(file);
+    private_file(&path);
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn finish_staged_file(
+    dir: &FsPath,
+    staged_name: &str,
+    target_name: &str,
+    expected_sha256: &str,
+    description: &str,
+) -> Result<(), String> {
+    let staged = dir.join(staged_name);
+    let target = dir.join(target_name);
+    let source = if staged.exists() { &staged } else { &target };
+    let bytes = fs::read(source).map_err(|_| format!("Web 应用锁事务缺少{description}"))?;
+    if sha256_hex(&bytes) != expected_sha256 {
+        return Err(format!(
+            "Web 应用锁事务的{description}校验失败，拒绝继续覆盖"
+        ));
+    }
+    if staged.exists() {
+        fs::rename(&staged, &target).map_err(|e| format!("完成{description}事务失败：{e}"))?;
+    }
+    private_file(&target);
+    Ok(())
+}
+
+fn prepare_lock_transaction(
+    dir: &FsPath,
+    key: &[u8; 32],
+    data: &VaultData,
+    wrapper: Option<&VaultKeyWrapper>,
+) -> Result<(), String> {
+    if dir.join(LOCK_TRANSACTION_FILE).exists() {
+        return Err("存在尚未恢复的 Web 应用锁写入，请重启服务后重试".into());
+    }
+    for name in [
+        LOCK_TRANSACTION_VAULT_FILE,
+        LOCK_TRANSACTION_CREDENTIAL_FILE,
+    ] {
+        match fs::remove_file(dir.join(name)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("清理 Web 应用锁暂存文件失败：{error}")),
+        }
+    }
+    let raw = serde_json::to_vec(data).map_err(|e| format!("序列化 Web vault 失败：{e}"))?;
+    let encrypted_vault = encrypt(key, &raw)?;
+    write_private_staged(dir, LOCK_TRANSACTION_VAULT_FILE, &encrypted_vault)?;
+    let credential = match wrapper {
+        Some(value) => {
+            serde_json::to_vec(value).map_err(|e| format!("序列化 Web vault 密钥包装失败：{e}"))?
+        }
+        None => key.to_vec(),
+    };
+    write_private_staged(dir, LOCK_TRANSACTION_CREDENTIAL_FILE, &credential)?;
+    let transaction = serde_json::to_vec(&LockTransaction {
+        version: 1,
+        wrapped: wrapper.is_some(),
+        vault_sha256: sha256_hex(&encrypted_vault),
+        credential_sha256: sha256_hex(&credential),
+    })
+    .map_err(|e| format!("序列化 Web 应用锁事务失败：{e}"))?;
+    write_private_atomic(dir, LOCK_TRANSACTION_FILE, &transaction)
+}
+
+fn recover_lock_transaction(dir: &FsPath) -> Result<(), String> {
+    let transaction_path = dir.join(LOCK_TRANSACTION_FILE);
+    if !transaction_path.exists() {
+        return Ok(());
+    }
+    let transaction: LockTransaction = serde_json::from_slice(
+        &fs::read(&transaction_path).map_err(|e| format!("读取 Web 应用锁事务失败：{e}"))?,
+    )
+    .map_err(|_| "Web 应用锁事务格式无效，拒绝继续覆盖保险库".to_string())?;
+    if transaction.version != 1 {
+        return Err("Web 应用锁事务版本无效，拒绝继续覆盖保险库".into());
+    }
+    let target_credential = if transaction.wrapped {
+        KEY_WRAPPER_FILE
+    } else {
+        KEY_FILE
+    };
+    finish_staged_file(
+        dir,
+        LOCK_TRANSACTION_VAULT_FILE,
+        VAULT_FILE,
+        &transaction.vault_sha256,
+        "保险库密文",
+    )?;
+    finish_staged_file(
+        dir,
+        LOCK_TRANSACTION_CREDENTIAL_FILE,
+        target_credential,
+        &transaction.credential_sha256,
+        "密钥凭据",
+    )?;
+    let obsolete = if transaction.wrapped {
+        dir.join(KEY_FILE)
+    } else {
+        dir.join(KEY_WRAPPER_FILE)
+    };
+    match fs::remove_file(obsolete) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("清理旧 Web vault 密钥凭据失败：{error}")),
+    }
+    fs::File::open(dir)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|e| format!("持久化 Web 应用锁事务失败：{e}"))?;
+    fs::remove_file(&transaction_path).map_err(|e| format!("清理 Web 应用锁事务失败：{e}"))?;
+    fs::File::open(dir)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|e| format!("持久化 Web 应用锁事务清理失败：{e}"))
+}
+
 fn read_key_wrapper(dir: &FsPath) -> Result<Option<VaultKeyWrapper>, String> {
     let path = dir.join(KEY_WRAPPER_FILE);
     if !path.exists() {
@@ -547,6 +695,9 @@ fn load_data(dir: &FsPath, key: &[u8; 32]) -> Result<VaultData, String> {
 }
 
 fn save_data(dir: &FsPath, key: &[u8; 32], data: &VaultData) -> Result<(), String> {
+    if dir.join(LOCK_TRANSACTION_FILE).exists() {
+        return Err("存在尚未恢复的 Web 应用锁写入，拒绝覆盖保险库".into());
+    }
     private_dir_result(dir)?;
     let raw = serde_json::to_vec(data).map_err(|e| format!("序列化 Web vault 失败：{e}"))?;
     let encrypted = encrypt(key, &raw)?;
@@ -652,6 +803,7 @@ fn mark_account_permanently_deleted(account: &mut PasswordAccount, now: i64, dev
 impl Vault {
     fn open(dir: PathBuf) -> Result<Self, String> {
         private_dir_result(&dir)?;
+        recover_lock_transaction(&dir)?;
         let path = dir.join(VAULT_FILE);
         if let Some(wrapper) = read_key_wrapper(&dir)? {
             if !path.exists() {
@@ -702,6 +854,18 @@ impl Vault {
             .ok_or_else(|| "应用已锁定，无法写入 Web vault".to_string())?;
         save_data(&self.dir, key, &self.data)
     }
+    fn commit_lock_configuration(&mut self, password: Option<&str>) -> Result<(), String> {
+        let key = self
+            .key
+            .ok_or_else(|| "应用已锁定，无法更新 Web vault 密钥保护".to_string())?;
+        let wrapper = password
+            .map(|value| wrap_vault_key(value, &key))
+            .transpose()?;
+        prepare_lock_transaction(&self.dir, &key, &self.data, wrapper.as_ref())?;
+        recover_lock_transaction(&self.dir)?;
+        self.key_wrapper = wrapper;
+        Ok(())
+    }
     fn is_locked(&self) -> bool {
         self.key.is_none() || (self.data.lock.enabled && self.locked)
     }
@@ -719,22 +883,6 @@ impl Vault {
                 .map_err(|e| format!("持久化 Web vault 密钥迁移失败：{e}"))?;
         }
         self.key_wrapper = Some(wrapper);
-        Ok(())
-    }
-    fn unprotect_key(&mut self) -> Result<(), String> {
-        let key = self
-            .key
-            .ok_or_else(|| "应用已锁定，无法关闭 Web vault 密钥保护".to_string())?;
-        write_private_atomic(&self.dir, KEY_FILE, &key)?;
-        let wrapper_path = self.dir.join(KEY_WRAPPER_FILE);
-        if wrapper_path.exists() {
-            fs::remove_file(&wrapper_path)
-                .map_err(|e| format!("删除 Web vault 密钥包装失败：{e}"))?;
-            fs::File::open(&self.dir)
-                .and_then(|directory| directory.sync_all())
-                .map_err(|e| format!("持久化 Web vault 密钥状态失败：{e}"))?;
-        }
-        self.key_wrapper = None;
         Ok(())
     }
     fn unlock_with_password(&mut self, password: &str) -> Result<(), String> {
@@ -2501,11 +2649,11 @@ fn duplicate_groups(accounts: &[PasswordAccount], folder_id: &str) -> Vec<Folder
 }
 
 fn run_local_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String> {
-    let previous = v.data.clone();
+    let previous = v.clone();
     match do_command(v, command, args) {
         Ok(result) => Ok(result),
         Err(error) => {
-            v.data = previous;
+            *v = previous;
             Err(error)
         }
     }
@@ -2599,8 +2747,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             };
             v.locked = false;
             v.touch();
-            v.save()?;
-            v.protect_key(&password)?;
+            v.commit_lock_configuration(Some(&password))?;
             Ok(v.lock_public_state())
         }
         "lock_change_password" => {
@@ -2622,8 +2769,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             v.data.lock.iterations = LOCK_PBKDF2_ITERS;
             v.locked = false;
             v.touch();
-            v.protect_key(&new_password)?;
-            v.save()?;
+            v.commit_lock_configuration(Some(&new_password))?;
             Ok(v.lock_public_state())
         }
         "lock_disable" => {
@@ -2632,8 +2778,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
             v.data.lock.enabled = false;
             v.locked = false;
             v.touch();
-            v.save()?;
-            v.unprotect_key()?;
+            v.commit_lock_configuration(None)?;
             Ok(v.lock_public_state())
         }
         "lock_unlock" => {
@@ -2768,6 +2913,9 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 "findings": findings,
                 "summary": if exists { "检测到服务器上已有 Pass 同步服务" } else { "未发现已安装的 Pass 同步服务" }
             }))
+        }
+        "inspect_ssh_host_key_cmd" | "trust_ssh_host_key_cmd" => {
+            Err("Web 版无法读取或信任 SSH 主机指纹，请使用桌面版执行服务器创建".into())
         }
         "provision_self_hosted_server" => Err("Web 版无法直接执行 SSH 部署。请在 Ubuntu/Docker 上启动同步服务器，或使用桌面版的“创建服务”功能；Web 版已支持端点检测、同步设置和凭据草稿保存。".into()),
         "get_sync_settings" => Ok(if v.data.sync_settings.is_null() {
@@ -4285,7 +4433,11 @@ fn validate_startup_security(
     host: &str,
     auth_token: &str,
     trusted_loopback_proxy: bool,
+    require_auth: bool,
 ) -> Result<(), String> {
+    if require_auth && auth_token.trim().is_empty() {
+        return Err("此部署已要求 Web 访问认证，请设置 PASS_WEB_AUTH_TOKEN".into());
+    }
     if !is_loopback_bind_host(host) && auth_token.trim().is_empty() && !trusted_loopback_proxy {
         return Err(
             "PASS_WEB_HOST 为非回环地址时必须设置 PASS_WEB_AUTH_TOKEN；仅宿主机回环映射的可信 Docker 代理可设置 PASS_WEB_TRUSTED_LOOPBACK_PROXY=1"
@@ -4418,7 +4570,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         env::var("PASS_WEB_TRUSTED_LOOPBACK_PROXY").ok().as_deref(),
         Some("1") | Some("true") | Some("TRUE")
     );
-    validate_startup_security(&host, &token, trusted_loopback_proxy)?;
+    let require_auth = matches!(
+        env::var("PASS_WEB_REQUIRE_AUTH").ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE")
+    );
+    validate_startup_security(&host, &token, trusted_loopback_proxy, require_auth)?;
     let instance_guard = Arc::new(acquire_instance_guard(&data_dir)?);
     let state = AppState {
         vault: Arc::new(Mutex::new(Vault::open(data_dir)?)),
@@ -4451,11 +4607,12 @@ mod tests {
 
     #[test]
     fn non_loopback_web_bind_requires_access_token() {
-        assert!(validate_startup_security("127.0.0.1", "", false).is_ok());
-        assert!(validate_startup_security("::1", "", false).is_ok());
-        assert!(validate_startup_security("0.0.0.0", "", false).is_err());
-        assert!(validate_startup_security("0.0.0.0", "operator-token", false).is_ok());
-        assert!(validate_startup_security("0.0.0.0", "", true).is_ok());
+        assert!(validate_startup_security("127.0.0.1", "", false, false).is_ok());
+        assert!(validate_startup_security("::1", "", false, false).is_ok());
+        assert!(validate_startup_security("0.0.0.0", "", false, false).is_err());
+        assert!(validate_startup_security("0.0.0.0", "operator-token", false, false).is_ok());
+        assert!(validate_startup_security("0.0.0.0", "", true, false).is_ok());
+        assert!(validate_startup_security("127.0.0.1", "", false, true).is_err());
     }
 
     #[test]
@@ -4677,6 +4834,93 @@ mod tests {
         .is_err());
         do_command(&mut restarted, "lock_unlock", json!({"password": password})).unwrap();
         assert!(!restarted.is_locked());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn changed_master_password_survives_restart_as_one_commit() {
+        let dir = std::env::temp_dir().join(format!("pass-web-change-lock-{}", Uuid::new_v4()));
+        let mut vault = Vault::open(dir.clone()).unwrap();
+        do_command(
+            &mut vault,
+            "lock_enable",
+            json!({"password": "old-password", "confirm": "old-password"}),
+        )
+        .unwrap();
+        do_command(
+            &mut vault,
+            "lock_change_password",
+            json!({
+                "oldPassword": "old-password",
+                "newPassword": "new-password",
+                "confirm": "new-password"
+            }),
+        )
+        .unwrap();
+        drop(vault);
+
+        let mut restarted = Vault::open(dir.clone()).unwrap();
+        assert!(do_command(
+            &mut restarted,
+            "lock_unlock",
+            json!({"password": "old-password"})
+        )
+        .is_err());
+        do_command(
+            &mut restarted,
+            "lock_unlock",
+            json!({"password": "new-password"}),
+        )
+        .unwrap();
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn restart_finishes_interrupted_lock_file_pair_commit() {
+        let dir = std::env::temp_dir().join(format!("pass-web-lock-recovery-{}", Uuid::new_v4()));
+        let mut vault = Vault::open(dir.clone()).unwrap();
+        do_command(
+            &mut vault,
+            "lock_enable",
+            json!({"password": "old-password", "confirm": "old-password"}),
+        )
+        .unwrap();
+
+        let new_password = "new-password";
+        let mut salt = [0u8; 16];
+        rand::thread_rng().fill_bytes(&mut salt);
+        let lock_key = derive_web_lock_key(new_password, &salt, LOCK_PBKDF2_ITERS);
+        vault.data.lock.salt_b64 = STANDARD.encode(salt);
+        vault.data.lock.verifier_b64 = STANDARD.encode(Sha256::digest(lock_key));
+        let vault_key = vault.key.unwrap();
+        let wrapper = wrap_vault_key(new_password, &vault_key).unwrap();
+        prepare_lock_transaction(&dir, &vault_key, &vault.data, Some(&wrapper)).unwrap();
+        fs::rename(dir.join(LOCK_TRANSACTION_VAULT_FILE), dir.join(VAULT_FILE)).unwrap();
+        drop(vault);
+
+        let mut restarted = Vault::open(dir.clone()).unwrap();
+        assert!(!dir.join(LOCK_TRANSACTION_FILE).exists());
+        do_command(
+            &mut restarted,
+            "lock_unlock",
+            json!({"password": new_password}),
+        )
+        .unwrap();
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn lock_transaction_rejects_missing_stage_with_stale_target() {
+        let dir = std::env::temp_dir().join(format!("pass-web-lock-corrupt-{}", Uuid::new_v4()));
+        let mut vault = Vault::open(dir.clone()).unwrap();
+        vault.data.device_name = "new-state".into();
+        let vault_key = vault.key.unwrap();
+        prepare_lock_transaction(&dir, &vault_key, &vault.data, None).unwrap();
+        fs::remove_file(dir.join(LOCK_TRANSACTION_VAULT_FILE)).unwrap();
+
+        let error = recover_lock_transaction(&dir).expect_err("stale target must be rejected");
+        assert!(error.contains("校验失败"));
+        assert!(dir.join(LOCK_TRANSACTION_FILE).exists());
         let _ = fs::remove_dir_all(dir);
     }
 

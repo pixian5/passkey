@@ -370,6 +370,31 @@ test("迁移标记已存在时仍会转换 Safari 新来源中的旧集合", asy
   assert.equal(typeof migratedRow.ciphertextBase64, "string");
 });
 
+test("旧集合迁移按稳定 recordId 合并，不能按历史 accountId 误合并", async () => {
+  await local.set({
+    "pass.accounts": [
+      { accountId: "legacy-shared", recordId: "record-a", username: "first", updatedAtMs: 1 },
+      { accountId: "legacy-shared", recordId: "record-b", username: "second", updatedAtMs: 2 },
+    ],
+  });
+  assert.deepEqual(
+    (await getAccounts()).map((account) => account.recordId),
+    ["record-a", "record-b"],
+  );
+
+  await local.set({
+    "pass.accounts": [
+      { accountId: "old-account", recordId: "record-a", username: "old", updatedAtMs: 3 },
+      { accountId: "new-account", recordId: "record-a", username: "new", updatedAtMs: 4 },
+    ],
+  });
+  await resetDataStoreRuntimeForTests();
+  assert.deepEqual(
+    (await getAccounts()).map((account) => account.username),
+    ["new", "second"],
+  );
+});
+
 test("安全快照使用 IndexedDB 加密存储，并迁移后删除旧明文副本", async () => {
   const secretPayload = {
     accounts: [{ recordId: "secret-record", password: "do-not-leak" }],

@@ -1,7759 +1,2845 @@
-import AppKit
-import CryptoKit
-import Foundation
-import SwiftUI
-import Vision
-
-@MainActor
-final class AccountStore: ObservableObject {
-    enum SyncMode: String, CaseIterable, Identifiable {
-        case merge
-        case remoteOverwriteLocal
-        case localOverwriteRemote
-
-        var id: String { rawValue }
-
-        var label: String {
-            switch self {
-            case .merge:
-                return "åˆå¹¶"
-            case .remoteOverwriteLocal:
-                return "äº‘ç«¯è¦†ç›–æœ¬åœ°"
-            case .localOverwriteRemote:
-                return "æœ¬åœ°è¦†ç›–äº‘ç«¯"
-            }
-        }
-
-        var completionVerb: String {
-            switch self {
-            case .merge:
-                return "å®Œæˆåˆå¹¶åŒæ­¥"
-            case .remoteOverwriteLocal:
-                return "å®Œæˆäº‘ç«¯è¦†ç›–æœ¬åœ°"
-            case .localOverwriteRemote:
-                return "å®Œæˆæœ¬åœ°è¦†ç›–äº‘ç«¯"
-            }
-        }
-    }
-
-    enum AutoSyncInterval: Int, CaseIterable, Identifiable {
-        case disabled = 0
-        case minute1 = 1
-        case minute3 = 3
-        case minute5 = 5
-        case minute10 = 10
-        case minute15 = 15
-        case minute30 = 30
-        case minute60 = 60
-
-        var id: Int { rawValue }
-
-        var label: String {
-            switch self {
-            case .disabled:
-                return "å…³é—­"
-            case .minute1:
-                return "æ¯ 1 åˆ†é’Ÿ"
-            case .minute3:
-                return "æ¯ 3 åˆ†é’Ÿ"
-            case .minute5:
-                return "æ¯ 5 åˆ†é’Ÿ"
-            case .minute10:
-                return "æ¯ 10 åˆ†é’Ÿ"
-            case .minute15:
-                return "æ¯ 15 åˆ†é’Ÿ"
-            case .minute30:
-                return "æ¯ 30 åˆ†é’Ÿ"
-            case .minute60:
-                return "æ¯ 60 åˆ†é’Ÿ"
-            }
-        }
-    }
-
-    enum SyncPrimarySource: String, CaseIterable, Identifiable {
-        case selfHostedServer
-        case webDAV
-        case iCloud
-
-        var id: String { rawValue }
-
-        var label: String {
-            switch self {
-            case .selfHostedServer: return "è‡ªå»ºæœåŠ¡å™¨ï¼ˆæŽ¨èï¼‰"
-            case .webDAV: return "WebDAV"
-            case .iCloud: return "iCloud"
-            }
-        }
-    }
-
-    @Published var deviceName: String = ""
-    enum ToastStyle: String, Equatable {
-        case success
-        case error
-        case warning
-    }
-
-    @Published var statusMessage: String = "" {
-        didSet {
-            let message = statusMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-            let allowsUndoMove = nextStatusAllowsUndoMove
-            nextStatusAllowsUndoMove = false
-            isTopToastUndoAvailable = allowsUndoMove
-            guard !message.isEmpty else { return }
-            showToast(message, style: Self.classifyToastStyle(message))
-        }
-    }
-    @Published var createSitesText: String = ""
-    @Published var createUsername: String = ""
-    @Published var createPassword: String = ""
-    @Published var createTotpSecret: String = ""
-    @Published var createRecoveryCodes: String = ""
-    @Published var createNote: String = ""
-    @Published var showDeletedAccounts: Bool = false
-    @Published var editingAccountId: UUID?
-    @Published var editSitesText: String = ""
-    @Published var editUsername: String = ""
-    @Published var editPassword: String = ""
-    @Published var editTotpSecret: String = ""
-    @Published var editRecoveryCodes: String = ""
-    @Published var editNote: String = ""
-    @Published var exportDirectoryPath: String = ""
-    @Published var uiFontFamily: String = AccountStore.systemDefaultFontFamily {
-        didSet {
-            let fallback = AccountStore.systemDefaultFontFamily
-            let normalized = uiFontFamily.trimmingCharacters(in: .whitespacesAndNewlines)
-            let resolved = (normalized == fallback || AccountStore.installedFontFamilies.contains(normalized))
-                ? normalized
-                : fallback
-            if resolved != uiFontFamily {
-                uiFontFamily = resolved
-                return
-            }
-            UserDefaults.standard.set(resolved, forKey: Keys.uiFontFamily)
-        }
-    }
-    @Published var uiTextFontSize: Double = 20 {
-        didSet {
-            let clamped = min(max(uiTextFontSize, 12), 40)
-            if clamped != uiTextFontSize {
-                uiTextFontSize = clamped
-                return
-            }
-            UserDefaults.standard.set(clamped, forKey: Keys.uiTextFontSize)
-        }
-    }
-    @Published var uiButtonFontSize: Double = 20 {
-        didSet {
-            let clamped = min(max(uiButtonFontSize, 12), 52)
-            if clamped != uiButtonFontSize {
-                uiButtonFontSize = clamped
-                return
-            }
-            UserDefaults.standard.set(clamped, forKey: Keys.uiButtonFontSize)
-        }
-    }
-    @Published var uiToastDurationSeconds: Double = 5 {
-        didSet {
-            let clamped = min(max(uiToastDurationSeconds, 1), 10)
-            if clamped != uiToastDurationSeconds {
-                uiToastDurationSeconds = clamped
-                return
-            }
-            UserDefaults.standard.set(clamped, forKey: Keys.uiToastDurationSeconds)
-        }
-    }
-    @Published var showPasswordsGlobally: Bool = true {
-        didSet {
-            UserDefaults.standard.set(showPasswordsGlobally, forKey: Keys.showPasswordsGlobally)
-        }
-    }
-    @Published private(set) var toastMessage: String = ""
-    @Published private(set) var toastStyle: ToastStyle = .success
-    @Published private(set) var isToastVisible: Bool = false
-    @Published private(set) var isTopToastUndoAvailable: Bool = false
-    @Published private(set) var folders: [AccountFolder] = []
-    var activeFolders: [AccountFolder] {
-        folders.filter { !$0.isDeleted }
-    }
-    @Published private(set) var undoMoveToastMessage: String = ""
-    @Published private(set) var isUndoMoveToastVisible: Bool = false
-    @Published private(set) var selectAllAccountsSignal: Int = 0
-    @Published private(set) var cloudSyncStatus: String = "iCloud æœªè¿žæŽ¥ï¼Œä½¿ç”¨æœ¬æœºæ•°æ®"
-    @Published private(set) var syncVersionSummaries: [SyncVersionSummary] = []
-    @Published private(set) var syncVersionsStatus: String = ""
-    @Published private(set) var syncPreviewStatus: String = ""
-    @Published private(set) var syncOutboxCount: Int = 0
-    @Published private(set) var syncOutboxStatus: String = ""
-    @Published private(set) var storageIntegrityStatus: String = ""
-    @Published private(set) var syncDiagnostics: SyncDiagnostics = .empty
-    @Published private(set) var accounts: [PasswordAccount] = []
-    @Published private(set) var passkeys: [PasskeyRecord] = []
-    @Published private(set) var historyEntries: [OperationHistoryEntry] = []
-    @Published var syncEnableICloud: Bool = true {
-        didSet {
-            guard !isLoadingSyncPreferences else { return }
-            setSyncPreference(syncEnableICloud, forKey: Keys.syncEnableICloud)
-            handleSyncSourceSelectionChanged()
-        }
-    }
-    @Published var syncEnableWebDAV: Bool = false {
-        didSet {
-            guard !isLoadingSyncPreferences else { return }
-            setSyncPreference(syncEnableWebDAV, forKey: Keys.syncEnableWebDAV)
-            handleSyncSourceSelectionChanged()
-        }
-    }
-    @Published var syncEnableSelfHostedServer: Bool = false {
-        didSet {
-            guard !isLoadingSyncPreferences else { return }
-            setSyncPreference(syncEnableSelfHostedServer, forKey: Keys.syncEnableSelfHostedServer)
-            handleSyncSourceSelectionChanged()
-        }
-    }
-    @Published var syncPrimarySource: SyncPrimarySource = .selfHostedServer {
-        didSet {
-            guard !isLoadingSyncPreferences else { return }
-            setSyncPreference(syncPrimarySource.rawValue, forKey: Keys.syncPrimarySource)
-            refreshSyncSourceStatusHint()
-        }
-    }
-    @Published var webdavBaseURL: String = "" {
-        didSet {
-            guard !isLoadingSyncPreferences else { return }
-            setSyncPreference(webdavBaseURL, forKey: Keys.webdavBaseURL)
-        }
-    }
-    @Published var webdavRemotePath: String = "pass-sync-bundle-v2.json" {
-        didSet {
-            guard !isLoadingSyncPreferences else { return }
-            setSyncPreference(webdavRemotePath, forKey: Keys.webdavRemotePath)
-        }
-    }
-    @Published var webdavUsername: String = "" {
-        didSet {
-            guard !isLoadingSyncPreferences else { return }
-            setSyncPreference(webdavUsername, forKey: Keys.webdavUsername)
-        }
-    }
-    @Published var webdavPassword: String = "" {
-        didSet {
-            guard !isLoadingSyncPreferences else { return }
-            _ = saveSecret(webdavPassword, account: SecretKeys.webdavPasswordAccount)
-        }
-    }
-    @Published var serverBaseURL: String = "" {
-        didSet {
-            guard !isLoadingSyncPreferences else { return }
-            let normalized = normalizedSelfHostedServerBaseURL(serverBaseURL)
-            if normalized != serverBaseURL {
-                serverBaseURL = normalized
-                return
-            }
-            setSyncPreference(normalized, forKey: Keys.serverBaseURL)
-        }
-    }
-    @Published var serverAuthToken: String = "" {
-        didSet {
-            guard !isLoadingSyncPreferences else { return }
-            _ = saveSecret(serverAuthToken, account: SecretKeys.serverTokenAccount)
-        }
-    }
-    @Published var syncEncryptionKey: String = "" {
-        didSet {
-            guard !isLoadingSyncPreferences else { return }
-            _ = saveSecret(syncEncryptionKey, account: SecretKeys.syncEncryptionKeyAccount)
-        }
-    }
-    @Published var previousSyncEncryptionKey: String = "" {
-        didSet {
-            guard !isLoadingSyncPreferences else { return }
-            _ = saveSecret(previousSyncEncryptionKey, account: SecretKeys.previousSyncEncryptionKeyAccount)
-        }
-    }
-    @Published var syncMode: SyncMode = .merge {
-        didSet {
-            guard !isLoadingSyncPreferences else { return }
-            setSyncPreference(syncMode.rawValue, forKey: Keys.syncMode)
-        }
-    }
-    @Published var autoSyncIntervalMinutes: Int = AutoSyncInterval.disabled.rawValue {
-        didSet {
-            let resolved = AutoSyncInterval(rawValue: autoSyncIntervalMinutes) ?? .disabled
-            if resolved.rawValue != autoSyncIntervalMinutes {
-                autoSyncIntervalMinutes = resolved.rawValue
-                return
-            }
-            guard !isLoadingSyncPreferences else { return }
-            setSyncPreference(resolved.rawValue, forKey: Keys.autoSyncIntervalMinutes)
-            updateAutoSyncTimer()
-        }
-    }
-
-    static let systemDefaultFontFamily = "ç³»ç»Ÿé»˜è®¤"
-    static let fixedNewAccountFolderName = PassSyncPolicy.fixedNewAccountFolderName
-    static let fixedNewAccountFolderId = PassSyncPolicy.fixedNewAccountFolderId
-    static let syncBundleSchemaV2 = "pass.sync.bundle.v2"
-    static let defaultSelfHostedServerBaseURL = "https://uk.sbbz.tech:5443"
-    private static let maxHistoryEntries = 500
-    private static let installedFontFamilies: Set<String> = Set(NSFontManager.shared.availableFontFamilies)
-
-    private struct RemotePayloadResponse {
-        let payload: SyncBundlePayload?
-        let etag: String?
-        let isEncrypted: Bool
-        let revision: Int?
-    }
-
-    struct SyncDiagnostics: Codable {
-        let localAccounts: Int
-        let localPasskeys: Int
-        let localFolders: Int
-        let remoteAccounts: Int
-        let remotePasskeys: Int
-        let remoteFolders: Int
-        let conflictCount: Int
-        let revision: Int?
-        let etag: String?
-        let lastSyncAtMs: Int64?
-        let sourceSummary: String
-
-        static let empty = SyncDiagnostics(
-            localAccounts: 0,
-            localPasskeys: 0,
-            localFolders: 0,
-            remoteAccounts: 0,
-            remotePasskeys: 0,
-            remoteFolders: 0,
-            conflictCount: 0,
-            revision: nil,
-            etag: nil,
-            lastSyncAtMs: nil,
-            sourceSummary: "æœªåŒæ­¥"
-        )
-    }
-
-    private func persistSyncDiagnostics() {
-        guard let data = try? JSONEncoder().encode(syncDiagnostics) else { return }
-        UserDefaults.standard.set(data, forKey: Keys.syncDiagnostics)
-    }
-
-    private func loadSyncDiagnostics() {
-        guard let data = UserDefaults.standard.data(forKey: Keys.syncDiagnostics),
-              let decoded = try? JSONDecoder().decode(SyncDiagnostics.self, from: data)
-        else { return }
-        syncDiagnostics = decoded
-    }
-
-    private struct SelfHostedPushResult {
-        let payload: SyncBundlePayload
-        let changedLocalData: Bool
-    }
-
-    private struct ETagPushResult {
-        let payload: SyncBundlePayload
-        let changedLocalData: Bool
-        let etag: String?
-    }
-
-    private struct RemoteWriteConfirmation {
-        let etag: String?
-    }
-
-    private struct SelfHostedWriteReceipt: Decodable {
-        let ok: Bool
-        let committed: Bool
-        let scope: String
-        let etag: String
-        let payloadSha256: String
-        let revision: Int
-        let idempotencyKey: String?
-    }
-
-    private struct SyncOutboxItem: Codable {
-        let sourceKey: String
-        let payload: SyncBundlePayload
-        let createdAtMs: Int64
-        let attempts: Int
-        let nextRetryAtMs: Int64
-        let lastError: String
-        let payloadSha256: String
-        let expectedEtag: String
-        let expectedRevision: Int
-        let idempotencyKey: String
-        let syncSessionId: String
-        let operationId: String
-        let lastErrorCode: String
-        let status: String
-
-        private enum CodingKeys: String, CodingKey {
-            case sourceKey, payload, createdAtMs, attempts, nextRetryAtMs, lastError
-            case payloadSha256, expectedEtag, expectedRevision, idempotencyKey, syncSessionId, operationId, lastErrorCode, status
-        }
-
-        init(sourceKey: String, payload: SyncBundlePayload, createdAtMs: Int64, attempts: Int, nextRetryAtMs: Int64,
-             lastError: String, payloadSha256: String = "", expectedEtag: String = "", expectedRevision: Int = 0,
-             idempotencyKey: String = "", syncSessionId: String = "", operationId: String = "", lastErrorCode: String = "", status: String = "pendingRetry") {
-            self.sourceKey = sourceKey; self.payload = payload; self.createdAtMs = createdAtMs; self.attempts = attempts
-            self.nextRetryAtMs = nextRetryAtMs; self.lastError = lastError; self.payloadSha256 = payloadSha256
-            self.expectedEtag = expectedEtag; self.expectedRevision = expectedRevision; self.idempotencyKey = idempotencyKey
-            self.syncSessionId = syncSessionId; self.operationId = operationId; self.lastErrorCode = lastErrorCode
-            self.status = status
-        }
-
-        init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            sourceKey = try c.decode(String.self, forKey: .sourceKey)
-            payload = try c.decode(SyncBundlePayload.self, forKey: .payload)
-            createdAtMs = try c.decode(Int64.self, forKey: .createdAtMs)
-            attempts = try c.decode(Int.self, forKey: .attempts)
-            nextRetryAtMs = try c.decode(Int64.self, forKey: .nextRetryAtMs)
-            lastError = try c.decode(String.self, forKey: .lastError)
-            payloadSha256 = try c.decodeIfPresent(String.self, forKey: .payloadSha256) ?? ""
-            expectedEtag = try c.decodeIfPresent(String.self, forKey: .expectedEtag) ?? ""
-            expectedRevision = try c.decodeIfPresent(Int.self, forKey: .expectedRevision) ?? 0
-            idempotencyKey = try c.decodeIfPresent(String.self, forKey: .idempotencyKey) ?? ""
-            syncSessionId = try c.decodeIfPresent(String.self, forKey: .syncSessionId) ?? ""
-            operationId = try c.decodeIfPresent(String.self, forKey: .operationId) ?? ""
-            lastErrorCode = try c.decodeIfPresent(String.self, forKey: .lastErrorCode) ?? ""
-            status = try c.decodeIfPresent(String.self, forKey: .status) ?? "pendingRetry"
-        }
-    }
-
-    struct SyncVersionSummary: Identifiable {
-        let id: Int
-        let exportedAtMs: Int64
-        let updatedAtMs: Int64
-        let savedAtMs: Int64
-        let payloadSha256: String
-    }
-
-    private struct SyncVersionsResponse: Decodable {
-        let versions: [SyncVersionRecord]
-    }
-
-    private struct SyncVersionRecord: Decodable {
-        let versionId: Int
-        let exportedAtMs: Int64
-        let updatedAtMs: Int64
-        let savedAtMs: Int64
-        let payloadSha256: String
-    }
-
-    struct RemoteOverwritePreflightResult {
-        let unreachableSources: [String]
-        let emptySources: [String]
-
-        var needsWarning: Bool {
-            !unreachableSources.isEmpty || !emptySources.isEmpty
-        }
-    }
-
-    private enum SyncRemoteError: LocalizedError {
-        case preconditionFailed
-
-        var errorDescription: String? {
-            switch self {
-            case .preconditionFailed:
-                return "è¿œç«¯æ•°æ®å·²è¢«å…¶ä»–è®¾å¤‡æ›´æ–°ï¼Œè¯·é‡æ–°æ‹‰å–å¹¶åˆå¹¶åŽå†ä¸Šä¼ "
-            }
-        }
-    }
-
-    private let decoder = JSONDecoder()
-    private let encoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return encoder
-    }()
-    private let cloudStore = NSUbiquitousKeyValueStore.default
-    private let displayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yy-M-d H:m:s"
-        return formatter
-    }()
-    private var toastDismissWorkItem: DispatchWorkItem?
-    private var undoMoveDismissWorkItem: DispatchWorkItem?
-    private var nextStatusAllowsUndoMove: Bool = false
-    private var lastMoveOperation: FolderMoveOperation?
-    private var cloudObserver: NSObjectProtocol?
-    private var suppressCloudPush: Bool = false
-    private var isLoadingSyncPreferences: Bool = false
-    private var syncSecretsLoaded: Bool = false
-    private var syncSecretFileLoaded: Bool = false
-    private var syncSecretFileCorrupt: Bool = false
-    private var syncSecrets: [String: String] = [:]
-    private var localDatabaseReadFailed: Bool = false
-    private var syncNowTask: Task<Void, Never>?
-    private var autoSyncTimer: Timer?
-    private lazy var localSQLiteStore = LocalSQLiteStore(
-        databaseURL: dataDirectoryURL().appendingPathComponent("pass.db", isDirectory: false)
-    )
-
-    private enum LocalDatabaseKeys {
-        static let accounts = "accounts"
-        static let folders = "folders"
-        static let passkeys = "passkeys"
-        static let history = "history"
-        static let syncOutbox = "syncOutbox"
-    }
-
-    private struct FolderMoveOperation {
-        let accountIds: [UUID]
-        let previousFolderIdsByAccountId: [UUID: [UUID]]
-        let actionSummary: String
-    }
-
-    init() {
-        load()
-        loadSyncDiagnostics()
-        loadSyncOutbox()
-        // Perform the legacy credential migration once during startup. The
-        // migration query is non-interactive; after the file is written no
-        // normal launch touches the Keychain again.
-        loadSyncSecretsIfNeeded()
-        handleSyncSourceSelectionChanged()
-    }
-
-    func saveDeviceName(showStatus: Bool = true) {
-        let normalized = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else {
-            if showStatus {
-                statusMessage = "è®¾å¤‡åç§°ä¸èƒ½ä¸ºç©º"
-            }
-            return
-        }
-
-        deviceName = normalized
-        UserDefaults.standard.set(normalized, forKey: Keys.deviceName)
-        if showStatus {
-            statusMessage = "è®¾å¤‡åç§°å·²ä¿å­˜"
-        }
-    }
-
-    func triggerSelectAllAccounts() {
-        selectAllAccountsSignal &+= 1
-    }
-
-    func handleSelectAllShortcut() {
-        triggerSelectAllAccounts()
-    }
-
-    func handleUndoShortcut() {
-        if let textResponder = NSApp.keyWindow?.firstResponder as? NSTextView,
-           textResponder.isEditable
-        {
-            textResponder.undoManager?.undo()
-            return
-        }
-        undoLastMoveOperation()
-    }
-
-    func createFolder(named rawName: String) {
-        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else {
-            statusMessage = "æ–‡ä»¶å¤¹åç§°ä¸èƒ½ä¸ºç©º"
-            return
-        }
-        if activeFolders.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
-            statusMessage = "æ–‡ä»¶å¤¹å·²å­˜åœ¨: \(name)"
-            return
-        }
-
-        let folder = AccountFolder(
-            id: UUID(),
-            name: name,
-            matchedSites: [],
-            autoAddMatchingSites: false,
-            createdAtMs: nowMs(),
-            updatedAtMs: nowMs()
-        )
-        folders.append(folder)
-        markFolderOrderChanged()
-        _ = normalizeFoldersEnsuringFixedNewAccountFolder()
-        saveFoldersToDefaults()
-        appendHistoryEntry(action: "åˆ›å»ºæ–‡ä»¶å¤¹ï¼š\(name)")
-        statusMessage = "å·²åˆ›å»ºæ–‡ä»¶å¤¹: \(name)"
-    }
-
-    private func resolveAuthenticatorImportFolderId(
-        targetFolderId: UUID?,
-        newFolderName: String
-    ) -> UUID? {
-        let normalizedNewFolderName = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !normalizedNewFolderName.isEmpty {
-            if let existing = activeFolders.first(where: {
-                $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
-                    .caseInsensitiveCompare(normalizedNewFolderName) == .orderedSame
-            }) {
-                return existing.id
-            }
-
-            let now = nowMs()
-            let folder = AccountFolder(
-                id: UUID(),
-                name: normalizedNewFolderName,
-                matchedSites: [],
-                autoAddMatchingSites: false,
-                createdAtMs: now,
-                updatedAtMs: now
-            )
-            folders.append(folder)
-            markFolderOrderChanged(at: now)
-            _ = normalizeFoldersEnsuringFixedNewAccountFolder()
-            saveFoldersToDefaults()
-            appendHistoryEntry(action: "åˆ›å»ºæ–‡ä»¶å¤¹ï¼š\(normalizedNewFolderName)")
-            return folder.id
-        }
-
-        guard let targetFolderId else {
-            return nil
-        }
-        guard activeFolders.contains(where: { $0.id == targetFolderId }) else {
-            statusMessage = "ç›®æ ‡æ–‡ä»¶å¤¹ä¸å­˜åœ¨"
-            return nil
-        }
-        return targetFolderId
-    }
-
-    func deleteFolder(id: UUID) {
-        guard let folder = activeFolders.first(where: { $0.id == id }) else {
-            statusMessage = "ç›®æ ‡æ–‡ä»¶å¤¹ä¸å­˜åœ¨"
-            return
-        }
-        if folder.id == Self.fixedNewAccountFolderId {
-            statusMessage = "å›ºå®šæ–‡ä»¶å¤¹ä¸å¯åˆ é™¤"
-            return
-        }
-
-        let now = nowMs()
-        let device = currentDeviceName()
-        if let index = folders.firstIndex(where: { $0.id == id }) {
-            folders[index].isDeleted = true
-            folders[index].isPermanentlyDeleted = true
-            folders[index].deletedAtMs = now
-            folders[index].deletedDeviceName = device
-            folders[index].updatedAtMs = now
-        }
-        _ = normalizeFoldersEnsuringFixedNewAccountFolder()
-        markFolderOrderChanged(at: now)
-
-        var removedFromAccountCount = 0
-
-        for index in accounts.indices {
-            let currentFolderIds = accounts[index].resolvedFolderIds
-            guard currentFolderIds.contains(id) else { continue }
-            let nextFolderIds = currentFolderIds.filter { $0 != id }
-            accounts[index].setResolvedFolderIds(nextFolderIds)
-            accounts[index].touchUpdatedAt(now, deviceName: device)
-            removedFromAccountCount += 1
-        }
-
-        guard saveAccountsAndFoldersAtomically() else {
-            return
-        }
-
-        if removedFromAccountCount > 0 {
-            appendHistoryEntry(action: "åˆ é™¤æ–‡ä»¶å¤¹ï¼š\(folder.name)ï¼Œå¹¶ä»Ž \(removedFromAccountCount) ä¸ªè´¦å·ä¸­ç§»é™¤")
-            statusMessage = "å·²åˆ é™¤æ–‡ä»¶å¤¹: \(folder.name)ï¼Œå¹¶ä»Ž \(removedFromAccountCount) ä¸ªè´¦å·ä¸­ç§»é™¤"
-        } else {
-            appendHistoryEntry(action: "åˆ é™¤æ–‡ä»¶å¤¹ï¼š\(folder.name)")
-            statusMessage = "å·²åˆ é™¤æ–‡ä»¶å¤¹: \(folder.name)"
-        }
-    }
-
-    func folderName(for id: UUID) -> String {
-        activeFolders.first(where: { $0.id == id })?.name ?? "æœªå‘½åæ–‡ä»¶å¤¹"
-    }
-
-    func folderRuleSites(for id: UUID) -> [String] {
-        activeFolders.first(where: { $0.id == id })?.matchedSites ?? []
-    }
-
-    func folderRuleAutoAddEnabled(for id: UUID) -> Bool {
-        activeFolders.first(where: { $0.id == id })?.autoAddMatchingSites ?? false
-    }
-
-    func checkedFolderIdsForAccounts(accountIds: [UUID]) -> [UUID] {
-        let idSet = Set(accountIds)
-        let selected = accounts.filter { idSet.contains($0.id) && !$0.isDeleted }
-        guard let first = selected.first else {
-            return []
-        }
-
-        var intersection = Set(first.resolvedFolderIds)
-        for account in selected.dropFirst() {
-            intersection.formIntersection(account.resolvedFolderIds)
-        }
-
-        let existingFolderIds = Set(folders.map(\.id))
-        let filtered = intersection.filter { existingFolderIds.contains($0) }
-        return normalizeFolderIds(Array(filtered))
-    }
-
-    func applyFolderSelection(accountIds: [UUID], checkedFolderIds: [UUID]) {
-        let idSet = Set(accountIds)
-        guard !idSet.isEmpty else {
-            statusMessage = "æœªé€‰æ‹©è´¦å·"
-            return
-        }
-
-        let selectedIndexes = accounts.indices.filter { idSet.contains(accounts[$0].id) && !accounts[$0].isDeleted }
-        guard !selectedIndexes.isEmpty else {
-            statusMessage = "æœªé€‰æ‹©è´¦å·"
-            return
-        }
-
-        let existingFolderIds = Set(folders.map(\.id))
-        let targetFolderIds = normalizeFolderIds(
-            checkedFolderIds.filter { existingFolderIds.contains($0) }
-        )
-
-        var previousFolderIdsByAccountId: [UUID: [UUID]] = [:]
-        var beforeAccounts: [PasswordAccount] = []
-        var changedAccountIds: [UUID] = []
-        var changedCount = 0
-        let now = nowMs()
-        let device = currentDeviceName()
-
-        for index in selectedIndexes {
-            let currentFolderIds = accounts[index].resolvedFolderIds
-            previousFolderIdsByAccountId[accounts[index].id] = currentFolderIds
-
-            if currentFolderIds != targetFolderIds {
-                beforeAccounts.append(accounts[index])
-                accounts[index].setResolvedFolderIds(targetFolderIds)
-                accounts[index].touchUpdatedAt(now, deviceName: device)
-                changedCount += 1
-                changedAccountIds.append(accounts[index].id)
-            }
-        }
-
-        guard changedCount > 0 else {
-            statusMessage = "æ–‡ä»¶å¤¹å‹¾é€‰æ— å˜æ›´"
-            return
-        }
-
-        prependAccountsToFolderOrder(
-            accountIds: changedAccountIds,
-            folderIds: targetFolderIds,
-            timestamp: now,
-            deviceName: device
-        )
-        removeAccountsFromFolderOrder(
-            accountIds: selectedIndexes.map { accounts[$0].id },
-            excludingFolderIds: targetFolderIds,
-            timestamp: now,
-            deviceName: device
-        )
-
-        let actionSummary = "å·²æŒ‰å‹¾é€‰æ›´æ–° \(changedCount) ä¸ªè´¦å·çš„æ–‡ä»¶å¤¹"
-        lastMoveOperation = FolderMoveOperation(
-            accountIds: Array(previousFolderIdsByAccountId.keys),
-            previousFolderIdsByAccountId: previousFolderIdsByAccountId,
-            actionSummary: actionSummary
-        )
-        saveAccounts()
-        let changedIds = Set(beforeAccounts.map(\.accountId))
-        let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
-        appendAccountHistoryBatch(
-            category: .local,
-            title: actionSummary,
-            timestampMs: now,
-            beforeAccounts: beforeAccounts,
-            afterAccounts: afterAccounts
-        )
-        setStatusMessage("å·²æŒ‰å‹¾é€‰æ›´æ–°æ–‡ä»¶å¤¹ï¼ˆ\(changedCount) ä¸ªè´¦å·ï¼‰ï¼Œç‚¹å‡»æ’¤é”€", allowsUndoMove: true)
-    }
-
-    func areAllAccountsInFolder(accountIds: [UUID], folderId: UUID) -> Bool {
-        let idSet = Set(accountIds)
-        let selected = accounts.filter { idSet.contains($0.id) && !$0.isDeleted }
-        guard !selected.isEmpty else {
-            return false
-        }
-        return selected.allSatisfy { $0.isInFolder(folderId) }
-    }
-
-    func toggleAccountsFolderMembership(accountIds: [UUID], folderId: UUID) {
-        let idSet = Set(accountIds)
-        guard !idSet.isEmpty else {
-            statusMessage = "æœªé€‰æ‹©è´¦å·"
-            return
-        }
-        guard activeFolders.contains(where: { $0.id == folderId }) else {
-            statusMessage = "ç›®æ ‡æ–‡ä»¶å¤¹ä¸å­˜åœ¨"
-            return
-        }
-
-        let selectedIndexes = accounts.indices.filter { idSet.contains(accounts[$0].id) && !accounts[$0].isDeleted }
-        guard !selectedIndexes.isEmpty else {
-            statusMessage = "æœªé€‰æ‹©è´¦å·"
-            return
-        }
-
-        let allAlreadyInFolder = selectedIndexes.allSatisfy { accounts[$0].isInFolder(folderId) }
-        let shouldAddToFolder = !allAlreadyInFolder
-
-        var previousFolderIdsByAccountId: [UUID: [UUID]] = [:]
-        var beforeAccounts: [PasswordAccount] = []
-        var changedAccountIds: [UUID] = []
-        var changedCount = 0
-        let now = nowMs()
-        let device = currentDeviceName()
-
-        for index in selectedIndexes {
-            let currentFolderIds = accounts[index].resolvedFolderIds
-            previousFolderIdsByAccountId[accounts[index].id] = currentFolderIds
-
-            var nextFolderIds = currentFolderIds
-            if shouldAddToFolder {
-                if !nextFolderIds.contains(folderId) {
-                    nextFolderIds.append(folderId)
-                }
-            } else {
-                nextFolderIds.removeAll(where: { $0 == folderId })
-            }
-
-            let normalizedNext = normalizeFolderIds(nextFolderIds)
-            if normalizedNext != currentFolderIds {
-                beforeAccounts.append(accounts[index])
-                accounts[index].setResolvedFolderIds(normalizedNext)
-                accounts[index].touchUpdatedAt(now, deviceName: device)
-                changedCount += 1
-                changedAccountIds.append(accounts[index].id)
-            }
-        }
-
-        guard changedCount > 0 else {
-            statusMessage = shouldAddToFolder
-                ? "æ‰€é€‰è´¦å·å·²åœ¨æ–‡ä»¶å¤¹ï¼š\(folderName(for: folderId))"
-                : "æ‰€é€‰è´¦å·ä¸åœ¨æ–‡ä»¶å¤¹ï¼š\(folderName(for: folderId))"
-            return
-        }
-
-        if shouldAddToFolder {
-            prependAccountsToFolderOrder(
-                accountIds: changedAccountIds,
-                folderIds: [folderId],
-                timestamp: now,
-                deviceName: device
-            )
-        } else {
-            removeAccountsFromFolderOrder(
-                accountIds: changedAccountIds,
-                excludingFolderIds: folders.map(\.id).filter { $0 != folderId },
-                timestamp: now,
-                deviceName: device
-            )
-        }
-
-        let actionPrefix = shouldAddToFolder ? "å·²æ”¾å…¥" : "å·²ç§»å‡º"
-        let actionSummary = "\(actionPrefix) \(changedCount) ä¸ªè´¦å· \(shouldAddToFolder ? "åˆ°" : "ä»Ž")æ–‡ä»¶å¤¹ï¼š\(folderName(for: folderId))"
-        lastMoveOperation = FolderMoveOperation(
-            accountIds: Array(previousFolderIdsByAccountId.keys),
-            previousFolderIdsByAccountId: previousFolderIdsByAccountId,
-            actionSummary: actionSummary
-        )
-        saveAccounts()
-        let changedIds = Set(beforeAccounts.map(\.accountId))
-        let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
-        appendAccountHistoryBatch(
-            category: .local,
-            title: actionSummary,
-            timestampMs: now,
-            beforeAccounts: beforeAccounts,
-            afterAccounts: afterAccounts
-        )
-        setStatusMessage("\(actionSummary)ï¼ˆ\(changedCount) ä¸ªè´¦å·ï¼‰ï¼Œç‚¹å‡»æ’¤é”€", allowsUndoMove: true)
-    }
-
-    func addAccountsToFolder(accountIds: [UUID], folderId: UUID) {
-        let idSet = Set(accountIds)
-        guard !idSet.isEmpty else {
-            statusMessage = "æœªé€‰æ‹©è´¦å·"
-            return
-        }
-        guard activeFolders.contains(where: { $0.id == folderId }) else {
-            statusMessage = "ç›®æ ‡æ–‡ä»¶å¤¹ä¸å­˜åœ¨"
-            return
-        }
-
-        let selectedIndexes = accounts.indices.filter { idSet.contains(accounts[$0].id) && !accounts[$0].isDeleted }
-        guard !selectedIndexes.isEmpty else {
-            statusMessage = "æœªé€‰æ‹©è´¦å·"
-            return
-        }
-
-        var previousFolderIdsByAccountId: [UUID: [UUID]] = [:]
-        var beforeAccounts: [PasswordAccount] = []
-        var changedAccountIds: [UUID] = []
-        var changedCount = 0
-        let now = nowMs()
-        let device = currentDeviceName()
-
-        for index in selectedIndexes {
-            let currentFolderIds = accounts[index].resolvedFolderIds
-            previousFolderIdsByAccountId[accounts[index].id] = currentFolderIds
-            if currentFolderIds.contains(folderId) {
-                continue
-            }
-            var nextFolderIds = currentFolderIds
-            nextFolderIds.append(folderId)
-            let normalizedNext = normalizeFolderIds(nextFolderIds)
-            if normalizedNext != currentFolderIds {
-                beforeAccounts.append(accounts[index])
-                accounts[index].setResolvedFolderIds(normalizedNext)
-                accounts[index].touchUpdatedAt(now, deviceName: device)
-                changedCount += 1
-                changedAccountIds.append(accounts[index].id)
-            }
-        }
-
-        guard changedCount > 0 else {
-            statusMessage = "æ‰€é€‰è´¦å·å·²åœ¨æ–‡ä»¶å¤¹ï¼š\(folderName(for: folderId))"
-            return
-        }
-
-        prependAccountsToFolderOrder(
-            accountIds: changedAccountIds,
-            folderIds: [folderId],
-            timestamp: now,
-            deviceName: device
-        )
-
-        let actionSummary = "å·²æ”¾å…¥ \(changedCount) ä¸ªè´¦å· åˆ°æ–‡ä»¶å¤¹ï¼š\(folderName(for: folderId))"
-        lastMoveOperation = FolderMoveOperation(
-            accountIds: Array(previousFolderIdsByAccountId.keys),
-            previousFolderIdsByAccountId: previousFolderIdsByAccountId,
-            actionSummary: actionSummary
-        )
-        saveAccounts()
-        let changedIds = Set(beforeAccounts.map(\.accountId))
-        let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
-        appendAccountHistoryBatch(
-            category: .local,
-            title: actionSummary,
-            timestampMs: now,
-            beforeAccounts: beforeAccounts,
-            afterAccounts: afterAccounts
-        )
-        setStatusMessage("\(actionSummary)ï¼ˆ\(changedCount) ä¸ªè´¦å·ï¼‰ï¼Œç‚¹å‡»æ’¤é”€", allowsUndoMove: true)
-    }
-
-    func addAccountsMatchingSitesToFolder(siteInputs: [String], folderId: UUID) {
-        guard activeFolders.contains(where: { $0.id == folderId }) else {
-            statusMessage = "ç›®æ ‡æ–‡ä»¶å¤¹ä¸å­˜åœ¨"
-            return
-        }
-
-        let normalizedSites = Array(
-            Set(siteInputs.map(DomainUtils.normalize).filter { !$0.isEmpty })
-        ).sorted()
-        guard !normalizedSites.isEmpty else {
-            statusMessage = "è¯·è‡³å°‘è¾“å…¥ä¸€ä¸ªç«™ç‚¹"
-            return
-        }
-
-        let matchingIds = accounts.compactMap { account -> UUID? in
-            guard !account.isDeleted else { return nil }
-            let aliases = Set(account.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
-            let canonical = DomainUtils.normalize(account.canonicalSite)
-            let matched = normalizedSites.contains { site in
-                aliases.contains(site) || canonical == site
-            }
-            return matched ? account.id : nil
-        }
-
-        guard !matchingIds.isEmpty else {
-            statusMessage = "æ²¡æœ‰æ‰¾åˆ°åŒ…å«è¿™äº›ç«™ç‚¹çš„è´¦å·"
-            return
-        }
-
-        addAccountsToFolder(accountIds: matchingIds, folderId: folderId)
-    }
-
-    func configureFolderSiteRules(folderId: UUID, siteInputs: [String], autoAdd: Bool) {
-        guard let folderIndex = folders.firstIndex(where: { $0.id == folderId }) else {
-            statusMessage = "ç›®æ ‡æ–‡ä»¶å¤¹ä¸å­˜åœ¨"
-            return
-        }
-
-        let normalizedSites = Array(
-            Set(siteInputs.map(DomainUtils.normalize).filter { !$0.isEmpty })
-        ).sorted()
-        let now = nowMs()
-        folders[folderIndex].matchedSites = normalizedSites
-        folders[folderIndex].autoAddMatchingSites = autoAdd
-        folders[folderIndex].updatedAtMs = now
-        saveFoldersToDefaults()
-        appendHistoryEntry(
-            action: "æ›´æ–°æ–‡ä»¶å¤¹ç«™ç‚¹è§„åˆ™ï¼š\(folders[folderIndex].name)ï¼ˆ\(normalizedSites.count) ä¸ªç«™ç‚¹ï¼Œè‡ªåŠ¨åŠ å…¥\(autoAdd ? "å¼€" : "å…³")ï¼‰",
-            timestampMs: now
-        )
-
-        let matchingIds = accounts.compactMap { account -> UUID? in
-            guard !account.isDeleted else { return nil }
-            let aliases = Set(account.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
-            let canonical = DomainUtils.normalize(account.canonicalSite)
-            let matched = normalizedSites.contains { site in
-                aliases.contains(site) || canonical == site
-            }
-            return matched ? account.id : nil
-        }
-
-        guard !matchingIds.isEmpty else {
-            statusMessage = "å·²ä¿å­˜æ–‡ä»¶å¤¹ç«™ç‚¹è§„åˆ™"
-            return
-        }
-
-        addAccountsToFolder(accountIds: matchingIds, folderId: folderId)
-    }
-
-    func duplicateAccountGroups(inFolder folderId: UUID) -> [FolderDuplicateAccountGroup] {
-        let grouped = Dictionary(grouping: accounts.filter { !$0.isDeleted && $0.isInFolder(folderId) }) { account in
-            let normalizedSites = Array(
-                Set(account.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
-            ).sorted()
-            let fallbackSites = normalizedSites.isEmpty
-                ? [DomainUtils.normalize(account.canonicalSite)].filter { !$0.isEmpty }
-                : normalizedSites
-            let usernameKey = account.username
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            return "\(fallbackSites.joined(separator: "|"))\n\(usernameKey)"
-        }
-
-        return grouped.compactMap { key, groupedAccounts in
-            guard groupedAccounts.count > 1 else { return nil }
-
-            let sortedAccounts = groupedAccounts.sorted { lhs, rhs in
-                if lhs.updatedAtMs != rhs.updatedAtMs {
-                    return lhs.updatedAtMs > rhs.updatedAtMs
-                }
-                if lhs.createdAtMs != rhs.createdAtMs {
-                    return lhs.createdAtMs > rhs.createdAtMs
-                }
-                return lhs.accountId < rhs.accountId
-            }
-
-            let first = sortedAccounts[0]
-            let siteAliases = Array(
-                Set(first.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
-            ).sorted()
-            let usernameDisplay = first.username.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            return FolderDuplicateAccountGroup(
-                id: key,
-                folderId: folderId,
-                usernameKey: usernameDisplay.lowercased(),
-                usernameDisplay: usernameDisplay.isEmpty ? "(ç©ºç”¨æˆ·å)" : usernameDisplay,
-                siteAliases: siteAliases.isEmpty ? [first.canonicalSite] : siteAliases,
-                accounts: sortedAccounts
-            )
-        }
-        .sorted { lhs, rhs in
-            if lhs.newestUpdatedAtMs != rhs.newestUpdatedAtMs {
-                return lhs.newestUpdatedAtMs > rhs.newestUpdatedAtMs
-            }
-            return lhs.id < rhs.id
-        }
-    }
-
-    func keepOnlyDuplicateAccount(inFolder folderId: UUID, accountIdToKeep: UUID) {
-        guard let targetGroup = duplicateAccountGroups(inFolder: folderId).first(where: { group in
-            group.accounts.contains(where: { $0.id == accountIdToKeep })
-        }) else {
-            statusMessage = "å½“å‰æ–‡ä»¶å¤¹é‡Œæœªæ‰¾åˆ°å¯åŽ»é‡åˆ†ç»„"
-            return
-        }
-
-        let targetIds = Set(targetGroup.accounts.map(\.id)).subtracting([accountIdToKeep])
-        guard !targetIds.isEmpty else {
-            statusMessage = "å½“å‰åˆ†ç»„æ— éœ€å¤„ç†"
-            return
-        }
-
-        let folderTitle = folderName(for: folderId)
-        moveAccountsToRecycleBin(
-            accountIds: targetIds,
-            historyTitle: "æ–‡ä»¶å¤¹åŽ»é‡ï¼š\(folderTitle) Â· ä»…ä¿ç•™æ­¤è´¦å·",
-            statusMessage: "æ–‡ä»¶å¤¹åŽ»é‡å®Œæˆï¼š\(folderTitle)ï¼Œå½“å‰åˆ†ç»„å·²ç§»å…¥å›žæ”¶ç«™ \(targetIds.count) ä¸ªé‡å¤è´¦å·ï¼Œä¿ç•™ 1 ä¸ªè´¦å·"
-        )
-    }
-
-    func keepLatestDuplicateAccounts(inFolder folderId: UUID) {
-        let groups = duplicateAccountGroups(inFolder: folderId)
-        guard !groups.isEmpty else {
-            statusMessage = "å½“å‰æ–‡ä»¶å¤¹æš‚æ— é‡å¤è´¦å·"
-            return
-        }
-
-        performFolderDuplicateKeep(
-            inFolder: folderId,
-            keepAccountIds: Set(groups.compactMap { $0.accounts.first?.id }),
-            keptGroupCount: groups.count,
-            operationLabel: "ä¿ç•™å…¨éƒ¨æœ€æ–°è´¦å·"
-        )
-    }
-
-    func keepEarliestDuplicateAccounts(inFolder folderId: UUID) {
-        let groups = duplicateAccountGroups(inFolder: folderId)
-        guard !groups.isEmpty else {
-            statusMessage = "å½“å‰æ–‡ä»¶å¤¹æš‚æ— é‡å¤è´¦å·"
-            return
-        }
-
-        performFolderDuplicateKeep(
-            inFolder: folderId,
-            keepAccountIds: Set(groups.compactMap { $0.accounts.last?.id }),
-            keptGroupCount: groups.count,
-            operationLabel: "ä¿ç•™å…¨éƒ¨æœ€æ—©è´¦å·"
-        )
-    }
-
-    private func performFolderDuplicateKeep(
-        inFolder folderId: UUID,
-        keepAccountIds: Set<UUID>,
-        keptGroupCount: Int,
-        operationLabel: String
-    ) {
-        guard activeFolders.contains(where: { $0.id == folderId }) else {
-            statusMessage = "ç›®æ ‡æ–‡ä»¶å¤¹ä¸å­˜åœ¨"
-            return
-        }
-
-        let groups = duplicateAccountGroups(inFolder: folderId)
-        guard !groups.isEmpty else {
-            statusMessage = "å½“å‰æ–‡ä»¶å¤¹æš‚æ— é‡å¤è´¦å·"
-            return
-        }
-
-        let duplicateAccountIds = Set(groups.flatMap { $0.accounts.map(\.id) })
-        let targetIds = duplicateAccountIds.subtracting(keepAccountIds)
-        guard !targetIds.isEmpty else {
-            statusMessage = "å½“å‰æ–‡ä»¶å¤¹é‡å¤è´¦å·æ— éœ€å¤„ç†"
-            return
-        }
-
-        let folderTitle = folderName(for: folderId)
-        moveAccountsToRecycleBin(
-            accountIds: targetIds,
-            historyTitle: "æ–‡ä»¶å¤¹åŽ»é‡ï¼š\(folderTitle) Â· \(operationLabel)",
-            statusMessage: "æ–‡ä»¶å¤¹åŽ»é‡å®Œæˆï¼š\(folderTitle)ï¼Œå·²ç§»å…¥å›žæ”¶ç«™ \(targetIds.count) ä¸ªé‡å¤è´¦å·ï¼Œä¿ç•™ \(keptGroupCount) ç»„ç›®æ ‡è´¦å·"
-        )
-    }
-
-    func undoLastMoveOperation() {
-        guard let operation = lastMoveOperation else {
-            statusMessage = "æ²¡æœ‰å¯æ’¤é”€çš„ç§»åŠ¨æ“ä½œ"
-            return
-        }
-
-        let idSet = Set(operation.accountIds)
-        let now = nowMs()
-        let device = currentDeviceName()
-        let beforeAccounts = accounts.filter { idSet.contains($0.id) }
-        var revertedCount = 0
-
-        for index in accounts.indices where idSet.contains(accounts[index].id) {
-            if let previousFolderIds = operation.previousFolderIdsByAccountId[accounts[index].id] {
-                let normalizedPrevious = normalizeFolderIds(previousFolderIds)
-                if accounts[index].resolvedFolderIds != normalizedPrevious {
-                    revertedCount += 1
-                }
-                accounts[index].setResolvedFolderIds(normalizedPrevious)
-                accounts[index].touchUpdatedAt(now, deviceName: device)
-            }
-        }
-
-        guard revertedCount > 0 else {
-            statusMessage = "æ²¡æœ‰éœ€è¦æ’¤é”€çš„å˜æ›´"
-            return
-        }
-
-        saveAccounts()
-        isUndoMoveToastVisible = false
-        undoMoveDismissWorkItem?.cancel()
-        lastMoveOperation = nil
-        let afterAccounts = accounts.filter { idSet.contains($0.id) }
-        appendAccountHistoryBatch(
-            category: .local,
-            title: "æ’¤é”€ç§»åŠ¨ï¼š\(operation.actionSummary)",
-            timestampMs: now,
-            beforeAccounts: beforeAccounts,
-            afterAccounts: afterAccounts
-        )
-        statusMessage = "å·²æ’¤é”€: \(operation.actionSummary)"
-    }
-
-    func addDemoAccountsIfNeeded() {
-        guard accounts.isEmpty else {
-            statusMessage = "å·²å­˜åœ¨è´¦å·ï¼Œæœªé‡å¤ç”Ÿæˆ"
-            return
-        }
-
-        let safeDeviceName = currentDeviceName()
-        let seeds: [(site: String, username: String, password: String)] = [
-            ("icloud.com", "alice@icloud.com", "demo-pass-001"),
-            ("apple.com", "bob@apple.com", "demo-pass-002"),
-            ("qq.com", "demo@qq.com", "demo-pass-003"),
-            ("wx.qq.com", "wechat@qq.com", "demo-pass-004"),
-            ("baidu.com", "user01@baidu.com", "demo-pass-005"),
-            ("sina.com", "user02@sina.com", "demo-pass-006"),
-            ("github.com", "dev01@github.com", "demo-pass-007"),
-            ("gitlab.com", "dev02@gitlab.com", "demo-pass-008"),
-            ("google.com", "user03@gmail.com", "demo-pass-009"),
-            ("youtube.com", "user04@gmail.com", "demo-pass-010"),
-            ("x.com", "user05@x.com", "demo-pass-011"),
-            ("facebook.com", "user06@fb.com", "demo-pass-012"),
-            ("amazon.com", "user07@amazon.com", "demo-pass-013"),
-            ("paypal.com", "user08@paypal.com", "demo-pass-014"),
-            ("microsoft.com", "user09@outlook.com", "demo-pass-015"),
-            ("office.com", "user10@outlook.com", "demo-pass-016"),
-            ("netflix.com", "user11@netflix.com", "demo-pass-017"),
-            ("spotify.com", "user12@spotify.com", "demo-pass-018"),
-            ("linkedin.com", "user13@linkedin.com", "demo-pass-019"),
-            ("dropbox.com", "user14@dropbox.com", "demo-pass-020"),
-        ]
-
-        let samples = seeds.enumerated().map { index, seed in
-            var account = AccountFactory.create(
-                site: seed.site,
-                username: seed.username,
-                password: seed.password,
-                deviceName: safeDeviceName
-            )
-            account.sites = demoAliasSites(for: seed.site)
-            account.totpSecret = demoTotpSecret(for: index)
-            account.recoveryCodes = demoRecoveryCodes(for: index + 1)
-            account.note = """
-            ç¤ºä¾‹è´¦å· #\(index + 1)
-            è®¾å¤‡: \(safeDeviceName)
-            ç”¨äºŽæ¼”ç¤ºåŒæ­¥ã€ç¼–è¾‘ä¸Žå›žæ”¶ç«™åŠŸèƒ½
-            """
-            return account
-        }
-        accounts.append(contentsOf: samples)
-        markAllRegularOrderChanged()
-        syncAliasGroups()
-        saveAccounts()
-        let createdIds = Set(samples.map(\.accountId))
-        let afterAccounts = accounts.filter { createdIds.contains($0.accountId) }
-        appendAccountHistoryBatch(
-            category: .local,
-            title: "ç”Ÿæˆæ¼”ç¤ºè´¦å·ï¼š20 æ¡",
-            beforeAccounts: [],
-            afterAccounts: afterAccounts
-        )
-        statusMessage = "å·²ç”Ÿæˆæ¼”ç¤ºè´¦å· 20 æ¡ï¼ˆå« TOTP/æ¢å¤ç /å¤‡æ³¨/ç«™ç‚¹åˆ«åï¼‰"
-    }
-
-    func createAccountFromDraft() {
-        let sites = parseSites(createSitesText)
-        let firstAlias = firstSiteAlias(from: createSitesText)
-        let username = createUsername.trimmingCharacters(in: .whitespacesAndNewlines)
-        let password = createPassword
-        let totpSecret = createTotpSecret.trimmingCharacters(in: .whitespacesAndNewlines)
-        let recoveryCodes = createRecoveryCodes
-        let note = createNote
-
-        guard !sites.isEmpty else {
-            statusMessage = "ç«™ç‚¹åˆ«åä¸èƒ½ä¸ºç©º"
-            return
-        }
-        let idSite = firstAlias.isEmpty ? sites[0] : firstAlias
-        var created = AccountFactory.create(
-            site: idSite,
-            accountIdSite: idSite,
-            username: username,
-            password: password,
-            deviceName: currentDeviceName()
-        )
-        created.sites = sites
-        created.totpSecret = totpSecret
-        created.recoveryCodes = recoveryCodes
-        created.note = note
-        created.setResolvedFolderIds([Self.fixedNewAccountFolderId])
-        applyAutomaticFolderRules(to: &created)
-        accounts.append(created)
-        let createdNow = nowMs()
-        markAllRegularOrderChanged(at: createdNow)
-        prependAccountsToFolderOrder(
-            accountIds: [created.id],
-            folderIds: created.resolvedFolderIds,
-            timestamp: createdNow,
-            deviceName: currentDeviceName()
-        )
-        syncAliasGroups()
-        saveAccounts()
-        let persistedCreated = accounts.first(where: { $0.accountId == created.accountId }) ?? created
-        appendAccountHistoryBatch(
-            category: .local,
-            title: "åˆ›å»ºè´¦å·ï¼š\(created.accountId)",
-            beforeAccounts: [],
-            afterAccounts: [persistedCreated]
-        )
-
-        createSitesText = ""
-        createUsername = ""
-        createPassword = ""
-        createTotpSecret = ""
-        createRecoveryCodes = ""
-        createNote = ""
-        statusMessage = "è´¦å·å·²åˆ›å»º: \(created.accountId)"
-    }
-
-    func pasteCreateTotpRawSecretFromClipboard() {
-        pasteRawTotpSecretFromClipboard(to: .create)
-    }
-
-    func pasteCreateTotpURIFromClipboard() {
-        pasteOtpAuthURIFromClipboard(to: .create)
-    }
-
-    func pasteCreateTotpQRCodeFromClipboard() {
-        pasteQRCodeFromClipboard(to: .create)
-    }
-
-    func pasteEditTotpRawSecretFromClipboard() {
-        pasteRawTotpSecretFromClipboard(to: .edit)
-    }
-
-    func pasteEditTotpURIFromClipboard() {
-        pasteOtpAuthURIFromClipboard(to: .edit)
-    }
-
-    func pasteEditTotpQRCodeFromClipboard() {
-        pasteQRCodeFromClipboard(to: .edit)
-    }
-
-    func importGoogleAuthenticatorExportQRCodeFromClipboard(
-        targetFolderId: UUID? = nil,
-        newFolderName: String = ""
-    ) {
-        guard let migration = readGoogleAuthenticatorMigrationFromPasteboard() else {
-            statusMessage = "å‰ªè´´æ¿é‡Œæ²¡æœ‰å¯è¯†åˆ«çš„è°·æ­ŒéªŒè¯å™¨å¯¼å‡ºäºŒç»´ç "
-            return
-        }
-        importGoogleAuthenticatorMigration(
-            migration,
-            targetFolderId: targetFolderId,
-            newFolderName: newFolderName
-        )
-    }
-
-    func importGoogleAuthenticatorExportQRCodes(
-        from fileURLs: [URL],
-        targetFolderId: UUID? = nil,
-        newFolderName: String = ""
-    ) {
-        let migrations = fileURLs.compactMap(parseGoogleAuthenticatorMigrationFromImageFile)
-        guard !migrations.isEmpty else {
-            statusMessage = "æœªä»Žæ‰€é€‰å›¾ç‰‡ä¸­è¯†åˆ«åˆ°è°·æ­ŒéªŒè¯å™¨å¯¼å‡ºäºŒç»´ç "
-            return
-        }
-        importGoogleAuthenticatorMigration(
-            mergedGoogleAuthenticatorMigrations(migrations),
-            targetFolderId: targetFolderId,
-            newFolderName: newFolderName
-        )
-    }
-
-    private func importGoogleAuthenticatorMigration(
-        _ migration: ParsedGoogleAuthenticatorMigration,
-        targetFolderId: UUID?,
-        newFolderName: String
-    ) {
-        let resolvedFolderId = resolveAuthenticatorImportFolderId(
-            targetFolderId: targetFolderId,
-            newFolderName: newFolderName
-        )
-        if (
-            !newFolderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-            targetFolderId != nil
-        ) && resolvedFolderId == nil {
-            return
-        }
-        let previousAccounts = accounts
-        let startedAtMs = nowMs()
-        var nextAccounts = accounts
-        var createdCount = 0
-        var updatedCount = 0
-        var unchangedCount = 0
-        var skippedCount = migration.skippedCount
-        let normalizedTargetFolderId = resolvedFolderId.flatMap { folderId in
-            activeFolders.contains(where: { $0.id == folderId }) ? folderId : nil
-        }
-
-        for (offset, entry) in migration.entries.enumerated() {
-            guard let siteAlias = entry.siteAlias, !siteAlias.isEmpty, !entry.secret.isEmpty else {
-                skippedCount += 1
-                continue
-            }
-
-            let timestamp = startedAtMs + Int64(offset)
-            if let matchedIndex = matchedImportedTotpAccountIndex(
-                in: nextAccounts,
-                siteAlias: siteAlias,
-                username: entry.username ?? "",
-                secret: entry.secret
-            ) {
-                let updated = applyImportedTotpEntry(
-                    entry,
-                    siteAlias: siteAlias,
-                    to: nextAccounts[matchedIndex],
-                    nowMs: timestamp,
-                    targetFolderId: normalizedTargetFolderId
-                )
-                if updated == nextAccounts[matchedIndex] {
-                    unchangedCount += 1
-                } else {
-                    nextAccounts[matchedIndex] = updated
-                    updatedCount += 1
-                }
-                continue
-            }
-
-            let createdAtMs = startedAtMs + Int64(offset) * 1000
-            let createdAt = Date(timeIntervalSince1970: TimeInterval(createdAtMs) / 1000)
-            var created = AccountFactory.create(
-                site: siteAlias,
-                username: entry.username ?? "",
-                password: "",
-                deviceName: currentDeviceName(),
-                createdAt: createdAt
-            )
-            created.sites = [siteAlias]
-            created.totpSecret = entry.secret
-            created.totpUpdatedAtMs = createdAtMs
-            created.totpUpdatedDeviceName = currentDeviceName()
-            created.updatedAtMs = createdAtMs
-            created.lastOperatedDeviceName = currentDeviceName()
-            if let normalizedTargetFolderId {
-                created.setResolvedFolderIds([normalizedTargetFolderId])
-            }
-            applyAutomaticFolderRules(to: &created)
-            nextAccounts.append(created)
-            createdCount += 1
-        }
-
-        guard createdCount > 0 || updatedCount > 0 else {
-            statusMessage =
-                "è°·æ­ŒéªŒè¯å™¨å¯¼å…¥å®Œæˆï¼Œæ²¡æœ‰æ–°å¢žæˆ–æ›´æ–°è´¦å·" +
-                googleAuthenticatorImportSuffix(
-                    importedCount: migration.entries.count,
-                    skippedCount: skippedCount,
-                    unchangedCount: unchangedCount,
-                    batchSize: migration.batchSize,
-                    batchIndex: migration.batchIndex
-                )
-            return
-        }
-
-        accounts = nextAccounts
-        syncAliasGroups()
-        saveAccounts()
-
-        if let editingAccountId, !accounts.contains(where: { $0.id == editingAccountId }) {
-            cancelEditing()
-        }
-
-        appendAccountHistoryBatch(
-            category: .local,
-            title: "å¯¼å…¥è°·æ­ŒéªŒè¯å™¨å¯¼å‡ºäºŒç»´ç ",
-            beforeAccounts: previousAccounts,
-            afterAccounts: accounts
-        )
-
-        statusMessage =
-            "è°·æ­ŒéªŒè¯å™¨å¯¼å…¥å®Œæˆï¼šæ–°å¢ž \(createdCount) æ¡ï¼Œæ›´æ–° \(updatedCount) æ¡" +
-            (normalizedTargetFolderId.map { "ï¼Œå¯¼å…¥åˆ°æ–‡ä»¶å¤¹ \(folderName(for: $0))" } ?? "") +
-            googleAuthenticatorImportSuffix(
-                importedCount: migration.entries.count,
-                skippedCount: skippedCount,
-                unchangedCount: unchangedCount,
-                batchSize: migration.batchSize,
-                batchIndex: migration.batchIndex
-            )
-    }
-
-    func moveToRecycleBin(for account: PasswordAccount) {
-        guard let index = accounts.firstIndex(where: { $0.id == account.id }) else {
-            statusMessage = "æœªæ‰¾åˆ°ç›®æ ‡è´¦å·"
-            return
-        }
-
-        guard !accounts[index].isDeleted else {
-            statusMessage = "è´¦å·å·²åœ¨å›žæ”¶ç«™"
-            return
-        }
-
-        let beforeAccount = accounts[index]
-        let now = nowMs()
-        accounts[index].isDeleted = true
-        accounts[index].deletedAtMs = now
-        accounts[index].deletedDeviceName = currentDeviceName()
-        statusMessage = "è´¦å·å·²ç§»å…¥å›žæ”¶ç«™"
-        accounts[index].touchUpdatedAt(now, deviceName: currentDeviceName())
-        saveAccounts()
-        appendAccountHistoryBatch(
-            category: .local,
-            title: "è´¦å·ç§»å…¥å›žæ”¶ç«™ï¼š\(accounts[index].accountId)",
-            timestampMs: now,
-            beforeAccounts: [beforeAccount],
-            afterAccounts: [accounts[index]]
-        )
-    }
-
-    func moveToRecycleBin(accountIds: Set<UUID>) {
-        moveAccountsToRecycleBin(accountIds: accountIds)
-    }
-
-    private func moveAccountsToRecycleBin(
-        accountIds: Set<UUID>,
-        historyTitle: String? = nil,
-        statusMessage customStatusMessage: String? = nil
-    ) {
-        let targetIndexes = accounts.indices.filter { accountIds.contains(accounts[$0].id) && !accounts[$0].isDeleted }
-        guard !targetIndexes.isEmpty else {
-            statusMessage = "æœªæ‰¾åˆ°å¯åˆ é™¤è´¦å·"
-            return
-        }
-
-        let beforeAccounts = targetIndexes.map { accounts[$0] }
-        let now = nowMs()
-        let device = currentDeviceName()
-        for index in targetIndexes {
-            accounts[index].isDeleted = true
-            accounts[index].deletedAtMs = now
-            accounts[index].deletedDeviceName = device
-            accounts[index].touchUpdatedAt(now, deviceName: device)
-        }
-        if let editingAccountId, targetIndexes.contains(where: { accounts[$0].id == editingAccountId }) {
-            cancelEditing()
-        }
-        saveAccounts()
-        let changedIds = Set(beforeAccounts.map(\.accountId))
-        let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
-        appendAccountHistoryBatch(
-            category: .local,
-            title: historyTitle ?? "æ‰¹é‡ç§»å…¥å›žæ”¶ç«™ï¼š\(targetIndexes.count) æ¡è´¦å·",
-            timestampMs: now,
-            beforeAccounts: beforeAccounts,
-            afterAccounts: afterAccounts
-        )
-        statusMessage = customStatusMessage ?? "å·²å°† \(targetIndexes.count) æ¡è´¦å·ç§»å…¥å›žæ”¶ç«™"
-    }
-
-    func restoreFromRecycleBin(for account: PasswordAccount) {
-        guard let index = accounts.firstIndex(where: { $0.id == account.id }) else {
-            statusMessage = "æœªæ‰¾åˆ°ç›®æ ‡è´¦å·"
-            return
-        }
-
-        guard accounts[index].isDeleted else {
-            statusMessage = "è¯¥è´¦å·ä¸åœ¨å›žæ”¶ç«™"
-            return
-        }
-        guard !accounts[index].isPermanentlyDeleted else {
-            statusMessage = "è¯¥è´¦å·å·²æ°¸ä¹…åˆ é™¤ï¼Œä¸èƒ½æ¢å¤"
-            return
-        }
-
-        let beforeAccount = accounts[index]
-        let now = nowMs()
-        accounts[index].isDeleted = false
-        accounts[index].isPermanentlyDeleted = false
-        accounts[index].deletedAtMs = nil
-        accounts[index].deletedDeviceName = ""
-        statusMessage = "è´¦å·å·²ä»Žå›žæ”¶ç«™æ¢å¤"
-        accounts[index].touchUpdatedAt(now, deviceName: currentDeviceName())
-        markAllRegularOrderChanged(at: now)
-        saveAccounts()
-        appendAccountHistoryBatch(
-            category: .local,
-            title: "è´¦å·ä»Žå›žæ”¶ç«™æ¢å¤ï¼š\(accounts[index].accountId)",
-            timestampMs: now,
-            beforeAccounts: [beforeAccount],
-            afterAccounts: [accounts[index]]
-        )
-    }
-
-    func restoreFromRecycleBin(accountIds: Set<UUID>) {
-        let targetIndexes = accounts.indices.filter {
-            accountIds.contains(accounts[$0].id) && accounts[$0].isDeleted && !accounts[$0].isPermanentlyDeleted
-        }
-        guard !targetIndexes.isEmpty else {
-            statusMessage = "æœªæ‰¾åˆ°å¯æ¢å¤è´¦å·"
-            return
-        }
-
-        let beforeAccounts = targetIndexes.map { accounts[$0] }
-        let now = nowMs()
-        let device = currentDeviceName()
-        for index in targetIndexes {
-            accounts[index].isDeleted = false
-            accounts[index].isPermanentlyDeleted = false
-            accounts[index].deletedAtMs = nil
-            accounts[index].deletedDeviceName = ""
-            accounts[index].touchUpdatedAt(now, deviceName: device)
-        }
-        markAllRegularOrderChanged(at: now)
-        saveAccounts()
-        let changedIds = Set(beforeAccounts.map(\.accountId))
-        let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
-        appendAccountHistoryBatch(
-            category: .local,
-            title: "æ‰¹é‡æ¢å¤è´¦å·ï¼š\(targetIndexes.count) æ¡",
-            timestampMs: now,
-            beforeAccounts: beforeAccounts,
-            afterAccounts: afterAccounts
-        )
-        statusMessage = "å·²æ¢å¤ \(targetIndexes.count) ä¸ªè´¦å·"
-    }
-
-    func permanentlyDeleteFromRecycleBin(_ account: PasswordAccount) {
-        guard let index = accounts.firstIndex(where: { $0.id == account.id }) else {
-            statusMessage = "æœªæ‰¾åˆ°ç›®æ ‡è´¦å·"
-            return
-        }
-
-        guard accounts[index].isDeleted else {
-            statusMessage = "ä»…æ”¯æŒåœ¨å›žæ”¶ç«™ä¸­æ°¸ä¹…åˆ é™¤"
-            return
-        }
-
-        let beforeAccount = accounts[index]
-        let removedId = beforeAccount.accountId
-        let now = nowMs()
-        let device = currentDeviceName()
-        accounts[index].isDeleted = true
-        accounts[index].isPermanentlyDeleted = true
-        accounts[index].deletedAtMs = now
-        accounts[index].deletedDeviceName = device
-        accounts[index].touchUpdatedAt(now, deviceName: device)
-        let afterAccount = accounts[index]
-        if editingAccountId == account.id {
-            cancelEditing()
-        }
-        saveAccounts()
-        appendAccountHistoryBatch(
-            category: .local,
-            title: "æ°¸ä¹…åˆ é™¤è´¦å·ï¼š\(removedId)",
-            beforeAccounts: [beforeAccount],
-            afterAccounts: [afterAccount]
-        )
-        statusMessage = "è´¦å·å·²æ°¸ä¹…åˆ é™¤: \(removedId)"
-    }
-
-    func permanentlyDeleteFromRecycleBin(accountIds: Set<UUID>) {
-        let beforeAccounts = accounts.filter {
-            accountIds.contains($0.id) && $0.isDeleted && !$0.isPermanentlyDeleted
-        }
-        let targetIds = Set(beforeAccounts.map(\.id))
-        guard !targetIds.isEmpty else {
-            statusMessage = "æœªæ‰¾åˆ°å¯æ°¸ä¹…åˆ é™¤è´¦å·"
-            return
-        }
-
-        let now = nowMs()
-        let device = currentDeviceName()
-        for index in accounts.indices where targetIds.contains(accounts[index].id) {
-            accounts[index].isDeleted = true
-            accounts[index].isPermanentlyDeleted = true
-            accounts[index].deletedAtMs = now
-            accounts[index].deletedDeviceName = device
-            accounts[index].touchUpdatedAt(now, deviceName: device)
-        }
-        if let editingAccountId, targetIds.contains(editingAccountId) {
-            cancelEditing()
-        }
-        saveAccounts()
-        appendAccountHistoryBatch(
-            category: .local,
-            title: "æ‰¹é‡æ°¸ä¹…åˆ é™¤è´¦å·ï¼š\(targetIds.count) æ¡",
-            beforeAccounts: beforeAccounts,
-            afterAccounts: accounts.filter { targetIds.contains($0.id) }
-        )
-        statusMessage = "å·²æ°¸ä¹…åˆ é™¤ \(targetIds.count) ä¸ªè´¦å·"
-    }
-
-    func toggleDeleted(for account: PasswordAccount) {
-        if account.isDeleted {
-            restoreFromRecycleBin(for: account)
-        } else {
-            moveToRecycleBin(for: account)
-        }
-    }
-
-    func restoreAllFromRecycleBin() {
-        let deletedIndexes = accounts.indices.filter { accounts[$0].isDeleted && !accounts[$0].isPermanentlyDeleted }
-        guard !deletedIndexes.isEmpty else {
-            statusMessage = "å›žæ”¶ç«™ä¸ºç©º"
-            return
-        }
-
-        let beforeAccounts = deletedIndexes.map { accounts[$0] }
-        let now = nowMs()
-        let device = currentDeviceName()
-        for index in deletedIndexes {
-            accounts[index].isDeleted = false
-            accounts[index].isPermanentlyDeleted = false
-            accounts[index].deletedAtMs = nil
-            accounts[index].deletedDeviceName = ""
-            accounts[index].touchUpdatedAt(now, deviceName: device)
-        }
-        markAllRegularOrderChanged(at: now)
-        saveAccounts()
-        let changedIds = Set(beforeAccounts.map(\.accountId))
-        let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
-        appendAccountHistoryBatch(
-            category: .local,
-            title: "å…¨éƒ¨æ¢å¤å›žæ”¶ç«™è´¦å·ï¼š\(deletedIndexes.count) æ¡",
-            timestampMs: now,
-            beforeAccounts: beforeAccounts,
-            afterAccounts: afterAccounts
-        )
-        statusMessage = "å·²æ¢å¤ \(deletedIndexes.count) ä¸ªè´¦å·"
-    }
-
-    func permanentlyDeleteAllFromRecycleBin() {
-        let deletedCount = accounts.filter { $0.isDeleted && !$0.isPermanentlyDeleted }.count
-        guard deletedCount > 0 else {
-            statusMessage = "å›žæ”¶ç«™ä¸ºç©º"
-            return
-        }
-
-        let beforeAccounts = accounts.filter { $0.isDeleted && !$0.isPermanentlyDeleted }
-        let deletedIds = Set(beforeAccounts.map(\.id))
-        let now = nowMs()
-        let device = currentDeviceName()
-        for index in accounts.indices where deletedIds.contains(accounts[index].id) {
-            accounts[index].isDeleted = true
-            accounts[index].isPermanentlyDeleted = true
-            accounts[index].deletedAtMs = now
-            accounts[index].deletedDeviceName = device
-            accounts[index].touchUpdatedAt(now, deviceName: device)
-        }
-        if let editingAccountId, deletedIds.contains(editingAccountId) {
-            cancelEditing()
-        }
-        saveAccounts()
-        appendAccountHistoryBatch(
-            category: .local,
-            title: "æ¸…ç©ºå›žæ”¶ç«™ï¼šæ°¸ä¹…åˆ é™¤ \(deletedCount) æ¡è´¦å·",
-            beforeAccounts: beforeAccounts,
-            afterAccounts: accounts.filter { deletedIds.contains($0.id) }
-        )
-        statusMessage = "å·²æ°¸ä¹…åˆ é™¤ \(deletedCount) ä¸ªè´¦å·"
-    }
-
-    func deleteAllAccounts() {
-        let activeIndexes = accounts.indices.filter { !accounts[$0].isDeleted }
-        guard !activeIndexes.isEmpty else {
-            statusMessage = "æš‚æ— å¯åˆ é™¤è´¦å·"
-            return
-        }
-
-        let beforeAccounts = activeIndexes.map { accounts[$0] }
-        let now = nowMs()
-        let device = currentDeviceName()
-        for index in activeIndexes {
-            accounts[index].isDeleted = true
-            accounts[index].deletedAtMs = now
-            accounts[index].deletedDeviceName = device
-            accounts[index].touchUpdatedAt(now, deviceName: device)
-        }
-        cancelEditing()
-        saveAccounts()
-        let changedIds = Set(beforeAccounts.map(\.accountId))
-        let afterAccounts = accounts.filter { changedIds.contains($0.accountId) }
-        appendAccountHistoryBatch(
-            category: .local,
-            title: "å…¨éƒ¨è´¦å·ç§»å…¥å›žæ”¶ç«™ï¼š\(activeIndexes.count) æ¡",
-            timestampMs: now,
-            beforeAccounts: beforeAccounts,
-            afterAccounts: afterAccounts
-        )
-        statusMessage = "å·²å°†å…¨éƒ¨è´¦å·ç§»å…¥å›žæ”¶ç«™ \(activeIndexes.count) æ¡"
-    }
-
-    func suggestedCsvFileName() -> String {
-        "pass-all-accounts-\(timestampForFile()).csv"
-    }
-
-    func suggestedBrowserCsvFileName(browser: BrowserPasswordExportFormat) -> String {
-        "pass-\(browser.fileNameToken)-passwords-\(timestampForFile()).csv"
-    }
-
-    func suggestedSyncBundleFileName() -> String {
-        "pass-sync-bundle-\(timestampForFile()).json"
-    }
-
-    func saveExportDirectoryPath(clearBookmark: Bool = true) {
-        let normalized = exportDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        exportDirectoryPath = normalized
-        let defaults = UserDefaults.standard
-        defaults.set(normalized, forKey: Keys.exportDirectoryPath)
-        if clearBookmark {
-            defaults.removeObject(forKey: Keys.exportDirectoryBookmark)
-        }
-    }
-
-    func saveExportDirectoryBookmark(for directoryURL: URL) {
-        do {
-            let bookmark = try directoryURL.bookmarkData(
-                options: [.withSecurityScope],
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-            UserDefaults.standard.set(bookmark, forKey: Keys.exportDirectoryBookmark)
-        } catch {
-            UserDefaults.standard.removeObject(forKey: Keys.exportDirectoryBookmark)
-            statusMessage = "å¯¼å‡ºç›®å½•æŽˆæƒä¿å­˜å¤±è´¥ï¼Œä¸‹æ¬¡å¯¼å‡ºæ—¶ä¼šé‡æ–°é€‰æ‹©ç›®å½•ï¼š\(error.localizedDescription)"
-        }
-    }
-
-    func configuredExportDirectoryURL() -> URL? {
-        let defaults = UserDefaults.standard
-        if let bookmark = defaults.data(forKey: Keys.exportDirectoryBookmark) {
-            var isStale = false
-            if let resolved = try? URL(
-                resolvingBookmarkData: bookmark,
-                options: [.withSecurityScope],
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            ),
-               !isStale,
-               resolved.hasDirectoryPath,
-               FileManager.default.fileExists(atPath: resolved.path)
-            {
-                return resolved
-            }
-            defaults.removeObject(forKey: Keys.exportDirectoryBookmark)
-        }
-
-        // A plain path is not sufficient under App Sandbox. It is retained for
-        // display, but the next export must ask the user for a scoped location.
-        return nil
-    }
-
-    func exportCsv() {
-        let fileURL = dataDirectoryURL().appendingPathComponent(suggestedCsvFileName(), isDirectory: false)
-        exportCsv(to: fileURL)
-    }
-
-    @discardableResult
-    func exportCsv(to fileURL: URL, securityScopedDirectoryURL: URL? = nil) -> Bool {
-        let csv = buildCsvContent()
-        let parentDirectory = fileURL.deletingLastPathComponent()
-
-        do {
-            try withSecurityScopedAccess(to: fileURL, additionalURL: securityScopedDirectoryURL) {
-                try FileManager.default.createDirectory(
-                    at: parentDirectory,
-                    withIntermediateDirectories: true
-                )
-                try csv.write(to: fileURL, atomically: true, encoding: String.Encoding.utf8)
-            }
-            statusMessage = "å…¨éƒ¨è´¦å· CSV å¯¼å‡ºæˆåŠŸ: \(fileURL.path)"
-            return true
-        } catch {
-            statusMessage = "å…¨éƒ¨è´¦å· CSV å¯¼å‡ºå¤±è´¥: \(error.localizedDescription)"
-            return false
-        }
-    }
-
-    @discardableResult
-    func exportBrowserPasswordCsv(to fileURL: URL, format: BrowserPasswordExportFormat) -> Bool {
-        let csv = buildBrowserPasswordCsvContent(format: format)
-        let parentDirectory = fileURL.deletingLastPathComponent()
-
-        do {
-            try withSecurityScopedAccess(to: fileURL) {
-                try FileManager.default.createDirectory(
-                    at: parentDirectory,
-                    withIntermediateDirectories: true
-                )
-                try csv.write(to: fileURL, atomically: true, encoding: String.Encoding.utf8)
-            }
-            statusMessage = "\(format.label) å¯†ç  CSV å¯¼å‡ºæˆåŠŸ: \(fileURL.path)"
-            return true
-        } catch {
-            statusMessage = "\(format.label) å¯†ç  CSV å¯¼å‡ºå¤±è´¥: \(error.localizedDescription)"
-            return false
-        }
-    }
-
-    func exportSyncBundle(to fileURL: URL) {
-        do {
-            loadSyncSecretsIfNeeded()
-            let parentDirectory = fileURL.deletingLastPathComponent()
-            let data = try encodeEncryptedSyncBundle(payload: buildCurrentSyncPayload())
-            try withSecurityScopedAccess(to: fileURL) {
-                try FileManager.default.createDirectory(
-                    at: parentDirectory,
-                    withIntermediateDirectories: true
-                )
-                try data.write(to: fileURL, options: Data.WritingOptions.atomic)
-            }
-            statusMessage = PassSyncCrypto.isEncryptionKeyConfigured(syncEncryptionKey)
-                ? "åŒæ­¥åŒ…å¯¼å‡ºæˆåŠŸï¼ˆå·²åŠ å¯†ï¼‰: \(fileURL.path)"
-                : "åŒæ­¥åŒ…å¯¼å‡ºæˆåŠŸï¼ˆæœªåŠ å¯†ï¼Œè¯·å¦¥å–„ä¿ç®¡ï¼‰: \(fileURL.path)"
-        } catch {
-            statusMessage = "åŒæ­¥åŒ…å¯¼å‡ºå¤±è´¥: \(error.localizedDescription)"
-        }
-    }
-
-    private func withSecurityScopedAccess<T>(
-        to fileURL: URL,
-        additionalURL: URL? = nil,
-        operation: () throws -> T
-    ) rethrows -> T {
-        let candidateURLs = [additionalURL, fileURL, fileURL.deletingLastPathComponent()].compactMap { $0 }
-        var startedURLs: [URL] = []
-        for candidateURL in candidateURLs {
-            if candidateURL.startAccessingSecurityScopedResource() {
-                startedURLs.append(candidateURL)
-            }
-        }
-        defer {
-            for startedURL in startedURLs.reversed() {
-                startedURL.stopAccessingSecurityScopedResource()
-            }
-        }
-        return try operation()
-    }
-
-    func importSyncBundle(from fileURL: URL) {
-        do {
-            loadSyncSecretsIfNeeded()
-            let data = try Data(contentsOf: fileURL)
-            let parsed = try decodeSyncBundle(data)
-            let remotePayload = SyncBundlePayload(
-                accounts: normalizeDecodedAccounts(parsed.payload.accounts),
-                folders: parsed.payload.folders,
-                passkeys: parsed.payload.passkeys,
-                allRegularAccountIds: parsed.payload.allRegularAccountIds,
-                allRegularOrderUpdatedAtMs: parsed.payload.allRegularOrderUpdatedAtMs,
-                allRegularOrderUpdatedDeviceName: parsed.payload.allRegularOrderUpdatedDeviceName,
-                folderOrderIds: parsed.payload.folderOrderIds,
-                folderOrderUpdatedAtMs: parsed.payload.folderOrderUpdatedAtMs,
-                folderOrderUpdatedDeviceName: parsed.payload.folderOrderUpdatedDeviceName
-            )
-            let remoteAccounts = remotePayload.accounts
-            let remoteFolders = remotePayload.folders
-            let remotePasskeys = remotePayload.passkeys
-
-            let localAccountCount = visibleAccountCount(accounts)
-            let localFolderCount = visibleFolderCount(folders)
-            let localPasskeyCount = visiblePasskeyCount(passkeys)
-            let localPayload = buildCurrentSyncPayload()
-            let mergedPayload = mergePayloads(local: localPayload, remote: remotePayload)
-            let safetyReasons = syncSafetyReasons(
-                local: localPayload,
-                remote: remotePayload,
-                merged: mergedPayload,
-                mode: .merge
-            )
-            guard safetyReasons.isEmpty else {
-                statusMessage = "åŒæ­¥åŒ…å¯¼å…¥åœæ­¢ï¼šå®‰å…¨æ£€æŸ¥æœªé€šè¿‡ï¼ˆ\(safetyReasons.joined(separator: "ã€"))ï¼‰"
-                return
-            }
-
-            let preview = syncBundleImportPreviewText(
-                local: localPayload,
-                remote: remotePayload,
-                merged: mergedPayload,
-                kind: parsed.kind
-            )
-            let alert = NSAlert()
-            alert.alertStyle = .informational
-            alert.messageText = "ç¡®è®¤å¯¼å…¥å¹¶åˆå¹¶åŒæ­¥åŒ…ï¼Ÿ"
-            alert.informativeText = preview
-            alert.addButton(withTitle: "ç¡®è®¤å¯¼å…¥")
-            alert.addButton(withTitle: "å–æ¶ˆ")
-            guard alert.runModal() == .alertFirstButtonReturn else {
-                statusMessage = "å·²å–æ¶ˆåŒæ­¥åŒ…å¯¼å…¥"
-                return
-            }
-            guard syncPayloadEquals(buildCurrentSyncPayload(), localPayload) else {
-                statusMessage = "åŒæ­¥åŒ…å¯¼å…¥å·²å–æ¶ˆï¼šç¡®è®¤æœŸé—´æœ¬åœ°æ•°æ®å‘ç”Ÿå˜åŒ–ï¼Œè¯·é‡æ–°é€‰æ‹©æ–‡ä»¶å¹¶é¢„è§ˆ"
-                return
-            }
-            try saveLocalSyncSafetySnapshot(localPayload, reason: "å¯¼å…¥åŒæ­¥åŒ…å†™å…¥å‰è‡ªåŠ¨å¤‡ä»½")
-
-            let previousFolders = folders
-            let previousAccounts = accounts
-            let previousPasskeys = passkeys
-            folders = orderedFolders(mergedPayload.folders, ids: mergedPayload.folderOrderIds)
-            accounts = orderedAccounts(mergedPayload.accounts, ids: mergedPayload.allRegularAccountIds)
-            passkeys = mergedPayload.passkeys
-            syncAliasGroups()
-            do {
-                try saveCoreCollectionsAtomically()
-            } catch {
-                folders = previousFolders
-                accounts = previousAccounts
-                passkeys = previousPasskeys
-                throw error
-            }
-
-            if let editingAccountId, !accounts.contains(where: { $0.id == editingAccountId }) {
-                cancelEditing()
-            }
-
-            statusMessage =
-                "åŒæ­¥åŒ…å¯¼å…¥å¹¶åˆå¹¶å®Œæˆï¼ˆ\(parsed.kind)ï¼‰ï¼šè´¦å· \(localAccountCount)+\(visibleAccountCount(remoteAccounts))->\(visibleAccountCount(accounts))ï¼Œ" +
-                "æ–‡ä»¶å¤¹ \(localFolderCount)+\(visibleFolderCount(remoteFolders))->\(visibleFolderCount(folders))ï¼Œ" +
-                "é€šè¡Œå¯†é’¥ \(localPasskeyCount)+\(visiblePasskeyCount(remotePasskeys))->\(visiblePasskeyCount(passkeys))"
-            appendAccountHistoryBatch(
-                category: .sync,
-                title: "å¯¼å…¥åŒæ­¥åŒ…å¹¶åˆå¹¶ï¼ˆ\(parsed.kind)ï¼‰",
-                beforeAccounts: previousAccounts,
-                afterAccounts: accounts
-            )
-        } catch {
-            statusMessage = "åŒæ­¥åŒ…å¯¼å…¥å¤±è´¥: \(error.localizedDescription)"
-        }
-    }
-
-    private func syncBundleImportPreviewText(
-        local: SyncBundlePayload,
-        remote: SyncBundlePayload,
-        merged: SyncBundlePayload,
-        kind: String
-    ) -> String {
-        let localIds = Set(local.accounts.map { $0.id })
-        let remoteIds = Set(remote.accounts.map { $0.id })
-        let added = remote.accounts.filter { !localIds.contains($0.id) && !$0.isPermanentlyDeleted }
-        let changed = remote.accounts.filter { account in
-            guard localIds.contains(account.id), let current = local.accounts.first(where: { $0.id == account.id }) else { return false }
-            return current != account
-        }
-        let removed = local.accounts.filter { !remoteIds.contains($0.id) && !$0.isPermanentlyDeleted }
-        var lines = [
-            "æ ¼å¼ï¼š\(kind)",
-            "æœ¬åœ°è´¦å· \(visibleAccountCount(local.accounts)) â†’ åˆå¹¶ \(visibleAccountCount(merged.accounts))ï¼ˆæ–‡ä»¶ä¸­ \(visibleAccountCount(remote.accounts))ï¼‰",
-            "æ–‡ä»¶å¤¹ \(visibleFolderCount(local.folders)) â†’ \(visibleFolderCount(merged.folders))ï¼›é€šè¡Œå¯†é’¥ \(visiblePasskeyCount(local.passkeys)) â†’ \(visiblePasskeyCount(merged.passkeys))",
-            "å·®å¼‚ï¼šæ–°å¢ž \(added.count)ï¼Œä¿®æ”¹ \(changed.count)ï¼Œæœ¬åœ°ç‹¬æœ‰ \(removed.count)"
-        ]
-        for account in added.prefix(30) {
-            lines.append("æ–°å¢žï¼š\(account.canonicalSite) Â· \(account.username)")
-        }
-        for account in changed.prefix(30) {
-            lines.append("ä¿®æ”¹ï¼š\(account.canonicalSite) Â· \(account.username)")
-        }
-        if added.count > 30 || changed.count > 30 {
-            lines.append("å…¶ä½™å·®å¼‚å·²çœç•¥ï¼Œç¡®è®¤åŽä»æŒ‰å­—æ®µæ—¶é—´æˆ³åˆå¹¶")
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    func mergeCredentialExchangeImport(_ result: CredentialExchangeImportResult) {
-        let previousAccounts = accounts
-        let previousPasskeys = passkeys
-        let localAccountCount = visibleAccountCount(accounts)
-        let localPasskeyCount = visiblePasskeyCount(passkeys)
-
-        let mergedAccounts = mergeAccountCollections(
-            local: accounts,
-            remote: normalizeDecodedAccounts(result.accounts)
-        )
-        let mergedPasskeys = mergePasskeyCollections(local: passkeys, remote: result.passkeys)
-
-        accounts = mergedAccounts
-        passkeys = mergedPasskeys
-        syncAliasGroups()
-        do {
-            try saveCoreCollectionsAtomically()
-        } catch {
-            accounts = previousAccounts
-            passkeys = previousPasskeys
-            statusMessage = "Apple Credential Exchange å¯¼å…¥ä¿å­˜å¤±è´¥ï¼š\(error.localizedDescription)"
-            return
-        }
-
-        statusMessage =
-            "Apple Credential Exchange å¯¼å…¥å®Œæˆï¼šè´¦å· \(localAccountCount)+\(visibleAccountCount(result.accounts))->\(visibleAccountCount(accounts))ï¼Œ" +
-            "é€šè¡Œå¯†é’¥ \(localPasskeyCount)+\(visiblePasskeyCount(result.passkeys))->\(visiblePasskeyCount(passkeys))" +
-            (result.skippedPasskeyCount > 0 ? "ï¼Œè·³è¿‡ \(result.skippedPasskeyCount) æ¡æ— æ³•è½¬æ¢çš„é€šè¡Œå¯†é’¥" : "")
-        appendAccountHistoryBatch(
-            category: .sync,
-            title: "Apple Credential Exchange å¯¼å…¥",
-            beforeAccounts: previousAccounts,
-            afterAccounts: accounts
-        )
-    }
-
-    func importBrowserPasswordCsv(from fileURL: URL) {
-        do {
-            let previousAccounts = accounts
-            let data = try Data(contentsOf: fileURL)
-            let parsed = try BrowserPasswordImportParser.parse(data: data)
-            let startedAtMs = nowMs()
-            var nextAccounts = accounts
-            var createdCount = 0
-            var updatedCount = 0
-            var unchangedCount = 0
-
-            for (offset, entry) in parsed.entries.enumerated() {
-                if let matchedIndex = matchedImportedAccountIndex(in: nextAccounts, entry: entry) {
-                    let updated = applyImportedBrowserEntry(
-                        entry,
-                        to: nextAccounts[matchedIndex],
-                        nowMs: startedAtMs + Int64(offset)
-                    )
-                    if updated == nextAccounts[matchedIndex] {
-                        unchangedCount += 1
-                    } else {
-                        nextAccounts[matchedIndex] = updated
-                        updatedCount += 1
-                    }
-                    continue
-                }
-
-                let createdAtMs = startedAtMs + Int64(offset) * 1000
-                let createdAt = Date(timeIntervalSince1970: TimeInterval(createdAtMs) / 1000)
-                var created = AccountFactory.create(
-                    site: entry.sites.first ?? "",
-                    username: entry.username,
-                    password: entry.password,
-                    deviceName: currentDeviceName(),
-                    createdAt: createdAt
-                )
-                created.sites = entry.sites
-                created.note = entry.note
-                created.noteUpdatedAtMs = entry.note.isEmpty ? created.noteUpdatedAtMs : createdAtMs
-                created.noteUpdatedDeviceName = currentDeviceName()
-                created.updatedAtMs = createdAtMs
-                created.lastOperatedDeviceName = currentDeviceName()
-                nextAccounts.append(created)
-                createdCount += 1
-            }
-
-            guard createdCount > 0 || updatedCount > 0 else {
-                statusMessage =
-                    "æµè§ˆå™¨å¯†ç  CSV å¯¼å…¥å®Œæˆï¼ˆ\(parsed.format.label)ï¼‰ï¼Œæ²¡æœ‰æ–°å¢žæˆ–æ›´æ–°è´¦å·" +
-                    (parsed.skippedRowCount > 0 ? "ï¼Œè·³è¿‡ \(parsed.skippedRowCount) è¡Œ" : "") +
-                    (unchangedCount > 0 ? "ï¼Œæœªå˜åŒ– \(unchangedCount) è¡Œ" : "")
-                return
-            }
-
-            accounts = nextAccounts
-            syncAliasGroups()
-            saveAccounts()
-
-            if let editingAccountId, !accounts.contains(where: { $0.id == editingAccountId }) {
-                cancelEditing()
-            }
-
-            appendAccountHistoryBatch(
-                category: .local,
-                title: "å¯¼å…¥ \(parsed.format.label) å¯†ç  CSV",
-                beforeAccounts: previousAccounts,
-                afterAccounts: accounts
-            )
-
-            statusMessage =
-                "æµè§ˆå™¨å¯†ç  CSV å¯¼å…¥å®Œæˆï¼ˆ\(parsed.format.label)ï¼‰ï¼šæ–°å¢ž \(createdCount) æ¡ï¼Œæ›´æ–° \(updatedCount) æ¡" +
-                (parsed.skippedRowCount > 0 ? "ï¼Œè·³è¿‡ \(parsed.skippedRowCount) è¡Œ" : "") +
-                (unchangedCount > 0 ? "ï¼Œæœªå˜åŒ– \(unchangedCount) è¡Œ" : "")
-        } catch {
-            statusMessage = "æµè§ˆå™¨å¯†ç  CSV å¯¼å…¥å¤±è´¥: \(error.localizedDescription)"
-        }
-    }
-
-    private func buildCsvContent() -> String {
-        if !PassCoreFFI.forceSwiftMerge {
-            do {
-                return try buildCsvContentViaRust()
-            } catch {
-                NSLog("[PassCore] Rust CSV export failed, fallback Swift: \(error.localizedDescription)")
-            }
-        }
-        return buildCsvContentSwift()
-    }
-
-    private func buildCsvContentViaRust() throws -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let data = try encoder.encode(accounts)
-        guard let accountsJSON = String(data: data, encoding: .utf8) else {
-            throw PassCoreFFI.FFIError.invalidUTF8
-        }
-        return try PassCoreFFI.exportMacosCsvJSON(accountsJSON: accountsJSON)
-    }
-
-    private func buildCsvContentSwift() -> String {
-        let header = [
-            "account_id",
-            "sites",
-            "username",
-            "password",
-            "totp_secret",
-            "recovery_codes",
-            "note",
-            "username_updated_at_ms",
-            "password_updated_at_ms",
-            "totp_updated_at_ms",
-            "recovery_codes_updated_at_ms",
-            "note_updated_at_ms",
-            "is_deleted",
-            "deleted_at_ms",
-            "last_operated_device_name",
-            "created_at_ms",
-            "updated_at_ms",
-        ].joined(separator: ",")
-
-        let rows: [String] = accounts.map { account in
-            let columns: [String] = [
-                account.accountId,
-                account.sites.joined(separator: ";"),
-                account.username,
-                account.password,
-                account.totpSecret,
-                account.recoveryCodes,
-                account.note,
-                String(account.usernameUpdatedAtMs),
-                String(account.passwordUpdatedAtMs),
-                String(account.totpUpdatedAtMs),
-                String(account.recoveryCodesUpdatedAtMs),
-                String(account.noteUpdatedAtMs),
-                account.isDeleted ? "true" : "false",
-                account.deletedAtMs.map(String.init) ?? "",
-                account.lastOperatedDeviceName,
-                String(account.createdAtMs),
-                String(account.updatedAtMs),
-            ]
-
-            let escaped = columns.map(csvEscaped)
-            return escaped.joined(separator: ",")
-        }
-
-        return ([header] + rows).joined(separator: "\n")
-    }
-
-    private func buildBrowserPasswordCsvContent(format: BrowserPasswordExportFormat) -> String {
-        let header = format.headers.joined(separator: ",")
-        let activeAccounts = accounts.filter { !$0.isDeleted }
-        let rows: [String] = activeAccounts.flatMap { account in
-            let sites = Array(
-                Set(account.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
-            ).sorted()
-            return sites.compactMap { site in
-                let columns = format.row(
-                    site: site,
-                    username: account.username,
-                    password: account.password,
-                    note: account.note,
-                    canonicalSite: account.canonicalSite
-                )
-                return columns.map(csvEscaped).joined(separator: ",")
-            }
-        }
-
-        return ([header] + rows).joined(separator: "\n")
-    }
-
-    func beginEditing(_ account: PasswordAccount) {
-        editingAccountId = account.id
-        editSitesText = account.sites.joined(separator: "\n")
-        editUsername = account.username
-        editPassword = account.password
-        editTotpSecret = account.totpSecret
-        editRecoveryCodes = account.recoveryCodes
-        editNote = account.note
-    }
-
-    func cancelEditing() {
-        editingAccountId = nil
-        editSitesText = ""
-        editUsername = ""
-        editPassword = ""
-        editTotpSecret = ""
-        editRecoveryCodes = ""
-        editNote = ""
-    }
-
-    func saveEditing() {
-        guard let editingAccountId else {
-            statusMessage = "æ²¡æœ‰æ­£åœ¨ç¼–è¾‘çš„è´¦å·"
-            return
-        }
-        guard let index = accounts.firstIndex(where: { $0.id == editingAccountId }) else {
-            statusMessage = "ç¼–è¾‘ç›®æ ‡ä¸å­˜åœ¨"
-            cancelEditing()
-            return
-        }
-
-        let originalAccount = accounts[index]
-        let now = nowMs()
-        let device = currentDeviceName()
-        var changed = false
-        var changedLabels: [String] = []
-
-        let normalizedSites = parseSites(editSitesText)
-        if !normalizedSites.isEmpty, normalizedSites != accounts[index].sites {
-            let previousSites = Set(accounts[index].sites.map(DomainUtils.normalize))
-            let nextSites = Set(normalizedSites.map(DomainUtils.normalize))
-            for site in previousSites.subtracting(nextSites) {
-                accounts[index].siteAliasStates[site] = AccountFolderMembershipState(isDeleted: true, updatedAtMs: now, deviceName: device)
-            }
-            for site in nextSites {
-                accounts[index].siteAliasStates[site] = AccountFolderMembershipState(isDeleted: false, updatedAtMs: now, deviceName: device)
-            }
-            accounts[index].sites = normalizedSites
-            changed = true
-            changedLabels.append("ç«™ç‚¹åˆ«å")
-        }
-
-        let newUsername = editUsername.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !newUsername.isEmpty, newUsername != accounts[index].username {
-            accounts[index].username = newUsername
-            accounts[index].usernameUpdatedAtMs = now
-            accounts[index].usernameUpdatedDeviceName = device
-            changed = true
-            changedLabels.append("ç”¨æˆ·å")
-        }
-
-        if editPassword != accounts[index].password {
-            accounts[index].password = editPassword
-            accounts[index].passwordUpdatedAtMs = now
-            accounts[index].passwordUpdatedDeviceName = device
-            changed = true
-            changedLabels.append("å¯†ç ")
-        }
-
-        if editTotpSecret != accounts[index].totpSecret {
-            accounts[index].totpSecret = editTotpSecret
-            accounts[index].totpUpdatedAtMs = now
-            accounts[index].totpUpdatedDeviceName = device
-            changed = true
-            changedLabels.append("TOTP")
-        }
-
-        if editRecoveryCodes != accounts[index].recoveryCodes {
-            accounts[index].recoveryCodes = editRecoveryCodes
-            accounts[index].recoveryCodesUpdatedAtMs = now
-            accounts[index].recoveryCodesUpdatedDeviceName = device
-            changed = true
-            changedLabels.append("æ¢å¤ç ")
-        }
-
-        if editNote != accounts[index].note {
-            accounts[index].note = editNote
-            accounts[index].noteUpdatedAtMs = now
-            accounts[index].noteUpdatedDeviceName = device
-            changed = true
-            changedLabels.append("å¤‡æ³¨")
-        }
-
-        guard changed else {
-            statusMessage = "æ²¡æœ‰å¯ä¿å­˜çš„å˜æ›´"
-            return
-        }
-
-        applyAutomaticFolderRules(to: &accounts[index])
-        accounts[index].touchUpdatedAt(now, deviceName: device)
-        syncAliasGroups()
-        saveAccounts()
-        let titleSuffix = changedLabels.isEmpty ? "" : "ï¼ˆ" + changedLabels.joined(separator: "ã€") + "ï¼‰"
-        appendAccountHistoryBatch(
-            category: .local,
-            title: "ç¼–è¾‘è´¦å·ï¼š\(accounts[index].accountId)\(titleSuffix)",
-            timestampMs: now,
-            beforeAccounts: [originalAccount],
-            afterAccounts: [accounts[index]]
-        )
-        statusMessage = "è´¦å·ç¼–è¾‘å·²ä¿å­˜"
-        cancelEditing()
-    }
-
-    func accountIsPinned(_ account: PasswordAccount, scopeKey: String = "all") -> Bool {
-        pinnedState(for: account, scopeKey: scopeKey).pinned
-    }
-
-    func togglePin(for account: PasswordAccount, scopeKey: String = "all", scopeLabel: String = "å…¨éƒ¨") {
-        guard let index = accounts.firstIndex(where: { $0.id == account.id }) else {
-            statusMessage = "æœªæ‰¾åˆ°ç›®æ ‡è´¦å·"
-            return
-        }
-        guard !accounts[index].isDeleted else {
-            statusMessage = "å›žæ”¶ç«™è´¦å·ä¸æ”¯æŒç½®é¡¶"
-            return
-        }
-
-        let beforeAccount = accounts[index]
-        let now = nowMs()
-        let device = currentDeviceName()
-        var nextState = pinnedState(for: accounts[index], scopeKey: scopeKey)
-        let nextPinned = !nextState.pinned
-        if nextPinned {
-            nextState.pinned = true
-            nextState.pinnedSortOrder = nextPinnedSortOrder(scopeKey: scopeKey)
-        } else {
-            nextState.pinned = false
-            nextState.pinnedSortOrder = nil
-            nextState.regularSortOrder = nil
-        }
-        setPinnedState(nextState, for: &accounts[index], scopeKey: scopeKey)
-        accounts[index].touchUpdatedAt(now, deviceName: device)
-        saveAccounts()
-        appendAccountHistoryBatch(
-            category: .local,
-            title: nextPinned
-                ? "è´¦å·ç½®é¡¶[\(scopeLabel)]ï¼š\(accounts[index].accountId)"
-                : "å–æ¶ˆè´¦å·ç½®é¡¶[\(scopeLabel)]ï¼š\(accounts[index].accountId)",
-            timestampMs: now,
-            beforeAccounts: [beforeAccount],
-            afterAccounts: [accounts[index]]
-        )
-        statusMessage = nextPinned ? "è´¦å·å·²åœ¨\(scopeLabel)ç½®é¡¶" : "å·²å–æ¶ˆ\(scopeLabel)ç½®é¡¶"
-    }
-
-    func moveAccountBefore(sourceId: UUID, targetId: UUID, scopeKey: String = "all") {
-        guard editingAccountId == nil else {
-            return
-        }
-        guard sourceId != targetId else { return }
-        guard let source = accounts.first(where: { $0.id == sourceId }),
-              let target = accounts.first(where: { $0.id == targetId })
-        else {
-            return
-        }
-        guard !source.isDeleted, !target.isDeleted else {
-            return
-        }
-
-        let pinned = pinnedState(for: source, scopeKey: scopeKey).pinned
-        guard pinnedState(for: target, scopeKey: scopeKey).pinned == pinned else {
-            statusMessage = "ä»…æ”¯æŒ ç½®é¡¶ã€éžç½®é¡¶ é¡¹ç›®å†…éƒ¨æŽ’åº"
-            return
-        }
-
-        let group = sortedAccountsForDisplay(
-            accounts.filter { !$0.isDeleted && pinnedState(for: $0, scopeKey: scopeKey).pinned == pinned },
-            scopeKey: scopeKey
-        )
-        var orderedIds = group.map(\.id)
-        guard let fromIndex = orderedIds.firstIndex(of: sourceId),
-              let toIndex = orderedIds.firstIndex(of: targetId)
-        else {
-            return
-        }
-
-        orderedIds.remove(at: fromIndex)
-        orderedIds.insert(sourceId, at: toIndex)
-
-        let now = nowMs()
-        let device = currentDeviceName()
-        for (order, id) in orderedIds.enumerated() {
-            guard let index = accounts.firstIndex(where: { $0.id == id }) else { continue }
-            var state = pinnedState(for: accounts[index], scopeKey: scopeKey)
-            if pinned {
-                state.pinnedSortOrder = Int64(order)
-            } else {
-                state.regularSortOrder = Int64(order)
-            }
-            setPinnedState(state, for: &accounts[index], scopeKey: scopeKey)
-            accounts[index].touchUpdatedAt(now, deviceName: device)
-        }
-
-        if scopeKey == "all" {
-            markAllRegularOrderChanged(at: now)
-        }
-
-        saveAccounts()
-        appendHistoryEntry(action: pinned ? "é‡æŽ’ç½®é¡¶è´¦å·é¡ºåº" : "é‡æŽ’æ™®é€šè´¦å·é¡ºåº", timestampMs: now)
-    }
-
-    func activeAccounts() -> [PasswordAccount] {
-        sortedAccountsForDisplay(accounts.filter { !$0.isDeleted }, scopeKey: "all")
-    }
-
-    func filteredAccounts() -> [PasswordAccount] {
-        showDeletedAccounts
-            ? accounts.filter { $0.isDeleted && !$0.isPermanentlyDeleted }
-            : accounts.filter { !$0.isDeleted }
-    }
-
-    func displaySortedAccounts(_ source: [PasswordAccount], scopeKey: String = "all") -> [PasswordAccount] {
-        sortedAccountsForDisplay(source, scopeKey: scopeKey)
-    }
-
-    private func pinnedState(for account: PasswordAccount, scopeKey: String) -> AccountPinnedViewState {
-        let legacy = AccountPinnedViewState(
-            pinned: account.isPinned ?? false,
-            pinnedSortOrder: account.pinnedSortOrder,
-            regularSortOrder: account.regularSortOrder
-        )
-        return account.pinnedViews?[scopeKey] ?? (scopeKey == "all" ? legacy : AccountPinnedViewState(pinned: false, pinnedSortOrder: nil, regularSortOrder: nil))
-    }
-
-    private func setPinnedState(_ state: AccountPinnedViewState, for account: inout PasswordAccount, scopeKey: String) {
-        var pinnedViews = account.pinnedViews ?? [:]
-        pinnedViews[scopeKey] = state
-        account.pinnedViews = pinnedViews
-        if scopeKey == "all" {
-            account.isPinned = state.pinned
-            account.pinnedSortOrder = state.pinnedSortOrder
-            account.regularSortOrder = state.regularSortOrder
-        }
-    }
-
-    private func nextPinnedSortOrder(scopeKey: String) -> Int64 {
-        let pinnedOrders = accounts.compactMap { account -> Int64? in
-            let state = pinnedState(for: account, scopeKey: scopeKey)
-            guard state.pinned else { return nil }
-            return state.pinnedSortOrder
-        }
-        return (pinnedOrders.max() ?? -1) + 1
-    }
-
-    private func sortedAccountsForDisplay(_ source: [PasswordAccount], scopeKey: String) -> [PasswordAccount] {
-        let folderScopeId = UUID(uuidString: scopeKey)
-            ?? UUID(uuidString: scopeKey.replacingOccurrences(of: "folder:", with: ""))
-        let folderOrder: [String: Int] = folderScopeId
-            .flatMap { folderId in folders.first(where: { $0.id == folderId }) }
-            .map { folder in
-                Dictionary(uniqueKeysWithValues: folder.regularAccountIds.enumerated().map {
-                    ($0.element.lowercased(), $0.offset)
-                })
-            } ?? [:]
-        return source.sorted { lhs, rhs in
-            let lhsState = pinnedState(for: lhs, scopeKey: scopeKey)
-            let rhsState = pinnedState(for: rhs, scopeKey: scopeKey)
-            let lhsPinned = lhsState.pinned
-            let rhsPinned = rhsState.pinned
-            if lhsPinned != rhsPinned {
-                return lhsPinned && !rhsPinned
-            }
-
-            if !lhsPinned && !rhsPinned && !folderOrder.isEmpty {
-                let leftRank = folderOrder[lhs.id.uuidString.lowercased()] ?? Int.max
-                let rightRank = folderOrder[rhs.id.uuidString.lowercased()] ?? Int.max
-                if leftRank != rightRank { return leftRank < rightRank }
-            }
-
-            // æœ€è¿‘ä¿®æ”¹ä¼˜å…ˆï¼›æ¢å¤å›žæ”¶ç«™ã€ç¼–è¾‘ä¿å­˜åŽä¼šè§¦å‘ updatedAtMs æ›´æ–°å¹¶ç½®é¡¶ã€‚
-            if lhs.updatedAtMs != rhs.updatedAtMs {
-                return lhs.updatedAtMs > rhs.updatedAtMs
-            }
-
-            if lhsPinned && rhsPinned {
-                switch (lhsState.pinnedSortOrder, rhsState.pinnedSortOrder) {
-                case let (.some(lo), .some(ro)) where lo != ro:
-                    return lo < ro
-                case (.some, .none):
-                    return true
-                case (.none, .some):
-                    return false
-                default:
-                    break
-                }
-            } else {
-                switch (lhsState.regularSortOrder, rhsState.regularSortOrder) {
-                case let (.some(lo), .some(ro)) where lo != ro:
-                    return lo < ro
-                case (.some, .none):
-                    return true
-                case (.none, .some):
-                    return false
-                default:
-                    break
-                }
-            }
-            if lhs.createdAtMs != rhs.createdAtMs {
-                return lhs.createdAtMs > rhs.createdAtMs
-            }
-            return lhs.accountId.localizedStandardCompare(rhs.accountId) == .orderedAscending
-        }
-    }
-
-    private func applyAutomaticFolderRules(to account: inout PasswordAccount) {
-        let accountSites = Set(account.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
-        guard !accountSites.isEmpty else { return }
-        let matchingFolderIds = folders.compactMap { folder -> UUID? in
-            guard folder.autoAddMatchingSites else { return nil }
-            let folderSites = Set(folder.matchedSites.map(DomainUtils.normalize).filter { !$0.isEmpty })
-            guard !folderSites.isDisjoint(with: accountSites) else { return nil }
-            return folder.id
-        }
-        guard !matchingFolderIds.isEmpty else { return }
-        let mergedFolderIds = normalizeFolderIds(account.resolvedFolderIds + matchingFolderIds)
-        account.setResolvedFolderIds(mergedFolderIds)
-    }
-
-    /// Keep the per-folder order array authoritative when accounts are added
-    /// through any membership path.  The selected order is inserted as a
-    /// contiguous block at the top; existing members keep their relative order.
-    private func prependAccountsToFolderOrder(
-        accountIds: [UUID],
-        folderIds: [UUID],
-        timestamp: Int64,
-        deviceName: String
-    ) {
-        let orderedIds = accountIds.map { $0.uuidString.lowercased() }
-        guard !orderedIds.isEmpty else { return }
-        for index in folders.indices where folderIds.contains(folders[index].id) {
-            var ids = folders[index].regularAccountIds.filter { existing in
-                !orderedIds.contains(existing.lowercased())
-            }
-            ids.insert(contentsOf: orderedIds, at: 0)
-            folders[index].regularAccountIds = ids
-            folders[index].regularOrderUpdatedAtMs = timestamp
-            folders[index].regularOrderUpdatedDeviceName = deviceName
-        }
-    }
-
-    private func removeAccountsFromFolderOrder(
-        accountIds: [UUID],
-        excludingFolderIds: [UUID],
-        timestamp: Int64,
-        deviceName: String
-    ) {
-        let selected = Set(accountIds.map { $0.uuidString.lowercased() })
-        for index in folders.indices where !excludingFolderIds.contains(folders[index].id) {
-            let filtered = folders[index].regularAccountIds.filter {
-                !selected.contains($0.lowercased())
-            }
-            if filtered != folders[index].regularAccountIds {
-                folders[index].regularAccountIds = filtered
-                folders[index].regularOrderUpdatedAtMs = timestamp
-                folders[index].regularOrderUpdatedDeviceName = deviceName
-            }
-        }
-    }
-
-    func accountForEditing() -> PasswordAccount? {
-        guard let editingAccountId else { return nil }
-        return accounts.first(where: { $0.id == editingAccountId })
-    }
-
-    func displayTime(_ ms: Int64?) -> String {
-        guard let ms else { return "-" }
-        let date = Date(timeIntervalSince1970: Double(ms) / 1000.0)
-        return displayFormatter.string(from: date)
-    }
-
-    func syncWithICloudNow() {
-        syncNow()
-    }
-
-    func syncNow(modeOverride: SyncMode? = nil, suppressBusyMessage: Bool = false) {
-        if let syncNowTask, !syncNowTask.isCancelled {
-            if !suppressBusyMessage {
-                statusMessage = "åŒæ­¥è¿›è¡Œä¸­ï¼Œè¯·ç¨å€™"
-            }
-            return
-        }
-        syncNowTask = Task { [weak self] in
-            guard let self else { return }
-            await self.performSyncNow(
-                mode: modeOverride ?? self.syncMode,
-                forceOutboxRetry: !suppressBusyMessage
-            )
-            self.syncNowTask = nil
-        }
-    }
-
-    private func performSyncNow(mode: SyncMode, forceOutboxRetry: Bool) async {
-        let enabledSourceNames = activeSyncSourceNames()
-        guard !enabledSourceNames.isEmpty else {
-            cloudSyncStatus = "æœªå¯ç”¨åŒæ­¥æº"
-            statusMessage = "è¯·å…ˆå¯ç”¨è‡³å°‘ä¸€ä¸ªåŒæ­¥æº"
-            return
-        }
-
-        loadSyncSecretsIfNeeded()
-        let localPayload = canonicalizeSyncPayload(buildCurrentSyncPayload())
-        do {
-            try saveLocalSyncSafetySnapshot(localPayload, reason: "åŒæ­¥å‰è‡ªåŠ¨å¤‡ä»½")
-        } catch {
-            cloudSyncStatus = "åŒæ­¥å·²åœæ­¢ï¼šæ— æ³•åˆ›å»ºæœ¬åœ°å®‰å…¨å¤‡ä»½"
-            statusMessage = "åŒæ­¥å·²åœæ­¢ï¼Œæ— æ³•åˆ›å»ºæœ¬åœ°å®‰å…¨å¤‡ä»½ï¼š\(error.localizedDescription)"
-            return
-        }
-        var mergedPayload = localPayload
-        var selfHostedETag: String?
-        var webDAVETag: String?
-        var selfHostedRemoteEncrypted = false
-        var webDAVRemoteEncrypted = false
-        var selfHostedRemotePayload: SyncBundlePayload?
-        var webDAVRemotePayload: SyncBundlePayload?
-        var conflictCount = 0
-        var remoteAggregate: SyncBundlePayload?
-        var primaryRemotePayload: SyncBundlePayload?
-        var primaryRemoteRevision: Int?
-        var primaryRemoteETag: String?
-        let primarySource = resolvedPrimarySyncSource()
-        var pullErrors: [String] = []
-
-        if mode != .localOverwriteRemote {
-            if syncEnableICloud {
-                do {
-                    if let remotePayload = try fetchRemotePayloadFromICloud(), primarySource == .iCloud {
-                        let canonicalRemote = canonicalizeSyncPayload(remotePayload)
-                        primaryRemotePayload = canonicalRemote
-                        remoteAggregate = canonicalRemote
-                    }
-                } catch {
-                    if primarySource == .iCloud {
-                        statusMessage = "iCloud æ‹‰å–å¤±è´¥: \(error.localizedDescription)"
-                        return
-                    }
-                    pullErrors.append("iCloud æ‹‰å–å¤±è´¥: \(error.localizedDescription)")
-                }
-            }
-
-            if syncEnableWebDAV {
-                if let resourceURL = buildWebDAVResourceURL() {
-                    do {
-                        let authorization = buildBasicAuthorization(
-                            username: webdavUsername,
-                            password: webdavPassword
-                        )
-                        let remoteResponse = try await fetchRemotePayload(
-                            from: resourceURL,
-                            authorization: authorization
-                        )
-                        webDAVETag = remoteResponse.etag
-                        try requireWebDAVETagIfRemoteExists(payload: remoteResponse.payload, etag: remoteResponse.etag)
-                        webDAVRemotePayload = remoteResponse.payload.map(canonicalizeSyncPayload)
-                        webDAVRemoteEncrypted = remoteResponse.isEncrypted
-                        if let remotePayload = remoteResponse.payload, primarySource == .webDAV {
-                            let canonicalRemote = canonicalizeSyncPayload(remotePayload)
-                            primaryRemotePayload = canonicalRemote
-                            primaryRemoteETag = remoteResponse.etag
-                            primaryRemoteRevision = remoteResponse.revision
-                            remoteAggregate = canonicalRemote
-                        }
-                    } catch {
-                        if primarySource == .webDAV {
-                            statusMessage = "WebDAV æ‹‰å–å¤±è´¥: \(error.localizedDescription)"
-                            return
-                        }
-                        pullErrors.append("WebDAV æ‹‰å–å¤±è´¥: \(error.localizedDescription)")
-                    }
-                } else {
-                    if primarySource == .webDAV {
-                        statusMessage = "WebDAV é…ç½®ä¸å®Œæ•´ï¼šè¯·å¡«å†™æœåŠ¡åœ°å€ä¸Žè¿œç«¯æ–‡ä»¶è·¯å¾„"
-                        return
-                    }
-                    pullErrors.append("WebDAV é…ç½®ä¸å®Œæ•´")
-                }
-            }
-
-            if syncEnableSelfHostedServer {
-                if let resourceURL = buildSelfHostedPayloadURL() {
-                    do {
-                        let authorization = buildBearerAuthorization(serverAuthToken)
-                        let remoteResponse = try await fetchRemotePayload(
-                            from: resourceURL,
-                            authorization: authorization
-                        )
-                        selfHostedETag = remoteResponse.etag
-                        selfHostedRemotePayload = remoteResponse.payload.map(canonicalizeSyncPayload)
-                        selfHostedRemoteEncrypted = remoteResponse.isEncrypted
-                        if let remotePayload = remoteResponse.payload, primarySource == .selfHostedServer {
-                            let canonicalRemote = canonicalizeSyncPayload(remotePayload)
-                            primaryRemotePayload = canonicalRemote
-                            primaryRemoteETag = remoteResponse.etag
-                            primaryRemoteRevision = remoteResponse.revision
-                            remoteAggregate = canonicalRemote
-                        }
-                    } catch {
-                        if primarySource == .selfHostedServer {
-                            statusMessage = "æœåŠ¡å™¨æ‹‰å–å¤±è´¥: \(error.localizedDescription)"
-                            return
-                        }
-                        pullErrors.append("æœåŠ¡å™¨æ‹‰å–å¤±è´¥: \(error.localizedDescription)")
-                    }
-                } else {
-                    if primarySource == .selfHostedServer {
-                        statusMessage = "æœåŠ¡å™¨é…ç½®ä¸å®Œæ•´ï¼šè¯·å¡«å†™æœåŠ¡åœ°å€"
-                        return
-                    }
-                    pullErrors.append("æœåŠ¡å™¨é…ç½®ä¸å®Œæ•´")
-                }
-            }
-
-            switch mode {
-            case .merge:
-                if let remoteAggregate {
-                    conflictCount = countSyncAccountConflicts(local: localPayload.accounts, remote: remoteAggregate.accounts)
-                    if conflictCount > 0 {
-                        try? saveLocalSyncSafetySnapshot(remoteAggregate, reason: "åŒæ­¥å†²çªè¿œç«¯å€™é€‰å¤‡ä»½")
-                    }
-                    mergedPayload = canonicalizeSyncPayload(mergePayloads(local: localPayload, remote: remoteAggregate))
-                }
-            case .remoteOverwriteLocal:
-                guard let primaryRemotePayload,
-                      !isSyncPayloadEmpty(primaryRemotePayload)
-                else {
-                    statusMessage = "äº‘ç«¯è¦†ç›–æœ¬åœ°å·²åœæ­¢ï¼šä¸»åŒæ­¥æºä¸ºç©ºï¼Œé¿å…æ¸…ç©ºæœ¬åœ°æ•°æ®"
-                    return
-                }
-                mergedPayload = canonicalizeSyncPayload(primaryRemotePayload)
-            case .localOverwriteRemote:
-                break
-            }
-        }
-
-        let safetyReasons = syncSafetyReasons(
-            local: localPayload,
-            remote: mode == .localOverwriteRemote ? nil : remoteAggregate,
-            merged: mergedPayload,
-            mode: mode
-        )
-        if !safetyReasons.isEmpty {
-            cloudSyncStatus = "åŒæ­¥å·²åœæ­¢ï¼šå®‰å…¨æ£€æŸ¥æœªé€šè¿‡ï¼ˆ\(safetyReasons.joined(separator: ", "))ï¼‰"
-            statusMessage = "åŒæ­¥å·²åœæ­¢ï¼Œæœªä¿®æ”¹æœ¬åœ°æ•°æ®ï¼š\(safetyReasons.joined(separator: "ã€"))"
-            return
-        }
-
-        // The network phase may have yielded to local edits. Never apply an
-        // older merge result over a newer in-memory payload.
-        guard syncPayloadEquals(buildCurrentSyncPayload(), localPayload) else {
-            cloudSyncStatus = "åŒæ­¥å·²åœæ­¢ï¼šåŒæ­¥æœŸé—´æœ¬åœ°æ•°æ®å‘ç”Ÿå˜åŒ–"
-            statusMessage = "åŒæ­¥æœŸé—´æœ¬åœ°æ•°æ®å‘ç”Ÿå˜åŒ–ï¼Œè¯·é‡æ–°åŒæ­¥"
-            return
-        }
-
-        syncDiagnostics = SyncDiagnostics(
-            localAccounts: visibleAccountCount(localPayload.accounts),
-            localPasskeys: visiblePasskeyCount(localPayload.passkeys),
-            localFolders: visibleFolderCount(localPayload.folders),
-            remoteAccounts: remoteAggregate.map { visibleAccountCount($0.accounts) } ?? 0,
-            remotePasskeys: remoteAggregate.map { visiblePasskeyCount($0.passkeys) } ?? 0,
-            remoteFolders: remoteAggregate.map { visibleFolderCount($0.folders) } ?? 0,
-            conflictCount: conflictCount,
-            revision: primaryRemoteRevision,
-            etag: primaryRemoteETag,
-            lastSyncAtMs: nowMs(),
-            sourceSummary: enabledSourceNames.joined(separator: " + ")
-        )
-        persistSyncDiagnostics()
-
-        let conflictSuffix = conflictCount > 0 ? "ï¼Œæ£€æµ‹åˆ° \(conflictCount) ä¸ªå­—æ®µå†²çªå¹¶æŒ‰æ—¶é—´/è®¾å¤‡è§„åˆ™è£å†³" : ""
-        let syncTitle = "åŒæ­¥å¹¶æ›´æ–°æœ¬åœ°ï¼ˆ\(enabledSourceNames.joined(separator: " + "))ï¼Œ\(mode.label)ï¼‰\(conflictSuffix)"
-        var changed = applyMergedPayloadIfNeeded(mergedPayload, historyTitle: syncTitle)
-        var pushErrors: [String] = pullErrors
-        var primaryPushFailed = false
-
-        if syncEnableSelfHostedServer {
-            let sourceKey = syncOutboxSourceKey(kind: "server", url: buildSelfHostedPayloadURL())
-            if !shouldAttemptSyncOutbox(sourceKey: sourceKey, force: forceOutboxRetry) {
-                pushErrors.append("æœåŠ¡å™¨: è¡¥å¿ä»»åŠ¡ç­‰å¾…é€€é¿æ—¶é—´")
-            } else {
-                guard let resourceURL = buildSelfHostedPayloadURL() else {
-                recordSyncOutboxFailure(
-                    sourceKey: sourceKey,
-                    payload: mergedPayload,
-                    error: NSError(domain: "AccountStore.SyncRemote", code: 400, userInfo: [NSLocalizedDescriptionKey: "é…ç½®ä¸å®Œæ•´"])
-                )
-                pushErrors.append("æœåŠ¡å™¨: é…ç½®ä¸å®Œæ•´")
-                updateSyncStatusAfterSync(
-                    changed: changed,
-                    localPayload: localPayload,
-                    finalPayload: mergedPayload,
-                    enabledSourceNames: enabledSourceNames,
-                    pushErrors: pushErrors,
-                    mode: mode,
-                    conflictCount: conflictCount
-                )
-                return
-                }
-                do {
-                let authorization = buildBearerAuthorization(serverAuthToken)
-                switch mode {
-                case .merge:
-                    if selfHostedRemoteEncrypted,
-                       let selfHostedRemotePayload,
-                       syncPayloadEquals(mergedPayload, selfHostedRemotePayload)
-                    {
-                        clearSyncOutbox(sourceKey: sourceKey)
-                        break
-                    }
-                    let pushResult = try await pushSelfHostedPayloadWithRetry(
-                        mergedPayload,
-                        to: resourceURL,
-                        authorization: authorization,
-                        etag: selfHostedETag,
-                        historyTitle: "åŒæ­¥å†²çªåŽé‡æ–°åˆå¹¶ï¼ˆæœåŠ¡å™¨ï¼Œ\(mode.label)ï¼‰",
-                        mergeOnConflict: primarySource == .selfHostedServer
-                    )
-                    mergedPayload = pushResult.payload
-                    changed = changed || pushResult.changedLocalData
-                    clearSyncOutbox(sourceKey: sourceKey)
-                case .remoteOverwriteLocal:
-                    if selfHostedRemoteEncrypted,
-                       let selfHostedRemotePayload,
-                       syncPayloadEquals(mergedPayload, selfHostedRemotePayload)
-                    {
-                        clearSyncOutbox(sourceKey: sourceKey)
-                        break
-                    }
-                    let pushResult = try await pushSelfHostedRemotePayloadWithRetry(
-                        mergedPayload,
-                        to: resourceURL,
-                        authorization: authorization,
-                        etag: selfHostedETag,
-                        historyTitle: "è¿œç«¯è¦†ç›–æœ¬åœ°ï¼ˆæœåŠ¡å™¨ï¼Œ\(mode.label)ï¼‰",
-                        mergeOnConflict: primarySource == .selfHostedServer
-                    )
-                    mergedPayload = pushResult.payload
-                    changed = changed || pushResult.changedLocalData
-                    clearSyncOutbox(sourceKey: sourceKey)
-                case .localOverwriteRemote:
-                    _ = try await pushRemotePayload(
-                        mergedPayload,
-                        to: resourceURL,
-                        authorization: authorization,
-                        idempotencyKey: "pass-\(syncDeviceId())-\(UUID().uuidString)"
-                    )
-                    clearSyncOutbox(sourceKey: sourceKey)
-                }
-                } catch {
-                    recordSyncOutboxFailure(sourceKey: sourceKey, payload: mergedPayload, error: error)
-                    pushErrors.append("æœåŠ¡å™¨: \(error.localizedDescription)")
-                    if primarySource == .selfHostedServer {
-                        primaryPushFailed = true
-                    }
-                }
-            }
-        }
-
-        if syncEnableICloud {
-            if primaryPushFailed {
-                pushErrors.append("iCloud: ä¸»åŒæ­¥æºæŽ¨é€å¤±è´¥ï¼Œå·²è·³è¿‡é•œåƒå†™å…¥")
-            } else {
-            let sourceKey = syncOutboxSourceKey(kind: "icloud")
-            if !shouldAttemptSyncOutbox(sourceKey: sourceKey, force: forceOutboxRetry) {
-                pushErrors.append("iCloud: è¡¥å¿ä»»åŠ¡ç­‰å¾…é€€é¿æ—¶é—´")
-            } else {
-                do {
-                    _ = try pushPayloadToICloud(mergedPayload)
-                    clearSyncOutbox(sourceKey: sourceKey)
-                } catch {
-                    recordSyncOutboxFailure(sourceKey: sourceKey, payload: mergedPayload, error: error)
-                    pushErrors.append("iCloud: \(error.localizedDescription)")
-                    if primarySource == .iCloud {
-                        primaryPushFailed = true
-                    }
-                }
-            }
-            }
-        }
-
-        if syncEnableWebDAV {
-            if primaryPushFailed {
-                pushErrors.append("WebDAV: ä¸»åŒæ­¥æºæŽ¨é€å¤±è´¥ï¼Œå·²è·³è¿‡é•œåƒå†™å…¥")
-            } else {
-            let sourceKey = syncOutboxSourceKey(kind: "webdav", url: buildWebDAVResourceURL())
-            if !shouldAttemptSyncOutbox(sourceKey: sourceKey, force: forceOutboxRetry) {
-                pushErrors.append("WebDAV: è¡¥å¿ä»»åŠ¡ç­‰å¾…é€€é¿æ—¶é—´")
-            } else {
-                guard let resourceURL = buildWebDAVResourceURL() else {
-                recordSyncOutboxFailure(
-                    sourceKey: sourceKey,
-                    payload: mergedPayload,
-                    error: NSError(domain: "AccountStore.SyncRemote", code: 400, userInfo: [NSLocalizedDescriptionKey: "é…ç½®ä¸å®Œæ•´"])
-                )
-                pushErrors.append("WebDAV: é…ç½®ä¸å®Œæ•´")
-                updateSyncStatusAfterSync(
-                    changed: changed,
-                    localPayload: localPayload,
-                    finalPayload: mergedPayload,
-                    enabledSourceNames: enabledSourceNames,
-                    pushErrors: pushErrors,
-                    mode: mode,
-                    conflictCount: conflictCount
-                )
-                return
-                }
-                do {
-                let authorization = buildBasicAuthorization(
-                    username: webdavUsername,
-                    password: webdavPassword
-                )
-                switch mode {
-                case .merge:
-                    if webDAVRemoteEncrypted,
-                       let webDAVRemotePayload,
-                       syncPayloadEquals(mergedPayload, webDAVRemotePayload)
-                    {
-                        clearSyncOutbox(sourceKey: sourceKey)
-                        break
-                    }
-                    let pushResult = try await pushWebDAVPayloadWithRetry(
-                        mergedPayload,
-                        to: resourceURL,
-                        authorization: authorization,
-                        etag: webDAVETag,
-                        historyTitle: "åŒæ­¥å†²çªåŽé‡æ–°åˆå¹¶ï¼ˆWebDAVï¼Œ\(mode.label)ï¼‰",
-                        mergeOnConflict: primarySource == .webDAV
-                    )
-                    webDAVETag = pushResult.etag
-                    mergedPayload = pushResult.payload
-                    changed = changed || pushResult.changedLocalData
-                    clearSyncOutbox(sourceKey: sourceKey)
-                case .remoteOverwriteLocal:
-                    if webDAVRemoteEncrypted,
-                       let webDAVRemotePayload,
-                       syncPayloadEquals(mergedPayload, webDAVRemotePayload)
-                    {
-                        clearSyncOutbox(sourceKey: sourceKey)
-                        break
-                    }
-                    let pushResult = try await pushWebDAVRemotePayloadWithRetry(
-                        mergedPayload,
-                        to: resourceURL,
-                        authorization: authorization,
-                        etag: webDAVETag,
-                        historyTitle: "è¿œç«¯è¦†ç›–æœ¬åœ°ï¼ˆWebDAVï¼Œ\(mode.label)ï¼‰",
-                        mergeOnConflict: primarySource == .webDAV
-                    )
-                    webDAVETag = pushResult.etag
-                    mergedPayload = pushResult.payload
-                    changed = changed || pushResult.changedLocalData
-                    clearSyncOutbox(sourceKey: sourceKey)
-                case .localOverwriteRemote:
-                    let confirmation = try await pushRemotePayload(
-                        mergedPayload,
-                        to: resourceURL,
-                        authorization: authorization,
-                        ifNoneMatchStar: true,
-                        idempotencyKey: "pass-\(syncDeviceId())-\(UUID().uuidString)"
-                    )
-                    webDAVETag = confirmation.etag
-                    clearSyncOutbox(sourceKey: sourceKey)
-                }
-                } catch {
-                    recordSyncOutboxFailure(sourceKey: sourceKey, payload: mergedPayload, error: error)
-                    pushErrors.append("WebDAV: \(error.localizedDescription)")
-                    if primarySource == .webDAV {
-                        primaryPushFailed = true
-                    }
-                }
-            }
-            }
-        }
-
-        updateSyncStatusAfterSync(
-            changed: changed,
-            localPayload: localPayload,
-            finalPayload: mergedPayload,
-            enabledSourceNames: enabledSourceNames,
-            pushErrors: pushErrors,
-            mode: mode,
-            conflictCount: conflictCount
-        )
-    }
-
-    private func updateSyncStatusAfterSync(
-        changed: Bool,
-        localPayload: SyncBundlePayload,
-        finalPayload: SyncBundlePayload,
-        enabledSourceNames: [String],
-        pushErrors: [String],
-        mode: SyncMode,
-        conflictCount: Int
-    ) {
-        let sourceSummary = enabledSourceNames.joined(separator: " + ")
-        let payloadSummary = syncPayloadSummary(before: localPayload, after: finalPayload)
-        let conflictSummary = conflictCount > 0 ? "\nå­—æ®µå†²çªï¼š\(conflictCount) ä¸ª" : ""
-        if pushErrors.isEmpty {
-            cloudSyncStatus = changed
-                ? "\(mode.completionVerb)ï¼ˆ\(sourceSummary)ï¼‰\n\(payloadSummary)\(conflictSummary)\næ—¶é—´ï¼š\(displayTime(nowMs()))"
-                : "\(mode.label)åŽæ— å­—æ®µå˜åŒ–ï¼Œå·²è·³è¿‡æœ¬åœ°å†™å…¥ï¼ˆ\(sourceSummary)ï¼‰\n\(payloadSummary)\(conflictSummary)\næ—¶é—´ï¼š\(displayTime(nowMs()))"
-            statusMessage = changed
-                ? "\(sourceSummary) \(mode.completionVerb)\n\(payloadSummary)\(conflictSummary)"
-                : "\(sourceSummary) æ— å­—æ®µå˜åŒ–ï¼Œå·²è·³è¿‡æœ¬åœ°å†™å…¥\n\(payloadSummary)\(conflictSummary)"
-        } else {
-            cloudSyncStatus = "åŒæ­¥éƒ¨åˆ†å¤±è´¥ï¼ˆ\(sourceSummary)ï¼‰\n\(pushErrors.joined(separator: "ï¼›"))\n\(payloadSummary)\(conflictSummary)"
-            statusMessage = "åŒæ­¥å®Œæˆä½†éƒ¨åˆ†æºå¤±è´¥\n\(pushErrors.joined(separator: "ï¼›"))\n\(payloadSummary)\(conflictSummary)"
-        }
-    }
-
-    private func syncPayloadSummary(before: SyncBundlePayload, after: SyncBundlePayload) -> String {
-        [
-            "è´¦å· \(visibleAccountCount(before.accounts))->\(visibleAccountCount(after.accounts))",
-            "é€šè¡Œå¯†é’¥ \(visiblePasskeyCount(before.passkeys))->\(visiblePasskeyCount(after.passkeys))",
-            "æ–‡ä»¶å¤¹ \(visibleFolderCount(before.folders))->\(visibleFolderCount(after.folders))"
-        ].joined(separator: "\n")
-    }
-
-    private func visibleAccountCount(_ values: [PasswordAccount]) -> Int {
-        values.reduce(into: 0) { count, account in
-            if !account.isPermanentlyDeleted { count += 1 }
-        }
-    }
-
-    private func visibleFolderCount(_ values: [AccountFolder]) -> Int {
-        values.reduce(into: 0) { count, folder in
-            if !folder.isPermanentlyDeleted { count += 1 }
-        }
-    }
-
-    private func visiblePasskeyCount(_ values: [PasskeyRecord]) -> Int {
-        values.reduce(into: 0) { count, passkey in
-            if passkey.isPermanentlyDeleted != true { count += 1 }
-        }
-    }
-
-    private func countSyncAccountConflicts(local: [PasswordAccount], remote: [PasswordAccount]) -> Int {
-        let localByRecord = Dictionary(local.map { ("record:\($0.id.uuidString.lowercased())", $0) }) { first, _ in first }
-        let fields: [(PasswordAccount) -> String] = [
-            { $0.username }, { $0.password }, { $0.totpSecret },
-            { $0.recoveryCodes }, { $0.note }, { String($0.isDeleted) },
-        ]
-        var count = 0
-        for account in remote {
-            // Stable record identity is authoritative. Do not use a legacy
-            // accountId fallback when both records have stable IDs, otherwise
-            // recreated accounts with the same historical accountId look like
-            // field conflicts instead of distinct records.
-            let localAccount = localByRecord["record:\(account.id.uuidString.lowercased())"]
-            guard let localAccount else { continue }
-            count += fields.reduce(into: 0) { result, field in
-                if field(localAccount) != field(account) { result += 1 }
-            }
-        }
-        return count
-    }
-
-    private func isSyncPayloadEmpty(_ payload: SyncBundlePayload) -> Bool {
-        visibleAccountCount(payload.accounts) == 0
-            && visiblePasskeyCount(payload.passkeys) == 0
-            && visibleFolderCount(payload.folders) == 0
-    }
-
-    private func syncSafetyReasons(
-        local: SyncBundlePayload,
-        remote: SyncBundlePayload?,
-        merged: SyncBundlePayload,
-        mode: SyncMode
-    ) -> [String] {
-        guard mode == .merge || mode == .remoteOverwriteLocal else { return [] }
-        if !PassCoreFFI.forceSwiftMerge {
-            do {
-                let localJSON = try encodeSyncPayloadJSON(local)
-                let remoteJSON = try remote.map { try encodeSyncPayloadJSON($0) }
-                let mergedJSON = try encodeSyncPayloadJSON(merged)
-                let modeString = mode == .remoteOverwriteLocal ? "remoteOverwriteLocal" : "merge"
-                let report = try PassCoreFFI.evaluateSyncSafetyJSON(
-                    localJSON: localJSON,
-                    remoteJSON: remoteJSON,
-                    mergedJSON: mergedJSON,
-                    mode: modeString
-                )
-                return report.reasons
-            } catch {
-                NSLog("[PassCore] Rust safety failed, fallback Swift: \(error.localizedDescription)")
-            }
-        }
-        return syncSafetyReasonsSwift(local: local, remote: remote, merged: merged, mode: mode)
-    }
-
-    private func syncSafetyReasonsSwift(
-        local: SyncBundlePayload,
-        remote: SyncBundlePayload?,
-        merged: SyncBundlePayload,
-        mode: SyncMode
-    ) -> [String] {
-        let localNonEmpty = !isSyncPayloadEmpty(local)
-        let remoteNonEmpty = remote.map { !isSyncPayloadEmpty($0) } ?? false
-        var reasons: [String] = []
-        if mode == .remoteOverwriteLocal, localNonEmpty, !remoteNonEmpty {
-            reasons.append("REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL")
-        }
-        guard mode == .merge else { return reasons }
-        if localNonEmpty, remote != nil, !remoteNonEmpty {
-            reasons.append("REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL")
-        }
-
-        let localAccountIds = Set(local.accounts.map { $0.id.uuidString.lowercased() })
-        let mergedAccountIds = Set(merged.accounts.map { $0.id.uuidString.lowercased() })
-        if !localAccountIds.isSubset(of: mergedAccountIds) {
-            reasons.append("LOCAL_ACCOUNTS_DROPPED")
-        }
-        let localFolderIds = Set(local.folders.map { $0.id.uuidString.lowercased() })
-        let mergedFolderIds = Set(merged.folders.map { $0.id.uuidString.lowercased() })
-        if !localFolderIds.isSubset(of: mergedFolderIds) {
-            reasons.append("LOCAL_FOLDERS_DROPPED")
-        }
-        let localPasskeyIds = Set(local.passkeys.map(\.credentialIdB64u).filter { !$0.isEmpty })
-        let mergedPasskeyIds = Set(merged.passkeys.map(\.credentialIdB64u).filter { !$0.isEmpty })
-        if !localPasskeyIds.isSubset(of: mergedPasskeyIds) {
-            reasons.append("LOCAL_PASSKEYS_DROPPED")
-        }
-        if let remote {
-            let remoteAccountIds = Set(remote.accounts.map { $0.id.uuidString.lowercased() })
-            if !remoteAccountIds.isSubset(of: mergedAccountIds) {
-                reasons.append("REMOTE_ACCOUNTS_DROPPED")
-            }
-            let remoteFolderIds = Set(remote.folders.map { $0.id.uuidString.lowercased() })
-            if !remoteFolderIds.isSubset(of: mergedFolderIds) {
-                reasons.append("REMOTE_FOLDERS_DROPPED")
-            }
-            let remotePasskeyIds = Set(remote.passkeys.map(\.credentialIdB64u).filter { !$0.isEmpty })
-            if !remotePasskeyIds.isSubset(of: mergedPasskeyIds) {
-                reasons.append("REMOTE_PASSKEYS_DROPPED")
-            }
-        }
-        return reasons
-    }
-
-    private func activeSyncSourceNames() -> [String] {
-        var names: [String] = []
-        let primary = resolvedPrimarySyncSource()
-        if syncEnableSelfHostedServer && primary == .selfHostedServer { names.append("ä¸»ï¼šæœåŠ¡å™¨") }
-        if syncEnableWebDAV && primary == .webDAV { names.append("ä¸»ï¼šWebDAV") }
-        if syncEnableICloud && primary == .iCloud { names.append("ä¸»ï¼šiCloud") }
-        if syncEnableICloud && primary != .iCloud { names.append("iCloud é•œåƒ") }
-        if syncEnableWebDAV && primary != .webDAV { names.append("WebDAV é•œåƒ") }
-        if syncEnableSelfHostedServer && primary != .selfHostedServer { names.append("æœåŠ¡å™¨é•œåƒ") }
-        return names
-    }
-
-    private func resolvedPrimarySyncSource() -> SyncPrimarySource {
-        switch syncPrimarySource {
-        case .selfHostedServer where syncEnableSelfHostedServer:
-            return .selfHostedServer
-        case .webDAV where syncEnableWebDAV:
-            return .webDAV
-        case .iCloud where syncEnableICloud:
-            return .iCloud
-        default:
-            if syncEnableSelfHostedServer { return .selfHostedServer }
-            if syncEnableWebDAV { return .webDAV }
-            return .iCloud
-        }
-    }
-
-    var autoSyncIntervalOptions: [AutoSyncInterval] {
-        AutoSyncInterval.allCases
-    }
-
-    var syncEncryptionKeyIdentifier: String {
-        PassSyncCrypto.keyId(for: syncEncryptionKey)
-    }
-
-    var previousSyncEncryptionKeyIdentifier: String {
-        PassSyncCrypto.keyId(for: previousSyncEncryptionKey)
-    }
-
-    var autoSyncStatusDescription: String {
-        let interval = AutoSyncInterval(rawValue: autoSyncIntervalMinutes) ?? .disabled
-        let enabledSourceNames = activeSyncSourceNames()
-        if interval == .disabled {
-            return "è‡ªåŠ¨åŒæ­¥å·²å…³é—­"
-        }
-        if enabledSourceNames.isEmpty {
-            return "è‡ªåŠ¨åŒæ­¥å·²å¼€å¯ï¼Œä½†å½“å‰æ²¡æœ‰å¯ç”¨åŒæ­¥æº"
-        }
-        return "è‡ªåŠ¨æŒ‰â€œåˆå¹¶â€æ¨¡å¼æ‰§è¡Œ \(interval.label)ï¼ŒåŒæ­¥æºï¼š\(enabledSourceNames.joined(separator: " + "))"
-    }
-
-    private func buildCurrentSyncPayload() -> SyncBundlePayload {
-        let orderedAccounts = sortedAccountsForDisplay(accounts.filter { !$0.isDeleted }, scopeKey: "all")
-        let activeAccounts = accounts.filter { !$0.isDeleted && !$0.isPermanentlyDeleted }
-        var payloadFolders = folders
-        for index in payloadFolders.indices {
-            let folderId = payloadFolders[index].id
-            let activeMembers = activeAccounts.filter { $0.isInFolder(folderId) }
-            let activeIds = Set(activeMembers.map { $0.id.uuidString.lowercased() })
-            var seen = Set<String>()
-            var normalizedIds = payloadFolders[index].regularAccountIds.filter {
-                let key = $0.lowercased()
-                return activeIds.contains(key) && seen.insert(key).inserted
-            }
-            for account in activeMembers {
-                let key = account.id.uuidString.lowercased()
-                if seen.insert(key).inserted { normalizedIds.append(key) }
-            }
-            payloadFolders[index].regularAccountIds = normalizedIds
-        }
-        let allOrderClock = persistedOrderClock(
-            key: Keys.allRegularOrderUpdatedAtMs,
-            fallback: accounts.map(\.updatedAtMs).max() ?? 0
-        )
-        let folderOrderClock = persistedOrderClock(
-            key: Keys.folderOrderUpdatedAtMs,
-            fallback: folders.map(\.updatedAtMs).max() ?? 0
-        )
-        return SyncBundlePayload(
-            accounts: accounts,
-            folders: payloadFolders,
-            passkeys: passkeys,
-            allRegularAccountIds: orderedAccounts.map { $0.id.uuidString },
-            allRegularOrderUpdatedAtMs: allOrderClock,
-            allRegularOrderUpdatedDeviceName: currentDeviceName(),
-            folderOrderIds: folders.filter { !$0.isDeleted && !$0.isPermanentlyDeleted }.map { $0.id.uuidString },
-            folderOrderUpdatedAtMs: folderOrderClock,
-            folderOrderUpdatedDeviceName: currentDeviceName()
-        )
-    }
-
-    func previewSync() async {
-        loadSyncSecretsIfNeeded()
-        let localPayload = canonicalizeSyncPayload(buildCurrentSyncPayload())
-        let primarySource = resolvedPrimarySyncSource()
-        do {
-            let remotePayload: SyncBundlePayload?
-            switch primarySource {
-            case .iCloud:
-                remotePayload = try fetchRemotePayloadFromICloud().map(canonicalizeSyncPayload)
-            case .webDAV:
-                guard let url = buildWebDAVResourceURL() else {
-                    throw NSError(domain: "AccountStore.SyncPreview", code: 1, userInfo: [NSLocalizedDescriptionKey: "WebDAV é…ç½®ä¸å®Œæ•´"])
-                }
-                let response = try await fetchRemotePayload(
-                    from: url,
-                    authorization: buildBasicAuthorization(username: webdavUsername, password: webdavPassword)
-                )
-                remotePayload = response.payload.map(canonicalizeSyncPayload)
-            case .selfHostedServer:
-                guard let url = buildSelfHostedPayloadURL() else {
-                    throw NSError(domain: "AccountStore.SyncPreview", code: 2, userInfo: [NSLocalizedDescriptionKey: "æœåŠ¡å™¨é…ç½®ä¸å®Œæ•´"])
-                }
-                let response = try await fetchRemotePayload(
-                    from: url,
-                    authorization: buildBearerAuthorization(serverAuthToken)
-                )
-                remotePayload = response.payload.map(canonicalizeSyncPayload)
-            }
-
-            // Preview uses the same primary-source merge semantics as the
-            // actual sync path. A missing remote object means first-time
-            // initialization, not a confirmed empty payload.
-            let merged = remotePayload.map { mergePayloads(local: localPayload, remote: $0) } ?? localPayload
-            let safetyReasons = syncSafetyReasons(local: localPayload, remote: remotePayload, merged: merged, mode: .merge)
-            guard safetyReasons.isEmpty else {
-                syncPreviewStatus = "é¢„è§ˆåœæ­¢ï¼šå®‰å…¨æ£€æŸ¥æœªé€šè¿‡ï¼ˆ\(safetyReasons.joined(separator: ", "))ï¼‰"
-                return
-            }
-            syncPreviewStatus = "é¢„è§ˆï¼ˆæœªå†™å…¥ï¼Œä¸»æºï¼š\(primarySource.label)ï¼‰ï¼šè´¦å· \(visibleAccountCount(localPayload.accounts))->\(visibleAccountCount(merged.accounts))ï¼Œé€šè¡Œå¯†é’¥ \(visiblePasskeyCount(localPayload.passkeys))->\(visiblePasskeyCount(merged.passkeys))ï¼Œæ–‡ä»¶å¤¹ \(visibleFolderCount(localPayload.folders))->\(visibleFolderCount(merged.folders))"
-        } catch {
-            syncPreviewStatus = "é¢„è§ˆå¤±è´¥ï¼š\(error.localizedDescription)"
-        }
-    }
-
-    func remoteOverwritePreflight() async -> RemoteOverwritePreflightResult {
-        var unreachableSources: [String] = []
-        var emptySources: [String] = []
-
-        if syncEnableICloud {
-            do {
-                if try fetchRemotePayloadFromICloud() == nil {
-                    emptySources.append("iCloud")
-                }
-            } catch {
-                unreachableSources.append("iCloudï¼ˆ\(error.localizedDescription)ï¼‰")
-            }
-        }
-
-        if syncEnableWebDAV {
-            guard let resourceURL = buildWebDAVResourceURL() else {
-                unreachableSources.append("WebDAVï¼ˆé…ç½®ä¸å®Œæ•´ï¼‰")
-                return RemoteOverwritePreflightResult(unreachableSources: unreachableSources, emptySources: emptySources)
-            }
-            do {
-                let authorization = buildBasicAuthorization(
-                    username: webdavUsername,
-                    password: webdavPassword
-                )
-                let remoteResponse = try await fetchRemotePayload(
-                    from: resourceURL,
-                    authorization: authorization
-                )
-                if remoteResponse.payload == nil {
-                    emptySources.append("WebDAV")
-                }
-            } catch {
-                unreachableSources.append("WebDAVï¼ˆ\(error.localizedDescription)ï¼‰")
-            }
-        }
-
-        if syncEnableSelfHostedServer {
-            guard let resourceURL = buildSelfHostedPayloadURL() else {
-                unreachableSources.append("æœåŠ¡å™¨ï¼ˆé…ç½®ä¸å®Œæ•´ï¼‰")
-                return RemoteOverwritePreflightResult(unreachableSources: unreachableSources, emptySources: emptySources)
-            }
-            do {
-                let authorization = buildBearerAuthorization(serverAuthToken)
-                let remoteResponse = try await fetchRemotePayload(
-                    from: resourceURL,
-                    authorization: authorization
-                )
-                if remoteResponse.payload == nil {
-                    emptySources.append("æœåŠ¡å™¨")
-                }
-            } catch {
-                unreachableSources.append("æœåŠ¡å™¨ï¼ˆ\(error.localizedDescription)ï¼‰")
-            }
-        }
-
-        return RemoteOverwritePreflightResult(
-            unreachableSources: unreachableSources,
-            emptySources: emptySources
-        )
-    }
-
-    func loadSyncVersions() async {
-        loadSyncSecretsIfNeeded()
-        guard syncEnableSelfHostedServer else {
-            syncVersionsStatus = "è¯·å…ˆå¯ç”¨è‡ªå»ºæœåŠ¡å™¨"
-            syncVersionSummaries = []
-            return
-        }
-        guard let versionsURL = buildSelfHostedVersionsURL() else {
-            syncVersionsStatus = "æœåŠ¡å™¨åœ°å€é…ç½®ä¸å®Œæ•´"
-            syncVersionSummaries = []
-            return
-        }
-        do {
-            var request = URLRequest(url: versionsURL)
-            request.httpMethod = "GET"
-            request.timeoutInterval = 30
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            if let authorization = buildBearerAuthorization(serverAuthToken) {
-                request.setValue(authorization, forHTTPHeaderField: "Authorization")
-            }
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse,
-                  (200 ... 299).contains(http.statusCode)
-            else {
-                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-                throw NSError(domain: "AccountStore.SyncVersions", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "æœåŠ¡å™¨è¿”å›ž HTTP \(statusCode)"])
-            }
-            let decoded = try decoder.decode(SyncVersionsResponse.self, from: data)
-            syncVersionSummaries = decoded.versions.map {
-                SyncVersionSummary(
-                    id: $0.versionId,
-                    exportedAtMs: $0.exportedAtMs,
-                    updatedAtMs: $0.updatedAtMs,
-                    savedAtMs: $0.savedAtMs,
-                    payloadSha256: $0.payloadSha256
-                )
-            }
-            syncVersionsStatus = "å…± \(syncVersionSummaries.count) ä¸ªæœåŠ¡å™¨å¿«ç…§"
-        } catch {
-            syncVersionSummaries = []
-            syncVersionsStatus = "è¯»å–å¿«ç…§å¤±è´¥ï¼š\(error.localizedDescription)"
-        }
-    }
-
-    func restoreSyncVersion(_ version: SyncVersionSummary) async {
-        loadSyncSecretsIfNeeded()
-        guard syncEnableSelfHostedServer else {
-            syncVersionsStatus = "è¯·å…ˆå¯ç”¨è‡ªå»ºæœåŠ¡å™¨"
-            return
-        }
-        guard let payloadURL = buildSelfHostedPayloadURL(),
-              let versionsURL = buildSelfHostedVersionsURL()
-        else {
-            syncVersionsStatus = "æœåŠ¡å™¨åœ°å€é…ç½®ä¸å®Œæ•´"
-            return
-        }
-        do {
-            let authorization = buildBearerAuthorization(serverAuthToken)
-            let currentResponse = try await fetchRemotePayload(from: payloadURL, authorization: authorization)
-            guard currentResponse.payload != nil, let currentETag = currentResponse.etag else {
-                throw NSError(domain: "AccountStore.SyncVersions", code: 1, userInfo: [NSLocalizedDescriptionKey: "æœåŠ¡å™¨å½“å‰æ•°æ®æ²¡æœ‰ ETagï¼Œæ— æ³•å®‰å…¨æ¢å¤"])
-            }
-            try saveLocalSyncSafetySnapshot(buildCurrentSyncPayload(), reason: "æ¢å¤æœåŠ¡å™¨å¿«ç…§ç‰ˆæœ¬ \(version.id) å‰")
-
-            var request = URLRequest(url: versionsURL.appendingPathComponent(String(version.id)).appendingPathComponent("restore"))
-            request.httpMethod = "POST"
-            request.timeoutInterval = 30
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            request.setValue(currentETag, forHTTPHeaderField: "If-Match")
-            let idempotencyKey = "pass-restore-\(syncDeviceId())-\(UUID().uuidString)"
-            request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
-            if let authorization {
-                request.setValue(authorization, forHTTPHeaderField: "Authorization")
-            }
-            let (responseData, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw NSError(domain: "AccountStore.SyncVersions", code: 2, userInfo: [NSLocalizedDescriptionKey: "æ¢å¤å“åº”ä¸å¯è¯†åˆ«"])
-            }
-            if http.statusCode == 412 || http.statusCode == 428 {
-                throw SyncRemoteError.preconditionFailed
-            }
-            guard (200 ... 299).contains(http.statusCode) else {
-                throw NSError(domain: "AccountStore.SyncVersions", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "æ¢å¤å¤±è´¥ï¼ŒHTTP \(http.statusCode)"])
-            }
-            guard let receipt = try? decoder.decode(SelfHostedWriteReceipt.self, from: responseData),
-                  receipt.ok,
-                  receipt.committed,
-                  receipt.scope == http.value(forHTTPHeaderField: "X-Sync-Scope"),
-                  receipt.etag == http.value(forHTTPHeaderField: "ETag"),
-                  receipt.payloadSha256 == http.value(forHTTPHeaderField: "X-Payload-Sha256"),
-                  receipt.revision == http.value(forHTTPHeaderField: "X-Sync-Revision").flatMap(Int.init),
-                  receipt.idempotencyKey == idempotencyKey,
-                  http.value(forHTTPHeaderField: "X-Sync-Idempotency-Key") == idempotencyKey
-            else {
-                throw NSError(domain: "AccountStore.SyncVersions", code: 4, userInfo: [NSLocalizedDescriptionKey: "æœåŠ¡å™¨æœªè¿”å›žå¯éªŒè¯çš„æ¢å¤æäº¤å›žæ‰§"])
-            }
-            let restoredResponse = try await fetchRemotePayload(from: payloadURL, authorization: authorization)
-            guard let restoredPayload = restoredResponse.payload else {
-                throw NSError(domain: "AccountStore.SyncVersions", code: 3, userInfo: [NSLocalizedDescriptionKey: "æ¢å¤åŽæœåŠ¡å™¨æ•°æ®ä¸ºç©º"])
-            }
-            _ = applyMergedPayloadIfNeeded(restoredPayload, historyTitle: "æ¢å¤æœåŠ¡å™¨å¿«ç…§ç‰ˆæœ¬ \(version.id)")
-            syncVersionsStatus = "ç‰ˆæœ¬ \(version.id) æ¢å¤å®Œæˆ"
-            await loadSyncVersions()
-        } catch {
-            syncVersionsStatus = "æ¢å¤å¤±è´¥ï¼š\(error.localizedDescription)"
-        }
-    }
-
-    func isCurrentLocalPayloadEmpty() -> Bool {
-        let payload = buildCurrentSyncPayload()
-        return payload.accounts.isEmpty && payload.folders.isEmpty && payload.passkeys.isEmpty
-    }
-
-    private func emptySyncPayload() -> SyncBundlePayload {
-        SyncBundlePayload(accounts: [], folders: [], passkeys: [])
-    }
-
-    private func mergePayloadsIfNeeded(current: SyncBundlePayload?, incoming: SyncBundlePayload) -> SyncBundlePayload {
-        guard let current else { return incoming }
-        return mergePayloads(local: current, remote: incoming)
-    }
-
-    private func buildSyncBundleDocument(payload: SyncBundlePayload) -> SyncBundleV2 {
-        let logicalClockMs = nowMs()
-        return SyncBundleV2(
-            schema: Self.syncBundleSchemaV2,
-            exportedAtMs: logicalClockMs,
-            source: SyncBundleSource(
-                app: "pass-mac",
-                platform: "macos-app",
-                deviceName: currentDeviceName(),
-                deviceId: syncDeviceId(),
-                logicalClockMs: logicalClockMs,
-                formatVersion: 2
-            ),
-            payload: canonicalSyncPayload(payload)
-        )
-    }
-
-    private func mergePayloads(local: SyncBundlePayload, remote: SyncBundlePayload) -> SyncBundlePayload {
-        if !PassCoreFFI.forceSwiftMerge {
-            do {
-                return try mergePayloadsViaRust(local: local, remote: remote)
-            } catch {
-                NSLog("[PassCore] Rust merge failed, fallback Swift: \(error.localizedDescription)")
-            }
-        }
-        return mergePayloadsSwift(local: local, remote: remote)
-    }
-
-    /// Production path: shared Rust `pass_merge::v2` via `pass-core-ffi`.
-    private func mergePayloadsViaRust(local: SyncBundlePayload, remote: SyncBundlePayload) throws -> SyncBundlePayload {
-        let localJSON = try encodeSyncPayloadJSON(local)
-        let remoteJSON = try encodeSyncPayloadJSON(remote)
-        let mergedJSON = try PassCoreFFI.mergeSyncPayloadJSON(localJSON: localJSON, remoteJSON: remoteJSON)
-        guard let data = mergedJSON.data(using: .utf8) else {
-            throw PassCoreFFI.FFIError.invalidUTF8
-        }
-        return try decoder.decode(SyncBundlePayload.self, from: data)
-    }
-
-    /// Legacy in-process merge (rollback / FFI unavailable).
-    private func mergePayloadsSwift(local: SyncBundlePayload, remote: SyncBundlePayload) -> SyncBundlePayload {
-        let mergedFolders = mergeFolderCollections(local: local.folders, remote: remote.folders)
-        let validFolderIds = Set(mergedFolders.filter { !$0.isDeleted && !$0.isPermanentlyDeleted }.map(\.id))
-        var mergedAccounts = mergeAccountCollections(
-            local: normalizeDecodedAccounts(local.accounts),
-            remote: normalizeDecodedAccounts(remote.accounts)
-        )
-        mergedAccounts = reconcileAccountsWithValidFolderIds(mergedAccounts, validFolderIds: validFolderIds)
-        let mergedPasskeys = mergePasskeyCollections(local: local.passkeys, remote: remote.passkeys)
-        let useRemoteAllOrder = remote.allRegularOrderUpdatedAtMs > local.allRegularOrderUpdatedAtMs
-            || (remote.allRegularOrderUpdatedAtMs == local.allRegularOrderUpdatedAtMs
-                && remote.allRegularOrderUpdatedDeviceName > local.allRegularOrderUpdatedDeviceName)
-        let useRemoteFolderOrder = remote.folderOrderUpdatedAtMs > local.folderOrderUpdatedAtMs
-            || (remote.folderOrderUpdatedAtMs == local.folderOrderUpdatedAtMs
-                && remote.folderOrderUpdatedDeviceName > local.folderOrderUpdatedDeviceName)
-        return SyncBundlePayload(
-            accounts: mergedAccounts,
-            folders: mergedFolders,
-            passkeys: mergedPasskeys,
-            allRegularAccountIds: useRemoteAllOrder ? remote.allRegularAccountIds : local.allRegularAccountIds,
-            allRegularOrderUpdatedAtMs: useRemoteAllOrder ? remote.allRegularOrderUpdatedAtMs : local.allRegularOrderUpdatedAtMs,
-            allRegularOrderUpdatedDeviceName: useRemoteAllOrder ? remote.allRegularOrderUpdatedDeviceName : local.allRegularOrderUpdatedDeviceName,
-            folderOrderIds: useRemoteFolderOrder ? remote.folderOrderIds : local.folderOrderIds,
-            folderOrderUpdatedAtMs: useRemoteFolderOrder ? remote.folderOrderUpdatedAtMs : local.folderOrderUpdatedAtMs,
-            folderOrderUpdatedDeviceName: useRemoteFolderOrder ? remote.folderOrderUpdatedDeviceName : local.folderOrderUpdatedDeviceName
-        )
-    }
-
-    /// Canonicalize alias/site relations before safety checks. The fallback
-    /// implementation temporarily uses the in-memory account array because
-    /// the legacy Swift alias routine predates pure payload transforms.
-    private func canonicalizeSyncPayload(_ payload: SyncBundlePayload) -> SyncBundlePayload {
-        var result = payload
-        if !PassCoreFFI.forceSwiftMerge {
-            do {
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.sortedKeys]
-                let data = try encoder.encode(result.accounts)
-                guard let accountsJSON = String(data: data, encoding: .utf8) else { return result }
-                let aliasResult = try PassCoreFFI.syncAliasGroupsJSON(
-                    accountsJSON: accountsJSON,
-                    deviceName: currentDeviceName(),
-                    nowMs: nowMs()
-                )
-                guard aliasResult.changed,
-                      let decoded = try? decoder.decode([PasswordAccount].self, from: Data(aliasResult.accountsJSON.utf8))
-                else { return result }
-                result.accounts = decoded
-                return result
-            } catch {
-                NSLog("[PassCore] alias canonicalization via Rust failed, fallback Swift: %@", error.localizedDescription)
-            }
-        }
-        let previousAccounts = accounts
-        accounts = result.accounts
-        syncAliasGroupsSwift()
-        result.accounts = accounts
-        accounts = previousAccounts
-        return result
-    }
-
-    private func encodeSyncPayloadJSON(_ payload: SyncBundlePayload) throws -> String {
-        // Compact JSON for FFI (field names already camelCase via Codable).
-        let ffiEncoder = JSONEncoder()
-        ffiEncoder.outputFormatting = [.sortedKeys]
-        let data = try ffiEncoder.encode(payload)
-        guard let json = String(data: data, encoding: .utf8) else {
-            throw PassCoreFFI.FFIError.invalidUTF8
-        }
-        return json
-    }
-
-    @discardableResult
-    private func applyMergedPayloadIfNeeded(_ payload: SyncBundlePayload, historyTitle: String? = nil) -> Bool {
-        let currentPayload = buildCurrentSyncPayload()
-        guard !syncPayloadEquals(currentPayload, payload) else { return false }
-        let previousAccounts = currentPayload.accounts
-        suppressCloudPush = true
-        defer { suppressCloudPush = false }
-        folders = orderedFolders(payload.folders, ids: payload.folderOrderIds)
-        accounts = orderedAccounts(payload.accounts, ids: payload.allRegularAccountIds)
-        passkeys = payload.passkeys
-        syncAliasGroups()
-        do {
-            try saveCoreCollectionsAtomically()
-        } catch {
-            folders = currentPayload.folders
-            accounts = currentPayload.accounts
-            passkeys = currentPayload.passkeys
-            statusMessage = "ä¿å­˜åˆå¹¶æ•°æ®å¤±è´¥: \(error.localizedDescription)"
-            return false
-        }
-        if let historyTitle {
-            appendAccountHistoryBatch(
-                category: .sync,
-                title: historyTitle,
-                beforeAccounts: previousAccounts,
-                afterAccounts: accounts
-            )
-        }
-        return true
-    }
-
-    private func orderedAccounts(_ source: [PasswordAccount], ids: [String]) -> [PasswordAccount] {
-        let byId = Dictionary(uniqueKeysWithValues: source.map { ($0.id.uuidString.lowercased(), $0) })
-        var seen = Set<String>()
-        var result: [PasswordAccount] = []
-        for id in ids.map({ $0.lowercased() }) {
-            if let account = byId[id], seen.insert(id).inserted { result.append(account) }
-        }
-        result.append(contentsOf: source.filter { seen.insert($0.id.uuidString.lowercased()).inserted })
-        return result
-    }
-
-    private func orderedFolders(_ source: [AccountFolder], ids: [String]) -> [AccountFolder] {
-        let byId = Dictionary(uniqueKeysWithValues: source.map { ($0.id.uuidString.lowercased(), $0) })
-        var seen = Set<String>()
-        var result: [AccountFolder] = []
-        for id in ids.map({ $0.lowercased() }) {
-            if let folder = byId[id], seen.insert(id).inserted { result.append(folder) }
-        }
-        result.append(contentsOf: source.filter { seen.insert($0.id.uuidString.lowercased()).inserted })
-        return result
-    }
-
-    private func syncPayloadEquals(_ lhs: SyncBundlePayload, _ rhs: SyncBundlePayload) -> Bool {
-        guard let leftData = try? encoder.encode(canonicalSyncPayload(lhs)),
-              let rightData = try? encoder.encode(canonicalSyncPayload(rhs))
-        else {
-            return false
-        }
-        return leftData == rightData
-    }
-
-    private func canonicalSyncPayload(_ payload: SyncBundlePayload) -> SyncBundlePayload {
-        SyncBundlePayload(
-            accounts: payload.accounts.sorted { lhs, rhs in
-                let leftId = lhs.id.uuidString.lowercased()
-                let rightId = rhs.id.uuidString.lowercased()
-                if leftId != rightId { return leftId < rightId }
-                return lhs.accountId < rhs.accountId
-            },
-            folders: payload.folders.sorted { $0.id.uuidString.lowercased() < $1.id.uuidString.lowercased() },
-            passkeys: payload.passkeys.sorted { $0.credentialIdB64u < $1.credentialIdB64u },
-            allRegularAccountIds: payload.allRegularAccountIds,
-            allRegularOrderUpdatedAtMs: payload.allRegularOrderUpdatedAtMs,
-            allRegularOrderUpdatedDeviceName: payload.allRegularOrderUpdatedDeviceName,
-            folderOrderIds: payload.folderOrderIds,
-            folderOrderUpdatedAtMs: payload.folderOrderUpdatedAtMs,
-            folderOrderUpdatedDeviceName: payload.folderOrderUpdatedDeviceName
-        )
-    }
-
-    private func requireWebDAVETagIfRemoteExists(payload: SyncBundlePayload?, etag: String?) throws {
-        if payload != nil, (etag ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            throw NSError(
-                domain: "PassSync",
-                code: 428,
-                userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "WebDAV è¿œç«¯å·²æœ‰åŒæ­¥åŒ…ä½†æœªè¿”å›ž ETagï¼Œæ— æ³•å®‰å…¨åšæ¡ä»¶å†™å…¥ã€‚è¯·æ”¹ç”¨æ”¯æŒ ETag çš„ WebDAVï¼Œæˆ–æ”¹ç”¨è‡ªå»ºæœåŠ¡å™¨ä½œä¸ºä¸»æºã€‚"
-                ]
-            )
-        }
-    }
-
-    func buildWebDAVResourceURL() -> URL? {
-        let base = webdavBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let remotePath = webdavRemotePath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !base.isEmpty,
-              !remotePath.isEmpty,
-              let baseURL = URL(string: base),
-              isSecureSyncEndpoint(baseURL),
-              let baseComponents = URLComponents(url: baseURL, resolvingAgainstBaseURL: false),
-              baseComponents.user == nil,
-              baseComponents.password == nil,
-              baseComponents.query == nil,
-              baseComponents.fragment == nil,
-              !remotePath.contains("?"),
-              !remotePath.contains("#"),
-              !remotePath.contains("://")
-        else {
-            return nil
-        }
-        let pathComponents = remotePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
-        guard pathComponents.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
-            return nil
-        }
-        var url = baseURL
-        for component in pathComponents {
-            url.appendPathComponent(component)
-        }
-        return url
-    }
-
-    private func appBundleDefaults() -> UserDefaults? {
-        UserDefaults(suiteName: "com.pass.desktop")
-    }
-
-    private func legacyAppDefaults() -> UserDefaults? {
-        UserDefaults(suiteName: "PassMac")
-    }
-
-    private func syncPreferenceStores() -> [UserDefaults] {
-        [UserDefaults.standard, appBundleDefaults(), legacyAppDefaults()].compactMap { $0 }
-    }
-
-    private func setSyncPreference(_ value: Any?, forKey key: String) {
-        for store in syncPreferenceStores() {
-            store.set(value, forKey: key)
-            store.synchronize()
-        }
-    }
-
-    private func normalizedSelfHostedServerBaseURL(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return Self.defaultSelfHostedServerBaseURL }
-        guard let components = URLComponents(string: trimmed.lowercased()),
-              let url = components.url,
-              isSecureSyncEndpoint(url)
-        else { return "" }
-        let host = components.host ?? ""
-        let port = components.port ?? ((components.scheme ?? "") == "https" ? 443 : 80)
-        return (((host == "127.0.0.1" || host == "localhost") && port == 53333)
-            || (host == "or.sbbz.tech" && port == 5443))
-            ? Self.defaultSelfHostedServerBaseURL
-            : trimmed
-    }
-
-    private func isLegacyLocalSelfHostedServerBaseURL(_ value: String) -> Bool {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let components = URLComponents(string: trimmed.lowercased()) else { return false }
-        let host = components.host ?? ""
-        let port = components.port ?? ((components.scheme ?? "") == "https" ? 443 : 80)
-        return (host == "127.0.0.1" || host == "localhost") && port == 53333
-    }
-
-    private func copySyncPreferences(from source: UserDefaults, to destination: UserDefaults) {
-        let syncKeys = [
-            Keys.syncEnableICloud,
-            Keys.syncEnableWebDAV,
-            Keys.syncEnableSelfHostedServer,
-            Keys.syncPrimarySource,
-            Keys.syncMode,
-            Keys.autoSyncIntervalMinutes,
-            Keys.webdavBaseURL,
-            Keys.webdavRemotePath,
-            Keys.webdavUsername,
-            Keys.serverBaseURL,
-        ]
-        for key in syncKeys {
-            if let object = source.object(forKey: key) {
-                destination.set(object, forKey: key)
-            }
-        }
-    }
-
-    private func migrateLegacySyncPreferencesIfNeeded() {
-        let defaults = UserDefaults.standard
-        let stores = syncPreferenceStores()
-        let currentStoredBaseURL = defaults.string(forKey: Keys.serverBaseURL) ?? ""
-        let currentNeedsMigration = currentStoredBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || isLegacyLocalSelfHostedServerBaseURL(currentStoredBaseURL)
-
-        if currentNeedsMigration,
-           let seedStore = stores.first(where: { store in
-               let raw = store.string(forKey: Keys.serverBaseURL) ?? ""
-               return !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                   && !isLegacyLocalSelfHostedServerBaseURL(raw)
-           })
-        {
-            for store in stores {
-                if store !== seedStore {
-                    copySyncPreferences(from: seedStore, to: store)
-                    store.synchronize()
-                }
-            }
-        }
-
-        let storedBaseURL = defaults.string(forKey: Keys.serverBaseURL) ?? ""
-        let normalizedBaseURL = normalizedSelfHostedServerBaseURL(storedBaseURL)
-        if normalizedBaseURL != storedBaseURL {
-            for store in stores {
-                store.set(normalizedBaseURL, forKey: Keys.serverBaseURL)
-                store.synchronize()
-            }
-            cloudSyncStatus = "å·²å°†æ—§åŒæ­¥åœ°å€è¿ç§»ä¸º \(normalizedBaseURL)"
-        }
-        for store in stores {
-            if store !== defaults {
-                copySyncPreferences(from: defaults, to: store)
-                store.synchronize()
-            }
-        }
-    }
-
-    private func buildSelfHostedPayloadURL() -> URL? {
-        let base = normalizedSelfHostedServerBaseURL(serverBaseURL).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !base.isEmpty, let baseURL = URL(string: base), isSecureSyncEndpoint(baseURL) else { return nil }
-        let normalizedBase = base.hasSuffix("/") ? base : "\(base)/"
-        return URL(string: "v2/sync/state", relativeTo: URL(string: normalizedBase))?.absoluteURL
-    }
-
-    private func buildSelfHostedVersionsURL() -> URL? {
-        guard let payloadURL = buildSelfHostedPayloadURL() else { return nil }
-        return payloadURL.deletingLastPathComponent().appendingPathComponent("versions")
-    }
-
-    private func isSecureSyncEndpoint(_ url: URL) -> Bool {
-        if url.scheme?.lowercased() == "https" { return true }
-        let host = url.host?.lowercased() ?? ""
-        return url.scheme?.lowercased() == "http" && ["localhost", "127.0.0.1", "::1"].contains(host)
-    }
-
-    private func buildBasicAuthorization(username: String, password: String) -> String? {
-        guard !username.isEmpty || !password.isEmpty else { return nil }
-        let source = "\(username):\(password)"
-        guard let data = source.data(using: .utf8) else { return nil }
-        return "Basic \(data.base64EncodedString())"
-    }
-
-    private func buildBearerAuthorization(_ token: String) -> String? {
-        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        return "Bearer \(trimmed)"
-    }
-
-    private func fetchRemotePayload(from url: URL, authorization: String?) async throws -> RemotePayloadResponse {
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 30
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let authorization {
-            request.setValue(authorization, forHTTPHeaderField: "Authorization")
-        }
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw NSError(
-                domain: "AccountStore.SyncRemote",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "è¿œç«¯å“åº”ä¸å¯è¯†åˆ«"]
-            )
-        }
-        if http.statusCode == 404 {
-            return RemotePayloadResponse(payload: nil, etag: nil, isEncrypted: false, revision: nil)
-        }
-        guard (200 ... 299).contains(http.statusCode) else {
-            throw NSError(
-                domain: "AccountStore.SyncRemote",
-                code: http.statusCode,
-                userInfo: [NSLocalizedDescriptionKey: "è¿œç«¯æ‹‰å–å¤±è´¥ï¼ŒHTTP \(http.statusCode)"]
-            )
-        }
-        guard !data.isEmpty else {
-            return RemotePayloadResponse(
-                payload: nil,
-                etag: http.value(forHTTPHeaderField: "ETag"),
-                isEncrypted: false,
-                revision: http.value(forHTTPHeaderField: "X-Sync-Revision").flatMap(Int.init)
-            )
-        }
-        let isEncrypted = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["schema"] as? String == PassSyncCrypto.schema
-        let parsed = try decodeSyncBundle(data)
-        return RemotePayloadResponse(
-            payload: SyncBundlePayload(
-                accounts: normalizeDecodedAccounts(parsed.payload.accounts),
-                folders: parsed.payload.folders,
-                passkeys: parsed.payload.passkeys,
-                allRegularAccountIds: parsed.payload.allRegularAccountIds,
-                allRegularOrderUpdatedAtMs: parsed.payload.allRegularOrderUpdatedAtMs,
-                allRegularOrderUpdatedDeviceName: parsed.payload.allRegularOrderUpdatedDeviceName,
-                folderOrderIds: parsed.payload.folderOrderIds,
-                folderOrderUpdatedAtMs: parsed.payload.folderOrderUpdatedAtMs,
-                folderOrderUpdatedDeviceName: parsed.payload.folderOrderUpdatedDeviceName
-            ),
-            etag: http.value(forHTTPHeaderField: "ETag"),
-            isEncrypted: isEncrypted,
-            revision: http.value(forHTTPHeaderField: "X-Sync-Revision").flatMap(Int.init)
-        )
-    }
-
-    private func pushRemotePayload(
-        _ payload: SyncBundlePayload,
-        to url: URL,
-        authorization: String?,
-        ifMatch: String? = nil,
-        ifNoneMatchStar: Bool = false,
-        idempotencyKey: String? = nil
-    ) async throws -> RemoteWriteConfirmation {
-        var request = URLRequest(url: url)
-        request.httpMethod = "PUT"
-        request.timeoutInterval = 30
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let authorization {
-            request.setValue(authorization, forHTTPHeaderField: "Authorization")
-        }
-        if let ifMatch {
-            request.setValue(ifMatch, forHTTPHeaderField: "If-Match")
-        } else if ifNoneMatchStar {
-            request.setValue("*", forHTTPHeaderField: "If-None-Match")
-        }
-        if let idempotencyKey {
-            request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
-        }
-        request.httpBody = try encodeEncryptedSyncBundle(payload: payload)
-        let (responseData, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw NSError(
-                domain: "AccountStore.SyncRemote",
-                code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "è¿œç«¯å“åº”ä¸å¯è¯†åˆ«"]
-            )
-        }
-        if http.statusCode == 412 || http.statusCode == 428 {
-            throw SyncRemoteError.preconditionFailed
-        }
-        guard (200 ... 299).contains(http.statusCode) else {
-            throw NSError(
-                domain: "AccountStore.SyncRemote",
-                code: http.statusCode,
-                userInfo: [NSLocalizedDescriptionKey: "è¿œç«¯ä¸Šä¼ å¤±è´¥ï¼ŒHTTP \(http.statusCode)"]
-            )
-        }
-        let etag = http.value(forHTTPHeaderField: "ETag")
-        if let scope = http.value(forHTTPHeaderField: "X-Sync-Scope") {
-            let revisionHeader = http.value(forHTTPHeaderField: "X-Sync-Revision").flatMap(Int.init)
-            let idempotencyHeader = http.value(forHTTPHeaderField: "X-Sync-Idempotency-Key")
-            guard let receipt = try? decoder.decode(SelfHostedWriteReceipt.self, from: responseData),
-                  receipt.ok,
-                  receipt.committed,
-                  !scope.isEmpty,
-                  receipt.scope == scope,
-                  receipt.revision > 0,
-                  receipt.revision == revisionHeader,
-                  receipt.etag == etag,
-                  receipt.payloadSha256 == http.value(forHTTPHeaderField: "X-Payload-Sha256"),
-                  idempotencyKey == nil || idempotencyHeader == idempotencyKey,
-                  idempotencyKey == nil || receipt.idempotencyKey == idempotencyKey
-            else {
-                throw NSError(
-                    domain: "AccountStore.SyncRemote",
-                    code: 3,
-                    userInfo: [NSLocalizedDescriptionKey: "æœåŠ¡å™¨æœªè¿”å›žå¯éªŒè¯çš„åŒæ­¥æäº¤å›žæ‰§"]
-                )
-            }
-        }
-        return RemoteWriteConfirmation(etag: etag)
-    }
-
-    private func ensureCurrentSyncPayloadUnchanged(_ expected: SyncBundlePayload) throws {
-        guard syncPayloadEquals(buildCurrentSyncPayload(), expected) else {
-            throw NSError(
-                domain: "AccountStore.SyncRemote",
-                code: 409,
-                userInfo: [NSLocalizedDescriptionKey: "åŒæ­¥å†²çªé‡è¯•æœŸé—´æœ¬åœ°æ•°æ®å‘ç”Ÿå˜åŒ–ï¼Œå·²åœæ­¢å†™å…¥ï¼Œè¯·é‡æ–°åŒæ­¥"]
-            )
-        }
-    }
-
-    private func pushSelfHostedPayloadWithRetry(
-        _ payload: SyncBundlePayload,
-        to url: URL,
-        authorization: String?,
-        etag: String?,
-        historyTitle: String,
-        mergeOnConflict: Bool
-    ) async throws -> SelfHostedPushResult {
-        var candidate = payload
-        let safetyBaseline = payload
-        var currentETag = etag
-        var changed = false
-        let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
-        for attempt in 0..<PassSyncPolicy.syncPushConflictMaxAttempts {
-            try ensureCurrentSyncPayloadUnchanged(candidate)
-            do {
-                _ = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
-                return SelfHostedPushResult(payload: candidate, changedLocalData: changed)
-            } catch SyncRemoteError.preconditionFailed {
-                guard attempt < PassSyncPolicy.syncPushConflictMaxAttempts - 1 else { throw SyncRemoteError.preconditionFailed }
-                let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
-                try ensureCurrentSyncPayloadUnchanged(candidate)
-                let latestPayload = latestResponse.payload ?? emptySyncPayload()
-                currentETag = latestResponse.etag
-                if !mergeOnConflict { continue }
-                candidate = canonicalizeSyncPayload(mergePayloads(local: candidate, remote: canonicalizeSyncPayload(latestPayload)))
-                let safetyReasons = syncSafetyReasons(
-                    local: safetyBaseline,
-                    remote: latestPayload,
-                    merged: candidate,
-                    mode: .merge
-                )
-                if !safetyReasons.isEmpty {
-                    throw NSError(
-                        domain: "AccountStore.SyncSafety",
-                        code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: "å¹¶å‘é‡è¯•åˆå¹¶è¢«å®‰å…¨æ£€æŸ¥é˜»æ­¢ï¼š\(safetyReasons.joined(separator: ", "))"]
-                    )
-                }
-                let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
-                changed = changed || applied
-            } catch {
-                if let probe = try? await fetchRemotePayload(from: url, authorization: authorization),
-                   let remote = probe.payload,
-                   syncPayloadEquals(remote, candidate)
-                {
-                    return SelfHostedPushResult(payload: candidate, changedLocalData: changed)
-                }
-                throw error
-            }
-        }
-        throw SyncRemoteError.preconditionFailed
-    }
-
-    private func pushWebDAVPayloadWithRetry(
-        _ payload: SyncBundlePayload,
-        to url: URL,
-        authorization: String?,
-        etag: String?,
-        historyTitle: String,
-        mergeOnConflict: Bool
-    ) async throws -> ETagPushResult {
-        var candidate = payload
-        let safetyBaseline = payload
-        var currentETag = etag
-        var changed = false
-        let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
-        for attempt in 0..<PassSyncPolicy.syncPushConflictMaxAttempts {
-            try ensureCurrentSyncPayloadUnchanged(candidate)
-            do {
-                let confirmation = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, ifNoneMatchStar: currentETag == nil, idempotencyKey: idempotencyKey)
-                return ETagPushResult(payload: candidate, changedLocalData: changed, etag: confirmation.etag)
-            } catch SyncRemoteError.preconditionFailed {
-                guard attempt < PassSyncPolicy.syncPushConflictMaxAttempts - 1 else { throw SyncRemoteError.preconditionFailed }
-                let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
-                try ensureCurrentSyncPayloadUnchanged(candidate)
-                currentETag = latestResponse.etag
-                let latestPayload = latestResponse.payload ?? emptySyncPayload()
-                if !mergeOnConflict { continue }
-                candidate = canonicalizeSyncPayload(mergePayloads(local: candidate, remote: canonicalizeSyncPayload(latestPayload)))
-                let safetyReasons = syncSafetyReasons(
-                    local: safetyBaseline,
-                    remote: latestPayload,
-                    merged: candidate,
-                    mode: .merge
-                )
-                if !safetyReasons.isEmpty {
-                    throw NSError(
-                        domain: "AccountStore.SyncSafety",
-                        code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: "å¹¶å‘é‡è¯•åˆå¹¶è¢«å®‰å…¨æ£€æŸ¥é˜»æ­¢ï¼š\(safetyReasons.joined(separator: ", "))"]
-                    )
-                }
-                let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
-                changed = changed || applied
-            } catch {
-                if let probe = try? await fetchRemotePayload(from: url, authorization: authorization),
-                   let remote = probe.payload,
-                   syncPayloadEquals(remote, candidate)
-                {
-                    return ETagPushResult(payload: candidate, changedLocalData: changed, etag: probe.etag)
-                }
-                throw error
-            }
-        }
-        throw SyncRemoteError.preconditionFailed
-    }
-
-    private func pushWebDAVRemotePayloadWithRetry(
-        _ payload: SyncBundlePayload,
-        to url: URL,
-        authorization: String?,
-        etag: String?,
-        historyTitle: String,
-        mergeOnConflict: Bool
-    ) async throws -> ETagPushResult {
-        var candidate = payload
-        var currentETag = etag
-        var changed = false
-        let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
-        for attempt in 0..<PassSyncPolicy.syncPushConflictMaxAttempts {
-            try ensureCurrentSyncPayloadUnchanged(candidate)
-            do {
-                let confirmation = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, ifNoneMatchStar: currentETag == nil, idempotencyKey: idempotencyKey)
-                return ETagPushResult(payload: candidate, changedLocalData: changed, etag: confirmation.etag)
-            } catch SyncRemoteError.preconditionFailed {
-                guard attempt < PassSyncPolicy.syncPushConflictMaxAttempts - 1 else { throw SyncRemoteError.preconditionFailed }
-                let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
-                try ensureCurrentSyncPayloadUnchanged(candidate)
-                currentETag = latestResponse.etag
-                let latestPayload = latestResponse.payload ?? emptySyncPayload()
-                if !mergeOnConflict { continue }
-                let safetyReasons = syncSafetyReasons(
-                    local: candidate,
-                    remote: latestPayload,
-                    merged: latestPayload,
-                    mode: .remoteOverwriteLocal
-                )
-                if !safetyReasons.isEmpty {
-                    throw NSError(
-                        domain: "AccountStore.SyncSafety",
-                        code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: "å¹¶å‘é‡è¯•çš„äº‘ç«¯è¦†ç›–è¢«å®‰å…¨æ£€æŸ¥é˜»æ­¢ï¼š\(safetyReasons.joined(separator: ", "))"]
-                    )
-                }
-                candidate = canonicalizeSyncPayload(latestPayload)
-                let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
-                changed = changed || applied
-            } catch {
-                if let probe = try? await fetchRemotePayload(from: url, authorization: authorization),
-                   let remote = probe.payload,
-                   syncPayloadEquals(remote, candidate)
-                {
-                    return ETagPushResult(payload: candidate, changedLocalData: changed, etag: probe.etag)
-                }
-                throw error
-            }
-        }
-        throw SyncRemoteError.preconditionFailed
-    }
-
-    private func pushSelfHostedRemotePayloadWithRetry(
-        _ payload: SyncBundlePayload,
-        to url: URL,
-        authorization: String?,
-        etag: String?,
-        historyTitle: String,
-        mergeOnConflict: Bool
-    ) async throws -> SelfHostedPushResult {
-        var candidate = payload
-        var currentETag = etag
-        var changed = false
-        let idempotencyKey = "pass-\(syncDeviceId())-\(UUID().uuidString)"
-        for attempt in 0..<PassSyncPolicy.syncPushConflictMaxAttempts {
-            try ensureCurrentSyncPayloadUnchanged(candidate)
-            do {
-                _ = try await pushRemotePayload(candidate, to: url, authorization: authorization, ifMatch: currentETag, idempotencyKey: idempotencyKey)
-                return SelfHostedPushResult(payload: candidate, changedLocalData: changed)
-            } catch SyncRemoteError.preconditionFailed {
-                guard attempt < PassSyncPolicy.syncPushConflictMaxAttempts - 1 else { throw SyncRemoteError.preconditionFailed }
-                let latestResponse = try await fetchRemotePayload(from: url, authorization: authorization)
-                try ensureCurrentSyncPayloadUnchanged(candidate)
-                currentETag = latestResponse.etag
-                let latestPayload = latestResponse.payload ?? emptySyncPayload()
-                if !mergeOnConflict { continue }
-                let safetyReasons = syncSafetyReasons(
-                    local: candidate,
-                    remote: latestPayload,
-                    merged: latestPayload,
-                    mode: .remoteOverwriteLocal
-                )
-                if !safetyReasons.isEmpty {
-                    throw NSError(
-                        domain: "AccountStore.SyncSafety",
-                        code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: "å¹¶å‘é‡è¯•çš„äº‘ç«¯è¦†ç›–è¢«å®‰å…¨æ£€æŸ¥é˜»æ­¢ï¼š\(safetyReasons.joined(separator: ", "))"]
-                    )
-                }
-                candidate = canonicalizeSyncPayload(latestPayload)
-                let applied = applyMergedPayloadIfNeeded(candidate, historyTitle: historyTitle)
-                changed = changed || applied
-            } catch {
-                if let probe = try? await fetchRemotePayload(from: url, authorization: authorization),
-                   let remote = probe.payload,
-                   syncPayloadEquals(remote, candidate)
-                {
-                    return SelfHostedPushResult(payload: candidate, changedLocalData: changed)
-                }
-                throw error
-            }
-        }
-        throw SyncRemoteError.preconditionFailed
-    }
-
-    private func saveSecret(_ secret: String, account: String) -> Bool {
-        loadSyncSecretFileIfNeeded()
-        guard !syncSecretFileCorrupt else { return false }
-        let normalized = secret.trimmingCharacters(in: .newlines)
-        if normalized.isEmpty {
-            syncSecrets.removeValue(forKey: account)
-        } else {
-            syncSecrets[account] = secret
-        }
-        return persistSyncSecretFile()
-    }
-
-    private func readSecret(account: String) -> String {
-        loadSyncSecretFileIfNeeded()
-        return syncSecrets[account] ?? ""
-    }
-
-    func loadSyncSecretsForUI() {
-        loadSyncSecretsIfNeeded()
-    }
-
-    func savedServerSSHCredential(for serverURL: String) -> ServerSSHCredential {
-        loadSyncSecretsIfNeeded()
-        guard let host = ServerProvisioningService.host(from: serverURL),
-              let saved = ServerSSHCredentialStore.load(host: host)
-        else {
-            return ServerSSHCredential()
-        }
-        return saved
-    }
-
-    func provisionSelfHostedServer(
-        serverURL: String,
-        credential: ServerSSHCredential,
-        accessToken: String,
-        syncEncryptionKey: String
-    ) async throws {
-        loadSyncSecretsIfNeeded()
-        let result = try await ServerProvisioningService.deploy(
-            serverURL: serverURL,
-            credential: credential,
-            accessToken: accessToken,
-            syncEncryptionKey: syncEncryptionKey
-        )
-        guard ServerSSHCredentialStore.save(credential, host: result.host) else {
-            throw ServerProvisioningError.commandFailed("æœåŠ¡å™¨å·²æŽ¥å…¥ï¼Œä½† SSH å‡­æ®ä¿å­˜å¤±è´¥")
-        }
-        let normalizedToken = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedKey = syncEncryptionKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        serverBaseURL = result.endpoint
-        serverAuthToken = normalizedToken
-        self.syncEncryptionKey = normalizedKey
-        syncEnableSelfHostedServer = true
-
-        guard await ServerProvisioningService.verifyPublicEndpoint(result.endpoint) else {
-            statusMessage = "æœåŠ¡å™¨å·²å®‰è£…ï¼Œä½†æš‚æ—¶æ— æ³•ä»Žæœ¬æœºè®¿é—®ï¼š\(result.endpoint)/healthz"
-            throw ServerProvisioningError.commandFailed(
-                "æœåŠ¡å™¨æœåŠ¡å·²å®‰è£…ä¸”è¿žæŽ¥ä¿¡æ¯å·²ä¿å­˜ï¼Œä½†æ— æ³•ä»Žæœ¬æœºè®¿é—® \(result.endpoint)/healthzï¼›è¯·æ£€æŸ¥é˜²ç«å¢™ã€DNSã€ç«¯å£æ˜ å°„å’Œè¯ä¹¦"
-            )
-        }
-        statusMessage = "æœåŠ¡å™¨æŽ¥å…¥å®Œæˆï¼š\(result.endpoint)"
-    }
-
-    private func loadSyncSecretsIfNeeded() {
-        guard !syncSecretsLoaded else { return }
-        isLoadingSyncPreferences = true
-        loadSyncSecretFileIfNeeded()
-        webdavPassword = readSecret(account: SecretKeys.webdavPasswordAccount)
-        serverAuthToken = readSecret(account: SecretKeys.serverTokenAccount)
-        syncEncryptionKey = readSecret(account: SecretKeys.syncEncryptionKeyAccount)
-        previousSyncEncryptionKey = readSecret(account: SecretKeys.previousSyncEncryptionKeyAccount)
-        if !PassSyncCrypto.isValidKeyString(syncEncryptionKey) {
-            syncEncryptionKey = ""
-            _ = saveSecret(syncEncryptionKey, account: SecretKeys.syncEncryptionKeyAccount)
-        }
-        if !PassSyncCrypto.isValidKeyString(previousSyncEncryptionKey) || previousSyncEncryptionKey == syncEncryptionKey {
-            previousSyncEncryptionKey = ""
-            _ = saveSecret(previousSyncEncryptionKey, account: SecretKeys.previousSyncEncryptionKeyAccount)
-        }
-        isLoadingSyncPreferences = false
-        syncSecretsLoaded = true
-    }
-
-    private func loadSyncSecretFileIfNeeded() {
-        guard !syncSecretFileLoaded else { return }
-        let fileName = SecretKeys.fileName
-        let existingFileData = PassSharedFileSecretStore.read(named: fileName)
-        if let data = existingFileData,
-           let plaintext = try? PassSharedCrypto.decryptLocalSecret(data),
-           let stored = try? decoder.decode(SyncSecretFile.self, from: plaintext),
-           stored.version == SyncSecretFile.currentVersion
-        {
-            syncSecrets = stored.values
-            syncSecretFileLoaded = true
-            return
-        }
-
-        // Migrate the old plaintext file before probing the legacy Keychain.
-        // It is removed only after the replacement file has been written.
-        let legacyURL = dataDirectoryURL().appendingPathComponent(
-            SecretKeys.legacyFileName,
-            isDirectory: false
-        )
-        if let data = try? Data(contentsOf: legacyURL),
-           let legacy = try? decoder.decode([String: String].self, from: data)
-        {
-            syncSecrets = legacy.filter { SecretKeys.allAccounts.contains($0.key) }
-            if persistSyncSecretFile() {
-                try? FileManager.default.removeItem(at: legacyURL)
-                syncSecretFileLoaded = true
-                return
-            }
-        }
-
-        // A file written by an intermediate development build may still be
-        // plaintext JSON. Migrate it to the authenticated local-secret format
-        // before falling back to the legacy Keychain.
-        if let data = existingFileData,
-           let stored = try? decoder.decode(SyncSecretFile.self, from: data)
-        {
-            syncSecrets = stored.values
-            syncSecretFileLoaded = persistSyncSecretFile()
-            return
-        }
-
-        if existingFileData != nil {
-            syncSecretFileCorrupt = true
-            storageIntegrityStatus = "åŒæ­¥å‡­æ®æ–‡ä»¶æ— æ³•è§£å¯†ï¼ŒåŽŸæ–‡ä»¶æœªæ”¹åŠ¨ï¼›è¯·ä»Žå¤‡ä»½æ¢å¤ sync-credentials-v1.json"
-            syncSecretFileLoaded = true
-            return
-        }
-
-        // One-time, non-interactive migration from the old Keychain entries.
-        // Write the new file even when it is empty so subsequent launches never
-        // probe the Keychain again.
-        var migrated: [String: String] = [:]
-        for account in SecretKeys.allAccounts {
-            if let data = LocalKeychain.read(service: SecretKeys.service, account: account),
-               let value = String(data: data, encoding: .utf8),
-               !value.isEmpty
-            {
-                migrated[account] = value
-            }
-        }
-        syncSecrets = migrated
-        if syncSecretFileCorrupt {
-            syncSecretFileLoaded = true
-        } else {
-            syncSecretFileLoaded = persistSyncSecretFile()
-        }
-    }
-
-    @discardableResult
-    private func persistSyncSecretFile() -> Bool {
-        let file = SyncSecretFile(version: SyncSecretFile.currentVersion, values: syncSecrets)
-        guard let plaintext = try? encoder.encode(file),
-              let data = try? PassSharedCrypto.encryptLocalSecret(plaintext)
-        else { return false }
-        return PassSharedFileSecretStore.write(data, named: SecretKeys.fileName)
-    }
-
-    func currentTotpCode(for account: PasswordAccount, at date: Date = Date()) -> String? {
-        let secret = account.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !secret.isEmpty else { return nil }
-        return TotpGenerator.currentCode(secret: secret, at: date)
-    }
-
-    func totpRemainingSeconds(at date: Date = Date()) -> Int {
-        TotpGenerator.remainingSeconds(at: date)
-    }
-
-    private func load() {
-        PassSharedData.migrateLegacyStoreToSharedContainerIfNeeded()
-
-        let defaults = UserDefaults.standard
-        migrateLegacySyncPreferencesIfNeeded()
-        deviceName = defaults.string(forKey: Keys.deviceName) ?? ""
-        exportDirectoryPath = defaults.string(forKey: Keys.exportDirectoryPath) ?? ""
-        isLoadingSyncPreferences = true
-        syncEnableICloud = defaults.object(forKey: Keys.syncEnableICloud) as? Bool ?? true
-        syncEnableWebDAV = defaults.object(forKey: Keys.syncEnableWebDAV) as? Bool ?? false
-        syncEnableSelfHostedServer = defaults.object(forKey: Keys.syncEnableSelfHostedServer) as? Bool ?? false
-        syncPrimarySource = SyncPrimarySource(rawValue: defaults.string(forKey: Keys.syncPrimarySource) ?? "") ?? .selfHostedServer
-        syncMode = SyncMode(rawValue: defaults.string(forKey: Keys.syncMode) ?? "") ?? .merge
-        autoSyncIntervalMinutes = AutoSyncInterval(rawValue: defaults.integer(forKey: Keys.autoSyncIntervalMinutes))?.rawValue ?? AutoSyncInterval.disabled.rawValue
-        webdavBaseURL = defaults.string(forKey: Keys.webdavBaseURL) ?? ""
-        webdavRemotePath = defaults.string(forKey: Keys.webdavRemotePath) ?? "pass-sync-bundle-v2.json"
-        webdavUsername = defaults.string(forKey: Keys.webdavUsername) ?? ""
-        webdavPassword = ""
-        serverBaseURL = normalizedSelfHostedServerBaseURL(
-            defaults.string(forKey: Keys.serverBaseURL) ?? Self.defaultSelfHostedServerBaseURL
-        )
-        serverAuthToken = ""
-        syncEncryptionKey = ""
-        previousSyncEncryptionKey = ""
-        syncSecretsLoaded = false
-        syncSecretFileLoaded = false
-        isLoadingSyncPreferences = false
-
-        let foldersDataFromDatabase = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.folders)
-        var migratedFoldersFromDefaults = false
-        if let foldersDataFromDatabase,
-           let decodedFolders = try? decoder.decode([AccountFolder].self, from: foldersDataFromDatabase)
-        {
-            folders = decodedFolders
-        } else if !localDatabaseReadFailed,
-                  let foldersData = defaults.data(forKey: Keys.foldersData),
-                  let decodedFolders = try? decoder.decode([AccountFolder].self, from: foldersData)
-        {
-            folders = decodedFolders
-            migratedFoldersFromDefaults = true
-        } else {
-            folders = []
-        }
-        let folderNormalization = normalizeFoldersEnsuringFixedNewAccountFolder()
-
-        let savedFontFamily = defaults.string(forKey: Keys.uiFontFamily) ?? Self.systemDefaultFontFamily
-        if savedFontFamily == Self.systemDefaultFontFamily || Self.installedFontFamilies.contains(savedFontFamily) {
-            uiFontFamily = savedFontFamily
-        } else {
-            uiFontFamily = Self.systemDefaultFontFamily
-        }
-
-        let savedTextFontSize = defaults.double(forKey: Keys.uiTextFontSize)
-        uiTextFontSize = savedTextFontSize > 0 ? savedTextFontSize : 20
-
-        let savedButtonFontSize = defaults.double(forKey: Keys.uiButtonFontSize)
-        uiButtonFontSize = savedButtonFontSize > 0 ? savedButtonFontSize : 20
-
-        let savedToastDuration = defaults.double(forKey: Keys.uiToastDurationSeconds)
-        uiToastDurationSeconds = savedToastDuration > 0 ? savedToastDuration : 5
-
-        showPasswordsGlobally = defaults.object(forKey: Keys.showPasswordsGlobally) as? Bool ?? true
-
-        passkeys = loadPasskeysFromLocalDisk()
-        historyEntries = loadHistoryFromLocalDisk()
-
-        let accountDataFromDatabase = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.accounts)
-        let fileURL = dataFileURL()
-        let databaseExists = FileManager.default.fileExists(atPath: PassSharedData.databaseURL().path)
-        let accountDataFromLegacyFile = databaseExists && localDatabaseReadFailed
-            ? nil
-            : try? Data(contentsOf: fileURL)
-        let accountDataCandidates = [accountDataFromDatabase, accountDataFromLegacyFile].compactMap { $0 }
-        guard !accountDataCandidates.isEmpty else {
-            accounts = []
-            if localDatabaseReadFailed {
-                storageIntegrityStatus = "æœ¬åœ°æ•°æ®åº“æ— æ³•è§£å¯†ï¼Œå·²åœæ­¢è¯»å–æ—§å›žé€€æ–‡ä»¶ï¼›è¯·æ¢å¤ pass.db ä¸Ž pass-db-key-v1 å¤‡ä»½"
-            }
-            CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
-            if folderNormalization.foldersChanged || migratedFoldersFromDefaults {
-                _ = saveFoldersToDefaults()
-            }
-            return
-        }
-
-        for data in accountDataCandidates {
-            if let decoded = try? decoder.decode([PasswordAccount].self, from: data) {
-                accounts = normalizeDecodedAccounts(decoded)
-                let accountsChanged = migrateAccountFolderIdsFromLegacyNewAccountFolder(
-                    legacyFolderIds: folderNormalization.legacyNewAccountFolderIds
-                )
-                let usingDatabaseData = accountDataFromDatabase.map { $0 == data } ?? false
-                let foldersChanged = folderNormalization.foldersChanged || migratedFoldersFromDefaults
-                let accountsNeedSave = accountsChanged || !usingDatabaseData
-                if accountsNeedSave && foldersChanged {
-                    _ = saveAccountsAndFoldersAtomically(pushICloud: false)
-                } else if accountsNeedSave {
-                    _ = saveAccountsToLocalDisk()
-                } else if foldersChanged {
-                    _ = saveFoldersToDefaults()
-                }
-                CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
-                return
-            }
-
-            if let legacy = try? decoder.decode([LegacyPasswordAccount].self, from: data) {
-                accounts = legacy.map { $0.toCurrent(deviceName: currentDeviceName()) }
-                _ = migrateAccountFolderIdsFromLegacyNewAccountFolder(
-                    legacyFolderIds: folderNormalization.legacyNewAccountFolderIds
-                )
-                let foldersChanged = folderNormalization.foldersChanged || migratedFoldersFromDefaults
-                if foldersChanged {
-                    _ = saveAccountsAndFoldersAtomically(pushICloud: true)
-                } else {
-                    _ = saveAccounts()
-                }
-                CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
-                return
-            }
-        }
-
-        accounts = []
-        CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
-        if folderNormalization.foldersChanged || migratedFoldersFromDefaults {
-            _ = saveFoldersToDefaults()
-        }
-    }
-
-        @discardableResult
-    private func saveAccounts() -> Bool {
-        saveAccountsToLocalDisk(pushICloud: true)
-    }
-
-    @discardableResult
-    private func saveAccountsToLocalDisk(pushICloud: Bool = false) -> Bool {
-        let previousAccounts = accounts
-        do {
-            try writeCollectionsAtomically(
-                includeAccounts: true,
-                includeFolders: false,
-                includePasskeys: false,
-                pushICloud: pushICloud
-            )
-            return true
-        } catch {
-            accounts = previousAccounts
-            statusMessage = "ä¿å­˜å¤±è´¥: \(error.localizedDescription)"
-            if let persistedData = try? localSQLiteStore.readData(for: LocalDatabaseKeys.accounts),
-               let persisted = try? decoder.decode([PasswordAccount].self, from: persistedData)
-            {
-                accounts = normalizeDecodedAccounts(persisted)
-                CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
-            }
-            return false
-        }
-    }
-
-
-    private func loadPasskeysFromLocalDisk() -> [PasskeyRecord] {
-        if let data = loadCollectionDataFromLocalDatabase(for: LocalDatabaseKeys.passkeys),
-           let decoded = try? decoder.decode([PasskeyRecord].self, from: data)
-        {
-            return decoded.map(normalizePasskeyRecord)
-        }
-
-        guard !localDatabaseReadFailed else { return [] }
-        let fileURL = passkeysFileURL()
-        guard let data = try? Data(contentsOf: fileURL),
-              let decoded = try? decoder.decode([PasskeyRecord].self, from: data)
-        else {
-            return []
-        }
-        let normalized = decoded.map(normalizePasskeyRecord)
-        do {
-            let migratedData = try encoder.encode(normalized)
-            try saveCollectionDataToLocalDatabase(migratedData, for: LocalDatabaseKeys.passkeys)
-        } catch {
-            statusMessage = "è¿ç§»é€šè¡Œå¯†é’¥åˆ° SQLite å¤±è´¥: \(error.localizedDescription)"
-        }
-        return normalized
-    }
-
-    @discardableResult
-    private func savePasskeysToLocalDisk() -> Bool {
-        do {
-            let data = try encoder.encode(passkeys.map(normalizePasskeyRecord))
-            try saveCollectionDataToLocalDatabase(data, for: LocalDatabaseKeys.passkeys)
-            if !suppressCloudPush && syncEnableICloud {
-                pushSyncDataToICloud(trigger: "local_update")
-            }
-            return true
-        } catch {
-            statusMessage = "ä¿å­˜é€šè¡Œå¯†é’¥å¤±è´¥: \(error.localizedDescription)"
-            if let persistedData = try? localSQLiteStore.readData(for: LocalDatabaseKeys.passkeys),
-               let persisted = try? decoder.decode([PasskeyRecord].self, from: persistedData)
-            {
-                passkeys = persisted.map(normalizePasskeyRecord)
-            }
-            return false
-        }
-    }
-
-    private func saveCoreCollectionsAtomically() throws {
-        try writeCollectionsAtomically(
-            includeAccounts: true,
-            includeFolders: true,
-            includePasskeys: true,
-            pushICloud: true
-        )
-    }
-
-    /// Persists any combination of account/folder/passkey collections in one SQLite transaction.
-    /// On failure, memory is restored to the pre-write snapshot so UI state matches disk.
-    @discardableResult
-    private func saveAccountsAndFoldersAtomically(
-        includePasskeys: Bool = false,
-        pushICloud: Bool = true
-    ) -> Bool {
-        let previousAccounts = accounts
-        let previousFolders = folders
-        let previousPasskeys = passkeys
-        do {
-            try writeCollectionsAtomically(
-                includeAccounts: true,
-                includeFolders: true,
-                includePasskeys: includePasskeys,
-                pushICloud: pushICloud
-            )
-            return true
-        } catch {
-            accounts = previousAccounts
-            folders = previousFolders
-            passkeys = previousPasskeys
-            statusMessage = "ä¿å­˜è´¦å·/æ–‡ä»¶å¤¹å¤±è´¥: \(error.localizedDescription)"
-            return false
-        }
-    }
-
-    private func writeCollectionsAtomically(
-        includeAccounts: Bool,
-        includeFolders: Bool,
-        includePasskeys: Bool,
-        pushICloud: Bool
-    ) throws {
-        let accountsData = includeAccounts ? try encoder.encode(accounts) : nil
-        let foldersData = includeFolders ? try encoder.encode(folders) : nil
-        let passkeysData = includePasskeys ? try encoder.encode(passkeys.map(normalizePasskeyRecord)) : nil
-        let timestamp = nowMs()
-        try localSQLiteStore.transaction {
-            if let accountsData {
-                try localSQLiteStore.writeData(accountsData, for: LocalDatabaseKeys.accounts, updatedAtMs: timestamp)
-            }
-            if let foldersData {
-                try localSQLiteStore.writeData(foldersData, for: LocalDatabaseKeys.folders, updatedAtMs: timestamp)
-            }
-            if let passkeysData {
-                try localSQLiteStore.writeData(passkeysData, for: LocalDatabaseKeys.passkeys, updatedAtMs: timestamp)
-            }
-        }
-        if let foldersData {
-            UserDefaults.standard.set(foldersData, forKey: Keys.foldersData)
-        }
-        if includeAccounts {
-            CredentialIdentitySync.replaceCredentialIdentities(accounts: accounts)
-        }
-        if pushICloud && !suppressCloudPush && syncEnableICloud {
-            pushSyncDataToICloud(trigger: "local_update")
-        }
-    }
-
-    func clearHistoryEntries() {
-        historyEntries = []
-        saveHistoryToLocalDisk()
-        statusMessage = "åŽ†å²è®°å½•å·²æ¸…ç©º"
-    }
-
-    func clearHistoryEntries(category: HistoryEntryCategory) {
-        historyEntries.removeAll { $0.category == category }
-        saveHistoryToLocalDisk()
-        statusMessage = "\(category.menuTitle)å·²æ¸…ç©º"
-    }
-
-    func historyEntries(category: HistoryEntryCategory) -> [OperationHistoryEntry] {
-        historyEntries.filter { $0.category == category }
-    }
-
-    func canRevertHistoryEntry(_ entry: OperationHistoryEntry) -> Bool {
-        if entry.accountBefore != nil || entry.accountAfter != nil {
-            let accountId = historyAccountId(for: entry)
-            return accountId != nil
-        }
-        return entry.fieldKey == "note" && entry.accountId != nil && entry.oldValue != nil
-    }
-
-    func canRevertHistoryOperation(_ entries: [OperationHistoryEntry]) -> Bool {
-        !entries.isEmpty && entries.allSatisfy(canRevertHistoryEntry)
-    }
-
-    func clearHistoryEntries(forAccountId accountId: String) {
-        let prefix = "\(accountId)ï¼š"
-        historyEntries.removeAll { entry in
-            entry.accountId == accountId || entry.action.hasPrefix(prefix)
-        }
-        saveHistoryToLocalDisk()
-        statusMessage = "åŽ†å²è®°å½•å·²æ¸…ç©º"
-    }
-
-    func revertHistoryEntry(_ entry: OperationHistoryEntry) {
-        if entry.accountBefore != nil || entry.accountAfter != nil {
-            revertAccountSnapshotHistoryEntry(entry)
-            return
-        }
-        guard entry.fieldKey == "note",
-              let accountId = entry.accountId,
-              let restoredNote = entry.oldValue
-        else {
-            statusMessage = "è¯¥åŽ†å²è®°å½•æš‚ä¸æ”¯æŒå›žé€€"
-            return
-        }
-        guard let index = accounts.firstIndex(where: { $0.accountId == accountId }) else {
-            statusMessage = "æœªæ‰¾åˆ°åŽ†å²è®°å½•å¯¹åº”çš„è´¦å·"
-            return
-        }
-
-        let currentNote = accounts[index].note
-        guard currentNote != restoredNote else {
-            statusMessage = "å¤‡æ³¨å·²ç»æ˜¯è¯¥åŽ†å²ç‰ˆæœ¬"
-            return
-        }
-
-        let now = nowMs()
-        let device = currentDeviceName()
-        accounts[index].note = restoredNote
-        accounts[index].noteUpdatedAtMs = now
-        accounts[index].noteUpdatedDeviceName = device
-        accounts[index].touchUpdatedAt(now, deviceName: device)
-        saveAccounts()
-
-        if editingAccountId == accounts[index].id {
-            editNote = restoredNote
-        }
-
-        appendHistoryEntry(
-            action: "\(accountId)ï¼šå¤‡æ³¨æ”¹ä¸º",
-            timestampMs: now,
-            accountId: accountId,
-            fieldKey: "note",
-            oldValue: currentNote,
-            newValue: restoredNote
-        )
-        statusMessage = "å·²å›žé€€åˆ°è¯¥æ¬¡ä¿®æ”¹å‰çš„å¤‡æ³¨"
-    }
-
-    func revertHistoryOperation(_ entries: [OperationHistoryEntry]) {
-        guard canRevertHistoryOperation(entries) else {
-            statusMessage = "è¯¥åŽ†å²è®°å½•æš‚ä¸æ”¯æŒæ•´æ¬¡æ’¤é”€"
-            return
-        }
-
-        let sortedEntries = entries.sorted { lhs, rhs in
-            let lhsAccountId = historyAccountId(for: lhs) ?? lhs.accountId ?? ""
-            let rhsAccountId = historyAccountId(for: rhs) ?? rhs.accountId ?? ""
-            if lhsAccountId != rhsAccountId {
-                return lhsAccountId < rhsAccountId
-            }
-            return lhs.id.uuidString < rhs.id.uuidString
-        }
-
-        var nextAccounts = accounts
-        var beforeByAccountId: [String: PasswordAccount] = [:]
-        var afterByAccountId: [String: PasswordAccount?] = [:]
-
-        for entry in sortedEntries {
-            if entry.accountBefore != nil || entry.accountAfter != nil {
-                guard let accountId = historyAccountId(for: entry) else {
-                    statusMessage = "æœªæ‰¾åˆ°åŽ†å²è®°å½•å¯¹åº”çš„è´¦å·"
-                    return
-                }
-
-                let currentIndex = nextAccounts.firstIndex(where: { $0.accountId == accountId })
-                let currentAccount = currentIndex.map { nextAccounts[$0] }
-                let restoredAccount = entry.accountBefore
-
-                if beforeByAccountId[accountId] == nil, let currentAccount {
-                    beforeByAccountId[accountId] = currentAccount
-                }
-
-                if let currentIndex {
-                    if let restoredAccount {
-                        nextAccounts[currentIndex] = restoredAccount
-                    } else {
-                        nextAccounts.remove(at: currentIndex)
-                    }
-                } else if let restoredAccount {
-                    nextAccounts.append(restoredAccount)
-                }
-
-                afterByAccountId[accountId] = restoredAccount
-                continue
-            }
-
-            guard entry.fieldKey == "note",
-                  let accountId = entry.accountId,
-                  let restoredNote = entry.oldValue,
-                  let currentIndex = nextAccounts.firstIndex(where: { $0.accountId == accountId })
-            else {
-                statusMessage = "æœªæ‰¾åˆ°åŽ†å²è®°å½•å¯¹åº”çš„è´¦å·"
-                return
-            }
-
-            if beforeByAccountId[accountId] == nil {
-                beforeByAccountId[accountId] = nextAccounts[currentIndex]
-            }
-
-            let now = nowMs()
-            let device = currentDeviceName()
-            nextAccounts[currentIndex].note = restoredNote
-            nextAccounts[currentIndex].noteUpdatedAtMs = now
-            nextAccounts[currentIndex].noteUpdatedDeviceName = device
-            nextAccounts[currentIndex].touchUpdatedAt(now, deviceName: device)
-            afterByAccountId[accountId] = nextAccounts[currentIndex]
-        }
-
-        let changedAccountIds = Set(beforeByAccountId.keys).union(afterByAccountId.keys)
-        guard !changedAccountIds.isEmpty else {
-            statusMessage = "è¿™æ¬¡æ“ä½œå·²ç»æ˜¯åŽ†å²ç‰ˆæœ¬"
-            return
-        }
-
-        accounts = nextAccounts
-        syncAliasGroups()
-        saveAccounts()
-
-        if let editingAccountId {
-            if let editingIndex = accounts.firstIndex(where: { $0.id == editingAccountId }) {
-                beginEditing(accounts[editingIndex])
-            } else {
-                cancelEditing()
-            }
-        }
-
-        let now = nowMs()
-        appendAccountHistoryBatch(
-            category: .local,
-            title: "ä»Ž\(sortedEntries.first?.category.operationPrefix ?? HistoryEntryCategory.local.operationPrefix)åŽ†å²æ’¤å›ž \(changedAccountIds.count) ä¸ªè´¦å·",
-            timestampMs: now,
-            beforeAccounts: changedAccountIds.compactMap { beforeByAccountId[$0] },
-            afterAccounts: changedAccountIds.compactMap { afterByAccountId[$0] ?? nil }
-        )
-        statusMessage = "å·²æ’¤é”€æ­¤æ¬¡æ“ä½œï¼š\(changedAccountIds.count) ä¸ªè´¦å·"
-    }
-
-    private func revertAccountSnapshotHistoryEntry(_ entry: OperationHistoryEntry) {
-        guard let accountId = historyAccountId(for: entry) else {
-            statusMessage = "æœªæ‰¾åˆ°åŽ†å²è®°å½•å¯¹åº”çš„è´¦å·"
-            return
-        }
-
-        let currentIndex = accounts.firstIndex(where: { $0.accountId == accountId })
-        let currentAccount = currentIndex.map { accounts[$0] }
-        let restoredAccount = entry.accountBefore
-
-        if currentAccount == restoredAccount {
-            statusMessage = "è¯¥è´¦å·å·²ç»æ˜¯è¯¥åŽ†å²ç‰ˆæœ¬"
-            return
-        }
-
-        if let currentIndex {
-            if let restoredAccount {
-                accounts[currentIndex] = restoredAccount
-            } else {
-                accounts.remove(at: currentIndex)
-            }
-        } else if let restoredAccount {
-            accounts.append(restoredAccount)
-        } else {
-            statusMessage = "è¯¥è´¦å·å·²ä¸å­˜åœ¨ï¼Œæ— éœ€æ’¤å›ž"
-            return
-        }
-
-        syncAliasGroups()
-        saveAccounts()
-
-        if let editingAccountId {
-            if let editingIndex = accounts.firstIndex(where: { $0.id == editingAccountId }) {
-                beginEditing(accounts[editingIndex])
-            } else {
-                cancelEditing()
-            }
-        }
-
-        let now = nowMs()
-        appendAccountHistoryBatch(
-            category: .local,
-            title: "ä»Ž\(entry.category.operationPrefix)åŽ†å²æ’¤å›ž 1 ä¸ªè´¦å·",
-            timestampMs: now,
-            beforeAccounts: currentAccount.map { [$0] } ?? [],
-            afterAccounts: restoredAccount.map { [$0] } ?? []
-        )
-        statusMessage = "å·²æŒ‰åŽ†å²è®°å½•æ’¤å›žè´¦å·ï¼š\(accountId)"
-    }
-
-    private func loadHistoryFromLocalDisk() -> [OperationHistoryEntry] {
-        do {
-            guard let data = try localSQLiteStore.readData(for: LocalDatabaseKeys.history) else {
-                return []
-            }
-            guard let decoded = try? decoder.decode([OperationHistoryEntry].self, from: data) else {
-                throw PassSharedCryptoError.invalidCiphertext
-            }
-            return decoded
-                .filter { !$0.action.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                .sorted { lhs, rhs in
-                    if lhs.timestampMs != rhs.timestampMs {
-                        return lhs.timestampMs > rhs.timestampMs
-                    }
-                    return lhs.id.uuidString < rhs.id.uuidString
-                }
-        } catch {
-            // history æ˜¯å¯ä¸¢å¼ƒçš„æ´¾ç”Ÿå®¡è®¡è®°å½•ï¼Œä¸èƒ½é˜»å¡žè´¦å·ã€æ–‡ä»¶å¤¹æˆ– Passkey åŠ è½½ã€‚
-            // å…ˆæŠŠåŽŸå§‹å¯†æ–‡éš”ç¦»åˆ°ç‹¬ç«‹æ–‡ä»¶ï¼Œå†ç”¨å½“å‰å¯†é’¥å†™å…¥ç©ºæ•°ç»„ï¼Œé¿å…æ¯æ¬¡å¯åŠ¨é‡å¤æŠ¥é”™ã€‚
-            let backupDirectory = dataDirectoryURL().appendingPathComponent(
-                "corrupt-data-backups",
-                isDirectory: true
-            )
-            do {
-                let backupURL = try localSQLiteStore.quarantineAndReplaceData(
-                    for: LocalDatabaseKeys.history,
-                    with: Data("[]".utf8),
-                    backupDirectory: backupDirectory,
-                    updatedAtMs: nowMs()
-                )
-                if let backupURL {
-                    statusMessage = "åŽ†å²è®°å½•è§£å¯†å¤±è´¥ï¼Œå·²å¤‡ä»½æŸåæ•°æ®å¹¶é‡å»ºä¸ºç©ºï¼ˆ\(backupURL.lastPathComponent)ï¼‰"
-                } else {
-                    statusMessage = "åŽ†å²è®°å½•è§£å¯†å¤±è´¥ï¼Œå·²é‡å»ºä¸ºç©º"
-                }
-            } catch {
-                statusMessage = "åŽ†å²è®°å½•è§£å¯†å¤±è´¥ï¼ŒåŽŸå§‹æ•°æ®æœªæ”¹åŠ¨ï¼š\(error.localizedDescription)"
-            }
-            return []
-        }
-    }
-
-    private func saveHistoryToLocalDisk() {
-        do {
-            let data = try encoder.encode(historyEntries)
-            try saveCollectionDataToLocalDatabase(data, for: LocalDatabaseKeys.history)
-        } catch {
-            statusMessage = "ä¿å­˜åŽ†å²è®°å½•å¤±è´¥: \(error.localizedDescription)"
-        }
-    }
-
-    private func historyAccountId(for entry: OperationHistoryEntry) -> String? {
-        if let accountId = entry.accountId, !accountId.isEmpty {
-            return accountId
-        }
-        if let accountId = entry.accountBefore?.accountId, !accountId.isEmpty {
-            return accountId
-        }
-        if let accountId = entry.accountAfter?.accountId, !accountId.isEmpty {
-            return accountId
-        }
-        return nil
-    }
-
-    private func appendAccountHistoryBatch(
-        category: HistoryEntryCategory,
-        title: String,
-        timestampMs: Int64? = nil,
-        beforeAccounts: [PasswordAccount],
-        afterAccounts: [PasswordAccount]
-    ) {
-        let now = timestampMs ?? nowMs()
-        let operationId = UUID()
-        let beforeByAccountId = Dictionary(uniqueKeysWithValues: beforeAccounts.map { ($0.accountId, $0) })
-        let afterByAccountId = Dictionary(uniqueKeysWithValues: afterAccounts.map { ($0.accountId, $0) })
-        let accountIds = Set(beforeByAccountId.keys).union(afterByAccountId.keys).sorted()
-        guard !accountIds.isEmpty else { return }
-
-        for accountId in accountIds {
-            let before = beforeByAccountId[accountId]
-            let after = afterByAccountId[accountId]
-            guard before != after else { continue }
-
-            let detail = historyDetailText(before: before, after: after)
-            let entry = OperationHistoryEntry(
-                id: UUID(),
-                timestampMs: now,
-                category: category,
-                operationId: operationId,
-                operationTitle: title,
-                action: detail,
-                accountId: accountId,
-                accountBefore: before,
-                accountAfter: after
-            )
-            historyEntries.insert(entry, at: 0)
-        }
-
-        if historyEntries.count > Self.maxHistoryEntries {
-            historyEntries.removeLast(historyEntries.count - Self.maxHistoryEntries)
-        }
-        saveHistoryToLocalDisk()
-    }
-
-    private func historyDetailText(before: PasswordAccount?, after: PasswordAccount?) -> String {
-        switch (before, after) {
-        case (nil, let created?):
-            return "åˆ›å»ºè´¦å·ï¼š\(created.accountId)"
-        case (let removed?, nil):
-            return "åˆ é™¤è´¦å·ï¼š\(removed.accountId)"
-        case (let before?, let after?):
-            let changedFields = historyChangedFieldLabels(before: before, after: after)
-            if changedFields.isEmpty {
-                return "æ›´æ–°è´¦å·ï¼š\(after.accountId)"
-            }
-            return "æ›´æ–°è´¦å·ï¼š\(after.accountId)ï¼ˆ\(changedFields.joined(separator: "ã€"))ï¼‰"
-        default:
-            return "è´¦å·å˜æ›´"
-        }
-    }
-
-    private func historyChangedFieldLabels(before: PasswordAccount, after: PasswordAccount) -> [String] {
-        var labels: [String] = []
-        if before.sites != after.sites { labels.append("ç«™ç‚¹åˆ«å") }
-        if before.username != after.username { labels.append("ç”¨æˆ·å") }
-        if before.password != after.password { labels.append("å¯†ç ") }
-        if before.totpSecret != after.totpSecret { labels.append("TOTP") }
-        if before.recoveryCodes != after.recoveryCodes { labels.append("æ¢å¤ç ") }
-        if before.note != after.note { labels.append("å¤‡æ³¨") }
-        if before.passkeyCredentialIds != after.passkeyCredentialIds { labels.append("é€šè¡Œå¯†é’¥") }
-        if before.resolvedFolderIds != after.resolvedFolderIds { labels.append("æ–‡ä»¶å¤¹") }
-        if before.isDeleted != after.isDeleted { labels.append(after.isDeleted ? "ç§»å…¥å›žæ”¶ç«™" : "æ¢å¤è´¦å·") }
-        return labels
-    }
-
-    private func appendHistoryEntry(
-        action rawAction: String,
-        timestampMs: Int64? = nil,
-        category: HistoryEntryCategory = .local,
-        accountId: String? = nil,
-        fieldKey: String? = nil,
-        oldValue: String? = nil,
-        newValue: String? = nil
-    ) {
-        let action = rawAction.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !action.isEmpty else { return }
-        let entry = OperationHistoryEntry(
-            id: UUID(),
-            timestampMs: timestampMs ?? nowMs(),
-            category: category,
-            action: action,
-            accountId: accountId,
-            fieldKey: fieldKey,
-            oldValue: oldValue,
-            newValue: newValue
-        )
-        historyEntries.insert(entry, at: 0)
-        if historyEntries.count > Self.maxHistoryEntries {
-            historyEntries.removeLast(historyEntries.count - Self.maxHistoryEntries)
-        }
-        saveHistoryToLocalDisk()
-    }
-
-    private func historyValueSnippet(_ raw: String, maxLength: Int = 80) -> String {
-        let normalized = raw
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if normalized.isEmpty {
-            return "(ç©º)"
-        }
-        if normalized.count <= maxLength {
-            return normalized
-        }
-        return String(normalized.prefix(maxLength)) + "..."
-    }
-
-    private func loadCollectionDataFromLocalDatabase(for key: String) -> Data? {
-        do {
-            return try localSQLiteStore.readData(for: key)
-        } catch {
-            localDatabaseReadFailed = true
-            storageIntegrityStatus = "è¯»å–æœ¬åœ°åŠ å¯†æ•°æ®å¤±è´¥ï¼ˆ\(key)ï¼‰ï¼š\(error.localizedDescription)"
-            statusMessage = storageIntegrityStatus
-            return nil
-        }
-    }
-
-    private func saveCollectionDataToLocalDatabase(_ data: Data, for key: String) throws {
-        try localSQLiteStore.writeData(data, for: key, updatedAtMs: nowMs())
-    }
-
-    private func loadSyncOutbox() {
-        do {
-            guard let data = try localSQLiteStore.readData(for: LocalDatabaseKeys.syncOutbox) else {
-                syncOutboxCount = 0
-                syncOutboxStatus = ""
-                return
-            }
-            let items = try decoder.decode([SyncOutboxItem].self, from: data)
-            syncOutboxCount = items.count
-            syncOutboxStatus = syncOutboxStatusText(items)
-        } catch {
-            syncOutboxCount = 0
-            syncOutboxStatus = "åŒæ­¥è¡¥å¿é˜Ÿåˆ—è¯»å–å¤±è´¥ï¼š\(error.localizedDescription)"
-            statusMessage = syncOutboxStatus
-        }
-    }
-
-    private func saveSyncOutbox(_ items: [SyncOutboxItem]) {
-        let normalized = Dictionary(items.map { ($0.sourceKey, $0) }) { first, second in
-            first.nextRetryAtMs >= second.nextRetryAtMs ? first : second
-        }.values.sorted { lhs, rhs in
-            if lhs.nextRetryAtMs != rhs.nextRetryAtMs {
-                return lhs.nextRetryAtMs < rhs.nextRetryAtMs
-            }
-            return lhs.sourceKey < rhs.sourceKey
-        }
-        do {
-            let data = try encoder.encode(normalized)
-            try saveCollectionDataToLocalDatabase(data, for: LocalDatabaseKeys.syncOutbox)
-            syncOutboxCount = normalized.count
-            syncOutboxStatus = syncOutboxStatusText(normalized)
-        } catch {
-            syncOutboxStatus = "åŒæ­¥è¡¥å¿é˜Ÿåˆ—ä¿å­˜å¤±è´¥ï¼š\(error.localizedDescription)"
-            statusMessage = syncOutboxStatus
-        }
-    }
-
-    private func syncOutboxStatusText(_ items: [SyncOutboxItem]) -> String {
-        guard !items.isEmpty else { return "" }
-        let waiting = items.filter { $0.status != "paused" && $0.nextRetryAtMs > nowMs() }.count
-        let paused = items.filter { $0.status == "paused" }.count
-        let details = items.map { item in
-            let kind = item.sourceKey.split(separator: "|", maxSplits: 1).first.map(String.init) ?? "åŒæ­¥æº"
-            let label = kind == "server" ? "æœåŠ¡å™¨" : kind == "webdav" ? "WebDAV" : kind == "icloud" ? "iCloud" : kind
-            let retry = item.status == "paused" ? "å·²æš‚åœï¼Œç‚¹å‡»ç«‹å³é‡è¯•æ¢å¤" : item.nextRetryAtMs > nowMs() ? "ä¸‹æ¬¡ \(displayTime(item.nextRetryAtMs))" : "å¯ç«‹å³é‡è¯•"
-            return "\(label)ï¼šå¤±è´¥ \(item.attempts) æ¬¡ï¼Œ\(retry)ï¼Œ\(item.lastError)"
-        }
-        return "è¡¥å¿ä»»åŠ¡ \(items.count) ä¸ªï¼ˆç­‰å¾… \(waiting) ä¸ª\(paused > 0 ? "ï¼Œå·²æš‚åœ \(paused) ä¸ª" : "")ï¼‰\n\(details.joined(separator: "\n"))"
-    }
-
-    func retrySyncOutboxNow() {
-        guard syncOutboxCount > 0 else {
-            statusMessage = "åŒæ­¥è¡¥å¿é˜Ÿåˆ—ä¸ºç©º"
-            return
-        }
-        syncNow(modeOverride: .merge)
-    }
-
-    func clearInactiveSyncOutboxItems() {
-        guard let data = try? localSQLiteStore.readData(for: LocalDatabaseKeys.syncOutbox),
-              let items = try? decoder.decode([SyncOutboxItem].self, from: data)
-        else {
-            statusMessage = "åŒæ­¥è¡¥å¿é˜Ÿåˆ—ä¸ºç©º"
-            return
-        }
-        var activeKeys = Set<String>()
-        if syncEnableSelfHostedServer {
-            activeKeys.insert(syncOutboxSourceKey(kind: "server", url: buildSelfHostedPayloadURL()))
-        }
-        if syncEnableWebDAV {
-            activeKeys.insert(syncOutboxSourceKey(kind: "webdav", url: buildWebDAVResourceURL()))
-        }
-        if syncEnableICloud {
-            activeKeys.insert(syncOutboxSourceKey(kind: "icloud"))
-        }
-        let next = items.filter { activeKeys.contains($0.sourceKey) }
-        let removed = items.count - next.count
-        if removed > 0 { saveSyncOutbox(next) }
-        statusMessage = removed > 0 ? "å·²æ¸…ç† \(removed) ä¸ªå¤±æ•ˆåŒæ­¥ç›®æ ‡ä»»åŠ¡" : "æ²¡æœ‰å¤±æ•ˆåŒæ­¥ç›®æ ‡ä»»åŠ¡"
-    }
-
-    private func syncOutboxSourceKey(kind: String, url: URL? = nil) -> String {
-        let fallback: String
-        switch kind {
-        case "server":
-            fallback = normalizedSelfHostedServerBaseURL(serverBaseURL)
-        case "webdav":
-            fallback = "\(webdavBaseURL.trimmingCharacters(in: .whitespacesAndNewlines))/\(webdavRemotePath.trimmingCharacters(in: .whitespacesAndNewlines))"
-        default:
-            fallback = kind
-        }
-        let target = url?.absoluteString ?? fallback
-        return "\(kind)|\(target)"
-    }
-
-    private func shouldAttemptSyncOutbox(sourceKey: String, force: Bool) -> Bool {
-        do {
-            guard let data = try localSQLiteStore.readData(for: LocalDatabaseKeys.syncOutbox),
-                  let items = try? decoder.decode([SyncOutboxItem].self, from: data),
-                  let item = items.first(where: { $0.sourceKey == sourceKey })
-            else { return true }
-            if force, item.status == "paused" {
-                let resumed = SyncOutboxItem(
-                    sourceKey: item.sourceKey,
-                    payload: item.payload,
-                    createdAtMs: item.createdAtMs,
-                    attempts: 0,
-                    nextRetryAtMs: 0,
-                    lastError: item.lastError,
-                    payloadSha256: item.payloadSha256,
-                    expectedEtag: item.expectedEtag,
-                    expectedRevision: item.expectedRevision,
-                    idempotencyKey: item.idempotencyKey,
-                    syncSessionId: item.syncSessionId,
-                    operationId: item.operationId,
-                    lastErrorCode: item.lastErrorCode,
-                    status: "pendingRetry"
-                )
-                saveSyncOutbox(items.filter { $0.sourceKey != sourceKey } + [resumed])
-            }
-            if force { return true }
-            return item.status != "paused" && item.nextRetryAtMs <= nowMs()
-        } catch {
-            return true
-        }
-    }
-
-    private func recordSyncOutboxFailure(
-        sourceKey: String,
-        payload: SyncBundlePayload,
-        error: Error
-    ) {
-        let now = nowMs()
-        var items: [SyncOutboxItem] = []
-        if let data = try? localSQLiteStore.readData(for: LocalDatabaseKeys.syncOutbox),
-           let decoded = try? decoder.decode([SyncOutboxItem].self, from: data)
-        {
-            items = decoded
-        }
-        let payloadHash = syncOutboxPayloadHash(payload)
-        let previous = items.first(where: { $0.sourceKey == sourceKey })
-        let sameLogicalWrite = previous?.payloadSha256 == payloadHash && !payloadHash.isEmpty
-        let previousAttempts = sameLogicalWrite ? (previous?.attempts ?? 0) : 0
-        let attempts = min(previousAttempts + 1, PassSyncPolicy.syncOutboxMaxAttempts)
-        let status = attempts >= PassSyncPolicy.syncOutboxMaxAttempts ? "paused" : "pendingRetry"
-        let delaySeconds = PassSyncPolicy.syncOutboxRetryDelaySeconds(attempts: attempts)
-        let item = SyncOutboxItem(
-            sourceKey: sourceKey,
-            payload: canonicalSyncPayload(payload),
-            createdAtMs: sameLogicalWrite ? (previous?.createdAtMs ?? now) : now,
-            attempts: attempts,
-            nextRetryAtMs: now + Int64(delaySeconds * 1000),
-            lastError: error.localizedDescription,
-            payloadSha256: payloadHash,
-            expectedEtag: (error as NSError).userInfo["expectedEtag"] as? String ?? previous?.expectedEtag ?? "",
-            expectedRevision: (error as NSError).userInfo["expectedRevision"] as? Int ?? previous?.expectedRevision ?? 0,
-            idempotencyKey: (error as NSError).userInfo["idempotencyKey"] as? String ?? (sameLogicalWrite ? previous?.idempotencyKey : nil) ?? "pass-\(syncDeviceId())-\(UUID().uuidString)",
-            syncSessionId: (error as NSError).userInfo["syncSessionId"] as? String ?? (sameLogicalWrite ? previous?.syncSessionId : nil) ?? "pass-session-\(UUID().uuidString)",
-            operationId: (error as NSError).userInfo["operationId"] as? String ?? (sameLogicalWrite ? previous?.operationId : nil) ?? "pass-op-\(UUID().uuidString)",
-            lastErrorCode: "\((error as NSError).code)",
-            status: status
-        )
-        saveSyncOutbox(items.filter { $0.sourceKey != sourceKey } + [item])
-    }
-
-    private func syncOutboxPayloadHash(_ payload: SyncBundlePayload) -> String {
-        guard let data = try? encoder.encode(canonicalSyncPayload(payload)) else { return "" }
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
-
-    private func clearSyncOutbox(sourceKey: String) {
-        guard let data = try? localSQLiteStore.readData(for: LocalDatabaseKeys.syncOutbox),
-              let items = try? decoder.decode([SyncOutboxItem].self, from: data),
-              items.contains(where: { $0.sourceKey == sourceKey })
-        else { return }
-        saveSyncOutbox(items.filter { $0.sourceKey != sourceKey })
-    }
-
-    private func handleSyncSourceSelectionChanged() {
-        if syncEnableICloud {
-            if cloudObserver == nil {
-                setupICloudSync()
-            }
-        } else {
-            teardownICloudSyncObserver()
-        }
-        if cloudObserver == nil {
-            refreshSyncSourceStatusHint()
-        }
-        updateAutoSyncTimer()
-    }
-
-    private func refreshSyncSourceStatusHint() {
-        let names = activeSyncSourceNames()
-        if names.isEmpty {
-            cloudSyncStatus = "æœªå¯ç”¨åŒæ­¥æº"
-            return
-        }
-        cloudSyncStatus = "å·²å¯ç”¨åŒæ­¥æºï¼š\(names.joined(separator: " + "))"
-    }
-
-    private func teardownICloudSyncObserver() {
-        if let observer = cloudObserver {
-            NotificationCenter.default.removeObserver(observer)
-            cloudObserver = nil
-        }
-    }
-
-    private func setupICloudSync() {
-        teardownICloudSyncObserver()
-        cloudObserver = NotificationCenter.default.addObserver(
-            forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
-            object: cloudStore,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                if self.syncEnableWebDAV || self.syncEnableSelfHostedServer {
-                    self.syncNow(modeOverride: .merge)
-                } else {
-                    _ = self.pullSyncDataFromICloud(trigger: "remote_change")
-                }
-            }
-        }
-
-        if syncEnableWebDAV || syncEnableSelfHostedServer {
-            syncNow(modeOverride: .merge)
-        } else {
-            _ = pullSyncDataFromICloud(trigger: "startup")
-            pushSyncDataToICloud(trigger: "startup")
-        }
-    }
-
-    private func updateAutoSyncTimer() {
-        autoSyncTimer?.invalidate()
-        autoSyncTimer = nil
-
-        let interval = AutoSyncInterval(rawValue: autoSyncIntervalMinutes) ?? .disabled
-        guard interval != .disabled else { return }
-        guard !activeSyncSourceNames().isEmpty else { return }
-
-        autoSyncTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(interval.rawValue * 60), repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.syncNow(modeOverride: .merge, suppressBusyMessage: true)
-            }
-        }
-        autoSyncTimer?.tolerance = min(30, TimeInterval(interval.rawValue * 10))
-    }
-
-    @discardableResult
-    private func pullSyncDataFromICloud(trigger: String) -> Bool {
-        guard syncEnableICloud else { return false }
-        let remotePayload: SyncBundlePayload
-        do {
-            guard let fetched = try fetchRemotePayloadFromICloud() else {
-                if trigger == "manual" {
-                    cloudSyncStatus = "iCloud å¯ç”¨ï¼Œå½“å‰æ— äº‘ç«¯æ•°æ®"
-                }
-                return false
-            }
-            remotePayload = fetched
-        } catch {
-            cloudSyncStatus = error.localizedDescription
-            return false
-        }
-
-        let localPayload = buildCurrentSyncPayload()
-        do {
-            try saveLocalSyncSafetySnapshot(localPayload, reason: "iCloud åŒæ­¥å‰è‡ªåŠ¨å¤‡ä»½")
-        } catch {
-            cloudSyncStatus = "iCloud åŒæ­¥å·²åœæ­¢ï¼šæ— æ³•åˆ›å»ºæœ¬åœ°å®‰å…¨å¤‡ä»½"
-            return false
-        }
-        let mergedPayload = mergePayloads(local: localPayload, remote: remotePayload)
-        let safetyReasons = syncSafetyReasons(
-            local: localPayload,
-            remote: remotePayload,
-            merged: mergedPayload,
-            mode: .merge
-        )
-        if !safetyReasons.isEmpty {
-            cloudSyncStatus = "iCloud åŒæ­¥å·²åœæ­¢ï¼šå®‰å…¨æ£€æŸ¥æœªé€šè¿‡ï¼ˆ\(safetyReasons.joined(separator: ", "))ï¼‰"
-            return false
-        }
-        let changed = applyMergedPayloadIfNeeded(
-            mergedPayload,
-            historyTitle: "iCloud è‡ªåŠ¨åˆå¹¶å¹¶æ›´æ–°æœ¬åœ°"
-        )
-        let payloadSummary = syncPayloadSummary(before: localPayload, after: mergedPayload)
-        guard changed else {
-            if trigger == "manual" {
-                cloudSyncStatus = "iCloud åˆå¹¶åŽæ— å­—æ®µå˜åŒ–ï¼Œå·²è·³è¿‡æœ¬åœ°å†™å…¥\n\(payloadSummary)"
-            } else {
-                cloudSyncStatus = "iCloud å·²è¿žæŽ¥ï¼ˆæ— å­—æ®µå˜åŒ–ï¼Œå·²è·³è¿‡æœ¬åœ°å†™å…¥ï¼‰\n\(payloadSummary)"
-            }
-            return false
-        }
-
-        do {
-            _ = try pushPayloadToICloud(buildCurrentSyncPayload())
-            clearSyncOutbox(sourceKey: syncOutboxSourceKey(kind: "icloud"))
-        } catch {
-            recordSyncOutboxFailure(
-                sourceKey: syncOutboxSourceKey(kind: "icloud"),
-                payload: buildCurrentSyncPayload(),
-                error: error
-            )
-            cloudSyncStatus = "iCloud åˆå¹¶åŽå›žå†™å¤±è´¥: \(error.localizedDescription)"
-            return false
-        }
-        cloudSyncStatus = "iCloud å·²åˆå¹¶åŒæ­¥\n\(payloadSummary)\næ—¶é—´ï¼š\(displayTime(nowMs()))"
-        return true
-    }
-
-    private func pushSyncDataToICloud(trigger: String) {
-        guard syncEnableICloud else { return }
-        do {
-            let requested = try pushPayloadToICloud(buildCurrentSyncPayload())
-            clearSyncOutbox(sourceKey: syncOutboxSourceKey(kind: "icloud"))
-            if trigger == "manual" && requested {
-                cloudSyncStatus = "iCloud åŒæ­¥å·²æäº¤: \(displayTime(nowMs()))"
-            } else if trigger == "manual" {
-                cloudSyncStatus = "iCloud åŒæ­¥è¯·æ±‚æœªå®Œæˆï¼Œç¨åŽè‡ªåŠ¨é‡è¯•"
-            }
-        } catch {
-            recordSyncOutboxFailure(
-                sourceKey: syncOutboxSourceKey(kind: "icloud"),
-                payload: buildCurrentSyncPayload(),
-                error: error
-            )
-            cloudSyncStatus = "iCloud åŒæ­¥å¤±è´¥: \(error.localizedDescription)"
-        }
-    }
-
-    private func fetchRemotePayloadFromICloud() throws -> SyncBundlePayload? {
-        loadSyncSecretsIfNeeded()
-        guard iCloudAvailable() else {
-            throw NSError(
-                domain: "AccountStore.ICloudSync",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "iCloud ä¸å¯ç”¨ï¼Œå·²ä½¿ç”¨æœ¬æœºæ•°æ®"]
-            )
-        }
-
-        _ = cloudStore.synchronize()
-        guard let encoded = cloudStore.string(forKey: ICloudKeys.syncPayloadBlob),
-              let data = Data(base64Encoded: encoded)
-        else {
-            return nil
-        }
-
-        let parsed = try decodeSyncBundle(data)
-        return SyncBundlePayload(
-            accounts: normalizeDecodedAccounts(parsed.payload.accounts),
-            folders: parsed.payload.folders,
-            passkeys: parsed.payload.passkeys,
-            allRegularAccountIds: parsed.payload.allRegularAccountIds,
-            allRegularOrderUpdatedAtMs: parsed.payload.allRegularOrderUpdatedAtMs,
-            allRegularOrderUpdatedDeviceName: parsed.payload.allRegularOrderUpdatedDeviceName,
-            folderOrderIds: parsed.payload.folderOrderIds,
-            folderOrderUpdatedAtMs: parsed.payload.folderOrderUpdatedAtMs,
-            folderOrderUpdatedDeviceName: parsed.payload.folderOrderUpdatedDeviceName
-        )
-    }
-
-    private func pushPayloadToICloud(_ payload: SyncBundlePayload) throws -> Bool {
-        loadSyncSecretsIfNeeded()
-        guard iCloudAvailable() else {
-            throw NSError(
-                domain: "AccountStore.ICloudSync",
-                code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "iCloud ä¸å¯ç”¨ï¼Œå·²ä½¿ç”¨æœ¬æœºæ•°æ®"]
-            )
-        }
-        let data = try encodeEncryptedSyncBundle(payload: payload)
-        if data.count > 900_000 {
-            throw NSError(
-                domain: "AccountStore.ICloudSync",
-                code: 3,
-                userInfo: [NSLocalizedDescriptionKey: "iCloud æ•°æ®è¿‡å¤§ï¼Œå½“å‰ä»…æœ¬æœºä¿å­˜"]
-            )
-        }
-
-        let encoded = data.base64EncodedString()
-        if cloudStore.string(forKey: ICloudKeys.syncPayloadBlob) == encoded {
-            return true
-        }
-
-        cloudStore.set(encoded, forKey: ICloudKeys.syncPayloadBlob)
-        cloudStore.set(nowMs(), forKey: ICloudKeys.syncPayloadUpdatedAtMs)
-        return cloudStore.synchronize()
-    }
-
-    private func iCloudAvailable() -> Bool {
-        FileManager.default.ubiquityIdentityToken != nil
-    }
-
-    private func mergeAccountCollections(
-        local: [PasswordAccount],
-        remote: [PasswordAccount]
-    ) -> [PasswordAccount] {
-        var merged: [PasswordAccount] = []
-        for account in local + remote {
-            if let existingIndex = merged.firstIndex(where: {
-                $0.accountId == account.accountId || $0.id == account.id
-            }) {
-                merged[existingIndex] = mergeSameAccount(merged[existingIndex], account)
-            } else {
-                merged.append(account)
-            }
-        }
-        return merged
-    }
-
-    private func mergeRelationStates(
-        _ left: [String: AccountFolderMembershipState], _ right: [String: AccountFolderMembershipState],
-        leftValues: [String], rightValues: [String], leftUpdatedAt: Int64, rightUpdatedAt: Int64,
-        leftDevice: String, rightDevice: String,
-        normalizeKey: (String) -> String
-    ) -> [String: AccountFolderMembershipState] {
-        func rekey(
-            _ source: [String: AccountFolderMembershipState],
-            values: [String],
-            updatedAt: Int64,
-            device: String
-        ) -> [String: AccountFolderMembershipState] {
-            var result: [String: AccountFolderMembershipState] = [:]
-            for (rawKey, state) in source {
-                let key = normalizeKey(rawKey)
-                guard !key.isEmpty else { continue }
-                if let current = result[key] {
-                    if shouldPreferRelationState(state, over: current) {
-                        result[key] = state
-                    }
-                } else {
-                    result[key] = state
-                }
-            }
-            let activityAt = max(updatedAt, 0)
-            for rawValue in values {
-                let key = normalizeKey(rawValue)
-                guard !key.isEmpty, result[key] == nil else { continue }
-                result[key] = AccountFolderMembershipState(
-                    isDeleted: false,
-                    updatedAtMs: activityAt,
-                    deviceName: device
-                )
-            }
-            return result
-        }
-
-        var merged = rekey(left, values: leftValues, updatedAt: leftUpdatedAt, device: leftDevice)
-        let incoming = rekey(right, values: rightValues, updatedAt: rightUpdatedAt, device: rightDevice)
-        for (id, state) in incoming {
-            guard let current = merged[id] else {
-                merged[id] = state
-                continue
-            }
-            if shouldPreferRelationState(state, over: current) {
-                merged[id] = state
-            }
-        }
-        return merged
-    }
-
-    /// Match sync_merge_core.js stable device-name tie-break (case-insensitive).
-    private func shouldPreferRelationState(
-        _ incoming: AccountFolderMembershipState,
-        over current: AccountFolderMembershipState
-    ) -> Bool {
-        if incoming.updatedAtMs > current.updatedAtMs { return true }
-        if incoming.updatedAtMs < current.updatedAtMs { return false }
-        if incoming.isDeleted && !current.isDeleted { return true }
-        if incoming.isDeleted == current.isDeleted {
-            let leftDevice = incoming.deviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let rightDevice = current.deviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            return leftDevice > rightDevice
-        }
-        return false
-    }
-
-    /// Align with JS: `passkeyUpdatedAtMs || updatedAtMs || createdAtMs`.
-    private func resolvedPasskeyUpdatedAtMs(_ account: PasswordAccount) -> Int64 {
-        if account.passkeyUpdatedAtMs > 0 {
-            return account.passkeyUpdatedAtMs
-        }
-        return max(account.updatedAtMs, account.createdAtMs)
-    }
-
-    /// Align with JS synthetic relation clocks: `updatedAtMs || createdAtMs`.
-    private func resolvedAccountActivityAtMs(_ account: PasswordAccount) -> Int64 {
-        max(account.updatedAtMs, account.createdAtMs)
-    }
-
-    private func firstNonEmptyString(_ candidates: String..., fallback: String = "") -> String {
-        for candidate in candidates {
-            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                return trimmed
-            }
-        }
-        return fallback
-    }
-
-    private func firstNonEmptyDeviceName(_ candidates: String...) -> String {
-        for candidate in candidates {
-            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                return trimmed
-            }
-        }
-        return PassSyncPolicy.defaultDeviceName
-    }
-
-    private func stableAccountSourceTieKey(_ account: PasswordAccount) -> String {
-        [
-            account.createdDeviceName,
-            account.lastOperatedDeviceName,
-            account.accountId,
-            account.canonicalSite,
-            account.usernameAtCreate,
-            account.id.uuidString
-        ]
-        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-        .joined(separator: "\u{0}")
-    }
-
-    private func preferAccountSource(_ lhs: PasswordAccount, _ rhs: PasswordAccount) -> PasswordAccount {
-        stableAccountSourceTieKey(lhs) >= stableAccountSourceTieKey(rhs) ? lhs : rhs
-    }
-
-    private func mergeSameAccount(_ lhs: PasswordAccount, _ rhs: PasswordAccount) -> PasswordAccount {
-        let primary: PasswordAccount
-        if lhs.createdAtMs < rhs.createdAtMs {
-            primary = lhs
-        } else if rhs.createdAtMs < lhs.createdAtMs {
-            primary = rhs
-        } else {
-            primary = preferAccountSource(lhs, rhs)
-        }
-        let secondary = primary.id == lhs.id && stableAccountSourceTieKey(primary) == stableAccountSourceTieKey(lhs)
-            ? rhs
-            : lhs
-        let leftActivityAt = resolvedAccountActivityAtMs(lhs)
-        let rightActivityAt = resolvedAccountActivityAtMs(rhs)
-
-        let siteAliasStates = mergeRelationStates(
-            lhs.siteAliasStates,
-            rhs.siteAliasStates,
-            leftValues: lhs.sites.map(DomainUtils.normalize),
-            rightValues: rhs.sites.map(DomainUtils.normalize),
-            leftUpdatedAt: leftActivityAt,
-            rightUpdatedAt: rightActivityAt,
-            leftDevice: lhs.lastOperatedDeviceName,
-            rightDevice: rhs.lastOperatedDeviceName,
-            normalizeKey: DomainUtils.normalize
-        )
-        let mergedSites = siteAliasStates.filter { !$0.value.isDeleted }.map(\.key).sorted()
-        let canonicalBySites = DomainUtils.etldPlusOne(for: mergedSites.first ?? "")
-        let canonicalSite: String = {
-            if !canonicalBySites.isEmpty { return canonicalBySites }
-            if !primary.canonicalSite.isEmpty { return primary.canonicalSite }
-            return secondary.canonicalSite
-        }()
-
-        var folderMembershipStates: [String: AccountFolderMembershipState] = [:]
-        func ingestFolderStates(
-            from account: PasswordAccount,
-            activityAt: Int64
-        ) {
-            var rekeyed: [String: AccountFolderMembershipState] = [:]
-            for (rawId, state) in account.folderMembershipStates {
-                let id = rawId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                guard !id.isEmpty else { continue }
-                if let current = rekeyed[id] {
-                    if shouldPreferRelationState(state, over: current) {
-                        rekeyed[id] = state
-                    }
-                } else {
-                    rekeyed[id] = state
-                }
-            }
-            for id in account.resolvedFolderIds.map({ $0.uuidString.lowercased() }) where rekeyed[id] == nil {
-                rekeyed[id] = AccountFolderMembershipState(
-                    isDeleted: false,
-                    updatedAtMs: activityAt,
-                    deviceName: account.lastOperatedDeviceName
-                )
-            }
-            for (id, incoming) in rekeyed {
-                guard let current = folderMembershipStates[id] else {
-                    folderMembershipStates[id] = incoming
-                    continue
-                }
-                if shouldPreferRelationState(incoming, over: current) {
-                    folderMembershipStates[id] = incoming
-                }
-            }
-        }
-        ingestFolderStates(from: lhs, activityAt: leftActivityAt)
-        ingestFolderStates(from: rhs, activityAt: rightActivityAt)
-        let mergedFolderIds = folderMembershipStates
-            .filter { !$0.value.isDeleted }
-            .compactMap { UUID(uuidString: $0.key) }
-            .sorted { $0.uuidString < $1.uuidString }
-
-        let usernameField = newerField(
-            lhs.username,
-            lhs.usernameUpdatedAtMs,
-            lhs.usernameUpdatedDeviceName,
-            lhs.updatedAtMs,
-            rhs.username,
-            rhs.usernameUpdatedAtMs,
-            rhs.usernameUpdatedDeviceName,
-            rhs.updatedAtMs
-        )
-        let passwordField = newerField(
-            lhs.password,
-            lhs.passwordUpdatedAtMs,
-            lhs.passwordUpdatedDeviceName,
-            lhs.updatedAtMs,
-            rhs.password,
-            rhs.passwordUpdatedAtMs,
-            rhs.passwordUpdatedDeviceName,
-            rhs.updatedAtMs
-        )
-        let totpField = newerField(
-            lhs.totpSecret,
-            lhs.totpUpdatedAtMs,
-            lhs.totpUpdatedDeviceName,
-            lhs.updatedAtMs,
-            rhs.totpSecret,
-            rhs.totpUpdatedAtMs,
-            rhs.totpUpdatedDeviceName,
-            rhs.updatedAtMs
-        )
-        let recoveryField = newerField(
-            lhs.recoveryCodes,
-            lhs.recoveryCodesUpdatedAtMs,
-            lhs.recoveryCodesUpdatedDeviceName,
-            lhs.updatedAtMs,
-            rhs.recoveryCodes,
-            rhs.recoveryCodesUpdatedAtMs,
-            rhs.recoveryCodesUpdatedDeviceName,
-            rhs.updatedAtMs
-        )
-        let noteField = newerField(
-            lhs.note,
-            lhs.noteUpdatedAtMs,
-            lhs.noteUpdatedDeviceName,
-            lhs.updatedAtMs,
-            rhs.note,
-            rhs.noteUpdatedAtMs,
-            rhs.noteUpdatedDeviceName,
-            rhs.updatedAtMs
-        )
-        let passkeyLinkStates = mergeRelationStates(
-            lhs.passkeyLinkStates,
-            rhs.passkeyLinkStates,
-            leftValues: lhs.passkeyCredentialIds,
-            rightValues: rhs.passkeyCredentialIds,
-            leftUpdatedAt: leftActivityAt,
-            rightUpdatedAt: rightActivityAt,
-            leftDevice: lhs.lastOperatedDeviceName,
-            rightDevice: rhs.lastOperatedDeviceName,
-            normalizeKey: { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        )
-        let mergedPasskeyCredentialIds = passkeyLinkStates.filter { !$0.value.isDeleted }.map(\.key).sorted()
-        // Align with sync_merge_core.js: treat missing/zero field clocks as account activity.
-        let leftPasskeyUpdatedAt = resolvedPasskeyUpdatedAtMs(lhs)
-        let rightPasskeyUpdatedAt = resolvedPasskeyUpdatedAtMs(rhs)
-        let passkeyUpdatedAtMs = max(leftPasskeyUpdatedAt, rightPasskeyUpdatedAt)
-        let passkeySource: PasswordAccount
-        if leftPasskeyUpdatedAt > rightPasskeyUpdatedAt {
-            passkeySource = lhs
-        } else if rightPasskeyUpdatedAt > leftPasskeyUpdatedAt {
-            passkeySource = rhs
-        } else {
-            passkeySource = preferAccountSource(lhs, rhs)
-        }
-        let passkeyUpdatedDeviceName = firstNonEmptyDeviceName(
-            passkeySource.passkeyUpdatedDeviceName,
-            passkeySource.lastOperatedDeviceName
-        )
-
-        let latestContentUpdatedAt = max(
-            usernameField.updatedAtMs,
-            passwordField.updatedAtMs,
-            totpField.updatedAtMs,
-            recoveryField.updatedAtMs,
-            noteField.updatedAtMs,
-            passkeyUpdatedAtMs
-        )
-
-        let lhsDeletedAt = lhs.isDeleted ? (lhs.deletedAtMs ?? 0) : 0
-        let rhsDeletedAt = rhs.isDeleted ? (rhs.deletedAtMs ?? 0) : 0
-        let latestDeletedAt = max(lhsDeletedAt, rhsDeletedAt)
-        // A restore clears deletedAtMs but updates the account timestamp. Include
-        // that activity timestamp so a later restore can beat an older tombstone.
-        let latestActivityAt = max(latestContentUpdatedAt, lhs.updatedAtMs, rhs.updatedAtMs)
-        let keepDeleted = latestDeletedAt > 0 && latestDeletedAt >= latestActivityAt
-        let keepPermanentlyDeleted = lhs.isPermanentlyDeleted || rhs.isPermanentlyDeleted
-
-        let latestUpdatedAt = max(
-            lhs.updatedAtMs,
-            rhs.updatedAtMs,
-            latestContentUpdatedAt,
-            latestDeletedAt,
-            primary.createdAtMs
-        )
-        let newerAccount: PasswordAccount
-        if lhs.updatedAtMs > rhs.updatedAtMs {
-            newerAccount = lhs
-        } else if rhs.updatedAtMs > lhs.updatedAtMs {
-            newerAccount = rhs
-        } else {
-            newerAccount = preferAccountSource(lhs, rhs)
-        }
-        let olderAccount = newerAccount.id == lhs.id && stableAccountSourceTieKey(newerAccount) == stableAccountSourceTieKey(lhs)
-            ? rhs
-            : lhs
-        let usernameAtCreate = firstNonEmptyString(
-            primary.usernameAtCreate,
-            secondary.usernameAtCreate,
-            primary.username,
-            secondary.username
-        )
-        let createdDeviceName = firstNonEmptyDeviceName(
-            primary.createdDeviceName,
-            secondary.createdDeviceName,
-            primary.lastOperatedDeviceName,
-            secondary.lastOperatedDeviceName
-        )
-        let lastOperatedDeviceName = firstNonEmptyDeviceName(
-            newerAccount.lastOperatedDeviceName,
-            olderAccount.lastOperatedDeviceName
-        )
-        let deletedDeviceNameCandidate: String
-        if lhsDeletedAt > rhsDeletedAt {
-            deletedDeviceNameCandidate = lhs.deletedDeviceName
-        } else if rhsDeletedAt > lhsDeletedAt {
-            deletedDeviceNameCandidate = rhs.deletedDeviceName
-        } else {
-            let leftDevice = lhs.deletedDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let rightDevice = rhs.deletedDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            deletedDeviceNameCandidate = leftDevice >= rightDevice
-                ? lhs.deletedDeviceName
-                : rhs.deletedDeviceName
-        }
-        let deletedDeviceName = keepPermanentlyDeleted || keepDeleted
-            ? firstNonEmptyDeviceName(deletedDeviceNameCandidate, lastOperatedDeviceName)
-            : ""
-
-        return PasswordAccount(
-            id: primary.id,
-            accountId: primary.accountId,
-            canonicalSite: canonicalSite,
-            usernameAtCreate: usernameAtCreate,
-            isPinned: newerAccount.isPinned ?? false,
-            pinnedSortOrder: newerAccount.pinnedSortOrder,
-            regularSortOrder: newerAccount.regularSortOrder,
-            pinnedViews: newerAccount.pinnedViews ?? olderAccount.pinnedViews,
-            folderId: mergedFolderIds.first ?? newerAccount.folderId,
-            folderIds: mergedFolderIds,
-            folderMembershipStates: folderMembershipStates,
-            // Empty is intentional: every site may be tombstoned. Never revive primary.sites.
-            sites: mergedSites,
-            siteAliasStates: siteAliasStates,
-            username: usernameField.value,
-            password: passwordField.value,
-            totpSecret: totpField.value,
-            recoveryCodes: recoveryField.value,
-            note: noteField.value,
-            passkeyCredentialIds: mergedPasskeyCredentialIds,
-            passkeyLinkStates: passkeyLinkStates,
-            usernameUpdatedAtMs: usernameField.updatedAtMs,
-            usernameUpdatedDeviceName: usernameField.deviceName,
-            passwordUpdatedAtMs: passwordField.updatedAtMs,
-            passwordUpdatedDeviceName: passwordField.deviceName,
-            totpUpdatedAtMs: totpField.updatedAtMs,
-            totpUpdatedDeviceName: totpField.deviceName,
-            recoveryCodesUpdatedAtMs: recoveryField.updatedAtMs,
-            recoveryCodesUpdatedDeviceName: recoveryField.deviceName,
-            noteUpdatedAtMs: noteField.updatedAtMs,
-            noteUpdatedDeviceName: noteField.deviceName,
-            passkeyUpdatedAtMs: passkeyUpdatedAtMs,
-            passkeyUpdatedDeviceName: passkeyUpdatedDeviceName,
-            updatedAtMs: latestUpdatedAt,
-            isDeleted: keepPermanentlyDeleted || keepDeleted,
-            isPermanentlyDeleted: keepPermanentlyDeleted,
-            deletedAtMs: keepPermanentlyDeleted || keepDeleted
-                ? (latestDeletedAt == 0 ? latestUpdatedAt : latestDeletedAt)
-                : nil,
-            deletedDeviceName: deletedDeviceName,
-            lastOperatedDeviceName: lastOperatedDeviceName,
-            createdDeviceName: createdDeviceName,
-            createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs)
-        )
-    }
-
-    private func mergeFolderCollections(
-        local: [AccountFolder],
-        remote: [AccountFolder]
-    ) -> [AccountFolder] {
-        var mergedById: [UUID: AccountFolder] = [:]
-
-        for folder in local {
-            mergedById[folder.id] = folder
-        }
-
-        for folder in remote {
-            if let existing = mergedById[folder.id] {
-                mergedById[folder.id] = mergeSameFolder(existing, folder)
-            } else {
-                mergedById[folder.id] = folder
-            }
-        }
-
-        let fixedId = Self.fixedNewAccountFolderId
-        if let existing = mergedById[fixedId] {
-            mergedById[fixedId] = AccountFolder(
-                id: fixedId,
-                name: Self.fixedNewAccountFolderName,
-                matchedSites: existing.matchedSites,
-                autoAddMatchingSites: existing.autoAddMatchingSites,
-                createdAtMs: existing.createdAtMs,
-                updatedAtMs: existing.updatedAtMs,
-                regularAccountIds: existing.regularAccountIds,
-                regularOrderUpdatedAtMs: existing.regularOrderUpdatedAtMs,
-                regularOrderUpdatedDeviceName: existing.regularOrderUpdatedDeviceName
-            )
-        } else {
-            // Align with JS: synthetic fixed folder uses epoch timestamps, not wall clock.
-            mergedById[fixedId] = AccountFolder(
-                id: fixedId,
-                name: Self.fixedNewAccountFolderName,
-                matchedSites: [],
-                autoAddMatchingSites: false,
-                createdAtMs: 0,
-                updatedAtMs: 0
-            )
-        }
-
-        return sortFoldersWithFixedNewAccountFirst(Array(mergedById.values))
-    }
-
-    private func mergeSameFolder(_ lhs: AccountFolder, _ rhs: AccountFolder) -> AccountFolder {
-        let leftUpdatedAt = lhs.updatedAtMs
-        let rightUpdatedAt = rhs.updatedAtMs
-        let leftDeletedAt = lhs.isDeleted ? (lhs.deletedAtMs ?? 0) : 0
-        let rightDeletedAt = rhs.isDeleted ? (rhs.deletedAtMs ?? 0) : 0
-        let useRightRegularOrder = rhs.regularOrderUpdatedAtMs > lhs.regularOrderUpdatedAtMs
-            || (rhs.regularOrderUpdatedAtMs == lhs.regularOrderUpdatedAtMs
-                && rhs.regularOrderUpdatedDeviceName > lhs.regularOrderUpdatedDeviceName)
-        let mergedRegularIds = useRightRegularOrder ? rhs.regularAccountIds : lhs.regularAccountIds
-        let mergedRegularOrderUpdatedAtMs = useRightRegularOrder ? rhs.regularOrderUpdatedAtMs : lhs.regularOrderUpdatedAtMs
-        let mergedRegularOrderUpdatedDeviceName = useRightRegularOrder ? rhs.regularOrderUpdatedDeviceName : lhs.regularOrderUpdatedDeviceName
-        let latestDeletedAt = max(leftDeletedAt, rightDeletedAt)
-        let keepPermanentlyDeleted = lhs.isPermanentlyDeleted || rhs.isPermanentlyDeleted
-        let keepDeleted = keepPermanentlyDeleted || (latestDeletedAt > 0 && latestDeletedAt >= max(leftUpdatedAt, rightUpdatedAt))
-        let deletedDeviceName = leftDeletedAt >= rightDeletedAt ? lhs.deletedDeviceName : rhs.deletedDeviceName
-        if lhs.id == Self.fixedNewAccountFolderId {
-            return AccountFolder(
-                id: lhs.id,
-                name: Self.fixedNewAccountFolderName,
-                matchedSites: rightUpdatedAt >= leftUpdatedAt ? rhs.matchedSites : lhs.matchedSites,
-                autoAddMatchingSites: rightUpdatedAt >= leftUpdatedAt ? rhs.autoAddMatchingSites : lhs.autoAddMatchingSites,
-                createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs),
-                updatedAtMs: max(leftUpdatedAt, rightUpdatedAt),
-                regularAccountIds: mergedRegularIds,
-                regularOrderUpdatedAtMs: mergedRegularOrderUpdatedAtMs,
-                regularOrderUpdatedDeviceName: mergedRegularOrderUpdatedDeviceName,
-                isDeleted: false,
-                isPermanentlyDeleted: false,
-                deletedAtMs: nil,
-                deletedDeviceName: ""
-            )
-        }
-
-        let leftName = lhs.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let rightName = rhs.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let mergedName: String
-        if rightUpdatedAt > leftUpdatedAt {
-            mergedName = rightName.isEmpty ? leftName : rightName
-        } else if leftUpdatedAt > rightUpdatedAt {
-            mergedName = leftName.isEmpty ? rightName : leftName
-        } else {
-            mergedName = leftName.isEmpty ? rightName : leftName
-        }
-
-        return AccountFolder(
-            id: lhs.id,
-            name: mergedName.isEmpty ? lhs.name : mergedName,
-            matchedSites: rightUpdatedAt > leftUpdatedAt ? rhs.matchedSites : lhs.matchedSites,
-            autoAddMatchingSites: rightUpdatedAt > leftUpdatedAt ? rhs.autoAddMatchingSites : lhs.autoAddMatchingSites,
-            createdAtMs: min(lhs.createdAtMs, rhs.createdAtMs),
-            updatedAtMs: max(leftUpdatedAt, rightUpdatedAt),
-            regularAccountIds: mergedRegularIds,
-            regularOrderUpdatedAtMs: mergedRegularOrderUpdatedAtMs,
-            regularOrderUpdatedDeviceName: mergedRegularOrderUpdatedDeviceName,
-            isDeleted: keepDeleted,
-            isPermanentlyDeleted: keepPermanentlyDeleted,
-            deletedAtMs: keepDeleted ? (latestDeletedAt == 0 ? max(leftUpdatedAt, rightUpdatedAt) : latestDeletedAt) : nil,
-            deletedDeviceName: keepDeleted ? (deletedDeviceName.isEmpty ? currentDeviceName() : deletedDeviceName) : ""
-        )
-    }
-
-    private func normalizePasskeyRecord(_ source: PasskeyRecord) -> PasskeyRecord {
-        let normalizedCredentialId = source.credentialIdB64u.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedRpId = DomainUtils.normalize(source.rpId)
-        let normalizedUserName = source.userName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedDisplayName = source.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedMode = source.mode.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedCreateCompatMethod = normalizePasskeyCreateCompatMethod(source.createCompatMethod, alg: source.alg)
-        let createdAt = max(source.createdAtMs, 0)
-        let updatedAt = max(source.updatedAtMs, createdAt)
-        let lastUsedAt = source.lastUsedAtMs.map { max($0, 0) }
-
-        return PasskeyRecord(
-            credentialIdB64u: normalizedCredentialId,
-            rpId: normalizedRpId,
-            userName: normalizedUserName,
-            displayName: normalizedDisplayName,
-            userHandleB64u: source.userHandleB64u,
-            alg: source.alg,
-            signCount: max(source.signCount, 0),
-            privateJwk: source.privateJwk,
-            publicJwk: source.publicJwk,
-            createdAtMs: createdAt,
-            updatedAtMs: updatedAt,
-            lastUsedAtMs: lastUsedAt,
-            mode: normalizedMode.isEmpty ? "managed" : normalizedMode,
-            createCompatMethod: normalizedCreateCompatMethod,
-            isDeleted: source.isDeleted ?? false,
-            isPermanentlyDeleted: source.isPermanentlyDeleted ?? false,
-            deletedAtMs: source.deletedAtMs,
-            deletedDeviceName: source.deletedDeviceName
-        )
-    }
-
-    private func normalizePasskeyCreateCompatMethod(_ raw: String?, alg: Int) -> String {
-        let normalized = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        switch normalized {
-        case "standard", "user_name_fallback", "rs256", "user_name_fallback+rs256", "unknown_linked":
-            return normalized
-        default:
-            return alg == -257 ? "rs256" : "standard"
-        }
-    }
-
-    private func mergePasskeyCollections(
-        local: [PasskeyRecord],
-        remote: [PasskeyRecord]
-    ) -> [PasskeyRecord] {
-        var mergedById: [String: PasskeyRecord] = [:]
-        var order: [String] = []
-        for item in (local + remote) {
-            let normalized = normalizePasskeyRecord(item)
-            let id = normalized.credentialIdB64u
-            guard !id.isEmpty else { continue }
-            if let existing = mergedById[id] {
-                mergedById[id] = mergeSamePasskey(existing, normalized)
-            } else {
-                mergedById[id] = normalized
-                order.append(id)
-            }
-        }
-        return order.compactMap { mergedById[$0] }.sorted { lhs, rhs in
-            if lhs.updatedAtMs != rhs.updatedAtMs {
-                return lhs.updatedAtMs > rhs.updatedAtMs
-            }
-            return lhs.credentialIdB64u < rhs.credentialIdB64u
-        }
-    }
-
-    private func mergeSamePasskey(_ lhs: PasskeyRecord, _ rhs: PasskeyRecord) -> PasskeyRecord {
-        let left = normalizePasskeyRecord(lhs)
-        let right = normalizePasskeyRecord(rhs)
-        let newer = left.updatedAtMs >= right.updatedAtMs ? left : right
-        let older = left.updatedAtMs >= right.updatedAtMs ? right : left
-        let leftDeletedAt = left.isDeleted == true ? (left.deletedAtMs ?? 0) : 0
-        let rightDeletedAt = right.isDeleted == true ? (right.deletedAtMs ?? 0) : 0
-        let latestDeletedAt = max(leftDeletedAt, rightDeletedAt)
-        let keepPermanentlyDeleted = left.isPermanentlyDeleted == true || right.isPermanentlyDeleted == true
-        let keepDeleted = keepPermanentlyDeleted || (latestDeletedAt > 0 && latestDeletedAt >= max(left.updatedAtMs, right.updatedAtMs))
-        let deletedDeviceName = leftDeletedAt >= rightDeletedAt ? left.deletedDeviceName : right.deletedDeviceName
-
-        return PasskeyRecord(
-            credentialIdB64u: newer.credentialIdB64u.isEmpty ? older.credentialIdB64u : newer.credentialIdB64u,
-            rpId: newer.rpId.isEmpty ? older.rpId : newer.rpId,
-            userName: newer.userName.isEmpty ? older.userName : newer.userName,
-            displayName: newer.displayName.isEmpty ? older.displayName : newer.displayName,
-            userHandleB64u: newer.userHandleB64u.isEmpty ? older.userHandleB64u : newer.userHandleB64u,
-            alg: newer.alg == 0 ? older.alg : newer.alg,
-            signCount: max(left.signCount, right.signCount),
-            privateJwk: newer.privateJwk ?? older.privateJwk,
-            publicJwk: newer.publicJwk ?? older.publicJwk,
-            createdAtMs: min(left.createdAtMs, right.createdAtMs),
-            updatedAtMs: max(left.updatedAtMs, right.updatedAtMs),
-            lastUsedAtMs: max(left.lastUsedAtMs ?? 0, right.lastUsedAtMs ?? 0) > 0
-                ? max(left.lastUsedAtMs ?? 0, right.lastUsedAtMs ?? 0)
-                : nil,
-            mode: newer.mode.isEmpty ? older.mode : newer.mode,
-            createCompatMethod: normalizePasskeyCreateCompatMethod(
-                newer.createCompatMethod ?? older.createCompatMethod,
-                alg: newer.alg == 0 ? older.alg : newer.alg
-            ),
-            isDeleted: keepDeleted,
-            isPermanentlyDeleted: keepPermanentlyDeleted,
-            deletedAtMs: keepDeleted ? (latestDeletedAt == 0 ? max(left.updatedAtMs, right.updatedAtMs) : latestDeletedAt) : nil,
-            deletedDeviceName: keepDeleted ? (deletedDeviceName ?? currentDeviceName()) : nil
-        )
-    }
-
-    private func reconcileAccountsWithValidFolderIds(
-        _ source: [PasswordAccount],
-        validFolderIds: Set<UUID>
-    ) -> [PasswordAccount] {
-        source.map { account in
-            var mutable = account
-            let filtered = normalizeFolderIds(
-                mutable.resolvedFolderIds.filter { validFolderIds.contains($0) }
-            )
-            mutable.setResolvedFolderIds(filtered)
-            return mutable
-        }
-    }
-
-    private func decodeSyncBundle(_ data: Data) throws -> (payload: SyncBundlePayload, kind: String) {
-        let plaintext: Data
-        do {
-            plaintext = try PassSyncCrypto.decrypt(
-                data,
-                keyString: syncEncryptionKey,
-                fallbackKeyStrings: [previousSyncEncryptionKey]
-            )
-        } catch {
-            throw NSError(
-                domain: "AccountStore.SyncBundle",
-                code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "åŒæ­¥åŒ…è§£å¯†å¤±è´¥ï¼Œè¯·ç¡®è®¤æ‰€æœ‰è®¾å¤‡ä½¿ç”¨åŒä¸€åŒæ­¥åŠ å¯†å¯†é’¥"]
-            )
-        }
-
-        if let bundle = try? decoder.decode(SyncBundleV2.self, from: plaintext),
-           bundle.schema == Self.syncBundleSchemaV2
-        {
-            return (bundle.payload, "v2")
-        }
-
-        throw NSError(
-            domain: "AccountStore.SyncBundle",
-            code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "ä¸æ”¯æŒçš„åŒæ­¥åŒ…æ ¼å¼ï¼Œä»…æ”¯æŒ pass.sync.bundle.v2"]
-        )
-    }
-
-    private func encodeEncryptedSyncBundle(payload: SyncBundlePayload) throws -> Data {
-        let bundle = buildSyncBundleDocument(payload: payload)
-        let plaintext = try encoder.encode(bundle)
-        return try PassSyncCrypto.encrypt(
-            plaintext,
-            keyString: syncEncryptionKey,
-            exportedAtMs: bundle.exportedAtMs
-        )
-    }
-
-    func generateSyncEncryptionKey() {
-        syncEncryptionKey = PassSyncCrypto.generateKeyString()
-        statusMessage = "å·²ç”Ÿæˆæ–°çš„åŒæ­¥åŠ å¯†å¯†é’¥ï¼›å…¶ä»–è®¾å¤‡å¿…é¡»å¡«å†™åŒä¸€å¯†é’¥"
-    }
-
-    func copySyncEncryptionKey() {
-        let trimmed = PassSyncCrypto.normalizedKeyString(syncEncryptionKey)
-        guard !trimmed.isEmpty else {
-            statusMessage = "åŒæ­¥åŠ å¯†å¯†é’¥ä¸ºç©ºï¼Œå°†ä½¿ç”¨æ˜Žæ–‡åŒæ­¥ï¼›è¯·ç¡®è®¤åŒæ­¥æœåŠ¡å™¨å…è®¸æ˜Žæ–‡"
-            return
-        }
-        guard PassSyncCrypto.isValidKeyString(syncEncryptionKey) else {
-            statusMessage = "åŒæ­¥åŠ å¯†å¯†é’¥æ— æ•ˆ"
-            return
-        }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(syncEncryptionKey, forType: .string)
-        statusMessage = "åŒæ­¥åŠ å¯†å¯†é’¥å·²å¤åˆ¶"
-    }
-
-    private func newerField(
-        _ lhsValue: String,
-        _ lhsUpdatedAt: Int64,
-        _ lhsDeviceName: String,
-        _ lhsAccountUpdatedAt: Int64,
-        _ rhsValue: String,
-        _ rhsUpdatedAt: Int64,
-        _ rhsDeviceName: String,
-        _ rhsAccountUpdatedAt: Int64
-    ) -> (value: String, updatedAtMs: Int64, deviceName: String) {
-        if lhsUpdatedAt > rhsUpdatedAt {
-            return (lhsValue, lhsUpdatedAt, lhsDeviceName)
-        }
-        if rhsUpdatedAt > lhsUpdatedAt {
-            return (rhsValue, rhsUpdatedAt, rhsDeviceName)
-        }
-        if lhsValue == rhsValue {
-            let lhsDevice = lhsDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let rhsDevice = rhsDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let candidate = lhsDevice >= rhsDevice ? lhsDeviceName : rhsDeviceName
-            let device = candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? PassSyncPolicy.defaultDeviceName
-                : candidate
-            return (lhsValue, lhsUpdatedAt, device)
-        }
-        // Field clocks tied: never let an empty credential erase a non-empty one
-        // just because an unrelated account-level edit bumped updatedAtMs.
-        if lhsValue.isEmpty, !rhsValue.isEmpty {
-            return (rhsValue, rhsUpdatedAt, rhsDeviceName)
-        }
-        if rhsValue.isEmpty, !lhsValue.isEmpty {
-            return (lhsValue, lhsUpdatedAt, lhsDeviceName)
-        }
-        if lhsAccountUpdatedAt > rhsAccountUpdatedAt {
-            return (lhsValue, lhsUpdatedAt, lhsDeviceName)
-        }
-        if rhsAccountUpdatedAt > lhsAccountUpdatedAt {
-            return (rhsValue, rhsUpdatedAt, rhsDeviceName)
-        }
-        let lhsDevice = lhsDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let rhsDevice = rhsDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if lhsDevice != rhsDevice {
-            return lhsDevice > rhsDevice
-                ? (lhsValue, lhsUpdatedAt, lhsDeviceName)
-                : (rhsValue, rhsUpdatedAt, rhsDeviceName)
-        }
-        return lhsValue >= rhsValue
-            ? (lhsValue, lhsUpdatedAt, lhsDeviceName)
-            : (rhsValue, rhsUpdatedAt, rhsDeviceName)
-    }
-
-    // å¯¹æ‰€æœ‰è´¦å·åšè¿žé€šåˆ†é‡å¹¶é›†åŒæ­¥ï¼š
-    // è‹¥è´¦å· A/B çš„ sites æœ‰äº¤é›†ã€åŒ eTLD+1 æˆ–å±žäºŽæ˜Žç¡®çš„å“ç‰Œåˆ«åç»„ï¼Œ
-    // åˆ™è§†ä¸ºåŒä¸€åˆ«åç»„ï¼Œç»„å†…ç«™ç‚¹å–å¹¶é›†å¹¶å›žå¡«ã€‚
-    private func syncAliasGroups() {
-        guard accounts.count >= 2 else { return }
-
-        if !PassCoreFFI.forceSwiftMerge {
-            do {
-                try syncAliasGroupsViaRust()
-                return
-            } catch {
-                NSLog("[PassCore] Rust alias sync failed, fallback Swift: \(error.localizedDescription)")
-            }
-        }
-        syncAliasGroupsSwift()
-    }
-
-    private func syncAliasGroupsViaRust() throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let data = try encoder.encode(accounts)
-        guard let accountsJSON = String(data: data, encoding: .utf8) else {
-            throw PassCoreFFI.FFIError.invalidUTF8
-        }
-        let result = try PassCoreFFI.syncAliasGroupsJSON(
-            accountsJSON: accountsJSON,
-            deviceName: currentDeviceName(),
-            nowMs: nowMs()
-        )
-        guard result.changed else { return }
-        let decoded = try decoder.decode([PasswordAccount].self, from: Data(result.accountsJSON.utf8))
-        accounts = decoded
-    }
-
-    /// Legacy in-process alias union (rollback / FFI unavailable).
-    private func domainAliasGroupKey(for site: String) -> String? {
-        let normalized = DomainUtils.normalize(site)
-        let groups: [(String, [String])] = [
-            ("apple", ["apple.com", "apple.com.cn", "icloud.com", "icloud.com.cn"]),
-            ("qq", ["qq.com", "wx.qq.com"]),
-            ("baidu", ["baidu.com", "passport.baidu.com", "pan.baidu.com"]),
-            ("sina", ["sina.com", "mail.sina.com", "weibo.com"]),
-            ("github", ["github.com", "gist.github.com"]),
-            ("gitlab", ["gitlab.com", "about.gitlab.com"]),
-            ("google", ["google.com", "accounts.google.com"]),
-            ("youtube", ["youtube.com", "studio.youtube.com"]),
-            ("x", ["x.com", "twitter.com"]),
-            ("facebook", ["facebook.com", "messenger.com"]),
-            ("amazon", ["amazon.com", "smile.amazon.com"]),
-            (
-                "microsoft",
-                [
-                    "microsoft.com", "microsoftonline.com", "login.microsoftonline.com",
-                    "login.microsoft.com", "account.microsoft.com", "live.com", "hotmail.com",
-                    "outlook.com", "account.live.com", "office.com", "outlook.office.com",
-                    "microsoft365.com", "office365.com", "azure.com", "msn.com"
-                ]
-            ),
-            ("paypal", ["paypal.com"]),
-            ("netflix", ["netflix.com", "help.netflix.com"]),
-            ("spotify", ["spotify.com", "open.spotify.com"]),
-            ("linkedin", ["linkedin.com"]),
-            ("dropbox", ["dropbox.com"]),
-        ]
-        return groups.first { _, aliases in
-            aliases.contains { alias in normalized == alias || normalized.hasSuffix("." + alias) }
-        }?.0
-    }
-
-    private func syncAliasGroupsSwift() {
-        var components: [[Int]] = []
-        var visited = Set<Int>()
-
-        for i in accounts.indices {
-            if visited.contains(i) { continue }
-
-            var queue = [i]
-            var component = [Int]()
-            visited.insert(i)
-
-            while let current = queue.first {
-                queue.removeFirst()
-                component.append(current)
-
-                let currentSites = Set(accounts[current].sites.map(DomainUtils.normalize))
-
-                for j in accounts.indices where !visited.contains(j) {
-                    let targetSites = Set(accounts[j].sites.map(DomainUtils.normalize))
-                    let hasSiteOverlap = !currentSites.isDisjoint(with: targetSites)
-                    let sameEtld1 = currentSites.contains { currentSite in
-                        targetSites.contains { targetSite in
-                            DomainUtils.etldPlusOne(for: currentSite) == DomainUtils.etldPlusOne(for: targetSite)
-                        }
-                    }
-                    let sameAliasGroup = currentSites.contains { currentSite in
-                        guard let group = domainAliasGroupKey(for: currentSite) else { return false }
-                        return targetSites.contains { domainAliasGroupKey(for: $0) == group }
-                    }
-                    if hasSiteOverlap || sameEtld1 || sameAliasGroup {
-                        visited.insert(j)
-                        queue.append(j)
-                    }
-                }
-            }
-
-            components.append(component)
-        }
-
-        for component in components where component.count > 1 {
-            let mergedSites: [String] = Array(
-                Set(component.flatMap { accounts[$0].sites.map(DomainUtils.normalize) })
-            ).sorted()
-
-            for index in component {
-                if accounts[index].sites != mergedSites {
-                    accounts[index].sites = mergedSites
-                    accounts[index].touchUpdatedAt(nowMs(), deviceName: currentDeviceName())
-                }
-            }
-        }
-    }
-
-    private func normalizeDecodedAccounts(_ source: [PasswordAccount]) -> [PasswordAccount] {
-        source.map { account in
-            var mutable = account
-            mutable.setResolvedFolderIds(mutable.resolvedFolderIds)
-            mutable.passkeyCredentialIds = Array(
-                Set(mutable.passkeyCredentialIds
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty })
-            ).sorted()
-            if mutable.passkeyUpdatedAtMs <= 0 {
-                mutable.passkeyUpdatedAtMs = mutable.createdAtMs
-            }
-            return mutable
-        }
-    }
-
-    private func normalizeFoldersEnsuringFixedNewAccountFolder() -> (
-        foldersChanged: Bool,
-        legacyNewAccountFolderIds: Set<UUID>
-    ) {
-        let fixedName = Self.fixedNewAccountFolderName
-        let fixedId = Self.fixedNewAccountFolderId
-
-        let legacyNewAccountFolderIds: Set<UUID> = Set(
-            folders.compactMap { folder in
-                guard folder.id != fixedId else { return nil }
-                return folder.name.caseInsensitiveCompare(fixedName) == .orderedSame ? folder.id : nil
-            }
-        )
-
-        let fixedCreatedAt = folders.first(where: { $0.id == fixedId })?.createdAtMs
-            ?? folders.filter { legacyNewAccountFolderIds.contains($0.id) }.map(\.createdAtMs).min()
-            ?? nowMs()
-        let fixedUpdatedAt = folders.first(where: { $0.id == fixedId })?.updatedAtMs
-            ?? folders.filter { legacyNewAccountFolderIds.contains($0.id) }.map(\.updatedAtMs).max()
-            ?? fixedCreatedAt
-
-        let retainedFolders = folders.filter { folder in
-            folder.id != fixedId && !legacyNewAccountFolderIds.contains(folder.id)
-        }
-
-        let fixedFolder = AccountFolder(
-            id: fixedId,
-            name: fixedName,
-            matchedSites: folders.first(where: { $0.id == fixedId })?.matchedSites ?? [],
-            autoAddMatchingSites: folders.first(where: { $0.id == fixedId })?.autoAddMatchingSites ?? false,
-            createdAtMs: fixedCreatedAt,
-            updatedAtMs: fixedUpdatedAt,
-            regularAccountIds: folders.first(where: { $0.id == fixedId })?.regularAccountIds ?? [],
-            regularOrderUpdatedAtMs: folders.first(where: { $0.id == fixedId })?.regularOrderUpdatedAtMs ?? 0,
-            regularOrderUpdatedDeviceName: folders.first(where: { $0.id == fixedId })?.regularOrderUpdatedDeviceName ?? ""
-        )
-
-        var deduplicated: [AccountFolder] = [fixedFolder]
-        var seenIds: Set<UUID> = [fixedId]
-        for folder in retainedFolders {
-            if seenIds.insert(folder.id).inserted {
-                deduplicated.append(folder)
-            }
-        }
-
-        let sorted = sortFoldersWithFixedNewAccountFirst(deduplicated)
-        let changed = sorted != folders
-        folders = sorted
-        return (changed, legacyNewAccountFolderIds)
-    }
-
-    private func sortFoldersWithFixedNewAccountFirst(_ source: [AccountFolder]) -> [AccountFolder] {
-        source.sorted { lhs, rhs in
-            if lhs.id == Self.fixedNewAccountFolderId {
-                return rhs.id != Self.fixedNewAccountFolderId
-            }
-            if rhs.id == Self.fixedNewAccountFolderId {
-                return false
-            }
-            if lhs.createdAtMs != rhs.createdAtMs {
-                return lhs.createdAtMs < rhs.createdAtMs
-            }
-            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
-        }
-    }
-
-    private func migrateAccountFolderIdsFromLegacyNewAccountFolder(legacyFolderIds: Set<UUID>) -> Bool {
-        let validFolderIds = Set(folders.filter { !$0.isDeleted }.map(\.id))
-        let shouldMigrateLegacyIds = !legacyFolderIds.isEmpty
-        var changed = false
-
-        for index in accounts.indices {
-            let original = accounts[index].resolvedFolderIds
-            var next = original
-
-            if shouldMigrateLegacyIds && !Set(next).isDisjoint(with: legacyFolderIds) {
-                next.removeAll(where: { legacyFolderIds.contains($0) })
-                if !next.contains(Self.fixedNewAccountFolderId) {
-                    next.append(Self.fixedNewAccountFolderId)
-                }
-            }
-
-            next = normalizeFolderIds(next.filter { validFolderIds.contains($0) })
-            if next != original {
-                accounts[index].setResolvedFolderIds(next)
-                changed = true
-            }
-        }
-
-        return changed
-    }
-
-    private func normalizeFolderIds(_ source: [UUID]) -> [UUID] {
-        Array(Set(source)).sorted { $0.uuidString < $1.uuidString }
-    }
-
-    private func csvEscaped(_ value: String) -> String {
-        var sanitized = value
-            .replacingOccurrences(of: "\r", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-        if let first = sanitized.first, "=+-@\t".contains(first) {
-            sanitized = "'" + sanitized
-        }
-        return "\"\(sanitized.replacingOccurrences(of: "\"", with: "\"\""))\""
-    }
-
-    private func matchedImportedAccountIndex(
-        in source: [PasswordAccount],
-        entry: BrowserPasswordImportEntry
-    ) -> Int? {
-        let entrySites = Set(entry.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
-        let entryCanonicalSites = Set(entrySites.map(DomainUtils.etldPlusOne))
-        let normalizedUsername = entry.username.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        var bestMatch: (index: Int, score: Int)?
-
-        for (index, account) in source.enumerated() {
-            // Permanent-delete tombstones must not be revived by re-import.
-            if account.isPermanentlyDeleted {
-                continue
-            }
-            let accountSites = Set(account.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
-            let accountCanonicalSites = Set(accountSites.map(DomainUtils.etldPlusOne)).union([account.canonicalSite])
-            let usernameMatches = normalizedUsername.isEmpty
-                ? account.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                : (
-                    account.username.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedUsername ||
-                    account.usernameAtCreate.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedUsername
-                )
-            let siteOverlaps = !entrySites.isDisjoint(with: accountSites)
-            let canonicalMatches = !entryCanonicalSites.isDisjoint(with: accountCanonicalSites)
-
-            let score: Int
-            if usernameMatches && siteOverlaps {
-                score = account.isDeleted ? 35 : 40
-            } else if usernameMatches && canonicalMatches {
-                score = account.isDeleted ? 25 : 30
-            } else if normalizedUsername.isEmpty && siteOverlaps {
-                score = account.isDeleted ? 15 : 20
-            } else if normalizedUsername.isEmpty && canonicalMatches {
-                score = account.isDeleted ? 5 : 10
-            } else {
-                continue
-            }
-
-            if bestMatch == nil || score > bestMatch!.score {
-                bestMatch = (index, score)
-            }
-        }
-
-        return bestMatch?.index
-    }
-
-    private func applyImportedBrowserEntry(
-        _ entry: BrowserPasswordImportEntry,
-        to account: PasswordAccount,
-        nowMs: Int64
-    ) -> PasswordAccount {
-        // Defense in depth: never clear permanent-delete tombstones via import.
-        if account.isPermanentlyDeleted {
-            return account
-        }
-        var updated = account
-        var changed = false
-
-        let mergedSites = Array(
-            Set((updated.sites + entry.sites).map(DomainUtils.normalize).filter { !$0.isEmpty })
-        ).sorted()
-        if mergedSites != updated.sites {
-            updated.sites = mergedSites
-            changed = true
-        }
-
-        if !entry.username.isEmpty, entry.username != updated.username {
-            updated.username = entry.username
-            updated.usernameUpdatedAtMs = nowMs
-            updated.usernameUpdatedDeviceName = currentDeviceName()
-            changed = true
-        }
-
-        if !entry.password.isEmpty, entry.password != updated.password {
-            updated.password = entry.password
-            updated.passwordUpdatedAtMs = nowMs
-            updated.passwordUpdatedDeviceName = currentDeviceName()
-            changed = true
-        }
-
-        let mergedNote = mergedImportedBrowserNote(existing: updated.note, incoming: entry.note)
-        if mergedNote != updated.note {
-            updated.note = mergedNote
-            updated.noteUpdatedAtMs = nowMs
-            updated.noteUpdatedDeviceName = currentDeviceName()
-            changed = true
-        }
-
-        // Soft-deleted accounts may be revived; permanent tombstones are blocked above.
-        if updated.isDeleted {
-            updated.isDeleted = false
-            updated.deletedAtMs = nil
-            updated.deletedDeviceName = ""
-            changed = true
-        }
-
-        if changed {
-            updated.touchUpdatedAt(nowMs, deviceName: currentDeviceName())
-        }
-
-        return updated
-    }
-
-    private func mergedImportedBrowserNote(existing: String, incoming: String) -> String {
-        let normalizedIncoming = incoming.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedIncoming.isEmpty else { return existing }
-
-        let normalizedExisting = existing.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedExisting.isEmpty else { return normalizedIncoming }
-        if normalizedExisting.contains(normalizedIncoming) {
-            return normalizedExisting
-        }
-        return "\(normalizedExisting)\n\(normalizedIncoming)"
-    }
-
-    private enum TotpDraftTarget {
-        case create
-        case edit
-    }
-
-    private struct ParsedOtpAuthPayload {
-        let secret: String
-        let siteAlias: String?
-        let username: String?
-    }
-
-    private struct ParsedGoogleAuthenticatorEntry {
-        let secret: String
-        let siteAlias: String?
-        let username: String?
-    }
-
-    private struct ParsedGoogleAuthenticatorMigration {
-        let entries: [ParsedGoogleAuthenticatorEntry]
-        let skippedCount: Int
-        let batchSize: Int
-        let batchIndex: Int
-    }
-
-    private func pasteRawTotpSecretFromClipboard(to target: TotpDraftTarget) {
-        guard let rawText = NSPasteboard.general.string(forType: .string) else {
-            statusMessage = "å‰ªè´´æ¿æ²¡æœ‰æ–‡æœ¬å†…å®¹"
-            return
-        }
-
-        let secret = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !secret.isEmpty else {
-            statusMessage = "å‰ªè´´æ¿æ–‡æœ¬ä¸ºç©º"
-            return
-        }
-        guard isValidTotpSecret(secret) else {
-            statusMessage = "ç²˜è´´å¤±è´¥ï¼šåŽŸå§‹å¯†é’¥ä¸æ˜¯æœ‰æ•ˆ TOTP"
-            return
-        }
-
-        applyTotpPayload(
-            ParsedOtpAuthPayload(secret: secret, siteAlias: nil, username: nil),
-            to: target,
-            includeSiteAndUsername: false
-        )
-        statusMessage = "å·²å¡«å…… TOTP åŽŸå§‹å¯†é’¥"
-    }
-
-    private func pasteOtpAuthURIFromClipboard(to target: TotpDraftTarget) {
-        guard let rawText = NSPasteboard.general.string(forType: .string) else {
-            statusMessage = "å‰ªè´´æ¿æ²¡æœ‰æ–‡æœ¬å†…å®¹"
-            return
-        }
-        guard let payload = parseOtpAuthURI(rawText) else {
-            statusMessage = "ç²˜è´´å¤±è´¥ï¼šä¸æ˜¯æœ‰æ•ˆçš„ otpauth://totp URI"
-            return
-        }
-
-        applyTotpPayload(payload, to: target, includeSiteAndUsername: true)
-        statusMessage = "å·²è§£æž otpauth URIï¼Œå¹¶å¡«å…… TOTP/ç«™ç‚¹åˆ«å/ç”¨æˆ·å"
-    }
-
-    private func pasteQRCodeFromClipboard(to target: TotpDraftTarget) {
-        guard let qrPayload = parseQRCodePayloadFromPasteboard() else {
-            statusMessage = "ç²˜è´´å¤±è´¥ï¼šå‰ªè´´æ¿æ²¡æœ‰å¯è¯†åˆ«çš„äºŒç»´ç å›¾ç‰‡"
-            return
-        }
-        guard let payload = parseOtpAuthURI(qrPayload) else {
-            statusMessage = "ç²˜è´´å¤±è´¥ï¼šäºŒç»´ç å†…å®¹ä¸æ˜¯æœ‰æ•ˆçš„ otpauth://totp URI"
-            return
-        }
-
-        applyTotpPayload(payload, to: target, includeSiteAndUsername: true)
-        statusMessage = "å·²è§£æžäºŒç»´ç ï¼Œå¹¶å¡«å…… TOTP/ç«™ç‚¹åˆ«å/ç”¨æˆ·å"
-    }
-
-    private func applyTotpPayload(
-        _ payload: ParsedOtpAuthPayload,
-        to target: TotpDraftTarget,
-        includeSiteAndUsername: Bool
-    ) {
-        switch target {
-        case .create:
-            createTotpSecret = payload.secret
-            if includeSiteAndUsername {
-                if let siteAlias = payload.siteAlias, !siteAlias.isEmpty {
-                    createSitesText = siteAlias
-                }
-                if let username = payload.username, !username.isEmpty {
-                    createUsername = username
-                }
-            }
-        case .edit:
-            editTotpSecret = payload.secret
-            if includeSiteAndUsername {
-                if let siteAlias = payload.siteAlias, !siteAlias.isEmpty {
-                    editSitesText = siteAlias
-                }
-                if let username = payload.username, !username.isEmpty {
-                    editUsername = username
-                }
-            }
-        }
-    }
-
-    private func parseOtpAuthURI(_ raw: String) -> ParsedOtpAuthPayload? {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        guard let components = URLComponents(string: trimmed) else { return nil }
-        guard components.scheme?.lowercased() == "otpauth" else { return nil }
-        guard components.host?.lowercased() == "totp" else { return nil }
-
-        let queryItems = components.queryItems ?? []
-        let secret = queryItems
-            .first(where: { $0.name.caseInsensitiveCompare("secret") == .orderedSame })?
-            .value?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !secret.isEmpty, isValidTotpSecret(secret) else { return nil }
-
-        let issuerFromQuery = queryItems
-            .first(where: { $0.name.caseInsensitiveCompare("issuer") == .orderedSame })?
-            .value?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        let decodedPath = components.path.removingPercentEncoding ?? components.path
-        let label = decodedPath
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        var labelIssuer = ""
-        var labelUsername: String?
-        if let colon = label.firstIndex(of: ":") {
-            labelIssuer = String(label[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
-            let username = String(label[label.index(after: colon)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-            labelUsername = username.isEmpty ? nil : username
-        } else {
-            labelUsername = label.isEmpty ? nil : label
-        }
-
-        let issuer = issuerFromQuery.isEmpty ? labelIssuer : issuerFromQuery
-        let siteAlias = resolveImportedSiteAlias(issuer: issuer, username: labelUsername)
-
-        return ParsedOtpAuthPayload(
-            secret: secret,
-            siteAlias: siteAlias,
-            username: labelUsername
-        )
-    }
-
-    private func siteAliasFromIssuer(_ issuer: String) -> String? {
-        let compactIssuer = issuer
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: " ", with: "")
-        guard !compactIssuer.isEmpty else { return nil }
-        let normalized = DomainUtils.normalize(compactIssuer)
-        guard !normalized.isEmpty else { return nil }
-        if normalized.contains(".") {
-            return normalized
-        }
-        return "\(normalized).com"
-    }
-
-    private func resolveImportedSiteAlias(issuer: String, username: String?) -> String? {
-        if let site = siteAliasFromIssuer(issuer), !site.isEmpty {
-            return site
-        }
-        if let site = siteAliasFromUsername(username), !site.isEmpty {
-            return site
-        }
-        return nil
-    }
-
-    private func siteAliasFromUsername(_ username: String?) -> String? {
-        let raw = (username ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { return nil }
-        if let atIndex = raw.lastIndex(of: "@"), atIndex < raw.index(before: raw.endIndex) {
-            let domainPart = String(raw[raw.index(after: atIndex)...])
-            let normalized = DomainUtils.normalize(domainPart)
-            return normalized.isEmpty ? nil : normalized
-        }
-        let normalized = DomainUtils.normalize(raw)
-        return normalized.isEmpty ? nil : normalized
-    }
-
-    private func isValidTotpSecret(_ secret: String) -> Bool {
-        TotpGenerator.currentCode(secret: secret, at: Date(timeIntervalSince1970: 0)) != nil
-    }
-
-    private func parseQRCodePayloadFromPasteboard() -> String? {
-        let pasteboard = NSPasteboard.general
-        guard let images = pasteboard.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage] else {
-            return nil
-        }
-        for image in images {
-            guard let cgImage = cgImage(from: image) else { continue }
-            guard let payload = parseQRCodePayload(from: cgImage) else { continue }
-            return payload
-        }
-        return nil
-    }
-
-    private func cgImage(from image: NSImage) -> CGImage? {
-        var rect = CGRect(origin: .zero, size: image.size)
-        if let cgImage = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) {
-            return cgImage
-        }
-        guard let tiff = image.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiff)
-        else {
-            return nil
-        }
-        return rep.cgImage
-    }
-
-    private func parseQRCodePayload(from cgImage: CGImage) -> String? {
-        let request = VNDetectBarcodesRequest()
-        request.symbologies = [.qr]
-        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-        guard (try? handler.perform([request])) != nil else {
-            return nil
-        }
-        let observations = request.results ?? []
-        for observation in observations {
-            let payload = observation.payloadStringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !payload.isEmpty {
-                return payload
-            }
-        }
-        return nil
-    }
-
-    private func parseGoogleAuthenticatorMigrationFromImageFile(_ fileURL: URL) -> ParsedGoogleAuthenticatorMigration? {
-        guard let image = NSImage(contentsOf: fileURL),
-              let cgImage = cgImage(from: image),
-              let qrPayload = parseQRCodePayload(from: cgImage)
-        else {
-            return nil
-        }
-        return parseGoogleAuthenticatorMigrationURI(qrPayload)
-    }
-
-    private func readGoogleAuthenticatorMigrationFromPasteboard() -> ParsedGoogleAuthenticatorMigration? {
-        if let rawText = NSPasteboard.general.string(forType: .string),
-           let payload = parseGoogleAuthenticatorMigrationURI(rawText)
-        {
-            return payload
-        }
-        guard let qrPayload = parseQRCodePayloadFromPasteboard() else {
-            return nil
-        }
-        return parseGoogleAuthenticatorMigrationURI(qrPayload)
-    }
-
-    private func mergedGoogleAuthenticatorMigrations(
-        _ migrations: [ParsedGoogleAuthenticatorMigration]
-    ) -> ParsedGoogleAuthenticatorMigration {
-        var seen: Set<String> = []
-        var entries: [ParsedGoogleAuthenticatorEntry] = []
-        var skippedCount = 0
-        var batchSize = 0
-
-        for migration in migrations {
-            skippedCount += migration.skippedCount
-            batchSize += max(migration.batchSize, migration.entries.isEmpty ? 0 : 1)
-            for entry in migration.entries {
-                let key = [
-                    entry.siteAlias ?? "",
-                    entry.username ?? "",
-                    entry.secret,
-                ].joined(separator: "|")
-                if seen.insert(key).inserted {
-                    entries.append(entry)
-                }
-            }
-        }
-
-        return ParsedGoogleAuthenticatorMigration(
-            entries: entries,
-            skippedCount: skippedCount,
-            batchSize: max(batchSize, migrations.count),
-            batchIndex: 0
-        )
-    }
-
-    private func parseGoogleAuthenticatorMigrationURI(_ raw: String) -> ParsedGoogleAuthenticatorMigration? {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let components = URLComponents(string: trimmed) else {
-            return nil
-        }
-        guard components.scheme?.lowercased() == "otpauth-migration" else { return nil }
-        guard components.host?.lowercased() == "offline" else { return nil }
-        let dataB64 = components.queryItems?
-            .first(where: { $0.name.caseInsensitiveCompare("data") == .orderedSame })?
-            .value?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !dataB64.isEmpty else { return nil }
-        guard let rawData = Data(base64Encoded: normalizedBase64String(dataB64)) else {
-            return nil
-        }
-        return decodeGoogleAuthenticatorMigrationPayload(rawData)
-    }
-
-    private func normalizedBase64String(_ raw: String) -> String {
-        let normalized = raw
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        let remainder = normalized.count % 4
-        guard remainder != 0 else { return normalized }
-        return normalized + String(repeating: "=", count: 4 - remainder)
-    }
-
-    private func decodeGoogleAuthenticatorMigrationPayload(_ data: Data) -> ParsedGoogleAuthenticatorMigration? {
-        var reader = ProtoReader(data: data)
-        var entries: [ParsedGoogleAuthenticatorEntry] = []
-        var skippedCount = 0
-        var batchSize = 0
-        var batchIndex = 0
-
-        while !reader.isAtEnd {
-            guard let tag = reader.readVarint() else { break }
-            let fieldNumber = Int(tag >> 3)
-            let wireType = Int(tag & 0x07)
-
-            switch (fieldNumber, wireType) {
-            case (1, 2):
-                guard let nested = reader.readLengthDelimited() else { return nil }
-                if let entry = decodeGoogleAuthenticatorOtpParameters(nested) {
-                    entries.append(entry)
-                } else {
-                    skippedCount += 1
-                }
-            case (3, 0):
-                guard let value = reader.readVarint() else { return nil }
-                batchSize = Int(value)
-            case (4, 0):
-                guard let value = reader.readVarint() else { return nil }
-                batchIndex = Int(value)
-            default:
-                guard reader.skipField(wireType: wireType) else { return nil }
-            }
-        }
-
-        return ParsedGoogleAuthenticatorMigration(
-            entries: entries,
-            skippedCount: skippedCount,
-            batchSize: batchSize,
-            batchIndex: batchIndex
-        )
-    }
-
-    private func decodeGoogleAuthenticatorOtpParameters(_ data: Data) -> ParsedGoogleAuthenticatorEntry? {
-        var reader = ProtoReader(data: data)
-        var secretData = Data()
-        var name = ""
-        var issuer = ""
-        var algorithm = 1
-        var digits = 1
-        var type = 2
-
-        while !reader.isAtEnd {
-            guard let tag = reader.readVarint() else { break }
-            let fieldNumber = Int(tag >> 3)
-            let wireType = Int(tag & 0x07)
-
-            switch (fieldNumber, wireType) {
-            case (1, 2):
-                guard let value = reader.readLengthDelimited() else { return nil }
-                secretData = value
-            case (2, 2):
-                guard let value = reader.readLengthDelimitedString() else { return nil }
-                name = value
-            case (3, 2):
-                guard let value = reader.readLengthDelimitedString() else { return nil }
-                issuer = value
-            case (4, 0):
-                guard let value = reader.readVarint() else { return nil }
-                algorithm = Int(value)
-            case (5, 0):
-                guard let value = reader.readVarint() else { return nil }
-                digits = Int(value)
-            case (6, 0):
-                guard let value = reader.readVarint() else { return nil }
-                type = Int(value)
-            default:
-                guard reader.skipField(wireType: wireType) else { return nil }
-            }
-        }
-
-        guard !secretData.isEmpty else { return nil }
-        guard type == 2, algorithm == 1, digits == 1 else { return nil }
-
-        let label = parseImportedOtpLabel(name)
-        let effectiveIssuer = issuer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? label.issuer : issuer
-        let username = !label.username.isEmpty ? label.username : name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let siteAlias = resolveImportedSiteAlias(issuer: effectiveIssuer, username: username)
-        let secret = base32EncodedString(secretData)
-        guard let siteAlias, !secret.isEmpty, isValidTotpSecret(secret) else {
-            return nil
-        }
-
-        return ParsedGoogleAuthenticatorEntry(
-            secret: secret,
-            siteAlias: siteAlias,
-            username: username.isEmpty ? nil : username
-        )
-    }
-
-    private func parseImportedOtpLabel(_ raw: String) -> (issuer: String, username: String) {
-        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return ("", "") }
-        guard let colonIndex = text.firstIndex(of: ":") else {
-            return ("", text)
-        }
-        let issuer = String(text[..<colonIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
-        let username = String(text[text.index(after: colonIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        return (issuer, username)
-    }
-
-    private func base32EncodedString(_ data: Data) -> String {
-        let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
-        var output = ""
-        var buffer: UInt16 = 0
-        var bitsInBuffer = 0
-
-        for byte in data {
-            buffer = (buffer << 8) | UInt16(byte)
-            bitsInBuffer += 8
-
-            while bitsInBuffer >= 5 {
-                let index = Int((buffer >> UInt16(bitsInBuffer - 5)) & 0x1F)
-                output.append(alphabet[index])
-                bitsInBuffer -= 5
-                if bitsInBuffer == 0 {
-                    buffer = 0
-                } else {
-                    buffer &= (UInt16(1) << UInt16(bitsInBuffer)) - 1
-                }
-            }
-        }
-
-        if bitsInBuffer > 0 {
-            let index = Int((buffer << UInt16(5 - bitsInBuffer)) & 0x1F)
-            output.append(alphabet[index])
-        }
-
-        return output
-    }
-
-    private struct ProtoReader {
-        let data: Data
-        var offset: Int = 0
-
-        var isAtEnd: Bool {
-            offset >= data.count
-        }
-
-        mutating func readVarint() -> UInt64? {
-            var result: UInt64 = 0
-            var shift: UInt64 = 0
-
-            while offset < data.count && shift <= 63 {
-                let byte = data[offset]
-                offset += 1
-                result |= UInt64(byte & 0x7F) << shift
-                if (byte & 0x80) == 0 {
-                    return result
-                }
-                shift += 7
-            }
-
-            return nil
-        }
-
-        mutating func readLengthDelimited() -> Data? {
-            guard let length = readVarint() else { return nil }
-            let count = Int(length)
-            guard count >= 0, offset + count <= data.count else { return nil }
-            let slice = data.subdata(in: offset ..< offset + count)
-            offset += count
-            return slice
-        }
-
-        mutating func readLengthDelimitedString() -> String? {
-            guard let value = readLengthDelimited() else { return nil }
-            return String(data: value, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        mutating func skipField(wireType: Int) -> Bool {
-            switch wireType {
-            case 0:
-                return readVarint() != nil
-            case 1:
-                guard offset + 8 <= data.count else { return false }
-                offset += 8
-                return true
-            case 2:
-                return readLengthDelimited() != nil
-            case 5:
-                guard offset + 4 <= data.count else { return false }
-                offset += 4
-                return true
-            default:
-                return false
-            }
-        }
-    }
-
-    private func matchedImportedTotpAccountIndex(
-        in accounts: [PasswordAccount],
-        siteAlias: String,
-        username: String,
-        secret: String
-    ) -> Int? {
-        let entrySite = DomainUtils.normalize(siteAlias)
-        let entryCanonicalSite = DomainUtils.etldPlusOne(for: entrySite)
-        let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedSecret = secret.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        var bestMatch: (index: Int, score: Int)?
-
-        for (index, account) in accounts.enumerated() {
-            // Permanent-delete tombstones must not be revived by re-import.
-            if account.isPermanentlyDeleted {
-                continue
-            }
-            let accountSecret = account.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !normalizedSecret.isEmpty, accountSecret == normalizedSecret else {
-                continue
-            }
-
-            let accountSites = Set(account.sites.map(DomainUtils.normalize).filter { !$0.isEmpty })
-            let accountCanonicalSites = Set(accountSites.map(DomainUtils.etldPlusOne)).union([account.canonicalSite])
-            let usernameMatches = normalizedUsername.isEmpty
-                ? account.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                : (
-                    account.username.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedUsername ||
-                    account.usernameAtCreate.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedUsername
-                )
-            let siteOverlaps = accountSites.contains(entrySite)
-            let canonicalMatches = !entryCanonicalSite.isEmpty && accountCanonicalSites.contains(entryCanonicalSite)
-
-            let score: Int
-            if usernameMatches && siteOverlaps {
-                score = account.isDeleted ? 35 : 40
-            } else if usernameMatches && canonicalMatches {
-                score = account.isDeleted ? 25 : 30
-            } else {
-                continue
-            }
-
-            if bestMatch == nil || score > bestMatch!.score {
-                bestMatch = (index, score)
-            }
-        }
-
-        return bestMatch?.index
-    }
-
-    private func applyImportedTotpEntry(
-        _ entry: ParsedGoogleAuthenticatorEntry,
-        siteAlias: String,
-        to account: PasswordAccount,
-        nowMs: Int64,
-        targetFolderId: UUID?
-    ) -> PasswordAccount {
-        // Defense in depth: never clear permanent-delete tombstones via import.
-        if account.isPermanentlyDeleted {
-            return account
-        }
-        var updated = account
-        var changed = false
-
-        let mergedSites = Array(
-            Set((updated.sites + [siteAlias]).map(DomainUtils.normalize).filter { !$0.isEmpty })
-        ).sorted()
-        if mergedSites != updated.sites {
-            updated.sites = mergedSites
-            changed = true
-        }
-
-        if let username = entry.username, !username.isEmpty, username != updated.username {
-            updated.username = username
-            updated.usernameUpdatedAtMs = nowMs
-            updated.usernameUpdatedDeviceName = currentDeviceName()
-            changed = true
-        }
-
-        if !entry.secret.isEmpty, entry.secret != updated.totpSecret {
-            updated.totpSecret = entry.secret
-            updated.totpUpdatedAtMs = nowMs
-            updated.totpUpdatedDeviceName = currentDeviceName()
-            changed = true
-        }
-
-        // Soft-deleted accounts may be revived; permanent tombstones are blocked above.
-        if updated.isDeleted {
-            updated.isDeleted = false
-            updated.deletedAtMs = nil
-            updated.deletedDeviceName = ""
-            changed = true
-        }
-
-        if let targetFolderId {
-            let nextFolderIds = normalizeFolderIds(updated.resolvedFolderIds + [targetFolderId])
-            if nextFolderIds != updated.resolvedFolderIds {
-                updated.setResolvedFolderIds(nextFolderIds)
-                changed = true
-            }
-        }
-
-        if changed {
-            updated.touchUpdatedAt(nowMs, deviceName: currentDeviceName())
-        }
-
-        return updated
-    }
-
-    private func googleAuthenticatorImportSuffix(
-        importedCount: Int,
-        skippedCount: Int,
-        unchangedCount: Int,
-        batchSize: Int,
-        batchIndex: Int
-    ) -> String {
-        var parts: [String] = ["è§£æž \(importedCount) æ¡"]
-        if skippedCount > 0 {
-            parts.append("è·³è¿‡ \(skippedCount) æ¡")
-        }
-        if unchangedCount > 0 {
-            parts.append("æœªå˜åŒ– \(unchangedCount) æ¡")
-        }
-        if batchSize > 1 {
-            parts.append("å½“å‰æ‰¹æ¬¡ \(batchIndex + 1)/\(batchSize)")
-        }
-        return "ï¼Œ" + parts.joined(separator: "ï¼Œ")
-    }
-
-    private func parseSites(_ raw: String) -> [String] {
-        let normalizedRaw = raw.replacingOccurrences(of: ";", with: "\n")
-            .replacingOccurrences(of: ",", with: "\n")
-        let values = normalizedRaw
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .map(DomainUtils.normalize)
-            .filter { !$0.isEmpty }
-        return Array(Set(values)).sorted()
-    }
-
-    private func firstSiteAlias(from raw: String) -> String {
-        let normalizedRaw = raw.replacingOccurrences(of: ";", with: "\n")
-            .replacingOccurrences(of: ",", with: "\n")
-        let lines = normalizedRaw.components(separatedBy: .newlines)
-        for line in lines {
-            let value = DomainUtils.normalize(line)
-            if !value.isEmpty {
-                return value
-            }
-        }
-        return ""
-    }
-
-    private func demoAliasSites(for site: String) -> [String] {
-        let normalized = DomainUtils.normalize(site)
-        let aliases: [String]
-        switch normalized {
-        case "icloud.com", "apple.com":
-            aliases = ["apple.com", "apple.com.cn", "icloud.com", "icloud.com.cn"]
-        case "qq.com", "wx.qq.com":
-            aliases = ["qq.com", "wx.qq.com"]
-        case "baidu.com":
-            aliases = ["baidu.com", "passport.baidu.com", "pan.baidu.com"]
-        case "sina.com":
-            aliases = ["sina.com", "mail.sina.com", "weibo.com"]
-        case "github.com":
-            aliases = ["github.com", "gist.github.com"]
-        case "gitlab.com":
-            aliases = ["gitlab.com", "about.gitlab.com"]
-        case "google.com":
-            aliases = ["google.com", "accounts.google.com"]
-        case "youtube.com":
-            aliases = ["youtube.com", "studio.youtube.com"]
-        case "x.com":
-            aliases = ["x.com", "twitter.com"]
-        case "facebook.com":
-            aliases = ["facebook.com", "messenger.com"]
-        case "amazon.com":
-            aliases = ["amazon.com", "smile.amazon.com"]
-        case "paypal.com":
-            aliases = ["paypal.com", "www.paypal.com"]
-        case "microsoft.com":
-            aliases = ["microsoft.com", "live.com", "login.microsoftonline.com"]
-        case "office.com":
-            aliases = ["office.com", "outlook.office.com"]
-        case "netflix.com":
-            aliases = ["netflix.com", "help.netflix.com"]
-        case "spotify.com":
-            aliases = ["spotify.com", "open.spotify.com"]
-        case "linkedin.com":
-            aliases = ["linkedin.com", "www.linkedin.com"]
-        case "dropbox.com":
-            aliases = ["dropbox.com", "www.dropbox.com"]
-        default:
-            aliases = [normalized]
-        }
-        return Array(Set(aliases.map(DomainUtils.normalize).filter { !$0.isEmpty })).sorted()
-    }
-
-    private func demoTotpSecret(for index: Int) -> String {
-        let seeds = [
-            "JBSWY3DPEHPK3PXP",
-            "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
-            "KRUGS4ZANFZSAYJA",
-            "MFRGGZDFMZTWQ2LK",
-            "ONSWG4TFOQ======",
-            "NBSWY3DPEB3W64TMMQ======",
-            "J5XW4Z3FOI======",
-            "KRSXG5DSNFXGOIDB",
-            "MZXW6YTBOI======",
-            "NB2W45DFOIZA====",
-        ]
-        return seeds[index % seeds.count]
-    }
-
-    private func demoRecoveryCodes(for index: Int) -> String {
-        let prefix = String(format: "%02d", index)
-        return """
-        RC\(prefix)-A1B2-C3D4
-        RC\(prefix)-E5F6-G7H8
-        RC\(prefix)-J9K0-L1M2
-        RC\(prefix)-N3P4-Q5R6
-        RC\(prefix)-S7T8-U9V0
-        """
-    }
-
-    private func timestampForFile() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
-        return formatter.string(from: Date())
-    }
-
-    private func dataDirectoryURL() -> URL {
-        PassSharedData.dataDirectoryURL()
-    }
-
-    private func saveLocalSyncSafetySnapshot(_ payload: SyncBundlePayload, reason: String) throws {
-        let directory = dataDirectoryURL().appendingPathComponent("sync-safety-snapshots", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let safeReason = reason
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: "\\", with: "-")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let fileName = "pass-sync-safety-\(timestampForFile())-\(safeReason.isEmpty ? "backup" : safeReason)-\(UUID().uuidString).json"
-        let fileURL = directory.appendingPathComponent(fileName, isDirectory: false)
-        let data = try encodeEncryptedSyncBundle(payload: payload)
-        try data.write(to: fileURL, options: [.atomic])
-
-        let files = try FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.creationDateKey],
-            options: [.skipsHiddenFiles]
-        )
-        let sortedFiles = files.sorted { lhs, rhs in
-            let leftDate = (try? lhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-            let rightDate = (try? rhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-            return leftDate > rightDate
-        }
-        for staleURL in sortedFiles.dropFirst(5) {
-            try? FileManager.default.removeItem(at: staleURL)
-        }
-    }
-
-    private func dataFileURL() -> URL {
-        dataDirectoryURL().appendingPathComponent("accounts.json", isDirectory: false)
-    }
-
-    private func passkeysFileURL() -> URL {
-        dataDirectoryURL().appendingPathComponent("passkeys.json", isDirectory: false)
-    }
-
-    private func nowMs() -> Int64 {
-        Int64(Date().timeIntervalSince1970 * 1000)
-    }
-
-    private func persistedOrderClock(key: String, fallback: Int64) -> Int64 {
-        if let stored = UserDefaults.standard.object(forKey: key) as? NSNumber,
-           stored.int64Value > 0
-        {
-            return stored.int64Value
-        }
-        let resolved = max(fallback, 0)
-        UserDefaults.standard.set(resolved, forKey: key)
-        return resolved
-    }
-
-    private func markAllRegularOrderChanged(at timestamp: Int64? = nil) {
-        UserDefaults.standard.set(timestamp ?? nowMs(), forKey: Keys.allRegularOrderUpdatedAtMs)
-    }
-
-    private func markFolderOrderChanged(at timestamp: Int64? = nil) {
-        UserDefaults.standard.set(timestamp ?? nowMs(), forKey: Keys.folderOrderUpdatedAtMs)
-    }
-
-    private func currentDeviceName() -> String {
-        PassSyncPolicy.normalizeDeviceName(deviceName)
-    }
-
-    private func syncDeviceId() -> String {
-        let defaults = UserDefaults.standard
-        let existing = defaults.string(forKey: Keys.syncDeviceId)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased() ?? ""
-        if !existing.isEmpty {
-            return existing
-        }
-        let generated = UUID().uuidString.lowercased()
-        defaults.set(generated, forKey: Keys.syncDeviceId)
-        return generated
-    }
-
-    private func showToast(_ message: String, style: ToastStyle = .success) {
-        toastDismissWorkItem?.cancel()
-        toastMessage = message
-        toastStyle = style
-        isToastVisible = true
-
-        let dismissWorkItem = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            Task { @MainActor in
-                self.isToastVisible = false
-            }
-        }
-        toastDismissWorkItem = dismissWorkItem
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + uiToastDurationSeconds,
-            execute: dismissWorkItem
-        )
-    }
-
-    private func setStatusMessage(_ message: String, allowsUndoMove: Bool = false) {
-        nextStatusAllowsUndoMove = allowsUndoMove
-        statusMessage = message
-    }
-
-    static func classifyToastStyle(_ message: String) -> ToastStyle {
-        let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = text.lowercased()
-        let errorTokens = [
-            "å¤±è´¥", "é”™è¯¯", "æ— æ³•", "ä¸èƒ½", "æ‹’ç»", "æ— æ•ˆ", "ç¦æ­¢", "ä¸åŒ¹é…", "å·²åœæ­¢",
-            "ç¼ºå¤±", "ä¸å­˜åœ¨", "è¶…æ—¶", "å´©æºƒ", "å¼‚å¸¸", "æœªæ‰¾åˆ°", "ä¸æ­£ç¡®", "error", "failed", "fail",
-        ]
-        if errorTokens.contains(where: { lower.contains($0) || text.contains($0) }) {
-            return .error
-        }
-        let warningTokens = [
-            "è­¦å‘Š", "è¯·å…ˆ", "è¯·ç¡®è®¤", "å·²å–æ¶ˆ", "å–æ¶ˆ", "æš‚æ— ", "æœªå¯ç”¨", "æœªé…ç½®", "æ³¨æ„",
-            "è·³è¿‡", "æœªé€‰æ‹©", "ä¸å®Œæ•´", "warning", "warn", "cancel",
-        ]
-        if warningTokens.contains(where: { lower.contains($0) || text.contains($0) }) {
-            return .warning
-        }
-        return .success
-    }
-
-    private func showUndoMoveToast(message: String) {
-        undoMoveDismissWorkItem?.cancel()
-        undoMoveToastMessage = message
-        isUndoMoveToastVisible = true
-
-        let dismissWorkItem = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            Task { @MainActor in
-                self.isUndoMoveToastVisible = false
-            }
-        }
-        undoMoveDismissWorkItem = dismissWorkItem
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + 3.0,
-            execute: dismissWorkItem
-        )
-    }
-
-        @discardableResult
-    private func saveFoldersToDefaults() -> Bool {
-        let previousFolders = folders
-        do {
-            try writeCollectionsAtomically(
-                includeAccounts: false,
-                includeFolders: true,
-                includePasskeys: false,
-                pushICloud: true
-            )
-            return true
-        } catch {
-            folders = previousFolders
-            statusMessage = "ä¿å­˜æ–‡ä»¶å¤¹åˆ° SQLite å¤±è´¥: \(error.localizedDescription)"
-            if let persistedData = try? localSQLiteStore.readData(for: LocalDatabaseKeys.folders),
-               let persisted = try? decoder.decode([AccountFolder].self, from: persistedData)
-            {
-                folders = persisted
-            }
-            return false
-        }
-    }
-
-
-    var uiFontFamilyOptions: [String] {
-        [Self.systemDefaultFontFamily] + NSFontManager.shared.availableFontFamilies.sorted()
-    }
-
-    func textFont(size: CGFloat? = nil, weight: Font.Weight = .regular) -> Font {
-        appFont(size: size ?? CGFloat(uiTextFontSize), weight: weight)
-    }
-
-    func buttonFont(size: CGFloat? = nil, weight: Font.Weight = .semibold) -> Font {
-        appFont(size: size ?? CGFloat(uiButtonFontSize), weight: weight)
-    }
-
-    func scaledTextSize(_ base: CGFloat) -> CGFloat {
-        max(8, base + CGFloat(uiTextFontSize - 17))
-    }
-
-    private func appFont(size: CGFloat, weight: Font.Weight) -> Font {
-        if uiFontFamily == Self.systemDefaultFontFamily {
-            return .system(size: size, weight: weight)
-        }
-        return .custom(uiFontFamily, size: size).weight(weight)
-    }
-}
-
-private struct SyncBundleV2: Codable {
-    let schema: String
-    let exportedAtMs: Int64
-    let source: SyncBundleSource
-    let payload: SyncBundlePayload
-}
-
-private struct SyncBundleSource: Codable {
-    let app: String
-    let platform: String
-    let deviceName: String
-    let deviceId: String
-    let logicalClockMs: Int64
-    let formatVersion: Int
-
-    private enum CodingKeys: String, CodingKey {
-        case app
-        case platform
-        case deviceName
-        case deviceId
-        case logicalClockMs
-        case formatVersion
-    }
-
-    init(
-        app: String,
-        platform: String,
-        deviceName: String,
-        deviceId: String,
-        logicalClockMs: Int64,
-        formatVersion: Int
-    ) {
-        self.app = app
-        self.platform = platform
-        self.deviceName = deviceName
-        self.deviceId = deviceId
-        self.logicalClockMs = logicalClockMs
-        self.formatVersion = formatVersion
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        app = try container.decode(String.self, forKey: .app)
-        platform = try container.decode(String.self, forKey: .platform)
-        deviceName = try container.decode(String.self, forKey: .deviceName)
-        deviceId = try container.decodeIfPresent(String.self, forKey: .deviceId) ?? "legacy-device"
-        logicalClockMs = try container.decodeIfPresent(Int64.self, forKey: .logicalClockMs) ?? 0
-        formatVersion = try container.decodeIfPresent(Int.self, forKey: .formatVersion) ?? 2
-    }
-}
-
-private struct SyncBundlePayload: Codable {
-    var accounts: [PasswordAccount]
-    let folders: [AccountFolder]
-    let passkeys: [PasskeyRecord]
-    let allRegularAccountIds: [String]
-    let allRegularOrderUpdatedAtMs: Int64
-    let allRegularOrderUpdatedDeviceName: String
-    let folderOrderIds: [String]
-    let folderOrderUpdatedAtMs: Int64
-    let folderOrderUpdatedDeviceName: String
-
-    init(
-        accounts: [PasswordAccount],
-        folders: [AccountFolder],
-        passkeys: [PasskeyRecord],
-        allRegularAccountIds: [String] = [],
-        allRegularOrderUpdatedAtMs: Int64 = 0,
-        allRegularOrderUpdatedDeviceName: String = "",
-        folderOrderIds: [String] = [],
-        folderOrderUpdatedAtMs: Int64 = 0,
-        folderOrderUpdatedDeviceName: String = ""
-    ) {
-        self.accounts = accounts
-        self.folders = folders
-        self.passkeys = passkeys
-        self.allRegularAccountIds = allRegularAccountIds
-        self.allRegularOrderUpdatedAtMs = allRegularOrderUpdatedAtMs
-        self.allRegularOrderUpdatedDeviceName = allRegularOrderUpdatedDeviceName
-        self.folderOrderIds = folderOrderIds
-        self.folderOrderUpdatedAtMs = folderOrderUpdatedAtMs
-        self.folderOrderUpdatedDeviceName = folderOrderUpdatedDeviceName
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case accounts, folders, passkeys
-        case allRegularAccountIds, allRegularOrderUpdatedAtMs, allRegularOrderUpdatedDeviceName
-        case folderOrderIds, folderOrderUpdatedAtMs, folderOrderUpdatedDeviceName
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        accounts = try container.decodeIfPresent([PasswordAccount].self, forKey: .accounts) ?? []
-        folders = try container.decodeIfPresent([AccountFolder].self, forKey: .folders) ?? []
-        passkeys = try container.decodeIfPresent([PasskeyRecord].self, forKey: .passkeys) ?? []
-        allRegularAccountIds = try container.decodeIfPresent([String].self, forKey: .allRegularAccountIds) ?? []
-        allRegularOrderUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .allRegularOrderUpdatedAtMs) ?? 0
-        allRegularOrderUpdatedDeviceName = try container.decodeIfPresent(String.self, forKey: .allRegularOrderUpdatedDeviceName) ?? ""
-        folderOrderIds = try container.decodeIfPresent([String].self, forKey: .folderOrderIds) ?? []
-        folderOrderUpdatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .folderOrderUpdatedAtMs) ?? 0
-        folderOrderUpdatedDeviceName = try container.decodeIfPresent(String.self, forKey: .folderOrderUpdatedDeviceName) ?? ""
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(accounts, forKey: .accounts)
-        try container.encode(folders, forKey: .folders)
-        try container.encode(passkeys, forKey: .passkeys)
-        try container.encode(allRegularAccountIds, forKey: .allRegularAccountIds)
-        try container.encode(allRegularOrderUpdatedAtMs, forKey: .allRegularOrderUpdatedAtMs)
-        try container.encode(allRegularOrderUpdatedDeviceName, forKey: .allRegularOrderUpdatedDeviceName)
-        try container.encode(folderOrderIds, forKey: .folderOrderIds)
-        try container.encode(folderOrderUpdatedAtMs, forKey: .folderOrderUpdatedAtMs)
-        try container.encode(folderOrderUpdatedDeviceName, forKey: .folderOrderUpdatedDeviceName)
-    }
-}
-
-private enum Keys {
-    static let deviceName = "pass.deviceName"
-    static let exportDirectoryPath = "pass.export.directoryPath"
-    static let exportDirectoryBookmark = "pass.export.directoryBookmark"
-    static let foldersData = "pass.folders.data"
-    static let syncDeviceId = "pass.sync.deviceId.v1"
-    static let syncEnableICloud = "pass.sync.enableICloud.v3"
-    static let syncEnableWebDAV = "pass.sync.enableWebDAV.v3"
-    static let syncEnableSelfHostedServer = "pass.sync.enableSelfHostedServer.v3"
-    static let syncPrimarySource = "pass.sync.primarySource.v1"
-    static let syncMode = "pass.sync.mode.v1"
-    static let autoSyncIntervalMinutes = "pass.sync.autoIntervalMinutes.v1"
-    static let webdavBaseURL = "pass.sync.webdav.baseURL.v2"
-    static let webdavRemotePath = "pass.sync.webdav.remotePath.v2"
-    static let webdavUsername = "pass.sync.webdav.username.v2"
-    static let serverBaseURL = "pass.sync.server.baseURL.v2"
-    static let uiFontFamily = "pass.ui.font.family"
-    static let uiTextFontSize = "pass.ui.font.textSize"
-    static let uiButtonFontSize = "pass.ui.font.buttonSize"
-    static let uiToastDurationSeconds = "pass.ui.toast.duration"
-    static let showPasswordsGlobally = "pass.ui.passwords.showGlobally.v1"
-    static let syncDiagnostics = "pass.sync.diagnostics.v1"
-    static let allRegularOrderUpdatedAtMs = "pass.sync.order.all.updatedAtMs.v1"
-    static let folderOrderUpdatedAtMs = "pass.sync.order.folders.updatedAtMs.v1"
-}
-
-private enum SecretKeys {
-    static let service = "pass.sync.credentials.v2"
-    static let fileName = "sync-credentials-v1.json"
-    static let legacyFileName = "sync-secrets.json"
-    static let webdavPasswordAccount = "sync.webdav.password"
-    static let serverTokenAccount = "sync.server.token"
-    static let syncEncryptionKeyAccount = "sync.encryption.key.v1"
-    static let previousSyncEncryptionKeyAccount = "sync.encryption.key.previous.v1"
-    static let allAccounts = [
-        webdavPasswordAccount,
-        serverTokenAccount,
-        syncEncryptionKeyAccount,
-        previousSyncEncryptionKeyAccount,
-    ]
-}
-
-private struct SyncSecretFile: Codable {
-    static let currentVersion = 1
-
-    let version: Int
-    let values: [String: String]
-}
-
-private enum ICloudKeys {
-    static let syncPayloadBlob = "pass.sync.payload.blob.v2"
-    static let syncPayloadUpdatedAtMs = "pass.sync.payload.updatedAtMs.v2"
-}
-
-private struct LegacyPasswordAccount: Codable {
-    let id: UUID
-    let accountId: String
-    let sites: [String]
-    let username: String
-    let password: String
-    let updatedAtMs: Int64
-    let isDeleted: Bool
-}
-
-private extension LegacyPasswordAccount {
-    func toCurrent(deviceName: String) -> PasswordAccount {
-        let normalizedSites = Array(Set(sites.map(DomainUtils.normalize))).sorted()
-        let canonical = DomainUtils.etldPlusOne(for: normalizedSites.first ?? "")
-        return PasswordAccount(
-            id: id,
-            accountId: accountId,
-            canonicalSite: canonical,
-            usernameAtCreate: username,
-            isPinned: false,
-            pinnedSortOrder: nil,
-            regularSortOrder: nil,
-            pinnedViews: nil,
-            folderId: nil,
-            folderIds: [],
-            sites: normalizedSites,
-            username: username,
-            password: password,
-            totpSecret: "",
-            recoveryCodes: "",
-            note: "",
-            passkeyCredentialIds: [],
-            usernameUpdatedAtMs: updatedAtMs,
-            usernameUpdatedDeviceName: deviceName,
-            passwordUpdatedAtMs: updatedAtMs,
-            passwordUpdatedDeviceName: deviceName,
-            totpUpdatedAtMs: updatedAtMs,
-            totpUpdatedDeviceName: deviceName,
-            recoveryCodesUpdatedAtMs: updatedAtMs,
-            recoveryCodesUpdatedDeviceName: deviceName,
-            noteUpdatedAtMs: updatedAtMs,
-            noteUpdatedDeviceName: deviceName,
-            passkeyUpdatedAtMs: updatedAtMs,
-            passkeyUpdatedDeviceName: deviceName,
-            updatedAtMs: updatedAtMs,
-            isDeleted: isDeleted,
-            isPermanentlyDeleted: false,
-            deletedAtMs: isDeleted ? updatedAtMs : nil,
-            deletedDeviceName: isDeleted ? deviceName : "",
-            lastOperatedDeviceName: deviceName,
-            createdDeviceName: deviceName,
-            createdAtMs: updatedAtMs
-        )
-    }
-}
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éí×]9Ó¤èµ©hºÚn¶X§zÍZ[\Ü\Ú]š[\ÜÜž\ÒÚ]š[\Ü›Ý[™][Û‚š[\ÜÝÚYRBš[\Üš\Ú[Û‚‚XZ[XÝÜ‚™š[˜[Û\ÜÈXØÛÝ[ÝÜ™NˆØœÙ\˜X›SØš™XÝÂˆ[[HÞ[˜Ó[ÙNˆÝš[™ËØ\ÙR]\˜X›KY[YšXX›HÂˆØ\ÙHY\™ÙBˆØ\ÙH™[[ÝSÝ™\Üš]SØØ[ˆØ\ÙHØØ[Ý™\Üš]T™[[ÝB‚ˆ˜\ˆYˆÝš[™ÈÈ˜]Õ˜[YHB‚ˆ˜\ˆX™[ˆÝš[™ÈÂˆÝÚ]ÚÙ[ˆÂˆØ\ÙH›Y\™ÙN‚ˆ™]\›ˆ¹d"9nmˆ‚ˆØ\ÙHœ™[[ÝSÝ™\Üš]SØØ[‚ˆ™]\›ˆ¹.¤yêëú)¡¹æå¹§+9g,‚ˆØ\ÙH›ØØ[Ý™\Üš]T™[[ÝN‚ˆ™]\›ˆ¹§+9g,:)¡¹æå¹.¤yêëÈ‚ˆBˆB‚ˆ˜\ˆÛÛ\][Û•™\˜ŽˆÝš[™ÈÂˆÝÚ]ÚÙ[ˆÂˆØ\ÙH›Y\™ÙN‚ˆ™]\›ˆ¹k£9¢$9d"9nm¹d#9«iH‚ˆØ\ÙHœ™[[ÝSÝ™\Üš]SØØ[‚ˆ™]\›ˆ¹k£9¢$9.¤yêëú)¡¹æå¹§+9g,‚ˆØ\ÙH›ØØ[Ý™\Üš]T™[[ÝN‚ˆ™]\›ˆ¹k£9¢$9§+9g,:)¡¹æå¹.¤yêëÈ‚ˆBˆBˆB‚ˆ[[H]]ÔÞ[˜Ò[\˜[ˆ[Ø\ÙR]\˜X›KY[YšXX›HÂˆØ\ÙH\ØX›YHˆØ\ÙHZ[]LHHBˆØ\ÙHZ[]LÈHÂˆØ\ÙHZ[]MHHBˆØ\ÙHZ[]LLHLˆØ\ÙHZ[]LMHHMBˆØ\ÙHZ[]LÌHÌˆØ\ÙHZ[]MŒHŒ‚ˆ˜\ˆYˆ[È˜]Õ˜[YHB‚ˆ˜\ˆX™[ˆÝš[™ÈÂˆÝÚ]ÚÙ[ˆÂˆØ\ÙH™\ØX›Y‚ˆ™]\›ˆ¹alúeëH‚ˆØ\ÙH›Z[]LN‚ˆ™]\›ˆ¹«ãÈH9b!ºd§È‚ˆØ\ÙH›Z[]LÎ‚ˆ™]\›ˆ¹«ãÈÈ9b!ºd§È‚ˆØ\ÙH›Z[]MN‚ˆ™]\›ˆ¹«ãÈH9b!ºd§È‚ˆØ\ÙH›Z[]LL‚ˆ™]\›ˆ¹«ãÈL9b!ºd§È‚ˆØ\ÙH›Z[]LMN‚ˆ™]\›ˆ¹«ãÈMH9b!ºd§È‚ˆØ\ÙH›Z[]LÌ‚ˆ™]\›ˆ¹«ãÈÌ9b!ºd§È‚ˆØ\ÙH›Z[]MŒ‚ˆ™]\›ˆ¹«ãÈŒ9b!ºd§È‚ˆBˆBˆB‚ˆ[[HÞ[˜Ôš[X\žTÛÝ\˜ÙNˆÝš[™ËØ\ÙR]\˜X›KY[YšXX›HÂˆØ\ÙHÙ[’ÜÝYÙ\™\‚ˆØ\ÙHÙX‘U‚ˆØ\ÙHPÛÝY‚ˆ˜\ˆYˆÝš[™ÈÈ˜]Õ˜[YHB‚ˆ˜\ˆX™[ˆÝš[™ÈÂˆÝÚ]ÚÙ[ˆÂˆØ\ÙHœÙ[’ÜÝYÙ\™\Žˆ™]\›ˆº!ê¹nî¹§#yb¨yfj;ï"9£ª:#d;ï"H‚ˆØ\ÙHÙX‘UŽˆ™]\›ˆ•ÙX‘Uˆ‚ˆØ\ÙHšPÛÝYˆ™]\›ˆšPÛÝY‚ˆBˆBˆB‚ˆX›\ÚY˜\ˆ]šXÙS˜[YNˆÝš[™ÈHˆ‚ˆ[[HØ\ÝÝ[NˆÝš[™Ë\]X]X›HÂˆØ\ÙHÝXØÙ\ÜÂˆØ\ÙH\œ›Ü‚ˆØ\ÙHØ\›š[™ÂˆB‚ˆX›\ÚY˜\ˆÝ]\ÓY\ÜØYÙNˆÝš[™ÈHˆˆÂˆYÙ]Âˆ]Y\ÜØYÙHHÝ]\ÓY\ÜØYÙKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ][ÝÜÕ[™Ó[Ý™HH™^Ý]\Ð[ÝÜÕ[™Ó[Ý™Bˆ™^Ý]\Ð[ÝÜÕ[™Ó[Ý™HH˜[ÙBˆ\ÕÜØ\Ý[™Ð]˜Z[X›HH[ÝÜÕ[™Ó[Ý™BˆÝX\™[Y\ÜØYÙKš\Ñ[\H[ÙHÈ™]\›ˆBˆÚÝÕØ\Ý
+Y\ÜØYÙKÝ[NˆÙ[‹˜Û\ÜÚYžUØ\ÝÝ[JY\ÜØYÙJJBˆBˆBˆX›\ÚY˜\ˆÜ™X]TÚ]\Õ^ˆÝš[™ÈHˆ‚ˆX›\ÚY˜\ˆÜ™X]U\Ù\›˜[YNˆÝš[™ÈHˆ‚ˆX›\ÚY˜\ˆÜ™X]T\ÜÝÛÜ™ˆÝš[™ÈHˆ‚ˆX›\ÚY˜\ˆÜ™X]UÝÙXÜ™]ˆÝš[™ÈHˆ‚ˆX›\ÚY˜\ˆÜ™X]T™XÛÝ™\žPÛÙ\ÎˆÝš[™ÈHˆ‚ˆX›\ÚY˜\ˆÜ™X]S›ÝNˆÝš[™ÈHˆ‚ˆX›\ÚY˜\ˆÚÝÑ[]YXØÛÝ[Îˆ›ÛÛH˜[ÙBˆX›\ÚY˜\ˆY][™ÐXØÛÝ[YˆURQÂˆX›\ÚY˜\ˆY]Ú]\Õ^ˆÝš[™ÈHˆ‚ˆX›\ÚY˜\ˆY]\Ù\›˜[YNˆÝš[™ÈHˆ‚ˆX›\ÚY˜\ˆY]\ÜÝÛÜ™ˆÝš[™ÈHˆ‚ˆX›\ÚY˜\ˆY]ÝÙXÜ™]ˆÝš[™ÈHˆ‚ˆX›\ÚY˜\ˆY]™XÛÝ™\žPÛÙ\ÎˆÝš[™ÈHˆ‚ˆX›\ÚY˜\ˆY]›ÝNˆÝš[™ÈHˆ‚ˆX›\ÚY˜\ˆ^Ü\™XÝÜžT]ˆÝš[™ÈHˆ‚ˆX›\ÚY˜\ˆZQ›Û˜[Z[NˆÝš[™ÈHXØÛÝ[ÝÜ™KœÞ\Ý[QY˜][›Û˜[Z[HÂˆYÙ]Âˆ]˜[˜XÚÈHXØÛÝ[ÝÜ™KœÞ\Ý[QY˜][›Û˜[Z[Bˆ]›Ü›X[^™YHZQ›Û˜[Z[Kš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ]™\ÛÛ™YH
+›Ü›X[^™YOH˜[˜XÚÈXØÛÝ[ÝÜ™Kš[œÝ[Y›Û˜[Z[Y\Ë˜ÛÛZ[œÊ›Ü›X[^™Y
+JBˆÈ›Ü›X[^™Yˆˆ˜[˜XÚÂˆYˆ™\ÛÛ™YOHZQ›Û˜[Z[HÂˆZQ›Û˜[Z[HH™\ÛÛ™Yˆ™]\›‚ˆBˆ\Ù\‘Y˜][ËœÝ[™\™œÙ]
+™\ÛÛ™Y›Ü’Ù^NˆÙ^\ËZQ›Û˜[Z[JBˆBˆBˆX›\ÚY˜\ˆZU^›ÛÚ^™NˆÝX›HHŒÂˆYÙ]Âˆ]Û[\YHZ[ŠX^
+ZU^›ÛÚ^™KLŠK
+BˆYˆÛ[\YOHZU^›ÛÚ^™HÂˆZU^›ÛÚ^™HHÛ[\Yˆ™]\›‚ˆBˆ\Ù\‘Y˜][ËœÝ[™\™œÙ]
+Û[\Y›Ü’Ù^NˆÙ^\ËZU^›ÛÚ^™JBˆBˆBˆX›\ÚY˜\ˆZP]Û‘›ÛÚ^™NˆÝX›HHŒÂˆYÙ]Âˆ]Û[\YHZ[ŠX^
+ZP]Û‘›ÛÚ^™KLŠKLŠBˆYˆÛ[\YOHZP]Û‘›ÛÚ^™HÂˆZP]Û‘›ÛÚ^™HHÛ[\Yˆ™]\›‚ˆBˆ\Ù\‘Y˜][ËœÝ[™\™œÙ]
+Û[\Y›Ü’Ù^NˆÙ^\ËZP]Û‘›ÛÚ^™JBˆBˆBˆX›\ÚY˜\ˆZUØ\Ý\˜][Û”ÙXÛÛ™ÎˆÝX›HHHÂˆYÙ]Âˆ]Û[\YHZ[ŠX^
+ZUØ\Ý\˜][Û”ÙXÛÛ™ËJKL
+BˆYˆÛ[\YOHZUØ\Ý\˜][Û”ÙXÛÛ™ÈÂˆZUØ\Ý\˜][Û”ÙXÛÛ™ÈHÛ[\Yˆ™]\›‚ˆBˆ\Ù\‘Y˜][ËœÝ[™\™œÙ]
+Û[\Y›Ü’Ù^NˆÙ^\ËZUØ\Ý\˜][Û”ÙXÛÛ™ÊBˆBˆBˆX›\ÚY˜\ˆÚÝÔ\ÜÝÛÜ™ÑÛØ˜[Nˆ›ÛÛHYHÂˆYÙ]Âˆ\Ù\‘Y˜][ËœÝ[™\™œÙ]
+ÚÝÔ\ÜÝÛÜ™ÑÛØ˜[K›Ü’Ù^NˆÙ^\ËœÚÝÔ\ÜÝÛÜ™ÑÛØ˜[JBˆBˆBˆX›\ÚYš]˜]JÙ]
+H˜\ˆØ\ÝY\ÜØYÙNˆÝš[™ÈHˆ‚ˆX›\ÚYš]˜]JÙ]
+H˜\ˆØ\ÝÝ[NˆØ\ÝÝ[HHœÝXØÙ\ÜÂˆX›\ÚYš]˜]JÙ]
+H˜\ˆ\ÕØ\Ýš\ÚX›Nˆ›ÛÛH˜[ÙBˆX›\ÚYš]˜]JÙ]
+H˜\ˆ\ÕÜØ\Ý[™Ð]˜Z[X›Nˆ›ÛÛH˜[ÙBˆX›\ÚYš]˜]JÙ]
+H˜\ˆ›Û\œÎˆÐXØÛÝ[›Û\—HH×Bˆ˜\ˆXÝ]™Q›Û\œÎˆÐXØÛÝ[›Û\—HÂˆ›Û\œË™š[\ˆÈIš\Ñ[]YBˆBˆX›\ÚYš]˜]JÙ]
+H˜\ˆ[™Ó[Ý™UØ\ÝY\ÜØYÙNˆÝš[™ÈHˆ‚ˆX›\ÚYš]˜]JÙ]
+H˜\ˆ\Õ[™Ó[Ý™UØ\Ýš\ÚX›Nˆ›ÛÛH˜[ÙBˆX›\ÚYš]˜]JÙ]
+H˜\ˆÙ[XÝ[XØÛÝ[ÔÚYÛ˜[ˆ[HˆX›\ÚYš]˜]JÙ]
+H˜\ˆÛÝYÞ[˜ÔÝ]\ÎˆÝš[™ÈHšPÛÝY9§*º/ç¹£©{ï#9/oùå*9§+9§.¹¥l9£kˆ‚ˆX›\ÚYš]˜]JÙ]
+H˜\ˆÞ[˜Õ™\œÚ[Û”Ý[[X\šY\ÎˆÔÞ[˜Õ™\œÚ[Û”Ý[[X\žWHH×BˆX›\ÚYš]˜]JÙ]
+H˜\ˆÞ[˜Õ™\œÚ[ÛœÔÝ]\ÎˆÝš[™ÈHˆ‚ˆX›\ÚYš]˜]JÙ]
+H˜\ˆÞ[˜Ô™]šY]ÔÝ]\ÎˆÝš[™ÈHˆ‚ˆX›\ÚYš]˜]JÙ]
+H˜\ˆÞ[˜ÓÝ]›ÞÛÝ[ˆ[HˆX›\ÚYš]˜]JÙ]
+H˜\ˆÞ[˜ÓÝ]›ÞÝ]\ÎˆÝš[™ÈHˆ‚ˆX›\ÚYš]˜]JÙ]
+H˜\ˆÝÜ˜YÙR[YÜš]TÝ]\ÎˆÝš[™ÈHˆ‚ˆX›\ÚYš]˜]JÙ]
+H˜\ˆÞ[˜ÑXYÛ›ÜÝXÜÎˆÞ[˜ÑXYÛ›ÜÝXÜÈH™[\BˆX›\ÚYš]˜]JÙ]
+H˜\ˆXØÛÝ[ÎˆÔ\ÜÝÛÜ™XØÛÝ[HH×BˆX›\ÚYš]˜]JÙ]
+H˜\ˆ\ÜÚÙ^\ÎˆÔ\ÜÚÙ^T™XÛÜ™HH×BˆX›\ÚYš]˜]JÙ]
+H˜\ˆ\ÝÜžQ[šY\ÎˆÓÜ\˜][Û’\ÝÜžQ[žWHH×BˆX›\ÚY˜\ˆÞ[˜Ñ[˜X›RPÛÝYˆ›ÛÛHYHÂˆYÙ]ÂˆÝX\™Z\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\È[ÙHÈ™]\›ˆBˆÙ]Þ[˜Ô™Y™\™[˜ÙJÞ[˜Ñ[˜X›RPÛÝY›Ü’Ù^NˆÙ^\ËœÞ[˜Ñ[˜X›RPÛÝY
+Bˆ[™TÞ[˜ÔÛÝ\˜ÙTÙ[XÝ[ÛÚ[™ÙY
+
+BˆBˆBˆX›\ÚY˜\ˆÞ[˜Ñ[˜X›UÙX‘UŽˆ›ÛÛH˜[ÙHÂˆYÙ]ÂˆÝX\™Z\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\È[ÙHÈ™]\›ˆBˆÙ]Þ[˜Ô™Y™\™[˜ÙJÞ[˜Ñ[˜X›UÙX‘U‹›Ü’Ù^NˆÙ^\ËœÞ[˜Ñ[˜X›UÙX‘UŠBˆ[™TÞ[˜ÔÛÝ\˜ÙTÙ[XÝ[ÛÚ[™ÙY
+
+BˆBˆBˆX›\ÚY˜\ˆÞ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\Žˆ›ÛÛH˜[ÙHÂˆYÙ]ÂˆÝX\™Z\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\È[ÙHÈ™]\›ˆBˆÙ]Þ[˜Ô™Y™\™[˜ÙJÞ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\‹›Ü’Ù^NˆÙ^\ËœÞ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\ŠBˆ[™TÞ[˜ÔÛÝ\˜ÙTÙ[XÝ[ÛÚ[™ÙY
+
+BˆBˆBˆX›\ÚY˜\ˆÞ[˜Ôš[X\žTÛÝ\˜ÙNˆÞ[˜Ôš[X\žTÛÝ\˜ÙHHœÙ[’ÜÝYÙ\™\ˆÂˆYÙ]ÂˆÝX\™Z\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\È[ÙHÈ™]\›ˆBˆÙ]Þ[˜Ô™Y™\™[˜ÙJÞ[˜Ôš[X\žTÛÝ\˜ÙKœ˜]Õ˜[YK›Ü’Ù^NˆÙ^\ËœÞ[˜Ôš[X\žTÛÝ\˜ÙJBˆ™Yœ™\ÚÞ[˜ÔÛÝ\˜ÙTÝ]\Ò[
+
+BˆBˆBˆX›\ÚY˜\ˆÙX™]˜\ÙUT“ˆÝš[™ÈHˆˆÂˆYÙ]ÂˆÝX\™Z\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\È[ÙHÈ™]\›ˆBˆÙ]Þ[˜Ô™Y™\™[˜ÙJÙX™]˜\ÙUT“›Ü’Ù^NˆÙ^\ËÙX™]˜\ÙUT“
+BˆBˆBˆX›\ÚY˜\ˆÙX™]”™[[ÝT]ˆÝš[™ÈHœ\ÜË\Þ[˜ËX[™K]Œ‹šœÛÛˆˆÂˆYÙ]ÂˆÝX\™Z\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\È[ÙHÈ™]\›ˆBˆÙ]Þ[˜Ô™Y™\™[˜ÙJÙX™]”™[[ÝT]›Ü’Ù^NˆÙ^\ËÙX™]”™[[ÝT]
+BˆBˆBˆX›\ÚY˜\ˆÙX™]•\Ù\›˜[YNˆÝš[™ÈHˆˆÂˆYÙ]ÂˆÝX\™Z\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\È[ÙHÈ™]\›ˆBˆÙ]Þ[˜Ô™Y™\™[˜ÙJÙX™]•\Ù\›˜[YK›Ü’Ù^NˆÙ^\ËÙX™]•\Ù\›˜[YJBˆBˆBˆX›\ÚY˜\ˆÙX™]”\ÜÝÛÜ™ˆÝš[™ÈHˆˆÂˆYÙ]ÂˆÝX\™Z\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\È[ÙHÈ™]\›ˆBˆÈHØ]™TÙXÜ™]
+ÙX™]”\ÜÝÛÜ™XØÛÝ[ˆÙXÜ™]Ù^\ËÙX™]”\ÜÝÛÜ™XØÛÝ[
+BˆBˆBˆX›\ÚY˜\ˆÙ\™\˜\ÙUT“ˆÝš[™ÈHˆˆÂˆYÙ]ÂˆÝX\™Z\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\È[ÙHÈ™]\›ˆBˆ]›Ü›X[^™YH›Ü›X[^™YÙ[’ÜÝYÙ\™\˜\ÙUT“
+Ù\™\˜\ÙUT“
+BˆYˆ›Ü›X[^™YOHÙ\™\˜\ÙUT“ÂˆÙ\™\˜\ÙUT“H›Ü›X[^™Yˆ™]\›‚ˆBˆÙ]Þ[˜Ô™Y™\™[˜ÙJ›Ü›X[^™Y›Ü’Ù^NˆÙ^\ËœÙ\™\˜\ÙUT“
+BˆBˆBˆX›\ÚY˜\ˆÙ\™\]]ÚÙ[ŽˆÝš[™ÈHˆˆÂˆYÙ]ÂˆÝX\™Z\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\È[ÙHÈ™]\›ˆBˆÈHØ]™TÙXÜ™]
+Ù\™\]]ÚÙ[‹XØÛÝ[ˆÙXÜ™]Ù^\ËœÙ\™\•ÚÙ[XØÛÝ[
+BˆBˆBˆX›\ÚY˜\ˆÞ[˜Ñ[˜Üž\[Û’Ù^NˆÝš[™ÈHˆˆÂˆYÙ]ÂˆÝX\™Z\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\È[ÙHÈ™]\›ˆBˆÈHØ]™TÙXÜ™]
+Þ[˜Ñ[˜Üž\[Û’Ù^KXØÛÝ[ˆÙXÜ™]Ù^\ËœÞ[˜Ñ[˜Üž\[Û’Ù^PXØÛÝ[
+BˆBˆBˆX›\ÚY˜\ˆ™]š[Ý\ÔÞ[˜Ñ[˜Üž\[Û’Ù^NˆÝš[™ÈHˆˆÂˆYÙ]ÂˆÝX\™Z\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\È[ÙHÈ™]\›ˆBˆÈHØ]™TÙXÜ™]
+™]š[Ý\ÔÞ[˜Ñ[˜Üž\[Û’Ù^KXØÛÝ[ˆÙXÜ™]Ù^\Ëœ™]š[Ý\ÔÞ[˜Ñ[˜Üž\[Û’Ù^PXØÛÝ[
+BˆBˆBˆX›\ÚY˜\ˆÞ[˜Ó[ÙNˆÞ[˜Ó[ÙHH›Y\™ÙHÂˆYÙ]ÂˆÝX\™Z\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\È[ÙHÈ™]\›ˆBˆÙ]Þ[˜Ô™Y™\™[˜ÙJÞ[˜Ó[ÙKœ˜]Õ˜[YK›Ü’Ù^NˆÙ^\ËœÞ[˜Ó[ÙJBˆBˆBˆX›\ÚY˜\ˆ]]ÔÞ[˜Ò[\˜[Z[]\Îˆ[H]]ÔÞ[˜Ò[\˜[™\ØX›Yœ˜]Õ˜[YHÂˆYÙ]Âˆ]™\ÛÛ™YH]]ÔÞ[˜Ò[\˜[
+˜]Õ˜[YNˆ]]ÔÞ[˜Ò[\˜[Z[]\ÊHÏÈ™\ØX›YˆYˆ™\ÛÛ™Yœ˜]Õ˜[YHOH]]ÔÞ[˜Ò[\˜[Z[]\ÈÂˆ]]ÔÞ[˜Ò[\˜[Z[]\ÈH™\ÛÛ™Yœ˜]Õ˜[YBˆ™]\›‚ˆBˆÝX\™Z\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\È[ÙHÈ™]\›ˆBˆÙ]Þ[˜Ô™Y™\™[˜ÙJ™\ÛÛ™Yœ˜]Õ˜[YK›Ü’Ù^NˆÙ^\Ë˜]]ÔÞ[˜Ò[\˜[Z[]\ÊBˆ\]P]]ÔÞ[˜Õ[Y\Š
+BˆBˆB‚ˆÝ]XÈ]Þ\Ý[QY˜][›Û˜[Z[HH¹ìîùîçúnæ:+©‚ˆÝ]XÈ]š^Y™]ÐXØÛÝ[›Û\“˜[YHH\ÜÔÞ[˜ÔÛXÞK™š^Y™]ÐXØÛÝ[›Û\“˜[YBˆÝ]XÈ]š^Y™]ÐXØÛÝ[›Û\’YH\ÜÔÞ[˜ÔÛXÞK™š^Y™]ÐXØÛÝ[›Û\’YˆÝ]XÈ]Þ[˜Ð[™TØÚ[XUŒˆHœ\ÜËœÞ[˜Ë˜[™KŒˆ‚ˆÝ]XÈ]Y˜][Ù[’ÜÝYÙ\™\˜\ÙUT“HšÎ‹ËÝZËœØ˜ž‹XÚMÈ‚ˆš]˜]HÝ]XÈ]X^\ÝÜžQ[šY\ÈHLˆš]˜]HÝ]XÈ][œÝ[Y›Û˜[Z[Y\ÎˆÙ]Ýš[™ÏˆHÙ]
+”Ñ›ÛX[˜YÙ\‹œÚ\™Y˜]˜Z[X›Q›Û˜[Z[Y\ÊB‚ˆš]˜]HÝXÝ™[[ÝT^[ØY™\ÜÛœÙHÂˆ]^[ØYˆÞ[˜Ð[™T^[ØYÂˆ]]YÎˆÝš[™ÏÂˆ]\Ñ[˜Üž\Yˆ›ÛÛˆ]™]š\Ú[ÛŽˆ[ÂˆB‚ˆÝXÝÞ[˜ÑXYÛ›ÜÝXÜÎˆÛÙX›HÂˆ]ØØ[XØÛÝ[Îˆ[ˆ]ØØ[\ÜÚÙ^\Îˆ[ˆ]ØØ[›Û\œÎˆ[ˆ]™[[ÝPXØÛÝ[Îˆ[ˆ]™[[ÝT\ÜÚÙ^\Îˆ[ˆ]™[[ÝQ›Û\œÎˆ[ˆ]ÛÛ™›XÝÛÝ[ˆ[ˆ]™]š\Ú[ÛŽˆ[Âˆ]]YÎˆÝš[™ÏÂˆ]\ÝÞ[˜Ð]\Îˆ[Âˆ]ÛÝ\˜ÙTÝ[[X\žNˆÝš[™Â‚ˆÝ]XÈ][\HHÞ[˜ÑXYÛ›ÜÝXÜÊˆØØ[XØÛÝ[ÎˆˆØØ[\ÜÚÙ^\ÎˆˆØØ[›Û\œÎˆˆ™[[ÝPXØÛÝ[Îˆˆ™[[ÝT\ÜÚÙ^\Îˆˆ™[[ÝQ›Û\œÎˆˆÛÛ™›XÝÛÝ[ˆˆ™]š\Ú[ÛŽˆš[ˆ]YÎˆš[ˆ\ÝÞ[˜Ð]\Îˆš[ˆÛÝ\˜ÙTÝ[[X\žNˆ¹§*¹d#9«iH‚ˆ
+BˆB‚ˆš]˜]H[˜È\œÚ\ÝÞ[˜ÑXYÛ›ÜÝXÜÊ
+HÂˆÝX\™]]HHžOÈ”ÓÓ‘[˜ÛÙ\Š
+K™[˜ÛÙJÞ[˜ÑXYÛ›ÜÝXÜÊH[ÙHÈ™]\›ˆBˆ\Ù\‘Y˜][ËœÝ[™\™œÙ]
+]K›Ü’Ù^NˆÙ^\ËœÞ[˜ÑXYÛ›ÜÝXÜÊBˆB‚ˆš]˜]H[˜ÈØYÞ[˜ÑXYÛ›ÜÝXÜÊ
+HÂˆÝX\™]]HH\Ù\‘Y˜][ËœÝ[™\™™]J›Ü’Ù^NˆÙ^\ËœÞ[˜ÑXYÛ›ÜÝXÜÊKˆ]XÛÙYHžOÈ”ÓÓ‘XÛÙ\Š
+K™XÛÙJÞ[˜ÑXYÛ›ÜÝXÜËœÙ[‹œ›ÛNˆ]JBˆ[ÙHÈ™]\›ˆBˆÞ[˜ÑXYÛ›ÜÝXÜÈHXÛÙYˆB‚ˆš]˜]HÝXÝÙ[’ÜÝY\Ú™\Ý[Âˆ]^[ØYˆÞ[˜Ð[™T^[ØYˆ]Ú[™ÙYØØ[]Nˆ›ÛÛˆB‚ˆš]˜]HÝXÝUYÔ\Ú™\Ý[Âˆ]^[ØYˆÞ[˜Ð[™T^[ØYˆ]Ú[™ÙYØØ[]Nˆ›ÛÛˆ]]YÎˆÝš[™ÏÂˆB‚ˆš]˜]HÝXÝ™[[ÝUÜš]PÛÛ™š\›X][ÛˆÂˆ]]YÎˆÝš[™ÏÂˆB‚ˆš]˜]HÝXÝÙ[’ÜÝYÜš]T™XÙZ\ˆXÛÙX›HÂˆ]ÚÎˆ›ÛÛˆ]ÛÛ[Z]Yˆ›ÛÛˆ]ØÛÜNˆÝš[™Âˆ]]YÎˆÝš[™Âˆ]^[ØYÚLMŽˆÝš[™Âˆ]™]š\Ú[ÛŽˆ[ˆ]Y[\Ý[˜ÞRÙ^NˆÝš[™ÏÂˆB‚ˆš]˜]HÝXÝÞ[˜ÓÝ]›Þ][NˆÛÙX›HÂˆ]ÛÝ\˜ÙRÙ^NˆÝš[™Âˆ]^[ØYˆÞ[˜Ð[™T^[ØYˆ]Ü™X]Y]\Îˆ[ˆ]][\Îˆ[ˆ]™^™]žP]\Îˆ[ˆ]\Ý\œ›ÜŽˆÝš[™Âˆ]^[ØYÚLMŽˆÝš[™Âˆ]^XÝY]YÎˆÝš[™Âˆ]^XÝY™]š\Ú[ÛŽˆ[ˆ]Y[\Ý[˜ÞRÙ^NˆÝš[™Âˆ]Þ[˜ÔÙ\ÜÚ[Û’YˆÝš[™Âˆ]Ü\˜][Û’YˆÝš[™Âˆ]\Ý\œ›ÜÛÙNˆÝš[™Âˆ]Ý]\ÎˆÝš[™Â‚ˆš]˜]H[[HÛÙ[™ÒÙ^\ÎˆÝš[™ËÛÙ[™ÒÙ^HÂˆØ\ÙHÛÝ\˜ÙRÙ^K^[ØYÜ™X]Y]\Ë][\Ë™^™]žP]\Ë\Ý\œ›Ü‚ˆØ\ÙH^[ØYÚLM‹^XÝY]YË^XÝY™]š\Ú[Û‹Y[\Ý[˜ÞRÙ^KÞ[˜ÔÙ\ÜÚ[Û’YÜ\˜][Û’Y\Ý\œ›ÜÛÙKÝ]\ÂˆB‚ˆ[š]
+ÛÝ\˜ÙRÙ^NˆÝš[™Ë^[ØYˆÞ[˜Ð[™T^[ØYÜ™X]Y]\Îˆ[][\Îˆ[™^™]žP]\Îˆ[ˆ\Ý\œ›ÜŽˆÝš[™Ë^[ØYÚLMŽˆÝš[™ÈHˆ‹^XÝY]YÎˆÝš[™ÈHˆ‹^XÝY™]š\Ú[ÛŽˆ[HˆY[\Ý[˜ÞRÙ^NˆÝš[™ÈHˆ‹Þ[˜ÔÙ\ÜÚ[Û’YˆÝš[™ÈHˆ‹Ü\˜][Û’YˆÝš[™ÈHˆ‹\Ý\œ›ÜÛÙNˆÝš[™ÈHˆ‹Ý]\ÎˆÝš[™ÈHœ[™[™Ô™]žHŠHÂˆÙ[‹œÛÝ\˜ÙRÙ^HHÛÝ\˜ÙRÙ^NÈÙ[‹œ^[ØYH^[ØYÈÙ[‹˜Ü™X]Y]\ÈHÜ™X]Y]\ÎÈÙ[‹˜][\ÈH][\ÂˆÙ[‹›™^™]žP]\ÈH™^™]žP]\ÎÈÙ[‹›\Ý\œ›ÜˆH\Ý\œ›ÜŽÈÙ[‹œ^[ØYÚLMˆH^[ØYÚLM‚ˆÙ[‹™^XÝY]YÈH^XÝY]YÎÈÙ[‹™^XÝY™]š\Ú[ÛˆH^XÝY™]š\Ú[ÛŽÈÙ[‹šY[\Ý[˜ÞRÙ^HHY[\Ý[˜ÞRÙ^BˆÙ[‹œÞ[˜ÔÙ\ÜÚ[Û’YHÞ[˜ÔÙ\ÜÚ[Û’YÈÙ[‹›Ü\˜][Û’YHÜ\˜][Û’YÈÙ[‹›\Ý\œ›ÜÛÙHH\Ý\œ›ÜÛÙBˆÙ[‹œÝ]\ÈHÝ]\ÂˆB‚ˆ[š]
+œ›ÛHXÛÙ\ŽˆXÛÙ\ŠH›ÝÜÈÂˆ]ÈHžHXÛÙ\‹˜ÛÛZ[™\ŠÙ^YYžNˆÛÙ[™ÒÙ^\ËœÙ[ŠBˆÛÝ\˜ÙRÙ^HHžHË™XÛÙJÝš[™ËœÙ[‹›Ü’Ù^NˆœÛÝ\˜ÙRÙ^JBˆ^[ØYHžHË™XÛÙJÞ[˜Ð[™T^[ØYœÙ[‹›Ü’Ù^Nˆœ^[ØY
+BˆÜ™X]Y]\ÈHžHË™XÛÙJ[œÙ[‹›Ü’Ù^Nˆ˜Ü™X]Y]\ÊBˆ][\ÈHžHË™XÛÙJ[œÙ[‹›Ü’Ù^Nˆ˜][\ÊBˆ™^™]žP]\ÈHžHË™XÛÙJ[œÙ[‹›Ü’Ù^Nˆ›™^™]žP]\ÊBˆ\Ý\œ›ÜˆHžHË™XÛÙJÝš[™ËœÙ[‹›Ü’Ù^Nˆ›\Ý\œ›ÜŠBˆ^[ØYÚLMˆHžHË™XÛÙRY”™\Ù[
+Ýš[™ËœÙ[‹›Ü’Ù^Nˆœ^[ØYÚLMŠHÏÈˆ‚ˆ^XÝY]YÈHžHË™XÛÙRY”™\Ù[
+Ýš[™ËœÙ[‹›Ü’Ù^Nˆ™^XÝY]YÊHÏÈˆ‚ˆ^XÝY™]š\Ú[ÛˆHžHË™XÛÙRY”™\Ù[
+[œÙ[‹›Ü’Ù^Nˆ™^XÝY™]š\Ú[ÛŠHÏÈˆY[\Ý[˜ÞRÙ^HHžHË™XÛÙRY”™\Ù[
+Ýš[™ËœÙ[‹›Ü’Ù^NˆšY[\Ý[˜ÞRÙ^JHÏÈˆ‚ˆÞ[˜ÔÙ\ÜÚ[Û’YHžHË™XÛÙRY”™\Ù[
+Ýš[™ËœÙ[‹›Ü’Ù^NˆœÞ[˜ÔÙ\ÜÚ[Û’Y
+HÏÈˆ‚ˆÜ\˜][Û’YHžHË™XÛÙRY”™\Ù[
+Ýš[™ËœÙ[‹›Ü’Ù^Nˆ›Ü\˜][Û’Y
+HÏÈˆ‚ˆ\Ý\œ›ÜÛÙHHžHË™XÛÙRY”™\Ù[
+Ýš[™ËœÙ[‹›Ü’Ù^Nˆ›\Ý\œ›ÜÛÙJHÏÈˆ‚ˆÝ]\ÈHžHË™XÛÙRY”™\Ù[
+Ýš[™ËœÙ[‹›Ü’Ù^NˆœÝ]\ÊHÏÈœ[™[™Ô™]žH‚ˆBˆB‚ˆÝXÝÞ[˜Õ™\œÚ[Û”Ý[[X\žNˆY[YšXX›HÂˆ]Yˆ[ˆ]^ÜY]\Îˆ[ˆ]\]Y]\Îˆ[ˆ]Ø]™Y]\Îˆ[ˆ]^[ØYÚLMŽˆÝš[™ÂˆB‚ˆš]˜]HÝXÝÞ[˜Õ™\œÚ[ÛœÔ™\ÜÛœÙNˆXÛÙX›HÂˆ]™\œÚ[ÛœÎˆÔÞ[˜Õ™\œÚ[Û”™XÛÜ™BˆB‚ˆš]˜]HÝXÝÞ[˜Õ™\œÚ[Û”™XÛÜ™ˆXÛÙX›HÂˆ]™\œÚ[Û’Yˆ[ˆ]^ÜY]\Îˆ[ˆ]\]Y]\Îˆ[ˆ]Ø]™Y]\Îˆ[ˆ]^[ØYÚLMŽˆÝš[™ÂˆB‚ˆÝXÝ™[[ÝSÝ™\Üš]T™Y›YÚ™\Ý[Âˆ][œ™XXÚX›TÛÝ\˜Ù\ÎˆÔÝš[™×Bˆ][\TÛÝ\˜Ù\ÎˆÔÝš[™×B‚ˆ˜\ˆ™YYÕØ\›š[™Îˆ›ÛÛÂˆ][œ™XXÚX›TÛÝ\˜Ù\Ëš\Ñ[\HY[\TÛÝ\˜Ù\Ëš\Ñ[\BˆBˆB‚ˆš]˜]H[[HÞ[˜Ô™[[ÝQ\œ›ÜŽˆØØ[^™Y\œ›ÜˆÂˆØ\ÙH™XÛÛ™][Û‘˜Z[Y‚ˆ˜\ˆ\œ›Ü‘\ØÜš\[ÛŽˆÝš[™ÏÈÂˆÝÚ]ÚÙ[ˆÂˆØ\ÙHœ™XÛÛ™][Û‘˜Z[Y‚ˆ™]\›ˆº/ç9êëù¥l9£k¹mìº(ªùam¹.åº+¯¹i!ù¦í9¥¬;ï#:+íúaãy¥¬9¢âycå¹nm¹d"9nm¹d#¹a£y."¹/(‚ˆBˆBˆB‚ˆš]˜]H]XÛÙ\ˆH”ÓÓ‘XÛÙ\Š
+Bˆš]˜]H][˜ÛÙ\Žˆ”ÓÓ‘[˜ÛÙ\ˆHÂˆ][˜ÛÙ\ˆH”ÓÓ‘[˜ÛÙ\Š
+Bˆ[˜ÛÙ\‹›Ý]]›Ü›X][™ÈHËœ™]Tš[YœÛÜYÙ^\×Bˆ™]\›ˆ[˜ÛÙ\‚ˆJ
+Bˆš]˜]H]ÛÝYÝÜ™HH”ÕXš\]Z]Ý\ÒÙ^U˜[YTÝÜ™K™Y˜][ˆš]˜]H]\Ü^Q›Ü›X]\Žˆ]Q›Ü›X]\ˆHÂˆ]›Ü›X]\ˆH]Q›Ü›X]\Š
+Bˆ›Ü›X]\‹™]Q›Ü›X]Hž^KSKY›NœÈ‚ˆ™]\›ˆ›Ü›X]\‚ˆJ
+Bˆš]˜]H˜\ˆØ\Ý\ÛZ\ÜÕÛÜšÒ][Nˆ\Ü]ÚÛÜšÒ][OÂˆš]˜]H˜\ˆ[™Ó[Ý™Q\ÛZ\ÜÕÛÜšÒ][Nˆ\Ü]ÚÛÜšÒ][OÂˆš]˜]H˜\ˆ™^Ý]\Ð[ÝÜÕ[™Ó[Ý™Nˆ›ÛÛH˜[ÙBˆš]˜]H˜\ˆ\Ý[Ý™SÜ\˜][ÛŽˆ›Û\“[Ý™SÜ\˜][ÛÂˆš]˜]H˜\ˆÛÝYØœÙ\™\Žˆ”ÓØš™XÝ›ÝØÛÛÂˆš]˜]H˜\ˆÝ\™\ÜÐÛÝY\Úˆ›ÛÛH˜[ÙBˆš]˜]H˜\ˆ\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\Îˆ›ÛÛH˜[ÙBˆš]˜]H˜\ˆÞ[˜ÔÙXÜ™]ÓØYYˆ›ÛÛH˜[ÙBˆš]˜]H˜\ˆÞ[˜ÔÙXÜ™]š[SØYYˆ›ÛÛH˜[ÙBˆš]˜]H˜\ˆÞ[˜ÔÙXÜ™]š[PÛÜœ\ˆ›ÛÛH˜[ÙBˆš]˜]H˜\ˆÞ[˜ÔÙXÜ™]ÎˆÔÝš[™ÎˆÝš[™×HHÎ—Bˆš]˜]H˜\ˆØØ[]X˜\ÙT™XY˜Z[Yˆ›ÛÛH˜[ÙBˆš]˜]H˜\ˆÞ[˜Ó›ÝÕ\ÚÎˆ\ÚÏ›ÚY™]™\Âˆš]˜]H˜\ˆ]]ÔÞ[˜Õ[Y\Žˆ[Y\Âˆš]˜]H^žH˜\ˆØØ[ÔS]TÝÜ™HHØØ[ÔS]TÝÜ™Jˆ]X˜\ÙUT“ˆ]Q\™XÝÜžUT“
+
+K˜\[™[™Ô]ÛÛ\Û™[
+œ\ÜË™ˆ‹\Ñ\™XÝÜžNˆ˜[ÙJBˆ
+B‚ˆš]˜]H[[HØØ[]X˜\ÙRÙ^\ÈÂˆÝ]XÈ]XØÛÝ[ÈH˜XØÛÝ[È‚ˆÝ]XÈ]›Û\œÈH™›Û\œÈ‚ˆÝ]XÈ]\ÜÚÙ^\ÈHœ\ÜÚÙ^\È‚ˆÝ]XÈ]\ÝÜžHHš\ÝÜžH‚ˆÝ]XÈ]Þ[˜ÓÝ]›ÞHœÞ[˜ÓÝ]›Þ‚ˆB‚ˆš]˜]HÝXÝ›Û\“[Ý™SÜ\˜][ÛˆÂˆ]XØÛÝ[YÎˆÕURQBˆ]™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[YˆÕURQˆÕURQWBˆ]XÝ[Û”Ý[[X\žNˆÝš[™ÂˆB‚ˆ[š]
+
+HÂˆØY
+
+BˆØYÞ[˜ÑXYÛ›ÜÝXÜÊ
+BˆØYÞ[˜ÓÝ]›Þ
+
+BˆËÈ\™›Ü›HHYØXÞHÜ™Y[X[ZYÜ˜][ÛˆÛ˜ÙH\š[™ÈÝ\\ˆBˆËÈZYÜ˜][Ûˆ]Y\žH\È›Û‹Z[\˜XÝ]™NÈY\ˆHš[H\ÈÜš][ˆ›ÂˆËÈ›Ü›X[][˜ÚÝXÚ\ÈHÙ^XÚZ[ˆYØZ[‹‚ˆØYÞ[˜ÔÙXÜ™]ÒY“™YYY
+
+Bˆ[™TÞ[˜ÔÛÝ\˜ÙTÙ[XÝ[ÛÚ[™ÙY
+
+BˆB‚ˆ[˜ÈØ]™Q]šXÙS˜[YJÚÝÔÝ]\Îˆ›ÛÛHYJHÂˆ]›Ü›X[^™YH]šXÙS˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆÝX\™[›Ü›X[^™Yš\Ñ[\H[ÙHÂˆYˆÚÝÔÝ]\ÈÂˆÝ]\ÓY\ÜØYÙHHº+¯¹i!ùd#yéì9.#z ïy..¹ênˆ‚ˆBˆ™]\›‚ˆB‚ˆ]šXÙS˜[YHH›Ü›X[^™Yˆ\Ù\‘Y˜][ËœÝ[™\™œÙ]
+›Ü›X[^™Y›Ü’Ù^NˆÙ^\Ë™]šXÙS˜[YJBˆYˆÚÝÔÝ]\ÈÂˆÝ]\ÓY\ÜØYÙHHº+¯¹i!ùd#yéì9mì¹/çykf‚ˆBˆB‚ˆ[˜ÈšYÙÙ\”Ù[XÝ[XØÛÝ[Ê
+HÂˆÙ[XÝ[XØÛÝ[ÔÚYÛ˜[	ŠÏHBˆB‚ˆ[˜È[™TÙ[XÝ[ÚÜÝ]
+
+HÂˆšYÙÙ\”Ù[XÝ[XØÛÝ[Ê
+BˆB‚ˆ[˜È[™U[™ÔÚÜÝ]
+
+HÂˆYˆ]^™\ÜÛ™\ˆH”Ð\šÙ^UÚ[™ÝÏË™š\œÝ™\ÜÛ™\ˆ\ÏÈ”Õ^šY]Ëˆ^™\ÜÛ™\‹š\ÑY]X›BˆÂˆ^™\ÜÛ™\‹[™ÓX[˜YÙ\Ë[™Ê
+Bˆ™]\›‚ˆBˆ[™Ó\Ý[Ý™SÜ\˜][ÛŠ
+BˆB‚ˆ[˜ÈÜ™X]Q›Û\Š˜[YY˜]Ó˜[YNˆÝš[™ÊHÂˆ]˜[YHH˜]Ó˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆÝX\™[˜[YKš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹¥¡ù.í¹i.yd#yéì9.#z ïy..¹ênˆ‚ˆ™]\›‚ˆBˆYˆXÝ]™Q›Û\œË˜ÛÛZ[œÊÚ\™NˆÈ	›˜[YK˜Ø\ÙR[œÙ[œÚ]]™PÛÛ\\™J˜[YJHOH›Ü™\™YØ[YHJHÂˆÝ]\ÓY\ÜØYÙHH¹¥¡ù.í¹i.ymì¹kf9g*ˆ
+˜[YJH‚ˆ™]\›‚ˆB‚ˆ]›Û\ˆHXØÛÝ[›Û\ŠˆYˆURQ
+
+Kˆ˜[YNˆ˜[YKˆX]ÚYÚ]\Îˆ×Kˆ]]ÐYX]Ú[™ÔÚ]\Îˆ˜[ÙKˆÜ™X]Y]\Îˆ›ÝÓ\Ê
+Kˆ\]Y]\Îˆ›ÝÓ\Ê
+Bˆ
+Bˆ›Û\œË˜\[™
+›Û\ŠBˆX\šÑ›Û\“Ü™\Ú[™ÙY
+
+BˆÈH›Ü›X[^™Q›Û\œÑ[œÝ\š[™Ñš^Y™]ÐXØÛÝ[›Û\Š
+BˆÝX\™Ø]™Q›Û\œÕÑY˜][Ê
+H[ÙHÈ™]\›ˆBˆ\[™\ÝÜžQ[žJXÝ[ÛŽˆ¹b&ùnî¹¥¡ù.í¹i.{ï&—
+˜[YJHŠBˆÝ]\ÓY\ÜØYÙHH¹mì¹b&ùnî¹¥¡ù.í¹i.Nˆ
+˜[YJH‚ˆB‚ˆš]˜]H[˜È™\ÛÛ™P]][XØ]Ü’[\Ü›Û\’Y
+ˆ\™Ù]›Û\’YˆURQËˆ™]Ñ›Û\“˜[YNˆÝš[™Âˆ
+HOˆURQÈÂˆ]›Ü›X[^™Y™]Ñ›Û\“˜[YHH™]Ñ›Û\“˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆYˆ[›Ü›X[^™Y™]Ñ›Û\“˜[YKš\Ñ[\HÂˆYˆ]^\Ý[™ÈHXÝ]™Q›Û\œË™š\œÝ
+Ú\™NˆÂˆ	›˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ˜Ø\ÙR[œÙ[œÚ]]™PÛÛ\\™J›Ü›X[^™Y™]Ñ›Û\“˜[YJHOH›Ü™\™YØ[YBˆJHÂˆ™]\›ˆ^\Ý[™ËšYˆB‚ˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]›Û\ˆHXØÛÝ[›Û\ŠˆYˆURQ
+
+Kˆ˜[YNˆ›Ü›X[^™Y™]Ñ›Û\“˜[YKˆX]ÚYÚ]\Îˆ×Kˆ]]ÐYX]Ú[™ÔÚ]\Îˆ˜[ÙKˆÜ™X]Y]\Îˆ›ÝËˆ\]Y]\Îˆ›ÝÂˆ
+Bˆ›Û\œË˜\[™
+›Û\ŠBˆX\šÑ›Û\“Ü™\Ú[™ÙY
+]ˆ›ÝÊBˆÈH›Ü›X[^™Q›Û\œÑ[œÝ\š[™Ñš^Y™]ÐXØÛÝ[›Û\Š
+BˆÝX\™Ø]™Q›Û\œÕÑY˜][Ê
+H[ÙHÈ™]\›ˆš[Bˆ\[™\ÝÜžQ[žJXÝ[ÛŽˆ¹b&ùnî¹¥¡ù.í¹i.{ï&—
+›Ü›X[^™Y™]Ñ›Û\“˜[YJHŠBˆ™]\›ˆ›Û\‹šYˆB‚ˆÝX\™]\™Ù]›Û\’Y[ÙHÂˆ™]\›ˆš[ˆBˆÝX\™XÝ]™Q›Û\œË˜ÛÛZ[œÊÚ\™NˆÈ	šYOH\™Ù]›Û\’YJH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹æë¹¨!ù¥¡ù.í¹i.y.#ykf9g*‚ˆ™]\›ˆš[ˆBˆ™]\›ˆ\™Ù]›Û\’YˆB‚ˆ[˜È[]Q›Û\ŠYˆURQ
+HÂˆÝX\™]›Û\ˆHXÝ]™Q›Û\œË™š\œÝ
+Ú\™NˆÈ	šYOHYJH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹æë¹¨!ù¥¡ù.í¹i.y.#ykf9g*‚ˆ™]\›‚ˆBˆYˆ›Û\‹šYOHÙ[‹™š^Y™]ÐXØÛÝ[›Û\’YÂˆÝ]\ÓY\ÜØYÙHH¹fî¹k¦¹¥¡ù.í¹i.y.#ycëùb(:fi‚ˆ™]\›‚ˆB‚ˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+BˆYˆ][™^H›Û\œË™š\œÝ[™^
+Ú\™NˆÈ	šYOHYJHÂˆ›Û\œÖÚ[™^Kš\Ñ[]YHYBˆ›Û\œÖÚ[™^Kš\Ô\›X[™[Q[]YHYBˆ›Û\œÖÚ[™^K™[]Y]\ÈH›ÝÂˆ›Û\œÖÚ[™^K™[]Y]šXÙS˜[YHH]šXÙBˆ›Û\œÖÚ[™^K\]Y]\ÈH›ÝÂˆBˆÈH›Ü›X[^™Q›Û\œÑ[œÝ\š[™Ñš^Y™]ÐXØÛÝ[›Û\Š
+BˆX\šÑ›Û\“Ü™\Ú[™ÙY
+]ˆ›ÝÊB‚ˆ˜\ˆ™[[Ý™Yœ›ÛPXØÛÝ[ÛÝ[H‚ˆ›Üˆ[™^[ˆXØÛÝ[Ëš[™XÙ\ÈÂˆ]Ý\œ™[›Û\’YÈHXØÛÝ[ÖÚ[™^Kœ™\ÛÛ™Y›Û\’YÂˆÝX\™Ý\œ™[›Û\’YË˜ÛÛZ[œÊY
+H[ÙHÈÛÛ[YHBˆ]™^›Û\’YÈHÝ\œ™[›Û\’YË™š[\ˆÈ	OHYBˆXØÛÝ[ÖÚ[™^KœÙ]™\ÛÛ™Y›Û\’YÊ™^›Û\’YÊBˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆ™[[Ý™Yœ›ÛPXØÛÝ[ÛÝ[
+ÏHBˆB‚ˆÝX\™Ø]™PXØÛÝ[Ð[™›Û\œÐ]ÛZXØ[J
+H[ÙHÂˆ™]\›‚ˆB‚ˆYˆ™[[Ý™Yœ›ÛPXØÛÝ[ÛÝ[ˆÂˆ\[™\ÝÜžQ[žJXÝ[ÛŽˆ¹b(:fi9¥¡ù.í¹i.{ï&—
+›Û\‹›˜[YJ{ï#9nm¹.ãˆ
+™[[Ý™Yœ›ÛPXØÛÝ[ÛÝ[
+H9.*º-)¹cíù.+yéîúfiŠBˆÝ]\ÓY\ÜØYÙHH¹mì¹b(:fi9¥¡ù.í¹i.Nˆ
+›Û\‹›˜[YJ{ï#9nm¹.ãˆ
+™[[Ý™Yœ›ÛPXØÛÝ[ÛÝ[
+H9.*º-)¹cíù.+yéîúfi‚ˆH[ÙHÂˆ\[™\ÝÜžQ[žJXÝ[ÛŽˆ¹b(:fi9¥¡ù.í¹i.{ï&—
+›Û\‹›˜[YJHŠBˆÝ]\ÓY\ÜØYÙHH¹mì¹b(:fi9¥¡ù.í¹i.Nˆ
+›Û\‹›˜[YJH‚ˆBˆB‚ˆ[˜È›Û\“˜[YJ›ÜˆYˆURQ
+HOˆÝš[™ÈÂˆXÝ]™Q›Û\œË™š\œÝ
+Ú\™NˆÈ	šYOHYJOË›˜[YHÏÈ¹§*¹doyd#y¥¡ù.í¹i.H‚ˆB‚ˆ[˜È›Û\”[TÚ]\Ê›ÜˆYˆURQ
+HOˆÔÝš[™×HÂˆXÝ]™Q›Û\œË™š\œÝ
+Ú\™NˆÈ	šYOHYJOË›X]ÚYÚ]\ÈÏÈ×BˆB‚ˆ[˜È›Û\”[P]]ÐY[˜X›Y
+›ÜˆYˆURQ
+HOˆ›ÛÛÂˆXÝ]™Q›Û\œË™š\œÝ
+Ú\™NˆÈ	šYOHYJOË˜]]ÐYX]Ú[™ÔÚ]\ÈÏÈ˜[ÙBˆB‚ˆ[˜ÈÚXÚÙY›Û\’YÑ›ÜXØÛÝ[ÊXØÛÝ[YÎˆÕURQJHOˆÕURQHÂˆ]YÙ]HÙ]
+XØÛÝ[YÊBˆ]Ù[XÝYHXØÛÝ[Ë™š[\ˆÈYÙ]˜ÛÛZ[œÊ	šY
+H	‰ˆIš\Ñ[]YBˆÝX\™]š\œÝHÙ[XÝY™š\œÝ[ÙHÂˆ™]\›ˆ×BˆB‚ˆ˜\ˆ[\œÙXÝ[ÛˆHÙ]
+š\œÝœ™\ÛÛ™Y›Û\’YÊBˆ›ÜˆXØÛÝ[[ˆÙ[XÝY™›Üš\œÝ
+
+HÂˆ[\œÙXÝ[Û‹™›Ü›R[\œÙXÝ[ÛŠXØÛÝ[œ™\ÛÛ™Y›Û\’YÊBˆB‚ˆ]^\Ý[™Ñ›Û\’YÈHÙ]
+›Û\œË›X\
+šY
+JBˆ]š[\™YH[\œÙXÝ[Û‹™š[\ˆÈ^\Ý[™Ñ›Û\’YË˜ÛÛZ[œÊ	
+HBˆ™]\›ˆ›Ü›X[^™Q›Û\’YÊ\œ˜^Jš[\™Y
+JBˆB‚ˆ[˜È\Q›Û\”Ù[XÝ[ÛŠXØÛÝ[YÎˆÕURQKÚXÚÙY›Û\’YÎˆÕURQJHÂˆ]YÙ]HÙ]
+XØÛÝ[YÊBˆÝX\™ZYÙ]š\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*º`"y¢êz-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆ]Ù[XÝY[™^\ÈHXØÛÝ[Ëš[™XÙ\Ë™š[\ˆÈYÙ]˜ÛÛZ[œÊXØÛÝ[ÖÉKšY
+H	‰ˆXXØÛÝ[ÖÉKš\Ñ[]YBˆÝX\™\Ù[XÝY[™^\Ëš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*º`"y¢êz-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆ]^\Ý[™Ñ›Û\’YÈHÙ]
+›Û\œË›X\
+šY
+JBˆ]\™Ù]›Û\’YÈH›Ü›X[^™Q›Û\’YÊˆÚXÚÙY›Û\’YË™š[\ˆÈ^\Ý[™Ñ›Û\’YË˜ÛÛZ[œÊ	
+HBˆ
+B‚ˆ˜\ˆ™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[YˆÕURQˆÕURQWHHÎ—Bˆ˜\ˆ™Y›Ü™PXØÛÝ[ÎˆÔ\ÜÝÛÜ™XØÛÝ[HH×Bˆ˜\ˆÚ[™ÙYXØÛÝ[YÎˆÕURQHH×Bˆ˜\ˆÚ[™ÙYÛÝ[Hˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+B‚ˆ›Üˆ[™^[ˆÙ[XÝY[™^\ÈÂˆ]Ý\œ™[›Û\’YÈHXØÛÝ[ÖÚ[™^Kœ™\ÛÛ™Y›Û\’YÂˆ™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[YØXØÛÝ[ÖÚ[™^KšYHHÝ\œ™[›Û\’YÂ‚ˆYˆÝ\œ™[›Û\’YÈOH\™Ù]›Û\’YÈÂˆ™Y›Ü™PXØÛÝ[Ë˜\[™
+XØÛÝ[ÖÚ[™^JBˆXØÛÝ[ÖÚ[™^KœÙ]™\ÛÛ™Y›Û\’YÊ\™Ù]›Û\’YÊBˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆÚ[™ÙYÛÝ[
+ÏHBˆÚ[™ÙYXØÛÝ[YË˜\[™
+XØÛÝ[ÖÚ[™^KšY
+BˆBˆB‚ˆÝX\™Ú[™ÙYÛÝ[ˆ[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹¥¡ù.í¹i.ybïº`"y¥è9cæ9¦í‚ˆ™]\›‚ˆB‚ˆ™\[™XØÛÝ[ÕÑ›Û\“Ü™\ŠˆXØÛÝ[YÎˆÚ[™ÙYXØÛÝ[YËˆ›Û\’YÎˆ\™Ù]›Û\’YËˆ[Y\Ý[\ˆ›ÝËˆ]šXÙS˜[YNˆ]šXÙBˆ
+Bˆ™[[Ý™PXØÛÝ[Ñœ›ÛQ›Û\“Ü™\ŠˆXØÛÝ[YÎˆÙ[XÝY[™^\Ë›X\ÈXØÛÝ[ÖÉKšYKˆ^ÛY[™Ñ›Û\’YÎˆ\™Ù]›Û\’YËˆ[Y\Ý[\ˆ›ÝËˆ]šXÙS˜[YNˆ]šXÙBˆ
+B‚ˆ]XÝ[Û”Ý[[X\žHH¹mì¹£"ybïº`"y¦í9¥¬
+Ú[™ÙYÛÝ[
+H9.*º-)¹cíùæ¡9¥¡ù.í¹i.H‚ˆ][Ý™SÜ\˜][ÛˆH›Û\“[Ý™SÜ\˜][ÛŠˆXØÛÝ[YÎˆ\œ˜^J™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[YšÙ^\ÊKˆ™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[Yˆ™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[YˆXÝ[Û”Ý[[X\žNˆXÝ[Û”Ý[[X\žBˆ
+BˆÝX\™Ø]™PXØÛÝ[Ð[™›Û\œÐ]ÛZXØ[J
+H[ÙHÈ™]\›ˆBˆ\Ý[Ý™SÜ\˜][ÛˆH[Ý™SÜ\˜][Û‚ˆ]Ú[™ÙYYÈHÙ]
+™Y›Ü™PXØÛÝ[Ë›X\
+˜XØÛÝ[Y
+JBˆ]Y\XØÛÝ[ÈHXØÛÝ[Ë™š[\ˆÈÚ[™ÙYYË˜ÛÛZ[œÊ	˜XØÛÝ[Y
+HBˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]NˆXÝ[Û”Ý[[X\žKˆ[Y\Ý[\\Îˆ›ÝËˆ™Y›Ü™PXØÛÝ[Îˆ™Y›Ü™PXØÛÝ[ËˆY\XØÛÝ[ÎˆY\XØÛÝ[Âˆ
+BˆÙ]Ý]\ÓY\ÜØYÙJ¹mì¹£"ybïº`"y¦í9¥¬9¥¡ù.í¹i.{ï"
+Ú[™ÙYÛÝ[
+H9.*º-)¹cíûï"{ï#9à®yaîù¤©:e ‹[ÝÜÕ[™Ó[Ý™NˆYJBˆB‚ˆ[˜È\™P[XØÛÝ[Ò[‘›Û\ŠXØÛÝ[YÎˆÕURQK›Û\’YˆURQ
+HOˆ›ÛÛÂˆ]YÙ]HÙ]
+XØÛÝ[YÊBˆ]Ù[XÝYHXØÛÝ[Ë™š[\ˆÈYÙ]˜ÛÛZ[œÊ	šY
+H	‰ˆIš\Ñ[]YBˆÝX\™\Ù[XÝYš\Ñ[\H[ÙHÂˆ™]\›ˆ˜[ÙBˆBˆ™]\›ˆÙ[XÝY˜[Ø]\ÙžHÈ	š\Ò[‘›Û\Š›Û\’Y
+HBˆB‚ˆ[˜ÈÙÙÛPXØÛÝ[Ñ›Û\“Y[X™\œÚ\
+XØÛÝ[YÎˆÕURQK›Û\’YˆURQ
+HÂˆ]YÙ]HÙ]
+XØÛÝ[YÊBˆÝX\™ZYÙ]š\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*º`"y¢êz-)¹cíÈ‚ˆ™]\›‚ˆBˆÝX\™XÝ]™Q›Û\œË˜ÛÛZ[œÊÚ\™NˆÈ	šYOH›Û\’YJH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹æë¹¨!ù¥¡ù.í¹i.y.#ykf9g*‚ˆ™]\›‚ˆB‚ˆ]Ù[XÝY[™^\ÈHXØÛÝ[Ëš[™XÙ\Ë™š[\ˆÈYÙ]˜ÛÛZ[œÊXØÛÝ[ÖÉKšY
+H	‰ˆXXØÛÝ[ÖÉKš\Ñ[]YBˆÝX\™\Ù[XÝY[™^\Ëš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*º`"y¢êz-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆ][[™XYR[‘›Û\ˆHÙ[XÝY[™^\Ë˜[Ø]\ÙžHÈXØÛÝ[ÖÉKš\Ò[‘›Û\Š›Û\’Y
+HBˆ]ÚÝ[YÑ›Û\ˆHX[[™XYR[‘›Û\‚‚ˆ˜\ˆ™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[YˆÕURQˆÕURQWHHÎ—Bˆ˜\ˆ™Y›Ü™PXØÛÝ[ÎˆÔ\ÜÝÛÜ™XØÛÝ[HH×Bˆ˜\ˆÚ[™ÙYXØÛÝ[YÎˆÕURQHH×Bˆ˜\ˆÚ[™ÙYÛÝ[Hˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+B‚ˆ›Üˆ[™^[ˆÙ[XÝY[™^\ÈÂˆ]Ý\œ™[›Û\’YÈHXØÛÝ[ÖÚ[™^Kœ™\ÛÛ™Y›Û\’YÂˆ™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[YØXØÛÝ[ÖÚ[™^KšYHHÝ\œ™[›Û\’YÂ‚ˆ˜\ˆ™^›Û\’YÈHÝ\œ™[›Û\’YÂˆYˆÚÝ[YÑ›Û\ˆÂˆYˆ[™^›Û\’YË˜ÛÛZ[œÊ›Û\’Y
+HÂˆ™^›Û\’YË˜\[™
+›Û\’Y
+BˆBˆH[ÙHÂˆ™^›Û\’YËœ™[[Ý™P[
+Ú\™NˆÈ	OH›Û\’YJBˆB‚ˆ]›Ü›X[^™Y™^H›Ü›X[^™Q›Û\’YÊ™^›Û\’YÊBˆYˆ›Ü›X[^™Y™^OHÝ\œ™[›Û\’YÈÂˆ™Y›Ü™PXØÛÝ[Ë˜\[™
+XØÛÝ[ÖÚ[™^JBˆXØÛÝ[ÖÚ[™^KœÙ]™\ÛÛ™Y›Û\’YÊ›Ü›X[^™Y™^
+BˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆÚ[™ÙYÛÝ[
+ÏHBˆÚ[™ÙYXØÛÝ[YË˜\[™
+XØÛÝ[ÖÚ[™^KšY
+BˆBˆB‚ˆÝX\™Ú[™ÙYÛÝ[ˆ[ÙHÂˆÝ]\ÓY\ÜØYÙHHÚÝ[YÑ›Û\‚ˆÈ¹¢`:`"z-)¹cíùmì¹g*9¥¡ù.í¹i.{ï&—
+›Û\“˜[YJ›ÜŽˆ›Û\’Y
+JH‚ˆˆ¹¢`:`"z-)¹cíù.#yg*9¥¡ù.í¹i.{ï&—
+›Û\“˜[YJ›ÜŽˆ›Û\’Y
+JH‚ˆ™]\›‚ˆB‚ˆYˆÚÝ[YÑ›Û\ˆÂˆ™\[™XØÛÝ[ÕÑ›Û\“Ü™\ŠˆXØÛÝ[YÎˆÚ[™ÙYXØÛÝ[YËˆ›Û\’YÎˆÙ›Û\’YKˆ[Y\Ý[\ˆ›ÝËˆ]šXÙS˜[YNˆ]šXÙBˆ
+BˆH[ÙHÂˆ™[[Ý™PXØÛÝ[Ñœ›ÛQ›Û\“Ü™\ŠˆXØÛÝ[YÎˆÚ[™ÙYXØÛÝ[YËˆ^ÛY[™Ñ›Û\’YÎˆ›Û\œË›X\
+šY
+K™š[\ˆÈ	OH›Û\’YKˆ[Y\Ý[\ˆ›ÝËˆ]šXÙS˜[YNˆ]šXÙBˆ
+BˆB‚ˆ]XÝ[Û”™Yš^HÚÝ[YÑ›Û\ˆÈ¹mì¹¥/¹aiHˆˆ¹mì¹éîùaîˆ‚ˆ]XÝ[Û”Ý[[X\žHH—
+XÝ[Û”™Yš^
+H
+Ú[™ÙYÛÝ[
+H9.*º-)¹cíÈ
+ÚÝ[YÑ›Û\ˆÈ¹b,ˆˆ¹.ãˆŠy¥¡ù.í¹i.{ï&—
+›Û\“˜[YJ›ÜŽˆ›Û\’Y
+JH‚ˆ][Ý™SÜ\˜][ÛˆH›Û\“[Ý™SÜ\˜][ÛŠˆXØÛÝ[YÎˆ\œ˜^J™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[YšÙ^\ÊKˆ™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[Yˆ™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[YˆXÝ[Û”Ý[[X\žNˆXÝ[Û”Ý[[X\žBˆ
+BˆÝX\™Ø]™PXØÛÝ[Ð[™›Û\œÐ]ÛZXØ[J
+H[ÙHÈ™]\›ˆBˆ\Ý[Ý™SÜ\˜][ÛˆH[Ý™SÜ\˜][Û‚ˆ]Ú[™ÙYYÈHÙ]
+™Y›Ü™PXØÛÝ[Ë›X\
+˜XØÛÝ[Y
+JBˆ]Y\XØÛÝ[ÈHXØÛÝ[Ë™š[\ˆÈÚ[™ÙYYË˜ÛÛZ[œÊ	˜XØÛÝ[Y
+HBˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]NˆXÝ[Û”Ý[[X\žKˆ[Y\Ý[\\Îˆ›ÝËˆ™Y›Ü™PXØÛÝ[Îˆ™Y›Ü™PXØÛÝ[ËˆY\XØÛÝ[ÎˆY\XØÛÝ[Âˆ
+BˆÙ]Ý]\ÓY\ÜØYÙJ—
+XÝ[Û”Ý[[X\žJ{ï"
+Ú[™ÙYÛÝ[
+H9.*º-)¹cíûï"{ï#9à®yaîù¤©:e ‹[ÝÜÕ[™Ó[Ý™NˆYJBˆB‚ˆ[˜ÈYXØÛÝ[ÕÑ›Û\ŠXØÛÝ[YÎˆÕURQK›Û\’YˆURQ
+HÂˆ]YÙ]HÙ]
+XØÛÝ[YÊBˆÝX\™ZYÙ]š\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*º`"y¢êz-)¹cíÈ‚ˆ™]\›‚ˆBˆÝX\™XÝ]™Q›Û\œË˜ÛÛZ[œÊÚ\™NˆÈ	šYOH›Û\’YJH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹æë¹¨!ù¥¡ù.í¹i.y.#ykf9g*‚ˆ™]\›‚ˆB‚ˆ]Ù[XÝY[™^\ÈHXØÛÝ[Ëš[™XÙ\Ë™š[\ˆÈYÙ]˜ÛÛZ[œÊXØÛÝ[ÖÉKšY
+H	‰ˆXXØÛÝ[ÖÉKš\Ñ[]YBˆÝX\™\Ù[XÝY[™^\Ëš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*º`"y¢êz-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆ˜\ˆ™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[YˆÕURQˆÕURQWHHÎ—Bˆ˜\ˆ™Y›Ü™PXØÛÝ[ÎˆÔ\ÜÝÛÜ™XØÛÝ[HH×Bˆ˜\ˆÚ[™ÙYXØÛÝ[YÎˆÕURQHH×Bˆ˜\ˆÚ[™ÙYÛÝ[Hˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+B‚ˆ›Üˆ[™^[ˆÙ[XÝY[™^\ÈÂˆ]Ý\œ™[›Û\’YÈHXØÛÝ[ÖÚ[™^Kœ™\ÛÛ™Y›Û\’YÂˆ™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[YØXØÛÝ[ÖÚ[™^KšYHHÝ\œ™[›Û\’YÂˆYˆÝ\œ™[›Û\’YË˜ÛÛZ[œÊ›Û\’Y
+HÂˆÛÛ[YBˆBˆ˜\ˆ™^›Û\’YÈHÝ\œ™[›Û\’YÂˆ™^›Û\’YË˜\[™
+›Û\’Y
+Bˆ]›Ü›X[^™Y™^H›Ü›X[^™Q›Û\’YÊ™^›Û\’YÊBˆYˆ›Ü›X[^™Y™^OHÝ\œ™[›Û\’YÈÂˆ™Y›Ü™PXØÛÝ[Ë˜\[™
+XØÛÝ[ÖÚ[™^JBˆXØÛÝ[ÖÚ[™^KœÙ]™\ÛÛ™Y›Û\’YÊ›Ü›X[^™Y™^
+BˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆÚ[™ÙYÛÝ[
+ÏHBˆÚ[™ÙYXØÛÝ[YË˜\[™
+XØÛÝ[ÖÚ[™^KšY
+BˆBˆB‚ˆÝX\™Ú[™ÙYÛÝ[ˆ[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹¢`:`"z-)¹cíùmì¹g*9¥¡ù.í¹i.{ï&—
+›Û\“˜[YJ›ÜŽˆ›Û\’Y
+JH‚ˆ™]\›‚ˆB‚ˆ™\[™XØÛÝ[ÕÑ›Û\“Ü™\ŠˆXØÛÝ[YÎˆÚ[™ÙYXØÛÝ[YËˆ›Û\’YÎˆÙ›Û\’YKˆ[Y\Ý[\ˆ›ÝËˆ]šXÙS˜[YNˆ]šXÙBˆ
+B‚ˆ]XÝ[Û”Ý[[X\žHH¹mì¹¥/¹aiH
+Ú[™ÙYÛÝ[
+H9.*º-)¹cíÈ9b,9¥¡ù.í¹i.{ï&—
+›Û\“˜[YJ›ÜŽˆ›Û\’Y
+JH‚ˆ][Ý™SÜ\˜][ÛˆH›Û\“[Ý™SÜ\˜][ÛŠˆXØÛÝ[YÎˆ\œ˜^J™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[YšÙ^\ÊKˆ™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[Yˆ™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[YˆXÝ[Û”Ý[[X\žNˆXÝ[Û”Ý[[X\žBˆ
+BˆÝX\™Ø]™PXØÛÝ[Ð[™›Û\œÐ]ÛZXØ[J
+H[ÙHÈ™]\›ˆBˆ\Ý[Ý™SÜ\˜][ÛˆH[Ý™SÜ\˜][Û‚ˆ]Ú[™ÙYYÈHÙ]
+™Y›Ü™PXØÛÝ[Ë›X\
+˜XØÛÝ[Y
+JBˆ]Y\XØÛÝ[ÈHXØÛÝ[Ë™š[\ˆÈÚ[™ÙYYË˜ÛÛZ[œÊ	˜XØÛÝ[Y
+HBˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]NˆXÝ[Û”Ý[[X\žKˆ[Y\Ý[\\Îˆ›ÝËˆ™Y›Ü™PXØÛÝ[Îˆ™Y›Ü™PXØÛÝ[ËˆY\XØÛÝ[ÎˆY\XØÛÝ[Âˆ
+BˆÙ]Ý]\ÓY\ÜØYÙJ—
+XÝ[Û”Ý[[X\žJ{ï"
+Ú[™ÙYÛÝ[
+H9.*º-)¹cíûï"{ï#9à®yaîù¤©:e ‹[ÝÜÕ[™Ó[Ý™NˆYJBˆB‚ˆ[˜ÈYXØÛÝ[ÓX]Ú[™ÔÚ]\ÕÑ›Û\ŠÚ]R[œ]ÎˆÔÝš[™×K›Û\’YˆURQ
+HÂˆÝX\™XÝ]™Q›Û\œË˜ÛÛZ[œÊÚ\™NˆÈ	šYOH›Û\’YJH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹æë¹¨!ù¥¡ù.í¹i.y.#ykf9g*‚ˆ™]\›‚ˆB‚ˆ]›Ü›X[^™YÚ]\ÈH\œ˜^JˆÙ]
+Ú]R[œ]Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JK™š[\ˆÈIš\Ñ[\HJBˆ
+KœÛÜY
+
+BˆÝX\™[›Ü›X[^™YÚ]\Ëš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHHº+íú!ìùl$z/¤ùaiy. 9.*¹êæyà®H‚ˆ™]\›‚ˆB‚ˆ]X]Ú[™ÒYÈHXØÛÝ[Ë˜ÛÛ\XÝX\ÈXØÛÝ[OˆURQÈ[‚ˆÝX\™XXØÛÝ[š\Ñ[]Y[ÙHÈ™]\›ˆš[Bˆ][X\Ù\ÈHÙ]
+XØÛÝ[œÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JK™š[\ˆÈIš\Ñ[\HJBˆ]Ø[›ÛšXØ[HÛXZ[•][Ë››Ü›X[^™JXØÛÝ[˜Ø[›ÛšXØ[Ú]JBˆ]X]ÚYH›Ü›X[^™YÚ]\Ë˜ÛÛZ[œÈÈÚ]H[‚ˆ[X\Ù\Ë˜ÛÛZ[œÊÚ]JHØ[›ÛšXØ[OHÚ]BˆBˆ™]\›ˆX]ÚYÈXØÛÝ[šYˆš[ˆB‚ˆÝX\™[X]Ú[™ÒYËš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹¬¨y§"y¢o¹b,9c!yd*ú/æy.¦ùêæyà®yæ¡:-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆYXØÛÝ[ÕÑ›Û\ŠXØÛÝ[YÎˆX]Ú[™ÒYË›Û\’Yˆ›Û\’Y
+BˆB‚ˆ[˜ÈÛÛ™šYÝ\™Q›Û\”Ú]T[\Ê›Û\’YˆURQÚ]R[œ]ÎˆÔÝš[™×K]]ÐYˆ›ÛÛ
+HÂˆÝX\™]›Û\’[™^H›Û\œË™š\œÝ[™^
+Ú\™NˆÈ	šYOH›Û\’YJH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹æë¹¨!ù¥¡ù.í¹i.y.#ykf9g*‚ˆ™]\›‚ˆB‚ˆ]›Ü›X[^™YÚ]\ÈH\œ˜^JˆÙ]
+Ú]R[œ]Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JK™š[\ˆÈIš\Ñ[\HJBˆ
+KœÛÜY
+
+Bˆ]›ÝÈH›ÝÓ\Ê
+Bˆ›Û\œÖÙ›Û\’[™^K›X]ÚYÚ]\ÈH›Ü›X[^™YÚ]\Âˆ›Û\œÖÙ›Û\’[™^K˜]]ÐYX]Ú[™ÔÚ]\ÈH]]ÐYˆ›Û\œÖÙ›Û\’[™^K\]Y]\ÈH›ÝÂˆÝX\™Ø]™Q›Û\œÕÑY˜][Ê
+H[ÙHÈ™]\›ˆBˆ\[™\ÝÜžQ[žJˆXÝ[ÛŽˆ¹¦í9¥¬9¥¡ù.í¹i.yêæyà®z)á9b&{ï&—
+›Û\œÖÙ›Û\’[™^K›˜[YJ{ï"
+›Ü›X[^™YÚ]\Ë˜ÛÝ[
+H9.*¹êæyà®{ï#:!ê¹bª9b¨9aiW
+]]ÐYÈ¹o ˆˆ¹alÈŠ{ï"H‹ˆ[Y\Ý[\\Îˆ›ÝÂˆ
+B‚ˆ]X]Ú[™ÒYÈHXØÛÝ[Ë˜ÛÛ\XÝX\ÈXØÛÝ[OˆURQÈ[‚ˆÝX\™XXØÛÝ[š\Ñ[]Y[ÙHÈ™]\›ˆš[Bˆ][X\Ù\ÈHÙ]
+XØÛÝ[œÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JK™š[\ˆÈIš\Ñ[\HJBˆ]Ø[›ÛšXØ[HÛXZ[•][Ë››Ü›X[^™JXØÛÝ[˜Ø[›ÛšXØ[Ú]JBˆ]X]ÚYH›Ü›X[^™YÚ]\Ë˜ÛÛZ[œÈÈÚ]H[‚ˆ[X\Ù\Ë˜ÛÛZ[œÊÚ]JHØ[›ÛšXØ[OHÚ]BˆBˆ™]\›ˆX]ÚYÈXØÛÝ[šYˆš[ˆB‚ˆÝX\™[X]Ú[™ÒYËš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹mì¹/çykf9¥¡ù.í¹i.yêæyà®z)á9b&H‚ˆ™]\›‚ˆB‚ˆYXØÛÝ[ÕÑ›Û\ŠXØÛÝ[YÎˆX]Ú[™ÒYË›Û\’Yˆ›Û\’Y
+BˆB‚ˆ[˜È\XØ]PXØÛÝ[Ü›Ý\Ê[‘›Û\ˆ›Û\’YˆURQ
+HOˆÑ›Û\‘\XØ]PXØÛÝ[Ü›Ý\HÂˆ]Ü›Ý\YHXÝ[Û˜\žJÜ›Ý\[™ÎˆXØÛÝ[Ë™š[\ˆÈIš\Ñ[]Y	‰ˆ	š\Ò[‘›Û\Š›Û\’Y
+HJHÈXØÛÝ[[‚ˆ]›Ü›X[^™YÚ]\ÈH\œ˜^JˆÙ]
+XØÛÝ[œÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JK™š[\ˆÈIš\Ñ[\HJBˆ
+KœÛÜY
+
+Bˆ]˜[˜XÚÔÚ]\ÈH›Ü›X[^™YÚ]\Ëš\Ñ[\BˆÈÑÛXZ[•][Ë››Ü›X[^™JXØÛÝ[˜Ø[›ÛšXØ[Ú]JWK™š[\ˆÈIš\Ñ[\HBˆˆ›Ü›X[^™YÚ]\Âˆ]\Ù\›˜[YRÙ^HHXØÛÝ[\Ù\›˜[YBˆš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ›ÝÙ\˜Ø\ÙY
+
+Bˆ™]\›ˆ—
+˜[˜XÚÔÚ]\Ëš›Ú[™Y
+Ù\\˜]ÜŽˆŸŠJW—
+\Ù\›˜[YRÙ^JH‚ˆB‚ˆ™]\›ˆÜ›Ý\Y˜ÛÛ\XÝX\ÈÙ^KÜ›Ý\YXØÛÝ[È[‚ˆÝX\™Ü›Ý\YXØÛÝ[Ë˜ÛÝ[ˆH[ÙHÈ™]\›ˆš[B‚ˆ]ÛÜYXØÛÝ[ÈHÜ›Ý\YXØÛÝ[ËœÛÜYÈËšÈ[‚ˆYˆË\]Y]\ÈOHšË\]Y]\ÈÂˆ™]\›ˆË\]Y]\ÈˆšË\]Y]\ÂˆBˆYˆË˜Ü™X]Y]\ÈOHšË˜Ü™X]Y]\ÈÂˆ™]\›ˆË˜Ü™X]Y]\ÈˆšË˜Ü™X]Y]\ÂˆBˆ™]\›ˆË˜XØÛÝ[YšË˜XØÛÝ[YˆB‚ˆ]š\œÝHÛÜYXØÛÝ[ÖÌBˆ]Ú]P[X\Ù\ÈH\œ˜^JˆÙ]
+š\œÝœÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JK™š[\ˆÈIš\Ñ[\HJBˆ
+KœÛÜY
+
+Bˆ]\Ù\›˜[YQ\Ü^HHš\œÝ\Ù\›˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊB‚ˆ™]\›ˆ›Û\‘\XØ]PXØÛÝ[Ü›Ý\
+ˆYˆÙ^Kˆ›Û\’Yˆ›Û\’Yˆ\Ù\›˜[YRÙ^Nˆ\Ù\›˜[YQ\Ü^K›ÝÙ\˜Ø\ÙY
+
+Kˆ\Ù\›˜[YQ\Ü^Nˆ\Ù\›˜[YQ\Ü^Kš\Ñ[\HÈŠ9ên¹å*9¢-ùd#JHˆˆ\Ù\›˜[YQ\Ü^KˆÚ]P[X\Ù\ÎˆÚ]P[X\Ù\Ëš\Ñ[\HÈÙš\œÝ˜Ø[›ÛšXØ[Ú]WHˆÚ]P[X\Ù\ËˆXØÛÝ[ÎˆÛÜYXØÛÝ[Âˆ
+BˆBˆœÛÜYÈËšÈ[‚ˆYˆË›™]Ù\Ý\]Y]\ÈOHšË›™]Ù\Ý\]Y]\ÈÂˆ™]\›ˆË›™]Ù\Ý\]Y]\ÈˆšË›™]Ù\Ý\]Y]\ÂˆBˆ™]\›ˆËšYšËšYˆBˆB‚ˆ[˜ÈÙY\Û›Q\XØ]PXØÛÝ[
+[‘›Û\ˆ›Û\’YˆURQXØÛÝ[YÒÙY\ˆURQ
+HÂˆÝX\™]\™Ù]Ü›Ý\H\XØ]PXØÛÝ[Ü›Ý\Ê[‘›Û\Žˆ›Û\’Y
+K™š\œÝ
+Ú\™NˆÈÜ›Ý\[‚ˆÜ›Ý\˜XØÛÝ[Ë˜ÛÛZ[œÊÚ\™NˆÈ	šYOHXØÛÝ[YÒÙY\JBˆJH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹odùbcy¥¡ù.í¹i.zaã9§*¹¢o¹b,9cëùc®úaãyb!¹îá‚ˆ™]\›‚ˆB‚ˆ]\™Ù]YÈHÙ]
+\™Ù]Ü›Ý\˜XØÛÝ[Ë›X\
+šY
+JKœÝX˜XÝ[™ÊØXØÛÝ[YÒÙY\JBˆÝX\™]\™Ù]YËš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹odùbcyb!¹îá9¥è:g 9i!9ä!ˆ‚ˆ™]\›‚ˆB‚ˆ]›Û\•]HH›Û\“˜[YJ›ÜŽˆ›Û\’Y
+Bˆ[Ý™PXØÛÝ[ÕÔ™XÞXÛPš[ŠˆXØÛÝ[YÎˆ\™Ù]YËˆ\ÝÜžU]Nˆ¹¥¡ù.í¹i.yc®úaã{ï&—
+›Û\•]JH0­È9.áy/çyåfy«i:-)¹cíÈ‹ˆÝ]\ÓY\ÜØYÙNˆ¹¥¡ù.í¹i.yc®úaãyk£9¢$;ï&—
+›Û\•]J{ï#9odùbcyb!¹îá9mì¹éîùaiyfç¹¥-¹êæH
+\™Ù]YË˜ÛÝ[
+H9.*ºaãyi#z-)¹cíûï#9/çyåfHH9.*º-)¹cíÈ‚ˆ
+BˆB‚ˆ[˜ÈÙY\]\Ý\XØ]PXØÛÝ[Ê[‘›Û\ˆ›Û\’YˆURQ
+HÂˆ]Ü›Ý\ÈH\XØ]PXØÛÝ[Ü›Ý\Ê[‘›Û\Žˆ›Û\’Y
+BˆÝX\™YÜ›Ý\Ëš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹odùbcy¥¡ù.í¹i.y¦ ¹¥è:aãyi#z-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆ\™›Ü›Q›Û\‘\XØ]RÙY\
+ˆ[‘›Û\Žˆ›Û\’YˆÙY\XØÛÝ[YÎˆÙ]
+Ü›Ý\Ë˜ÛÛ\XÝX\È	˜XØÛÝ[Ë™š\œÝËšYJKˆÙ\Ü›Ý\ÛÝ[ˆÜ›Ý\Ë˜ÛÝ[ˆÜ\˜][Û“X™[ˆ¹/çyåfyaj:`ê9§ 9¥¬:-)¹cíÈ‚ˆ
+BˆB‚ˆ[˜ÈÙY\X\›Y\Ý\XØ]PXØÛÝ[Ê[‘›Û\ˆ›Û\’YˆURQ
+HÂˆ]Ü›Ý\ÈH\XØ]PXØÛÝ[Ü›Ý\Ê[‘›Û\Žˆ›Û\’Y
+BˆÝX\™YÜ›Ý\Ëš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹odùbcy¥¡ù.í¹i.y¦ ¹¥è:aãyi#z-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆ\™›Ü›Q›Û\‘\XØ]RÙY\
+ˆ[‘›Û\Žˆ›Û\’YˆÙY\XØÛÝ[YÎˆÙ]
+Ü›Ý\Ë˜ÛÛ\XÝX\È	˜XØÛÝ[Ë›\ÝËšYJKˆÙ\Ü›Ý\ÛÝ[ˆÜ›Ý\Ë˜ÛÝ[ˆÜ\˜][Û“X™[ˆ¹/çyåfyaj:`ê9§ 9¥êz-)¹cíÈ‚ˆ
+BˆB‚ˆš]˜]H[˜È\™›Ü›Q›Û\‘\XØ]RÙY\
+ˆ[‘›Û\ˆ›Û\’YˆURQˆÙY\XØÛÝ[YÎˆÙ]URQ‹ˆÙ\Ü›Ý\ÛÝ[ˆ[ˆÜ\˜][Û“X™[ˆÝš[™Âˆ
+HÂˆÝX\™XÝ]™Q›Û\œË˜ÛÛZ[œÊÚ\™NˆÈ	šYOH›Û\’YJH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹æë¹¨!ù¥¡ù.í¹i.y.#ykf9g*‚ˆ™]\›‚ˆB‚ˆ]Ü›Ý\ÈH\XØ]PXØÛÝ[Ü›Ý\Ê[‘›Û\Žˆ›Û\’Y
+BˆÝX\™YÜ›Ý\Ëš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹odùbcy¥¡ù.í¹i.y¦ ¹¥è:aãyi#z-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆ]\XØ]PXØÛÝ[YÈHÙ]
+Ü›Ý\Ë™›]X\È	˜XØÛÝ[Ë›X\
+šY
+HJBˆ]\™Ù]YÈH\XØ]PXØÛÝ[YËœÝX˜XÝ[™ÊÙY\XØÛÝ[YÊBˆÝX\™]\™Ù]YËš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹odùbcy¥¡ù.í¹i.zaãyi#z-)¹cíù¥è:g 9i!9ä!ˆ‚ˆ™]\›‚ˆB‚ˆ]›Û\•]HH›Û\“˜[YJ›ÜŽˆ›Û\’Y
+Bˆ[Ý™PXØÛÝ[ÕÔ™XÞXÛPš[ŠˆXØÛÝ[YÎˆ\™Ù]YËˆ\ÝÜžU]Nˆ¹¥¡ù.í¹i.yc®úaã{ï&—
+›Û\•]JH0­È
+Ü\˜][Û“X™[
+H‹ˆÝ]\ÓY\ÜØYÙNˆ¹¥¡ù.í¹i.yc®úaãyk£9¢$;ï&—
+›Û\•]J{ï#9mì¹éîùaiyfç¹¥-¹êæH
+\™Ù]YË˜ÛÝ[
+H9.*ºaãyi#z-)¹cíûï#9/çyåfH
+Ù\Ü›Ý\ÛÝ[
+H9îá9æë¹¨!ú-)¹cíÈ‚ˆ
+BˆB‚ˆ[˜È[™Ó\Ý[Ý™SÜ\˜][ÛŠ
+HÂˆÝX\™]Ü\˜][ÛˆH\Ý[Ý™SÜ\˜][Ûˆ[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹¬¨y§"ycëù¤©:e 9æ¡9éîùbª9¤ãy/g‚ˆ™]\›‚ˆB‚ˆ]YÙ]HÙ]
+Ü\˜][Û‹˜XØÛÝ[YÊBˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+Bˆ]™Y›Ü™PXØÛÝ[ÈHXØÛÝ[Ë™š[\ˆÈYÙ]˜ÛÛZ[œÊ	šY
+HBˆ˜\ˆ™]™\YÛÝ[H‚ˆ›Üˆ[™^[ˆXØÛÝ[Ëš[™XÙ\ÈÚ\™HYÙ]˜ÛÛZ[œÊXØÛÝ[ÖÚ[™^KšY
+HÂˆYˆ]™]š[Ý\Ñ›Û\’YÈHÜ\˜][Û‹œ™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[YØXØÛÝ[ÖÚ[™^KšYHÂˆ]›Ü›X[^™Y™]š[Ý\ÈH›Ü›X[^™Q›Û\’YÊ™]š[Ý\Ñ›Û\’YÊBˆYˆXØÛÝ[ÖÚ[™^Kœ™\ÛÛ™Y›Û\’YÈOH›Ü›X[^™Y™]š[Ý\ÈÂˆ™]™\YÛÝ[
+ÏHBˆBˆXØÛÝ[ÖÚ[™^KœÙ]™\ÛÛ™Y›Û\’YÊ›Ü›X[^™Y™]š[Ý\ÊBˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆBˆB‚ˆÝX\™™]™\YÛÝ[ˆ[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹¬¨y§"zg :) y¤©:e 9æ¡9cæ9¦í‚ˆ™]\›‚ˆB‚ˆ›ÜˆXØÛÝ[Y[ˆÜ\˜][Û‹˜XØÛÝ[YÈÂˆ]™]š[Ý\Ñ›Û\’YÈHÜ\˜][Û‹œ™]š[Ý\Ñ›Û\’YÐžPXØÛÝ[YØXØÛÝ[YHÏÈ×Bˆ™\[™XØÛÝ[ÕÑ›Û\“Ü™\ŠˆXØÛÝ[YÎˆØXØÛÝ[YKˆ›Û\’YÎˆ™]š[Ý\Ñ›Û\’YËˆ[Y\Ý[\ˆ›ÝËˆ]šXÙS˜[YNˆ]šXÙBˆ
+Bˆ™[[Ý™PXØÛÝ[Ñœ›ÛQ›Û\“Ü™\ŠˆXØÛÝ[YÎˆØXØÛÝ[YKˆ^ÛY[™Ñ›Û\’YÎˆ™]š[Ý\Ñ›Û\’YËˆ[Y\Ý[\ˆ›ÝËˆ]šXÙS˜[YNˆ]šXÙBˆ
+BˆBˆÝX\™Ø]™PXØÛÝ[Ð[™›Û\œÐ]ÛZXØ[J
+H[ÙHÈ™]\›ˆBˆ\Õ[™Ó[Ý™UØ\Ýš\ÚX›HH˜[ÙBˆ[™Ó[Ý™Q\ÛZ\ÜÕÛÜšÒ][OË˜Ø[˜Ù[
+
+Bˆ\Ý[Ý™SÜ\˜][ÛˆHš[ˆ]Y\XØÛÝ[ÈHXØÛÝ[Ë™š[\ˆÈYÙ]˜ÛÛZ[œÊ	šY
+HBˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆ¹¤©:e 9éîùbª;ï&—
+Ü\˜][Û‹˜XÝ[Û”Ý[[X\žJH‹ˆ[Y\Ý[\\Îˆ›ÝËˆ™Y›Ü™PXØÛÝ[Îˆ™Y›Ü™PXØÛÝ[ËˆY\XØÛÝ[ÎˆY\XØÛÝ[Âˆ
+BˆÝ]\ÓY\ÜØYÙHH¹mì¹¤©:e ˆ
+Ü\˜][Û‹˜XÝ[Û”Ý[[X\žJH‚ˆB‚ˆ[˜ÈY[[ÐXØÛÝ[ÒY“™YYY
+
+HÂˆÝX\™XØÛÝ[Ëš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹mì¹kf9g*:-)¹cíûï#9§*ºaãyi#yå'ù¢$‚ˆ™]\›‚ˆB‚ˆ]ØY™Q]šXÙS˜[YHHÝ\œ™[]šXÙS˜[YJ
+Bˆ]ÙYYÎˆÊÚ]NˆÝš[™Ë\Ù\›˜[YNˆÝš[™Ë\ÜÝÛÜ™ˆÝš[™ÊWHHÂˆ
+šXÛÝY˜ÛÛH‹˜[XÙPXÛÝY˜ÛÛH‹™[[Ë\\ÜËLHŠKˆ
+˜\K˜ÛÛH‹˜›Ø\K˜ÛÛH‹™[[Ë\\ÜËLˆŠKˆ
+œ\K˜ÛÛH‹™[[Ð\K˜ÛÛH‹™[[Ë\\ÜËLÈŠKˆ
+Þœ\K˜ÛÛH‹ÙXÚ]\K˜ÛÛH‹™[[Ë\\ÜËLŠKˆ
+˜˜ZYK˜ÛÛH‹\Ù\ŒP˜ZYK˜ÛÛH‹™[[Ë\\ÜËLHŠKˆ
+œÚ[˜K˜ÛÛH‹\Ù\ŒÚ[˜K˜ÛÛH‹™[[Ë\\ÜËLˆŠKˆ
+™Ú]X‹˜ÛÛH‹™]ŒPÚ]X‹˜ÛÛH‹™[[Ë\\ÜËLÈŠKˆ
+™Ú]X‹˜ÛÛH‹™]ŒÚ]X‹˜ÛÛH‹™[[Ë\\ÜËLŠKˆ
+™ÛÛÙÛK˜ÛÛH‹\Ù\ŒÐÛXZ[˜ÛÛH‹™[[Ë\\ÜËLHŠKˆ
+ž[Ý]X™K˜ÛÛH‹\Ù\ŒÛXZ[˜ÛÛH‹™[[Ë\\ÜËLLŠKˆ
+ž˜ÛÛH‹\Ù\ŒP˜ÛÛH‹™[[Ë\\ÜËLLHŠKˆ
+™˜XÙX›ÛÚË˜ÛÛH‹\Ù\Œ˜‹˜ÛÛH‹™[[Ë\\ÜËLLˆŠKˆ
+˜[X^›Û‹˜ÛÛH‹\Ù\ŒÐ[X^›Û‹˜ÛÛH‹™[[Ë\\ÜËLLÈŠKˆ
+œ^\[˜ÛÛH‹\Ù\Œ^\[˜ÛÛH‹™[[Ë\\ÜËLMŠKˆ
+›ZXÜ›ÜÛÙ˜ÛÛH‹\Ù\ŒPÝ]ÛÚË˜ÛÛH‹™[[Ë\\ÜËLMHŠKˆ
+›Ù™šXÙK˜ÛÛH‹\Ù\ŒLÝ]ÛÚË˜ÛÛH‹™[[Ë\\ÜËLMˆŠKˆ
+›™]›^˜ÛÛH‹\Ù\ŒLP™]›^˜ÛÛH‹™[[Ë\\ÜËLMÈŠKˆ
+œÜÝYžK˜ÛÛH‹\Ù\ŒLÜÝYžK˜ÛÛH‹™[[Ë\\ÜËLNŠKˆ
+›[šÙY[‹˜ÛÛH‹\Ù\ŒLÐ[šÙY[‹˜ÛÛH‹™[[Ë\\ÜËLNHŠKˆ
+™›Ü›Þ˜ÛÛH‹\Ù\ŒM›Ü›Þ˜ÛÛH‹™[[Ë\\ÜËLŒŠKˆB‚ˆ]Ø[\\ÈHÙYYË™[[Y\˜]Y
+
+K›X\È[™^ÙYY[‚ˆ˜\ˆXØÛÝ[HXØÛÝ[˜XÝÜžK˜Ü™X]JˆÚ]NˆÙYYœÚ]Kˆ\Ù\›˜[YNˆÙYY\Ù\›˜[YKˆ\ÜÝÛÜ™ˆÙYYœ\ÜÝÛÜ™ˆ]šXÙS˜[YNˆØY™Q]šXÙS˜[YBˆ
+BˆXØÛÝ[œÚ]\ÈH[[Ð[X\ÔÚ]\Ê›ÜŽˆÙYYœÚ]JBˆXØÛÝ[ÝÙXÜ™]H[[ÕÝÙXÜ™]
+›ÜŽˆ[™^
+BˆXØÛÝ[œ™XÛÝ™\žPÛÙ\ÈH[[Ô™XÛÝ™\žPÛÙ\Ê›ÜŽˆ[™^
+ÈJBˆXØÛÝ[››ÝHHˆˆ‚ˆ9é.¹/¢ú-)¹cíÈ×
+[™^
+ÈJBˆ:+¯¹i!Îˆ
+ØY™Q]šXÙS˜[YJBˆ9å*9.£¹¯%9é.¹d#9«ixà yï%º/¤y.#¹fç¹¥-¹êæyb§ú ïBˆˆˆ‚ˆ™]\›ˆXØÛÝ[ˆBˆXØÛÝ[Ë˜\[™
+ÛÛ[ÓÙŽˆØ[\\ÊBˆX\šÐ[™YÝ[\“Ü™\Ú[™ÙY
+
+BˆÞ[˜Ð[X\ÑÜ›Ý\Ê
+BˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆBˆ]Ü™X]YYÈHÙ]
+Ø[\\Ë›X\
+˜XØÛÝ[Y
+JBˆ]Y\XØÛÝ[ÈHXØÛÝ[Ë™š[\ˆÈÜ™X]YYË˜ÛÛZ[œÊ	˜XØÛÝ[Y
+HBˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆ¹å'ù¢$9¯%9é.º-)¹cíûï&ŒŒ9§hH‹ˆ™Y›Ü™PXØÛÝ[Îˆ×KˆY\XØÛÝ[ÎˆY\XØÛÝ[Âˆ
+BˆÝ]\ÓY\ÜØYÙHH¹mì¹å'ù¢$9¯%9é.º-)¹cíÈŒ9§h{ï"9d*ÈÕù h¹i#yè Kùi!ù¬êùêæyà®yb*ùd#{ï"H‚ˆB‚ˆ[˜ÈÜ™X]PXØÛÝ[œ›ÛQ˜Y
+
+HÂˆ]Ú]\ÈH\œÙTÚ]\ÊÜ™X]TÚ]\Õ^
+Bˆ]š\œÝ[X\ÈHš\œÝÚ]P[X\Êœ›ÛNˆÜ™X]TÚ]\Õ^
+Bˆ]\Ù\›˜[YHHÜ™X]U\Ù\›˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ]\ÜÝÛÜ™HÜ™X]T\ÜÝÛÜ™ˆ]ÝÙXÜ™]HÜ™X]UÝÙXÜ™]š[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ]™XÛÝ™\žPÛÙ\ÈHÜ™X]T™XÛÝ™\žPÛÙ\Âˆ]›ÝHHÜ™X]S›ÝB‚ˆÝX\™\Ú]\Ëš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹êæyà®yb*ùd#y.#z ïy..¹ênˆ‚ˆ™]\›‚ˆBˆ]YÚ]HHš\œÝ[X\Ëš\Ñ[\HÈÚ]\ÖÌHˆš\œÝ[X\Âˆ˜\ˆÜ™X]YHXØÛÝ[˜XÝÜžK˜Ü™X]JˆÚ]NˆYÚ]KˆXØÛÝ[YÚ]NˆYÚ]Kˆ\Ù\›˜[YNˆ\Ù\›˜[YKˆ\ÜÝÛÜ™ˆ\ÜÝÛÜ™ˆ]šXÙS˜[YNˆÝ\œ™[]šXÙS˜[YJ
+Bˆ
+BˆÜ™X]YœÚ]\ÈHÚ]\ÂˆÜ™X]YÝÙXÜ™]HÝÙXÜ™]ˆÜ™X]Yœ™XÛÝ™\žPÛÙ\ÈH™XÛÝ™\žPÛÙ\ÂˆÜ™X]Y››ÝHH›ÝBˆÜ™X]YœÙ]™\ÛÛ™Y›Û\’YÊÔÙ[‹™š^Y™]ÐXØÛÝ[›Û\’YJBˆ\P]]ÛX]XÑ›Û\”[\ÊÎˆ	˜Ü™X]Y
+BˆXØÛÝ[Ë˜\[™
+Ü™X]Y
+Bˆ]Ü™X]Y›ÝÈH›ÝÓ\Ê
+BˆX\šÐ[™YÝ[\“Ü™\Ú[™ÙY
+]ˆÜ™X]Y›ÝÊBˆ™\[™XØÛÝ[ÕÑ›Û\“Ü™\ŠˆXØÛÝ[YÎˆØÜ™X]YšYKˆ›Û\’YÎˆÜ™X]Yœ™\ÛÛ™Y›Û\’YËˆ[Y\Ý[\ˆÜ™X]Y›ÝËˆ]šXÙS˜[YNˆÝ\œ™[]šXÙS˜[YJ
+Bˆ
+BˆÞ[˜Ð[X\ÑÜ›Ý\Ê
+BˆÝX\™Ø]™PXØÛÝ[Ð[™›Û\œÐ]ÛZXØ[J
+H[ÙHÈ™]\›ˆBˆ]\œÚ\ÝYÜ™X]YHXØÛÝ[Ë™š\œÝ
+Ú\™NˆÈ	˜XØÛÝ[YOHÜ™X]Y˜XØÛÝ[YJHÏÈÜ™X]Yˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆ¹b&ùnîº-)¹cíûï&—
+Ü™X]Y˜XØÛÝ[Y
+H‹ˆ™Y›Ü™PXØÛÝ[Îˆ×KˆY\XØÛÝ[ÎˆÜ\œÚ\ÝYÜ™X]YBˆ
+B‚ˆÜ™X]TÚ]\Õ^Hˆ‚ˆÜ™X]U\Ù\›˜[YHHˆ‚ˆÜ™X]T\ÜÝÛÜ™Hˆ‚ˆÜ™X]UÝÙXÜ™]Hˆ‚ˆÜ™X]T™XÛÝ™\žPÛÙ\ÈHˆ‚ˆÜ™X]S›ÝHHˆ‚ˆÝ]\ÓY\ÜØYÙHHº-)¹cíùmì¹b&ùnîŽˆ
+Ü™X]Y˜XØÛÝ[Y
+H‚ˆB‚ˆ[˜È\ÝPÜ™X]UÝ˜]ÔÙXÜ™]œ›ÛPÛ\›Ø\™
+
+HÂˆ\ÝT˜]ÕÝÙXÜ™]œ›ÛPÛ\›Ø\™
+Îˆ˜Ü™X]JBˆB‚ˆ[˜È\ÝPÜ™X]UÝT’Qœ›ÛPÛ\›Ø\™
+
+HÂˆ\ÝSÝ]]T’Qœ›ÛPÛ\›Ø\™
+Îˆ˜Ü™X]JBˆB‚ˆ[˜È\ÝPÜ™X]UÝTÛÙQœ›ÛPÛ\›Ø\™
+
+HÂˆ\ÝTTÛÙQœ›ÛPÛ\›Ø\™
+Îˆ˜Ü™X]JBˆB‚ˆ[˜È\ÝQY]Ý˜]ÔÙXÜ™]œ›ÛPÛ\›Ø\™
+
+HÂˆ\ÝT˜]ÕÝÙXÜ™]œ›ÛPÛ\›Ø\™
+Îˆ™Y]
+BˆB‚ˆ[˜È\ÝQY]ÝT’Qœ›ÛPÛ\›Ø\™
+
+HÂˆ\ÝSÝ]]T’Qœ›ÛPÛ\›Ø\™
+Îˆ™Y]
+BˆB‚ˆ[˜È\ÝQY]ÝTÛÙQœ›ÛPÛ\›Ø\™
+
+HÂˆ\ÝTTÛÙQœ›ÛPÛ\›Ø\™
+Îˆ™Y]
+BˆB‚ˆ[˜È[\ÜÛÛÙÛP]][XØ]Ü‘^ÜTÛÙQœ›ÛPÛ\›Ø\™
+ˆ\™Ù]›Û\’YˆURQÈHš[ˆ™]Ñ›Û\“˜[YNˆÝš[™ÈHˆ‚ˆ
+HÂˆÝX\™]ZYÜ˜][ÛˆH™XYÛÛÙÛP]][XØ]Ü“ZYÜ˜][Û‘œ›ÛT\ÝX›Ø\™
+
+H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹bjº--9§oúaã9¬¨y§"ycëú+á¹b*ùæ¡:,-ù«c:j£:+àyfj9kï9aî¹.£9îí9è H‚ˆ™]\›‚ˆBˆ[\ÜÛÛÙÛP]][XØ]Ü“ZYÜ˜][ÛŠˆZYÜ˜][Û‹ˆ\™Ù]›Û\’Yˆ\™Ù]›Û\’Yˆ™]Ñ›Û\“˜[YNˆ™]Ñ›Û\“˜[YBˆ
+BˆB‚ˆ[˜È[\ÜÛÛÙÛP]][XØ]Ü‘^ÜTÛÙ\Êˆœ›ÛHš[UT“ÎˆÕT“Kˆ\™Ù]›Û\’YˆURQÈHš[ˆ™]Ñ›Û\“˜[YNˆÝš[™ÈHˆ‚ˆ
+HÂˆ]ZYÜ˜][ÛœÈHš[UT“Ë˜ÛÛ\XÝX\
+\œÙQÛÛÙÛP]][XØ]Ü“ZYÜ˜][Û‘œ›ÛR[XYÙQš[JBˆÝX\™[ZYÜ˜][ÛœËš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*¹.ã¹¢`:`"yfï¹âaù.+z+á¹b*ùb,:,-ù«c:j£:+àyfj9kï9aî¹.£9îí9è H‚ˆ™]\›‚ˆBˆ[\ÜÛÛÙÛP]][XØ]Ü“ZYÜ˜][ÛŠˆY\™ÙYÛÛÙÛP]][XØ]Ü“ZYÜ˜][ÛœÊZYÜ˜][ÛœÊKˆ\™Ù]›Û\’Yˆ\™Ù]›Û\’Yˆ™]Ñ›Û\“˜[YNˆ™]Ñ›Û\“˜[YBˆ
+BˆB‚ˆš]˜]H[˜È[\ÜÛÛÙÛP]][XØ]Ü“ZYÜ˜][ÛŠˆÈZYÜ˜][ÛŽˆ\œÙYÛÛÙÛP]][XØ]Ü“ZYÜ˜][Û‹ˆ\™Ù]›Û\’YˆURQËˆ™]Ñ›Û\“˜[YNˆÝš[™Âˆ
+HÂˆ]™\ÛÛ™Y›Û\’YH™\ÛÛ™P]][XØ]Ü’[\Ü›Û\’Y
+ˆ\™Ù]›Û\’Yˆ\™Ù]›Û\’Yˆ™]Ñ›Û\“˜[YNˆ™]Ñ›Û\“˜[YBˆ
+BˆYˆ
+ˆ[™]Ñ›Û\“˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊKš\Ñ[\Hˆ\™Ù]›Û\’YOHš[ˆ
+H	‰ˆ™\ÛÛ™Y›Û\’YOHš[Âˆ™]\›‚ˆBˆ]™]š[Ý\ÐXØÛÝ[ÈHXØÛÝ[Âˆ]Ý\Y]\ÈH›ÝÓ\Ê
+Bˆ˜\ˆ™^XØÛÝ[ÈHXØÛÝ[Âˆ˜\ˆÜ™X]YÛÝ[Hˆ˜\ˆ\]YÛÝ[Hˆ˜\ˆ[˜Ú[™ÙYÛÝ[Hˆ˜\ˆÚÚ\YÛÝ[HZYÜ˜][Û‹œÚÚ\YÛÝ[ˆ]›Ü›X[^™Y\™Ù]›Û\’YH™\ÛÛ™Y›Û\’Y™›]X\È›Û\’Y[‚ˆXÝ]™Q›Û\œË˜ÛÛZ[œÊÚ\™NˆÈ	šYOH›Û\’YJHÈ›Û\’Yˆš[ˆB‚ˆ›Üˆ
+Ù™œÙ][žJH[ˆZYÜ˜][Û‹™[šY\Ë™[[Y\˜]Y
+
+HÂˆÝX\™]Ú]P[X\ÈH[žKœÚ]P[X\Ë\Ú]P[X\Ëš\Ñ[\KY[žKœÙXÜ™]š\Ñ[\H[ÙHÂˆÚÚ\YÛÝ[
+ÏHBˆÛÛ[YBˆB‚ˆ][Y\Ý[\HÝ\Y]\È
+È[
+Ù™œÙ]
+BˆYˆ]X]ÚY[™^HX]ÚY[\ÜYÝXØÛÝ[[™^
+ˆ[Žˆ™^XØÛÝ[ËˆÚ]P[X\ÎˆÚ]P[X\Ëˆ\Ù\›˜[YNˆ[žK\Ù\›˜[YHÏÈˆ‹ˆÙXÜ™]ˆ[žKœÙXÜ™]ˆ
+HÂˆ]\]YH\R[\ÜYÝ[žJˆ[žKˆÚ]P[X\ÎˆÚ]P[X\ËˆÎˆ™^XØÛÝ[ÖÛX]ÚY[™^Kˆ›ÝÓ\Îˆ[Y\Ý[\ˆ\™Ù]›Û\’Yˆ›Ü›X[^™Y\™Ù]›Û\’Yˆ
+BˆYˆ\]YOH™^XØÛÝ[ÖÛX]ÚY[™^HÂˆ[˜Ú[™ÙYÛÝ[
+ÏHBˆH[ÙHÂˆ™^XØÛÝ[ÖÛX]ÚY[™^HH\]Yˆ\]YÛÝ[
+ÏHBˆBˆÛÛ[YBˆB‚ˆ]Ü™X]Y]\ÈHÝ\Y]\È
+È[
+Ù™œÙ]
+H
+ˆLˆ]Ü™X]Y]H]J[YR[\˜[Ú[˜ÙLNMÌˆ[YR[\˜[
+Ü™X]Y]\ÊHÈL
+Bˆ˜\ˆÜ™X]YHXØÛÝ[˜XÝÜžK˜Ü™X]JˆÚ]NˆÚ]P[X\Ëˆ\Ù\›˜[YNˆ[žK\Ù\›˜[YHÏÈˆ‹ˆ\ÜÝÛÜ™ˆˆ‹ˆ]šXÙS˜[YNˆÝ\œ™[]šXÙS˜[YJ
+KˆÜ™X]Y]ˆÜ™X]Y]ˆ
+BˆÜ™X]YœÚ]\ÈHÜÚ]P[X\×BˆÜ™X]YÝÙXÜ™]H[žKœÙXÜ™]ˆÜ™X]YÝ\]Y]\ÈHÜ™X]Y]\ÂˆÜ™X]YÝ\]Y]šXÙS˜[YHHÝ\œ™[]šXÙS˜[YJ
+BˆÜ™X]Y\]Y]\ÈHÜ™X]Y]\ÂˆÜ™X]Y›\ÝÜ\˜]Y]šXÙS˜[YHHÝ\œ™[]šXÙS˜[YJ
+BˆYˆ]›Ü›X[^™Y\™Ù]›Û\’YÂˆÜ™X]YœÙ]™\ÛÛ™Y›Û\’YÊÛ›Ü›X[^™Y\™Ù]›Û\’YJBˆBˆ\P]]ÛX]XÑ›Û\”[\ÊÎˆ	˜Ü™X]Y
+Bˆ™^XØÛÝ[Ë˜\[™
+Ü™X]Y
+BˆÜ™X]YÛÝ[
+ÏHBˆB‚ˆÝX\™Ü™X]YÛÝ[ˆ\]YÛÝ[ˆ[ÙHÂˆÝ]\ÓY\ÜØYÙHBˆº,-ù«c:j£:+àyfj9kï9aiyk£9¢$;ï#9¬¨y§"y¥¬9h§¹¢%¹¦í9¥¬:-)¹cíÈˆ
+ÂˆÛÛÙÛP]][XØ]Ü’[\ÜÝY™š^
+ˆ[\ÜYÛÝ[ˆZYÜ˜][Û‹™[šY\Ë˜ÛÝ[ˆÚÚ\YÛÝ[ˆÚÚ\YÛÝ[ˆ[˜Ú[™ÙYÛÝ[ˆ[˜Ú[™ÙYÛÝ[ˆ˜]ÚÚ^™NˆZYÜ˜][Û‹˜˜]ÚÚ^™Kˆ˜]Ú[™^ˆZYÜ˜][Û‹˜˜]Ú[™^ˆ
+Bˆ™]\›‚ˆB‚ˆXØÛÝ[ÈH™^XØÛÝ[ÂˆÞ[˜Ð[X\ÑÜ›Ý\Ê
+BˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆB‚ˆYˆ]Y][™ÐXØÛÝ[YXXØÛÝ[Ë˜ÛÛZ[œÊÚ\™NˆÈ	šYOHY][™ÐXØÛÝ[YJHÂˆØ[˜Ù[Y][™Ê
+BˆB‚ˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆ¹kï9aiz,-ù«c:j£:+àyfj9kï9aî¹.£9îí9è H‹ˆ™Y›Ü™PXØÛÝ[Îˆ™]š[Ý\ÐXØÛÝ[ËˆY\XØÛÝ[ÎˆXØÛÝ[Âˆ
+B‚ˆÝ]\ÓY\ÜØYÙHBˆº,-ù«c:j£:+àyfj9kï9aiyk£9¢$;ï&¹¥¬9h§ˆ
+Ü™X]YÛÝ[
+H9§h{ï#9¦í9¥¬
+\]YÛÝ[
+H9§hHˆ
+Âˆ
+›Ü›X[^™Y\™Ù]›Û\’Y›X\È»ï#9kï9aiyb,9¥¡ù.í¹i.H
+›Û\“˜[YJ›ÜŽˆ	
+JHˆHÏÈˆŠH
+ÂˆÛÛÙÛP]][XØ]Ü’[\ÜÝY™š^
+ˆ[\ÜYÛÝ[ˆZYÜ˜][Û‹™[šY\Ë˜ÛÝ[ˆÚÚ\YÛÝ[ˆÚÚ\YÛÝ[ˆ[˜Ú[™ÙYÛÝ[ˆ[˜Ú[™ÙYÛÝ[ˆ˜]ÚÚ^™NˆZYÜ˜][Û‹˜˜]ÚÚ^™Kˆ˜]Ú[™^ˆZYÜ˜][Û‹˜˜]Ú[™^ˆ
+BˆB‚ˆ[˜È[Ý™UÔ™XÞXÛPš[Š›ÜˆXØÛÝ[ˆ\ÜÝÛÜ™XØÛÝ[
+HÂˆÝX\™][™^HXØÛÝ[Ë™š\œÝ[™^
+Ú\™NˆÈ	šYOHXØÛÝ[šYJH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*¹¢o¹b,9æë¹¨!ú-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆÝX\™XXØÛÝ[ÖÚ[™^Kš\Ñ[]Y[ÙHÂˆÝ]\ÓY\ÜØYÙHHº-)¹cíùmì¹g*9fç¹¥-¹êæH‚ˆ™]\›‚ˆB‚ˆ]™Y›Ü™PXØÛÝ[HXØÛÝ[ÖÚ[™^Bˆ]›ÝÈH›ÝÓ\Ê
+BˆXØÛÝ[ÖÚ[™^Kš\Ñ[]YHYBˆXØÛÝ[ÖÚ[™^K™[]Y]\ÈH›ÝÂˆXØÛÝ[ÖÚ[™^K™[]Y]šXÙS˜[YHHÝ\œ™[]šXÙS˜[YJ
+BˆÝ]\ÓY\ÜØYÙHHº-)¹cíùmì¹éîùaiyfç¹¥-¹êæH‚ˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆÝ\œ™[]šXÙS˜[YJ
+JBˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆBˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆº-)¹cíùéîùaiyfç¹¥-¹êæ{ï&—
+XØÛÝ[ÖÚ[™^K˜XØÛÝ[Y
+H‹ˆ[Y\Ý[\\Îˆ›ÝËˆ™Y›Ü™PXØÛÝ[ÎˆØ™Y›Ü™PXØÛÝ[KˆY\XØÛÝ[ÎˆØXØÛÝ[ÖÚ[™^WBˆ
+BˆB‚ˆ[˜È[Ý™UÔ™XÞXÛPš[ŠXØÛÝ[YÎˆÙ]URQŠHÂˆ[Ý™PXØÛÝ[ÕÔ™XÞXÛPš[ŠXØÛÝ[YÎˆXØÛÝ[YÊBˆB‚ˆš]˜]H[˜È[Ý™PXØÛÝ[ÕÔ™XÞXÛPš[ŠˆXØÛÝ[YÎˆÙ]URQ‹ˆ\ÝÜžU]NˆÝš[™ÏÈHš[ˆÝ]\ÓY\ÜØYÙHÝ\ÝÛTÝ]\ÓY\ÜØYÙNˆÝš[™ÏÈHš[ˆ
+HÂˆ]\™Ù][™^\ÈHXØÛÝ[Ëš[™XÙ\Ë™š[\ˆÈXØÛÝ[YË˜ÛÛZ[œÊXØÛÝ[ÖÉKšY
+H	‰ˆXXØÛÝ[ÖÉKš\Ñ[]YBˆÝX\™]\™Ù][™^\Ëš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*¹¢o¹b,9cëùb(:fi:-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆ]™Y›Ü™PXØÛÝ[ÈH\™Ù][™^\Ë›X\ÈXØÛÝ[ÖÉHBˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+Bˆ›Üˆ[™^[ˆ\™Ù][™^\ÈÂˆXØÛÝ[ÖÚ[™^Kš\Ñ[]YHYBˆXØÛÝ[ÖÚ[™^K™[]Y]\ÈH›ÝÂˆXØÛÝ[ÖÚ[™^K™[]Y]šXÙS˜[YHH]šXÙBˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆBˆYˆ]Y][™ÐXØÛÝ[Y\™Ù][™^\Ë˜ÛÛZ[œÊÚ\™NˆÈXØÛÝ[ÖÉKšYOHY][™ÐXØÛÝ[YJHÂˆØ[˜Ù[Y][™Ê
+BˆBˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆBˆ]Ú[™ÙYYÈHÙ]
+™Y›Ü™PXØÛÝ[Ë›X\
+˜XØÛÝ[Y
+JBˆ]Y\XØÛÝ[ÈHXØÛÝ[Ë™š[\ˆÈÚ[™ÙYYË˜ÛÛZ[œÊ	˜XØÛÝ[Y
+HBˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆ\ÝÜžU]HÏÈ¹¢nzaãùéîùaiyfç¹¥-¹êæ{ï&—
+\™Ù][™^\Ë˜ÛÝ[
+H9§hz-)¹cíÈ‹ˆ[Y\Ý[\\Îˆ›ÝËˆ™Y›Ü™PXØÛÝ[Îˆ™Y›Ü™PXØÛÝ[ËˆY\XØÛÝ[ÎˆY\XØÛÝ[Âˆ
+BˆÝ]\ÓY\ÜØYÙHHÝ\ÝÛTÝ]\ÓY\ÜØYÙHÏÈ¹mì¹l!ˆ
+\™Ù][™^\Ë˜ÛÝ[
+H9§hz-)¹cíùéîùaiyfç¹¥-¹êæH‚ˆB‚ˆ[˜È™\ÝÜ™Qœ›ÛT™XÞXÛPš[Š›ÜˆXØÛÝ[ˆ\ÜÝÛÜ™XØÛÝ[
+HÂˆÝX\™][™^HXØÛÝ[Ë™š\œÝ[™^
+Ú\™NˆÈ	šYOHXØÛÝ[šYJH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*¹¢o¹b,9æë¹¨!ú-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆÝX\™XØÛÝ[ÖÚ[™^Kš\Ñ[]Y[ÙHÂˆÝ]\ÓY\ÜØYÙHHº+éz-)¹cíù.#yg*9fç¹¥-¹êæH‚ˆ™]\›‚ˆBˆÝX\™XXØÛÝ[ÖÚ[™^Kš\Ô\›X[™[Q[]Y[ÙHÂˆÝ]\ÓY\ÜØYÙHHº+éz-)¹cíùmì¹¬.9.ayb(:fi;ï#9.#z ïy h¹i#H‚ˆ™]\›‚ˆB‚ˆ]™Y›Ü™PXØÛÝ[HXØÛÝ[ÖÚ[™^Bˆ]›ÝÈH›ÝÓ\Ê
+BˆXØÛÝ[ÖÚ[™^Kš\Ñ[]YH˜[ÙBˆXØÛÝ[ÖÚ[™^Kš\Ô\›X[™[Q[]YH˜[ÙBˆXØÛÝ[ÖÚ[™^K™[]Y]\ÈHš[ˆXØÛÝ[ÖÚ[™^K™[]Y]šXÙS˜[YHHˆ‚ˆÝ]\ÓY\ÜØYÙHHº-)¹cíùmì¹.ã¹fç¹¥-¹êæy h¹i#H‚ˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆÝ\œ™[]šXÙS˜[YJ
+JBˆX\šÐ[™YÝ[\“Ü™\Ú[™ÙY
+]ˆ›ÝÊBˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆBˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆº-)¹cíù.ã¹fç¹¥-¹êæy h¹i#{ï&—
+XØÛÝ[ÖÚ[™^K˜XØÛÝ[Y
+H‹ˆ[Y\Ý[\\Îˆ›ÝËˆ™Y›Ü™PXØÛÝ[ÎˆØ™Y›Ü™PXØÛÝ[KˆY\XØÛÝ[ÎˆØXØÛÝ[ÖÚ[™^WBˆ
+BˆB‚ˆ[˜È™\ÝÜ™Qœ›ÛT™XÞXÛPš[ŠXØÛÝ[YÎˆÙ]URQŠHÂˆ]\™Ù][™^\ÈHXØÛÝ[Ëš[™XÙ\Ë™š[\ˆÂˆXØÛÝ[YË˜ÛÛZ[œÊXØÛÝ[ÖÉKšY
+H	‰ˆXØÛÝ[ÖÉKš\Ñ[]Y	‰ˆXXØÛÝ[ÖÉKš\Ô\›X[™[Q[]YˆBˆÝX\™]\™Ù][™^\Ëš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*¹¢o¹b,9cëù h¹i#z-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆ]™Y›Ü™PXØÛÝ[ÈH\™Ù][™^\Ë›X\ÈXØÛÝ[ÖÉHBˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+Bˆ›Üˆ[™^[ˆ\™Ù][™^\ÈÂˆXØÛÝ[ÖÚ[™^Kš\Ñ[]YH˜[ÙBˆXØÛÝ[ÖÚ[™^Kš\Ô\›X[™[Q[]YH˜[ÙBˆXØÛÝ[ÖÚ[™^K™[]Y]\ÈHš[ˆXØÛÝ[ÖÚ[™^K™[]Y]šXÙS˜[YHHˆ‚ˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆBˆX\šÐ[™YÝ[\“Ü™\Ú[™ÙY
+]ˆ›ÝÊBˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆBˆ]Ú[™ÙYYÈHÙ]
+™Y›Ü™PXØÛÝ[Ë›X\
+˜XØÛÝ[Y
+JBˆ]Y\XØÛÝ[ÈHXØÛÝ[Ë™š[\ˆÈÚ[™ÙYYË˜ÛÛZ[œÊ	˜XØÛÝ[Y
+HBˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆ¹¢nzaãù h¹i#z-)¹cíûï&—
+\™Ù][™^\Ë˜ÛÝ[
+H9§hH‹ˆ[Y\Ý[\\Îˆ›ÝËˆ™Y›Ü™PXØÛÝ[Îˆ™Y›Ü™PXØÛÝ[ËˆY\XØÛÝ[ÎˆY\XØÛÝ[Âˆ
+BˆÝ]\ÓY\ÜØYÙHH¹mì¹ h¹i#H
+\™Ù][™^\Ë˜ÛÝ[
+H9.*º-)¹cíÈ‚ˆB‚ˆ[˜È\›X[™[Q[]Qœ›ÛT™XÞXÛPš[ŠÈXØÛÝ[ˆ\ÜÝÛÜ™XØÛÝ[
+HÂˆÝX\™][™^HXØÛÝ[Ë™š\œÝ[™^
+Ú\™NˆÈ	šYOHXØÛÝ[šYJH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*¹¢o¹b,9æë¹¨!ú-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆÝX\™XØÛÝ[ÖÚ[™^Kš\Ñ[]Y[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹.áy¥+ù£ yg*9fç¹¥-¹êæy.+y¬.9.ayb(:fi‚ˆ™]\›‚ˆB‚ˆ]™Y›Ü™PXØÛÝ[HXØÛÝ[ÖÚ[™^Bˆ]™[[Ý™YYH™Y›Ü™PXØÛÝ[˜XØÛÝ[Yˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+BˆXØÛÝ[ÖÚ[™^Kš\Ñ[]YHYBˆXØÛÝ[ÖÚ[™^Kš\Ô\›X[™[Q[]YHYBˆXØÛÝ[ÖÚ[™^K™[]Y]\ÈH›ÝÂˆXØÛÝ[ÖÚ[™^K™[]Y]šXÙS˜[YHH]šXÙBˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆ]Y\XØÛÝ[HXØÛÝ[ÖÚ[™^BˆYˆY][™ÐXØÛÝ[YOHXØÛÝ[šYÂˆØ[˜Ù[Y][™Ê
+BˆBˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆBˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆ¹¬.9.ayb(:fi:-)¹cíûï&—
+™[[Ý™YY
+H‹ˆ™Y›Ü™PXØÛÝ[ÎˆØ™Y›Ü™PXØÛÝ[KˆY\XØÛÝ[ÎˆØY\XØÛÝ[Bˆ
+BˆÝ]\ÓY\ÜØYÙHHº-)¹cíùmì¹¬.9.ayb(:fiˆ
+™[[Ý™YY
+H‚ˆB‚ˆ[˜È\›X[™[Q[]Qœ›ÛT™XÞXÛPš[ŠXØÛÝ[YÎˆÙ]URQŠHÂˆ]™Y›Ü™PXØÛÝ[ÈHXØÛÝ[Ë™š[\ˆÂˆXØÛÝ[YË˜ÛÛZ[œÊ	šY
+H	‰ˆ	š\Ñ[]Y	‰ˆIš\Ô\›X[™[Q[]YˆBˆ]\™Ù]YÈHÙ]
+™Y›Ü™PXØÛÝ[Ë›X\
+šY
+JBˆÝX\™]\™Ù]YËš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*¹¢o¹b,9cëù¬.9.ayb(:fi:-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+Bˆ›Üˆ[™^[ˆXØÛÝ[Ëš[™XÙ\ÈÚ\™H\™Ù]YË˜ÛÛZ[œÊXØÛÝ[ÖÚ[™^KšY
+HÂˆXØÛÝ[ÖÚ[™^Kš\Ñ[]YHYBˆXØÛÝ[ÖÚ[™^Kš\Ô\›X[™[Q[]YHYBˆXØÛÝ[ÖÚ[™^K™[]Y]\ÈH›ÝÂˆXØÛÝ[ÖÚ[™^K™[]Y]šXÙS˜[YHH]šXÙBˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆBˆYˆ]Y][™ÐXØÛÝ[Y\™Ù]YË˜ÛÛZ[œÊY][™ÐXØÛÝ[Y
+HÂˆØ[˜Ù[Y][™Ê
+BˆBˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆBˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆ¹¢nzaãù¬.9.ayb(:fi:-)¹cíûï&—
+\™Ù]YË˜ÛÝ[
+H9§hH‹ˆ™Y›Ü™PXØÛÝ[Îˆ™Y›Ü™PXØÛÝ[ËˆY\XØÛÝ[ÎˆXØÛÝ[Ë™š[\ˆÈ\™Ù]YË˜ÛÛZ[œÊ	šY
+HBˆ
+BˆÝ]\ÓY\ÜØYÙHH¹mì¹¬.9.ayb(:fi
+\™Ù]YË˜ÛÝ[
+H9.*º-)¹cíÈ‚ˆB‚ˆ[˜ÈÙÙÛQ[]Y
+›ÜˆXØÛÝ[ˆ\ÜÝÛÜ™XØÛÝ[
+HÂˆYˆXØÛÝ[š\Ñ[]YÂˆ™\ÝÜ™Qœ›ÛT™XÞXÛPš[Š›ÜŽˆXØÛÝ[
+BˆH[ÙHÂˆ[Ý™UÔ™XÞXÛPš[Š›ÜŽˆXØÛÝ[
+BˆBˆB‚ˆ[˜È™\ÝÜ™P[œ›ÛT™XÞXÛPš[Š
+HÂˆ][]Y[™^\ÈHXØÛÝ[Ëš[™XÙ\Ë™š[\ˆÈXØÛÝ[ÖÉKš\Ñ[]Y	‰ˆXXØÛÝ[ÖÉKš\Ô\›X[™[Q[]YBˆÝX\™Y[]Y[™^\Ëš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹fç¹¥-¹êæy..¹ênˆ‚ˆ™]\›‚ˆB‚ˆ]™Y›Ü™PXØÛÝ[ÈH[]Y[™^\Ë›X\ÈXØÛÝ[ÖÉHBˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+Bˆ›Üˆ[™^[ˆ[]Y[™^\ÈÂˆXØÛÝ[ÖÚ[™^Kš\Ñ[]YH˜[ÙBˆXØÛÝ[ÖÚ[™^Kš\Ô\›X[™[Q[]YH˜[ÙBˆXØÛÝ[ÖÚ[™^K™[]Y]\ÈHš[ˆXØÛÝ[ÖÚ[™^K™[]Y]šXÙS˜[YHHˆ‚ˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆBˆX\šÐ[™YÝ[\“Ü™\Ú[™ÙY
+]ˆ›ÝÊBˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆBˆ]Ú[™ÙYYÈHÙ]
+™Y›Ü™PXØÛÝ[Ë›X\
+˜XØÛÝ[Y
+JBˆ]Y\XØÛÝ[ÈHXØÛÝ[Ë™š[\ˆÈÚ[™ÙYYË˜ÛÛZ[œÊ	˜XØÛÝ[Y
+HBˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆ¹aj:`ê9 h¹i#yfç¹¥-¹êæz-)¹cíûï&—
+[]Y[™^\Ë˜ÛÝ[
+H9§hH‹ˆ[Y\Ý[\\Îˆ›ÝËˆ™Y›Ü™PXØÛÝ[Îˆ™Y›Ü™PXØÛÝ[ËˆY\XØÛÝ[ÎˆY\XØÛÝ[Âˆ
+BˆÝ]\ÓY\ÜØYÙHH¹mì¹ h¹i#H
+[]Y[™^\Ë˜ÛÝ[
+H9.*º-)¹cíÈ‚ˆB‚ˆ[˜È\›X[™[Q[]P[œ›ÛT™XÞXÛPš[Š
+HÂˆ][]YÛÝ[HXØÛÝ[Ë™š[\ˆÈ	š\Ñ[]Y	‰ˆIš\Ô\›X[™[Q[]YK˜ÛÝ[ˆÝX\™[]YÛÝ[ˆ[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹fç¹¥-¹êæy..¹ênˆ‚ˆ™]\›‚ˆB‚ˆ]™Y›Ü™PXØÛÝ[ÈHXØÛÝ[Ë™š[\ˆÈ	š\Ñ[]Y	‰ˆIš\Ô\›X[™[Q[]YBˆ][]YYÈHÙ]
+™Y›Ü™PXØÛÝ[Ë›X\
+šY
+JBˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+Bˆ›Üˆ[™^[ˆXØÛÝ[Ëš[™XÙ\ÈÚ\™H[]YYË˜ÛÛZ[œÊXØÛÝ[ÖÚ[™^KšY
+HÂˆXØÛÝ[ÖÚ[™^Kš\Ñ[]YHYBˆXØÛÝ[ÖÚ[™^Kš\Ô\›X[™[Q[]YHYBˆXØÛÝ[ÖÚ[™^K™[]Y]\ÈH›ÝÂˆXØÛÝ[ÖÚ[™^K™[]Y]šXÙS˜[YHH]šXÙBˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆBˆYˆ]Y][™ÐXØÛÝ[Y[]YYË˜ÛÛZ[œÊY][™ÐXØÛÝ[Y
+HÂˆØ[˜Ù[Y][™Ê
+BˆBˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆBˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆ¹®!yên¹fç¹¥-¹êæ{ï&¹¬.9.ayb(:fi
+[]YÛÝ[
+H9§hz-)¹cíÈ‹ˆ™Y›Ü™PXØÛÝ[Îˆ™Y›Ü™PXØÛÝ[ËˆY\XØÛÝ[ÎˆXØÛÝ[Ë™š[\ˆÈ[]YYË˜ÛÛZ[œÊ	šY
+HBˆ
+BˆÝ]\ÓY\ÜØYÙHH¹mì¹¬.9.ayb(:fi
+[]YÛÝ[
+H9.*º-)¹cíÈ‚ˆB‚ˆ[˜È[]P[XØÛÝ[Ê
+HÂˆ]XÝ]™R[™^\ÈHXØÛÝ[Ëš[™XÙ\Ë™š[\ˆÈXXØÛÝ[ÖÉKš\Ñ[]YBˆÝX\™XXÝ]™R[™^\Ëš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹¦ ¹¥è9cëùb(:fi:-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆ]™Y›Ü™PXØÛÝ[ÈHXÝ]™R[™^\Ë›X\ÈXØÛÝ[ÖÉHBˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+Bˆ›Üˆ[™^[ˆXÝ]™R[™^\ÈÂˆXØÛÝ[ÖÚ[™^Kš\Ñ[]YHYBˆXØÛÝ[ÖÚ[™^K™[]Y]\ÈH›ÝÂˆXØÛÝ[ÖÚ[™^K™[]Y]šXÙS˜[YHH]šXÙBˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆBˆØ[˜Ù[Y][™Ê
+BˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆBˆ]Ú[™ÙYYÈHÙ]
+™Y›Ü™PXØÛÝ[Ë›X\
+˜XØÛÝ[Y
+JBˆ]Y\XØÛÝ[ÈHXØÛÝ[Ë™š[\ˆÈÚ[™ÙYYË˜ÛÛZ[œÊ	˜XØÛÝ[Y
+HBˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆ¹aj:`ê:-)¹cíùéîùaiyfç¹¥-¹êæ{ï&—
+XÝ]™R[™^\Ë˜ÛÝ[
+H9§hH‹ˆ[Y\Ý[\\Îˆ›ÝËˆ™Y›Ü™PXØÛÝ[Îˆ™Y›Ü™PXØÛÝ[ËˆY\XØÛÝ[ÎˆY\XØÛÝ[Âˆ
+BˆÝ]\ÓY\ÜØYÙHH¹mì¹l!¹aj:`ê:-)¹cíùéîùaiyfç¹¥-¹êæH
+XÝ]™R[™^\Ë˜ÛÝ[
+H9§hH‚ˆB‚ˆ[˜ÈÝYÙÙ\ÝYÜÝ‘š[S˜[YJ
+HOˆÝš[™ÈÂˆœ\ÜËX[XXØÛÝ[ËW
+[Y\Ý[\›Ü‘š[J
+JK˜ÜÝˆ‚ˆB‚ˆ[˜ÈÝYÙÙ\ÝYœ›ÝÜÙ\ÜÝ‘š[S˜[YJœ›ÝÜÙ\Žˆœ›ÝÜÙ\”\ÜÝÛÜ™^Ü›Ü›X]
+HOˆÝš[™ÈÂˆœ\ÜËW
+œ›ÝÜÙ\‹™š[S˜[YUÚÙ[ŠK\\ÜÝÛÜ™ËW
+[Y\Ý[\›Ü‘š[J
+JK˜ÜÝˆ‚ˆB‚ˆ[˜ÈÝYÙÙ\ÝYÞ[˜Ð[™Qš[S˜[YJ
+HOˆÝš[™ÈÂˆœ\ÜË\Þ[˜ËX[™KW
+[Y\Ý[\›Ü‘š[J
+JKšœÛÛˆ‚ˆB‚ˆ[˜ÈØ]™Q^Ü\™XÝÜžT]
+ÛX\›ÛÚÛX\šÎˆ›ÛÛHYJHÂˆ]›Ü›X[^™YH^Ü\™XÝÜžT]š[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ^Ü\™XÝÜžT]H›Ü›X[^™Yˆ]Y˜][ÈH\Ù\‘Y˜][ËœÝ[™\™ˆY˜][ËœÙ]
+›Ü›X[^™Y›Ü’Ù^NˆÙ^\Ë™^Ü\™XÝÜžT]
+BˆYˆÛX\›ÛÚÛX\šÈÂˆY˜][Ëœ™[[Ý™SØš™XÝ
+›Ü’Ù^NˆÙ^\Ë™^Ü\™XÝÜžP›ÛÚÛX\šÊBˆBˆB‚ˆ[˜ÈØ]™Q^Ü\™XÝÜžP›ÛÚÛX\šÊ›Üˆ\™XÝÜžUT“ˆT“
+HÂˆÈÂˆ]›ÛÚÛX\šÈHžH\™XÝÜžUT“˜›ÛÚÛX\šÑ]JˆÜ[ÛœÎˆËÚ]ÙXÝ\š]TØÛÜWKˆ[˜ÛY[™Ô™\ÛÝ\˜ÙU˜[Y\Ñ›Ü’Ù^\Îˆš[ˆ™[]]™UÎˆš[ˆ
+Bˆ\Ù\‘Y˜][ËœÝ[™\™œÙ]
+›ÛÚÛX\šË›Ü’Ù^NˆÙ^\Ë™^Ü\™XÝÜžP›ÛÚÛX\šÊBˆHØ]ÚÂˆ\Ù\‘Y˜][ËœÝ[™\™œ™[[Ý™SØš™XÝ
+›Ü’Ù^NˆÙ^\Ë™^Ü\™XÝÜžP›ÛÚÛX\šÊBˆÝ]\ÓY\ÜØYÙHH¹kï9aî¹æë¹oey£¢9§`ù/çykf9i,z-){ï#9."ù«(ykï9aî¹¥í¹/&ºaãy¥¬:`"y¢êyæë¹oe{ï&—
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆBˆB‚ˆ[˜ÈÛÛ™šYÝ\™Y^Ü\™XÝÜžUT“
+
+HOˆT“ÈÂˆ]Y˜][ÈH\Ù\‘Y˜][ËœÝ[™\™ˆYˆ]›ÛÚÛX\šÈHY˜][Ë™]J›Ü’Ù^NˆÙ^\Ë™^Ü\™XÝÜžP›ÛÚÛX\šÊHÂˆ˜\ˆ\ÔÝ[HH˜[ÙBˆYˆ]™\ÛÛ™YHžOÈT“
+ˆ™\ÛÛš[™Ð›ÛÚÛX\šÑ]Nˆ›ÛÚÛX\šËˆÜ[ÛœÎˆËÚ]ÙXÝ\š]TØÛÜWKˆ™[]]™UÎˆš[ˆ›ÛÚÛX\šÑ]R\ÔÝ[Nˆ	š\ÔÝ[Bˆ
+KˆZ\ÔÝ[Kˆ™\ÛÛ™Yš\Ñ\™XÝÜžT]ˆš[SX[˜YÙ\‹™Y˜][™š[Q^\ÝÊ]]ˆ™\ÛÛ™Yœ]
+BˆÂˆ™]\›ˆ™\ÛÛ™YˆBˆY˜][Ëœ™[[Ý™SØš™XÝ
+›Ü’Ù^NˆÙ^\Ë™^Ü\™XÝÜžP›ÛÚÛX\šÊBˆB‚ˆËÈHZ[ˆ]\È›ÝÝY™šXÚY[[™\ˆ\Ø[™›Þˆ]\È™]Z[™Y›Ü‚ˆËÈ\Ü^K]H™^^Ü]\Ý\ÚÈH\Ù\ˆ›ÜˆHØÛÜYØØ][Û‹‚ˆ™]\›ˆš[ˆB‚ˆ[˜È^ÜÜÝŠ
+HÂˆ]š[UT“H]Q\™XÝÜžUT“
+
+K˜\[™[™Ô]ÛÛ\Û™[
+ÝYÙÙ\ÝYÜÝ‘š[S˜[YJ
+K\Ñ\™XÝÜžNˆ˜[ÙJBˆ^ÜÜÝŠÎˆš[UT“
+BˆB‚ˆ\ØØ\™X›T™\Ý[ˆ[˜È^ÜÜÝŠÈš[UT“ˆT“ÙXÝ\š]TØÛÜY\™XÝÜžUT“ˆT“ÈHš[
+HOˆ›ÛÛÂˆ]ÜÝˆHZ[ÜÝÛÛ[
+
+Bˆ]\™[\™XÝÜžHHš[UT“™[][™Ó\Ý]ÛÛ\Û™[
+
+B‚ˆÈÂˆžHÚ]ÙXÝ\š]TØÛÜYXØÙ\ÜÊÎˆš[UT“Y][Û˜[T“ˆÙXÝ\š]TØÛÜY\™XÝÜžUT“
+HÂˆžHš[SX[˜YÙ\‹™Y˜][˜Ü™X]Q\™XÝÜžJˆ]ˆ\™[\™XÝÜžKˆÚ][\›YYX]Q\™XÝÜšY\ÎˆYBˆ
+BˆžHÜÝ‹Üš]JÎˆš[UT“]ÛZXØ[NˆYK[˜ÛÙ[™ÎˆÝš[™Ë‘[˜ÛÙ[™Ë]Ž
+BˆBˆÝ]\ÓY\ÜØYÙHH¹aj:`ê:-)¹cíÈÔÕˆ9kï9aî¹¢$9b§Îˆ
+š[UT“œ]
+H‚ˆ™]\›ˆYBˆHØ]ÚÂˆÝ]\ÓY\ÜØYÙHH¹aj:`ê:-)¹cíÈÔÕˆ9kï9aî¹i,z-)Nˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆ™]\›ˆ˜[ÙBˆBˆB‚ˆ\ØØ\™X›T™\Ý[ˆ[˜È^Üœ›ÝÜÙ\”\ÜÝÛÜ™ÜÝŠÈš[UT“ˆT“›Ü›X]ˆœ›ÝÜÙ\”\ÜÝÛÜ™^Ü›Ü›X]
+HOˆ›ÛÛÂˆ]ÜÝˆHZ[œ›ÝÜÙ\”\ÜÝÛÜ™ÜÝÛÛ[
+›Ü›X]ˆ›Ü›X]
+Bˆ]\™[\™XÝÜžHHš[UT“™[][™Ó\Ý]ÛÛ\Û™[
+
+B‚ˆÈÂˆžHÚ]ÙXÝ\š]TØÛÜYXØÙ\ÜÊÎˆš[UT“
+HÂˆžHš[SX[˜YÙ\‹™Y˜][˜Ü™X]Q\™XÝÜžJˆ]ˆ\™[\™XÝÜžKˆÚ][\›YYX]Q\™XÝÜšY\ÎˆYBˆ
+BˆžHÜÝ‹Üš]JÎˆš[UT“]ÛZXØ[NˆYK[˜ÛÙ[™ÎˆÝš[™Ë‘[˜ÛÙ[™Ë]Ž
+BˆBˆÝ]\ÓY\ÜØYÙHH—
+›Ü›X]›X™[
+H9ká¹è HÔÕˆ9kï9aî¹¢$9b§Îˆ
+š[UT“œ]
+H‚ˆ™]\›ˆYBˆHØ]ÚÂˆÝ]\ÓY\ÜØYÙHH—
+›Ü›X]›X™[
+H9ká¹è HÔÕˆ9kï9aî¹i,z-)Nˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆ™]\›ˆ˜[ÙBˆBˆB‚ˆ[˜È^ÜÞ[˜Ð[™JÈš[UT“ˆT“
+HÂˆÈÂˆØYÞ[˜ÔÙXÜ™]ÒY“™YYY
+
+Bˆ]\™[\™XÝÜžHHš[UT“™[][™Ó\Ý]ÛÛ\Û™[
+
+Bˆ]]HHžH[˜ÛÙQ[˜Üž\YÞ[˜Ð[™J^[ØYˆZ[Ý\œ™[Þ[˜Ô^[ØY
+
+JBˆžHÚ]ÙXÝ\š]TØÛÜYXØÙ\ÜÊÎˆš[UT“
+HÂˆžHš[SX[˜YÙ\‹™Y˜][˜Ü™X]Q\™XÝÜžJˆ]ˆ\™[\™XÝÜžKˆÚ][\›YYX]Q\™XÝÜšY\ÎˆYBˆ
+BˆžH]KÜš]JÎˆš[UT“Ü[ÛœÎˆ]K•Üš][™ÓÜ[ÛœË˜]ÛZXÊBˆBˆÝ]\ÓY\ÜØYÙHH\ÜÔÞ[˜ÐÜž\Ëš\Ñ[˜Üž\[Û’Ù^PÛÛ™šYÝ\™Y
+Þ[˜Ñ[˜Üž\[Û’Ù^JBˆÈ¹d#9«iyc!ykï9aî¹¢$9b§ûï"9mì¹b¨9ká»ï"Nˆ
+š[UT“œ]
+H‚ˆˆ¹d#9«iyc!ykï9aî¹¢$9b§ûï"9§*¹b¨9ká»ï#:+íùi©ye¡9/çyë¨{ï"Nˆ
+š[UT“œ]
+H‚ˆHØ]ÚÂˆÝ]\ÓY\ÜØYÙHH¹d#9«iyc!ykï9aî¹i,z-)Nˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆBˆB‚ˆš]˜]H[˜ÈÚ]ÙXÝ\š]TØÛÜYXØÙ\ÜÏŠˆÈš[UT“ˆT“ˆY][Û˜[T“ˆT“ÈHš[ˆÜ\˜][ÛŽˆ
+
+H›ÝÜÈOˆˆ
+H™]›ÝÜÈOˆÂˆ]Ø[™Y]UT“ÈHØY][Û˜[T“š[UT“š[UT“™[][™Ó\Ý]ÛÛ\Û™[
+
+WK˜ÛÛ\XÝX\È	Bˆ˜\ˆÝ\YT“ÎˆÕT“HH×Bˆ›ÜˆØ[™Y]UT“[ˆØ[™Y]UT“ÈÂˆYˆØ[™Y]UT“œÝ\XØÙ\ÜÚ[™ÔÙXÝ\š]TØÛÜY™\ÛÝ\˜ÙJ
+HÂˆÝ\YT“Ë˜\[™
+Ø[™Y]UT“
+BˆBˆBˆY™\ˆÂˆ›ÜˆÝ\YT“[ˆÝ\YT“Ëœ™]™\œÙY
+
+HÂˆÝ\YT“œÝÜXØÙ\ÜÚ[™ÔÙXÝ\š]TØÛÜY™\ÛÝ\˜ÙJ
+BˆBˆBˆ™]\›ˆžHÜ\˜][ÛŠ
+BˆB‚ˆ[˜È[\ÜÞ[˜Ð[™Jœ›ÛHš[UT“ˆT“
+HÂˆÈÂˆØYÞ[˜ÔÙXÜ™]ÒY“™YYY
+
+Bˆ]]HHžH]JÛÛ[ÓÙŽˆš[UT“
+Bˆ]\œÙYHžHXÛÙTÞ[˜Ð[™J]JBˆ]™[[ÝT^[ØYHÞ[˜Ð[™T^[ØY
+ˆXØÛÝ[Îˆ›Ü›X[^™QXÛÙYXØÛÝ[Ê\œÙYœ^[ØY˜XØÛÝ[ÊKˆ›Û\œÎˆ\œÙYœ^[ØY™›Û\œËˆ\ÜÚÙ^\Îˆ\œÙYœ^[ØYœ\ÜÚÙ^\Ëˆ[™YÝ[\XØÛÝ[YÎˆ\œÙYœ^[ØY˜[™YÝ[\XØÛÝ[YËˆ[™YÝ[\“Ü™\•\]Y]\Îˆ\œÙYœ^[ØY˜[™YÝ[\“Ü™\•\]Y]\Ëˆ[™YÝ[\“Ü™\•\]Y]šXÙS˜[YNˆ\œÙYœ^[ØY˜[™YÝ[\“Ü™\•\]Y]šXÙS˜[YKˆ›Û\“Ü™\’YÎˆ\œÙYœ^[ØY™›Û\“Ü™\’YËˆ›Û\“Ü™\•\]Y]\Îˆ\œÙYœ^[ØY™›Û\“Ü™\•\]Y]\Ëˆ›Û\“Ü™\•\]Y]šXÙS˜[YNˆ\œÙYœ^[ØY™›Û\“Ü™\•\]Y]šXÙS˜[YBˆ
+Bˆ]™[[ÝPXØÛÝ[ÈH™[[ÝT^[ØY˜XØÛÝ[Âˆ]™[[ÝQ›Û\œÈH™[[ÝT^[ØY™›Û\œÂˆ]™[[ÝT\ÜÚÙ^\ÈH™[[ÝT^[ØYœ\ÜÚÙ^\Â‚ˆ]ØØ[XØÛÝ[ÛÝ[Hš\ÚX›PXØÛÝ[ÛÝ[
+XØÛÝ[ÊBˆ]ØØ[›Û\ÛÝ[Hš\ÚX›Q›Û\ÛÝ[
+›Û\œÊBˆ]ØØ[\ÜÚÙ^PÛÝ[Hš\ÚX›T\ÜÚÙ^PÛÝ[
+\ÜÚÙ^\ÊBˆ]ØØ[^[ØYHZ[Ý\œ™[Þ[˜Ô^[ØY
+
+Bˆ]Y\™ÙY^[ØYHY\™ÙT^[ØYÊØØ[ˆØØ[^[ØY™[[ÝNˆ™[[ÝT^[ØY
+Bˆ]ØY™]T™X\ÛÛœÈHÞ[˜ÔØY™]T™X\ÛÛœÊˆØØ[ˆØØ[^[ØYˆ™[[ÝNˆ™[[ÝT^[ØYˆY\™ÙYˆY\™ÙY^[ØYˆ[ÙNˆ›Y\™ÙBˆ
+BˆÝX\™ØY™]T™X\ÛÛœËš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹d#9«iyc!ykï9aiy`g9«h»ï&¹k¢yaj9¨à9§éy§*º`&º/áûï"
+ØY™]T™X\ÛÛœËš›Ú[™Y
+Ù\\˜]ÜŽˆ¸à HŠJ{ï"H‚ˆ™]\›‚ˆB‚ˆ]™]šY]ÈHÞ[˜Ð[™R[\Ü™]šY]Õ^
+ˆØØ[ˆØØ[^[ØYˆ™[[ÝNˆ™[[ÝT^[ØYˆY\™ÙYˆY\™ÙY^[ØYˆÚ[™ˆ\œÙYšÚ[™ˆ
+Bˆ][\H”Ð[\
+
+Bˆ[\˜[\Ý[HHš[™›Ü›X][Û˜[ˆ[\›Y\ÜØYÙU^H¹èkº+©9kï9aiynm¹d"9nm¹d#9«iyc!{ï'È‚ˆ[\š[™›Ü›X]]™U^H™]šY]Âˆ[\˜Y]ÛŠÚ]]Nˆ¹èkº+©9kï9aiHŠBˆ[\˜Y]ÛŠÚ]]Nˆ¹cå¹­¢ŠBˆÝX\™[\œ[“[Ù[
+
+HOH˜[\š\œÝ]Û”™]\›ˆ[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹mì¹cå¹­¢9d#9«iyc!ykï9aiH‚ˆ™]\›‚ˆBˆÝX\™Þ[˜Ô^[ØY\]X[ÊZ[Ý\œ™[Þ[˜Ô^[ØY
+
+KØØ[^[ØY
+H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹d#9«iyc!ykï9aiymì¹cå¹­¢;ï&¹èkº+©9§'úeí9§+9g,9¥l9£k¹cäyå'ùcæ9c%»ï#:+íúaãy¥¬:`"y¢êy¥¡ù.í¹nmºh¡:)â‚ˆ™]\›‚ˆBˆžHØ]™SØØ[Þ[˜ÔØY™]TÛ˜\ÚÝ
+ØØ[^[ØY™X\ÛÛŽˆ¹kï9aiyd#9«iyc!ya¦yaiybcz!ê¹bª9i!ù.ïHŠB‚ˆ]™]š[Ý\Ñ›Û\œÈH›Û\œÂˆ]™]š[Ý\ÐXØÛÝ[ÈHXØÛÝ[Âˆ]™]š[Ý\Ô\ÜÚÙ^\ÈH\ÜÚÙ^\Âˆ›Û\œÈHÜ™\™Y›Û\œÊY\™ÙY^[ØY™›Û\œËYÎˆY\™ÙY^[ØY™›Û\“Ü™\’YÊBˆXØÛÝ[ÈHÜ™\™YXØÛÝ[ÊY\™ÙY^[ØY˜XØÛÝ[ËYÎˆY\™ÙY^[ØY˜[™YÝ[\XØÛÝ[YÊBˆ\ÜÚÙ^\ÈHY\™ÙY^[ØYœ\ÜÚÙ^\ÂˆÞ[˜Ð[X\ÑÜ›Ý\Ê
+BˆÈÂˆžHØ]™PÛÜ™PÛÛXÝ[ÛœÐ]ÛZXØ[J
+BˆHØ]ÚÂˆ›Û\œÈH™]š[Ý\Ñ›Û\œÂˆXØÛÝ[ÈH™]š[Ý\ÐXØÛÝ[Âˆ\ÜÚÙ^\ÈH™]š[Ý\Ô\ÜÚÙ^\Âˆ›ÝÈ\œ›Ü‚ˆB‚ˆYˆ]Y][™ÐXØÛÝ[YXXØÛÝ[Ë˜ÛÛZ[œÊÚ\™NˆÈ	šYOHY][™ÐXØÛÝ[YJHÂˆØ[˜Ù[Y][™Ê
+BˆB‚ˆÝ]\ÓY\ÜØYÙHBˆ¹d#9«iyc!ykï9aiynm¹d"9nm¹k£9¢$;ï"
+\œÙYšÚ[™
+{ï"{ï&º-)¹cíÈ
+ØØ[XØÛÝ[ÛÝ[
+J×
+š\ÚX›PXØÛÝ[ÛÝ[
+™[[ÝPXØÛÝ[ÊJKO—
+š\ÚX›PXØÛÝ[ÛÝ[
+XØÛÝ[ÊJ{ï#ˆ
+Âˆ¹¥¡ù.í¹i.H
+ØØ[›Û\ÛÝ[
+J×
+š\ÚX›Q›Û\ÛÝ[
+™[[ÝQ›Û\œÊJKO—
+š\ÚX›Q›Û\ÛÝ[
+›Û\œÊJ{ï#ˆ
+Âˆº`&º(c9káºd©H
+ØØ[\ÜÚÙ^PÛÝ[
+J×
+š\ÚX›T\ÜÚÙ^PÛÝ[
+™[[ÝT\ÜÚÙ^\ÊJKO—
+š\ÚX›T\ÜÚÙ^PÛÝ[
+\ÜÚÙ^\ÊJH‚ˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆœÞ[˜Ëˆ]Nˆ¹kï9aiyd#9«iyc!ynm¹d"9nm»ï"
+\œÙYšÚ[™
+{ï"H‹ˆ™Y›Ü™PXØÛÝ[Îˆ™]š[Ý\ÐXØÛÝ[ËˆY\XØÛÝ[ÎˆXØÛÝ[Âˆ
+BˆHØ]ÚÂˆÝ]\ÓY\ÜØYÙHH¹d#9«iyc!ykï9aiyi,z-)Nˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆBˆB‚ˆš]˜]H[˜ÈÞ[˜Ð[™R[\Ü™]šY]Õ^
+ˆØØ[ˆÞ[˜Ð[™T^[ØYˆ™[[ÝNˆÞ[˜Ð[™T^[ØYˆY\™ÙYˆÞ[˜Ð[™T^[ØYˆÚ[™ˆÝš[™Âˆ
+HOˆÝš[™ÈÂˆ]ØØ[YÈHÙ]
+ØØ[˜XØÛÝ[Ë›X\È	šYJBˆ]™[[ÝRYÈHÙ]
+™[[ÝK˜XØÛÝ[Ë›X\È	šYJBˆ]YYH™[[ÝK˜XØÛÝ[Ë™š[\ˆÈ[ØØ[YË˜ÛÛZ[œÊ	šY
+H	‰ˆIš\Ô\›X[™[Q[]YBˆ]Ú[™ÙYH™[[ÝK˜XØÛÝ[Ë™š[\ˆÈXØÛÝ[[‚ˆÝX\™ØØ[YË˜ÛÛZ[œÊXØÛÝ[šY
+K]Ý\œ™[HØØ[˜XØÛÝ[Ë™š\œÝ
+Ú\™NˆÈ	šYOHXØÛÝ[šYJH[ÙHÈ™]\›ˆ˜[ÙHBˆ™]\›ˆÝ\œ™[OHXØÛÝ[ˆBˆ]™[[Ý™YHØØ[˜XØÛÝ[Ë™š[\ˆÈ\™[[ÝRYË˜ÛÛZ[œÊ	šY
+H	‰ˆIš\Ô\›X[™[Q[]YBˆ˜\ˆ[™\ÈHÂˆ¹¨/9o#ûï&—
+Ú[™
+H‹ˆ¹§+9g,:-)¹cíÈ
+š\ÚX›PXØÛÝ[ÛÝ[
+ØØ[˜XØÛÝ[ÊJH8¡¤ˆ9d"9nmˆ
+š\ÚX›PXØÛÝ[ÛÝ[
+Y\™ÙY˜XØÛÝ[ÊJ{ï"9¥¡ù.í¹.+H
+š\ÚX›PXØÛÝ[ÛÝ[
+™[[ÝK˜XØÛÝ[ÊJ{ï"H‹ˆ¹¥¡ù.í¹i.H
+š\ÚX›Q›Û\ÛÝ[
+ØØ[™›Û\œÊJH8¡¤ˆ
+š\ÚX›Q›Û\ÛÝ[
+Y\™ÙY™›Û\œÊJ{ï&ú`&º(c9káºd©H
+š\ÚX›T\ÜÚÙ^PÛÝ[
+ØØ[œ\ÜÚÙ^\ÊJH8¡¤ˆ
+š\ÚX›T\ÜÚÙ^PÛÝ[
+Y\™ÙYœ\ÜÚÙ^\ÊJH‹ˆ¹më¹o »ï&¹¥¬9h§ˆ
+YY˜ÛÝ[
+{ï#9/ë¹¥.H
+Ú[™ÙY˜ÛÝ[
+{ï#9§+9g,9âë9§"H
+™[[Ý™Y˜ÛÝ[
+H‚ˆBˆ›ÜˆXØÛÝ[[ˆYYœ™Yš^
+Ì
+HÂˆ[™\Ë˜\[™
+¹¥¬9h§»ï&—
+XØÛÝ[˜Ø[›ÛšXØ[Ú]JH0­È
+XØÛÝ[\Ù\›˜[YJHŠBˆBˆ›ÜˆXØÛÝ[[ˆÚ[™ÙYœ™Yš^
+Ì
+HÂˆ[™\Ë˜\[™
+¹/ë¹¥.{ï&—
+XØÛÝ[˜Ø[›ÛšXØ[Ú]JH0­È
+XØÛÝ[\Ù\›˜[YJHŠBˆBˆYˆYY˜ÛÝ[ˆÌÚ[™ÙY˜ÛÝ[ˆÌÂˆ[™\Ë˜\[™
+¹am¹/fymë¹o ¹mì¹ç yåi{ï#9èkº+©9d#¹.ãy£"ykeù«­y¥íºeí9¢,ùd"9nmˆŠBˆBˆ™]\›ˆ[™\Ëš›Ú[™Y
+Ù\\˜]ÜŽˆ—ˆŠBˆB‚ˆ[˜ÈY\™ÙPÜ™Y[X[^Ú[™ÙR[\Ü
+È™\Ý[ˆÜ™Y[X[^Ú[™ÙR[\Ü™\Ý[
+HÂˆ]™]š[Ý\ÐXØÛÝ[ÈHXØÛÝ[Âˆ]™]š[Ý\Ô\ÜÚÙ^\ÈH\ÜÚÙ^\Âˆ]ØØ[XØÛÝ[ÛÝ[Hš\ÚX›PXØÛÝ[ÛÝ[
+XØÛÝ[ÊBˆ]ØØ[\ÜÚÙ^PÛÝ[Hš\ÚX›T\ÜÚÙ^PÛÝ[
+\ÜÚÙ^\ÊB‚ˆ]Y\™ÙYXØÛÝ[ÈHY\™ÙPXØÛÝ[ÛÛXÝ[ÛœÊˆØØ[ˆXØÛÝ[Ëˆ™[[ÝNˆ›Ü›X[^™QXÛÙYXØÛÝ[Ê™\Ý[˜XØÛÝ[ÊBˆ
+Bˆ]Y\™ÙY\ÜÚÙ^\ÈHY\™ÙT\ÜÚÙ^PÛÛXÝ[ÛœÊØØ[ˆ\ÜÚÙ^\Ë™[[ÝNˆ™\Ý[œ\ÜÚÙ^\ÊB‚ˆXØÛÝ[ÈHY\™ÙYXØÛÝ[Âˆ\ÜÚÙ^\ÈHY\™ÙY\ÜÚÙ^\ÂˆÞ[˜Ð[X\ÑÜ›Ý\Ê
+BˆÈÂˆžHØ]™PÛÜ™PÛÛXÝ[ÛœÐ]ÛZXØ[J
+BˆHØ]ÚÂˆXØÛÝ[ÈH™]š[Ý\ÐXØÛÝ[Âˆ\ÜÚÙ^\ÈH™]š[Ý\Ô\ÜÚÙ^\ÂˆÝ]\ÓY\ÜØYÙHH\HÜ™Y[X[^Ú[™ÙH9kï9aiy/çykf9i,z-){ï&—
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆ™]\›‚ˆB‚ˆÝ]\ÓY\ÜØYÙHBˆ\HÜ™Y[X[^Ú[™ÙH9kï9aiyk£9¢$;ï&º-)¹cíÈ
+ØØ[XØÛÝ[ÛÝ[
+J×
+š\ÚX›PXØÛÝ[ÛÝ[
+™\Ý[˜XØÛÝ[ÊJKO—
+š\ÚX›PXØÛÝ[ÛÝ[
+XØÛÝ[ÊJ{ï#ˆ
+Âˆº`&º(c9káºd©H
+ØØ[\ÜÚÙ^PÛÝ[
+J×
+š\ÚX›T\ÜÚÙ^PÛÝ[
+™\Ý[œ\ÜÚÙ^\ÊJKO—
+š\ÚX›T\ÜÚÙ^PÛÝ[
+\ÜÚÙ^\ÊJHˆ
+Âˆ
+™\Ý[œÚÚ\Y\ÜÚÙ^PÛÝ[ˆÈ»ï#:-ìú/áÈ
+™\Ý[œÚÚ\Y\ÜÚÙ^PÛÝ[
+H9§hy¥è9¬åz/k9£h¹æ¡:`&º(c9káºd©HˆˆˆŠBˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆœÞ[˜Ëˆ]Nˆ\HÜ™Y[X[^Ú[™ÙH9kï9aiH‹ˆ™Y›Ü™PXØÛÝ[Îˆ™]š[Ý\ÐXØÛÝ[ËˆY\XØÛÝ[ÎˆXØÛÝ[Âˆ
+BˆB‚ˆ[˜È[\Üœ›ÝÜÙ\”\ÜÝÛÜ™ÜÝŠœ›ÛHš[UT“ˆT“
+HÂˆÈÂˆ]™]š[Ý\ÐXØÛÝ[ÈHXØÛÝ[Âˆ]]HHžH]JÛÛ[ÓÙŽˆš[UT“
+Bˆ]\œÙYHžHœ›ÝÜÙ\”\ÜÝÛÜ™[\Ü\œÙ\‹œ\œÙJ]Nˆ]JBˆ]Ý\Y]\ÈH›ÝÓ\Ê
+Bˆ˜\ˆ™^XØÛÝ[ÈHXØÛÝ[Âˆ˜\ˆÜ™X]YÛÝ[Hˆ˜\ˆ\]YÛÝ[Hˆ˜\ˆ[˜Ú[™ÙYÛÝ[H‚ˆ›Üˆ
+Ù™œÙ][žJH[ˆ\œÙY™[šY\Ë™[[Y\˜]Y
+
+HÂˆYˆ]X]ÚY[™^HX]ÚY[\ÜYXØÛÝ[[™^
+[Žˆ™^XØÛÝ[Ë[žNˆ[žJHÂˆ]\]YH\R[\ÜYœ›ÝÜÙ\‘[žJˆ[žKˆÎˆ™^XØÛÝ[ÖÛX]ÚY[™^Kˆ›ÝÓ\ÎˆÝ\Y]\È
+È[
+Ù™œÙ]
+Bˆ
+BˆYˆ\]YOH™^XØÛÝ[ÖÛX]ÚY[™^HÂˆ[˜Ú[™ÙYÛÝ[
+ÏHBˆH[ÙHÂˆ™^XØÛÝ[ÖÛX]ÚY[™^HH\]Yˆ\]YÛÝ[
+ÏHBˆBˆÛÛ[YBˆB‚ˆ]Ü™X]Y]\ÈHÝ\Y]\È
+È[
+Ù™œÙ]
+H
+ˆLˆ]Ü™X]Y]H]J[YR[\˜[Ú[˜ÙLNMÌˆ[YR[\˜[
+Ü™X]Y]\ÊHÈL
+Bˆ˜\ˆÜ™X]YHXØÛÝ[˜XÝÜžK˜Ü™X]JˆÚ]Nˆ[žKœÚ]\Ë™š\œÝÏÈˆ‹ˆ\Ù\›˜[YNˆ[žK\Ù\›˜[YKˆ\ÜÝÛÜ™ˆ[žKœ\ÜÝÛÜ™ˆ]šXÙS˜[YNˆÝ\œ™[]šXÙS˜[YJ
+KˆÜ™X]Y]ˆÜ™X]Y]ˆ
+BˆÜ™X]YœÚ]\ÈH[žKœÚ]\ÂˆÜ™X]Y››ÝHH[žK››ÝBˆÜ™X]Y››ÝU\]Y]\ÈH[žK››ÝKš\Ñ[\HÈÜ™X]Y››ÝU\]Y]\ÈˆÜ™X]Y]\ÂˆÜ™X]Y››ÝU\]Y]šXÙS˜[YHHÝ\œ™[]šXÙS˜[YJ
+BˆÜ™X]Y\]Y]\ÈHÜ™X]Y]\ÂˆÜ™X]Y›\ÝÜ\˜]Y]šXÙS˜[YHHÝ\œ™[]šXÙS˜[YJ
+Bˆ™^XØÛÝ[Ë˜\[™
+Ü™X]Y
+BˆÜ™X]YÛÝ[
+ÏHBˆB‚ˆÝX\™Ü™X]YÛÝ[ˆ\]YÛÝ[ˆ[ÙHÂˆÝ]\ÓY\ÜØYÙHBˆ¹­cú)â9fj9ká¹è HÔÕˆ9kï9aiyk£9¢$;ï"
+\œÙY™›Ü›X]›X™[
+{ï"{ï#9¬¨y§"y¥¬9h§¹¢%¹¦í9¥¬:-)¹cíÈˆ
+Âˆ
+\œÙYœÚÚ\Y›ÝÐÛÝ[ˆÈ»ï#:-ìú/áÈ
+\œÙYœÚÚ\Y›ÝÐÛÝ[
+H:(cˆˆˆŠH
+Âˆ
+[˜Ú[™ÙYÛÝ[ˆÈ»ï#9§*¹cæ9c%ˆ
+[˜Ú[™ÙYÛÝ[
+H:(cˆˆˆŠBˆ™]\›‚ˆB‚ˆXØÛÝ[ÈH™^XØÛÝ[ÂˆÞ[˜Ð[X\ÑÜ›Ý\Ê
+BˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆB‚ˆYˆ]Y][™ÐXØÛÝ[YXXØÛÝ[Ë˜ÛÛZ[œÊÚ\™NˆÈ	šYOHY][™ÐXØÛÝ[YJHÂˆØ[˜Ù[Y][™Ê
+BˆB‚ˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆ¹kï9aiH
+\œÙY™›Ü›X]›X™[
+H9ká¹è HÔÕˆ‹ˆ™Y›Ü™PXØÛÝ[Îˆ™]š[Ý\ÐXØÛÝ[ËˆY\XØÛÝ[ÎˆXØÛÝ[Âˆ
+B‚ˆÝ]\ÓY\ÜØYÙHBˆ¹­cú)â9fj9ká¹è HÔÕˆ9kï9aiyk£9¢$;ï"
+\œÙY™›Ü›X]›X™[
+{ï"{ï&¹¥¬9h§ˆ
+Ü™X]YÛÝ[
+H9§h{ï#9¦í9¥¬
+\]YÛÝ[
+H9§hHˆ
+Âˆ
+\œÙYœÚÚ\Y›ÝÐÛÝ[ˆÈ»ï#:-ìú/áÈ
+\œÙYœÚÚ\Y›ÝÐÛÝ[
+H:(cˆˆˆŠH
+Âˆ
+[˜Ú[™ÙYÛÝ[ˆÈ»ï#9§*¹cæ9c%ˆ
+[˜Ú[™ÙYÛÝ[
+H:(cˆˆˆŠBˆHØ]ÚÂˆÝ]\ÓY\ÜØYÙHH¹­cú)â9fj9ká¹è HÔÕˆ9kï9aiyi,z-)Nˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆBˆB‚ˆš]˜]H[˜ÈZ[ÜÝÛÛ[
+
+HOˆÝš[™ÈÂˆYˆT\ÜÐÛÜ™Q‘’K™›Ü˜ÙTÝÚYY\™ÙHÂˆÈÂˆ™]\›ˆžHZ[ÜÝÛÛ[šXT\Ý
+
+BˆHØ]ÚÂˆ”ÓÙÊ–Ô\ÜÐÛÜ™WH\ÝÔÕˆ^Ü˜Z[Y˜[˜XÚÈÝÚYˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠHŠBˆBˆBˆ™]\›ˆZ[ÜÝÛÛ[ÝÚY
+
+BˆB‚ˆš]˜]H[˜ÈZ[ÜÝÛÛ[šXT\Ý
+
+H›ÝÜÈOˆÝš[™ÈÂˆ][˜ÛÙ\ˆH”ÓÓ‘[˜ÛÙ\Š
+Bˆ[˜ÛÙ\‹›Ý]]›Ü›X][™ÈHËœÛÜYÙ^\×Bˆ]]HHžH[˜ÛÙ\‹™[˜ÛÙJXØÛÝ[ÊBˆÝX\™]XØÛÝ[Ò”ÓÓˆHÝš[™Ê]Nˆ]K[˜ÛÙ[™Îˆ]Ž
+H[ÙHÂˆ›ÝÈ\ÜÐÛÜ™Q‘’K‘‘’Q\œ›Ü‹š[˜[YUŽˆBˆ™]\›ˆžH\ÜÐÛÜ™Q‘’K™^ÜXXÛÜÐÜÝ’”ÓÓŠXØÛÝ[Ò”ÓÓŽˆXØÛÝ[Ò”ÓÓŠBˆB‚ˆš]˜]H[˜ÈZ[ÜÝÛÛ[ÝÚY
+
+HOˆÝš[™ÈÂˆ]XY\ˆHÂˆ˜XØÛÝ[ÚY‹ˆœÚ]\È‹ˆ\Ù\›˜[YH‹ˆœ\ÜÝÛÜ™‹ˆÝÜÙXÜ™]‹ˆœ™XÛÝ™\žWØÛÙ\È‹ˆ››ÝH‹ˆ\Ù\›˜[YWÝ\]YØ]Û\È‹ˆœ\ÜÝÛÜ™Ý\]YØ]Û\È‹ˆÝÝ\]YØ]Û\È‹ˆœ™XÛÝ™\žWØÛÙ\×Ý\]YØ]Û\È‹ˆ››ÝWÝ\]YØ]Û\È‹ˆš\×Ù[]Y‹ˆ™[]YØ]Û\È‹ˆ›\ÝÛÜ\˜]YÙ]šXÙWÛ˜[YH‹ˆ˜Ü™X]YØ]Û\È‹ˆ\]YØ]Û\È‹ˆKš›Ú[™Y
+Ù\\˜]ÜŽˆ‹ŠB‚ˆ]›ÝÜÎˆÔÝš[™×HHXØÛÝ[Ë›X\ÈXØÛÝ[[‚ˆ]ÛÛ[[œÎˆÔÝš[™×HHÂˆXØÛÝ[˜XØÛÝ[YˆXØÛÝ[œÚ]\Ëš›Ú[™Y
+Ù\\˜]ÜŽˆŽÈŠKˆXØÛÝ[\Ù\›˜[YKˆXØÛÝ[œ\ÜÝÛÜ™ˆXØÛÝ[ÝÙXÜ™]ˆXØÛÝ[œ™XÛÝ™\žPÛÙ\ËˆXØÛÝ[››ÝKˆÝš[™ÊXØÛÝ[\Ù\›˜[YU\]Y]\ÊKˆÝš[™ÊXØÛÝ[œ\ÜÝÛÜ™\]Y]\ÊKˆÝš[™ÊXØÛÝ[Ý\]Y]\ÊKˆÝš[™ÊXØÛÝ[œ™XÛÝ™\žPÛÙ\Õ\]Y]\ÊKˆÝš[™ÊXØÛÝ[››ÝU\]Y]\ÊKˆXØÛÝ[š\Ñ[]YÈYHˆˆ™˜[ÙH‹ˆXØÛÝ[™[]Y]\Ë›X\
+Ýš[™Ëš[š]
+HÏÈˆ‹ˆXØÛÝ[›\ÝÜ\˜]Y]šXÙS˜[YKˆÝš[™ÊXØÛÝ[˜Ü™X]Y]\ÊKˆÝš[™ÊXØÛÝ[\]Y]\ÊKˆB‚ˆ]\ØØ\YHÛÛ[[œË›X\
+ÜÝ‘\ØØ\Y
+Bˆ™]\›ˆ\ØØ\Yš›Ú[™Y
+Ù\\˜]ÜŽˆ‹ŠBˆB‚ˆ™]\›ˆ
+ÚXY\—H
+È›ÝÜÊKš›Ú[™Y
+Ù\\˜]ÜŽˆ—ˆŠBˆB‚ˆš]˜]H[˜ÈZ[œ›ÝÜÙ\”\ÜÝÛÜ™ÜÝÛÛ[
+›Ü›X]ˆœ›ÝÜÙ\”\ÜÝÛÜ™^Ü›Ü›X]
+HOˆÝš[™ÈÂˆ]XY\ˆH›Ü›X]šXY\œËš›Ú[™Y
+Ù\\˜]ÜŽˆ‹ŠBˆ]XÝ]™PXØÛÝ[ÈHXØÛÝ[Ë™š[\ˆÈIš\Ñ[]YBˆ]›ÝÜÎˆÔÝš[™×HHXÝ]™PXØÛÝ[Ë™›]X\ÈXØÛÝ[[‚ˆ]Ú]\ÈH\œ˜^JˆÙ]
+XØÛÝ[œÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JK™š[\ˆÈIš\Ñ[\HJBˆ
+KœÛÜY
+
+Bˆ™]\›ˆÚ]\Ë˜ÛÛ\XÝX\ÈÚ]H[‚ˆ]ÛÛ[[œÈH›Ü›X]œ›ÝÊˆÚ]NˆÚ]Kˆ\Ù\›˜[YNˆXØÛÝ[\Ù\›˜[YKˆ\ÜÝÛÜ™ˆXØÛÝ[œ\ÜÝÛÜ™ˆ›ÝNˆXØÛÝ[››ÝKˆØ[›ÛšXØ[Ú]NˆXØÛÝ[˜Ø[›ÛšXØ[Ú]Bˆ
+Bˆ™]\›ˆÛÛ[[œË›X\
+ÜÝ‘\ØØ\Y
+Kš›Ú[™Y
+Ù\\˜]ÜŽˆ‹ŠBˆBˆB‚ˆ™]\›ˆ
+ÚXY\—H
+È›ÝÜÊKš›Ú[™Y
+Ù\\˜]ÜŽˆ—ˆŠBˆB‚ˆ[˜È™YÚ[‘Y][™ÊÈXØÛÝ[ˆ\ÜÝÛÜ™XØÛÝ[
+HÂˆY][™ÐXØÛÝ[YHXØÛÝ[šYˆY]Ú]\Õ^HXØÛÝ[œÚ]\Ëš›Ú[™Y
+Ù\\˜]ÜŽˆ—ˆŠBˆY]\Ù\›˜[YHHXØÛÝ[\Ù\›˜[YBˆY]\ÜÝÛÜ™HXØÛÝ[œ\ÜÝÛÜ™ˆY]ÝÙXÜ™]HXØÛÝ[ÝÙXÜ™]ˆY]™XÛÝ™\žPÛÙ\ÈHXØÛÝ[œ™XÛÝ™\žPÛÙ\ÂˆY]›ÝHHXØÛÝ[››ÝBˆB‚ˆ[˜ÈØ[˜Ù[Y][™Ê
+HÂˆY][™ÐXØÛÝ[YHš[ˆY]Ú]\Õ^Hˆ‚ˆY]\Ù\›˜[YHHˆ‚ˆY]\ÜÝÛÜ™Hˆ‚ˆY]ÝÙXÜ™]Hˆ‚ˆY]™XÛÝ™\žPÛÙ\ÈHˆ‚ˆY]›ÝHHˆ‚ˆB‚ˆ[˜ÈØ]™QY][™Ê
+HÂˆÝX\™]Y][™ÐXØÛÝ[Y[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹¬¨y§"y«hùg*9ï%º/¤yæ¡:-)¹cíÈ‚ˆ™]\›‚ˆBˆÝX\™][™^HXØÛÝ[Ë™š\œÝ[™^
+Ú\™NˆÈ	šYOHY][™ÐXØÛÝ[YJH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹ï%º/¤yæë¹¨!ù.#ykf9g*‚ˆØ[˜Ù[Y][™Ê
+Bˆ™]\›‚ˆB‚ˆ]ÜšYÚ[˜[XØÛÝ[HXØÛÝ[ÖÚ[™^Bˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+Bˆ˜\ˆÚ[™ÙYH˜[ÙBˆ˜\ˆÚ[™ÙYX™[ÎˆÔÝš[™×HH×B‚ˆ]›Ü›X[^™YÚ]\ÈH\œÙTÚ]\ÊY]Ú]\Õ^
+BˆYˆ[›Ü›X[^™YÚ]\Ëš\Ñ[\K›Ü›X[^™YÚ]\ÈOHXØÛÝ[ÖÚ[™^KœÚ]\ÈÂˆ]™]š[Ý\ÔÚ]\ÈHÙ]
+XØÛÝ[ÖÚ[™^KœÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JJBˆ]™^Ú]\ÈHÙ]
+›Ü›X[^™YÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JJBˆ›ÜˆÚ]H[ˆ™]š[Ý\ÔÚ]\ËœÝX˜XÝ[™Ê™^Ú]\ÊHÂˆXØÛÝ[ÖÚ[™^KœÚ]P[X\ÔÝ]\ÖÜÚ]WHHXØÛÝ[›Û\“Y[X™\œÚ\Ý]J\Ñ[]YˆYK\]Y]\Îˆ›ÝË]šXÙS˜[YNˆ]šXÙJBˆBˆ›ÜˆÚ]H[ˆ™^Ú]\ÈÂˆXØÛÝ[ÖÚ[™^KœÚ]P[X\ÔÝ]\ÖÜÚ]WHHXØÛÝ[›Û\“Y[X™\œÚ\Ý]J\Ñ[]Yˆ˜[ÙK\]Y]\Îˆ›ÝË]šXÙS˜[YNˆ]šXÙJBˆBˆXØÛÝ[ÖÚ[™^KœÚ]\ÈH›Ü›X[^™YÚ]\ÂˆÚ[™ÙYHYBˆÚ[™ÙYX™[Ë˜\[™
+¹êæyà®yb*ùd#HŠBˆB‚ˆ]™]Õ\Ù\›˜[YHHY]\Ù\›˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆYˆ[™]Õ\Ù\›˜[YKš\Ñ[\K™]Õ\Ù\›˜[YHOHXØÛÝ[ÖÚ[™^K\Ù\›˜[YHÂˆXØÛÝ[ÖÚ[™^K\Ù\›˜[YHH™]Õ\Ù\›˜[YBˆXØÛÝ[ÖÚ[™^K\Ù\›˜[YU\]Y]\ÈH›ÝÂˆXØÛÝ[ÖÚ[™^K\Ù\›˜[YU\]Y]šXÙS˜[YHH]šXÙBˆÚ[™ÙYHYBˆÚ[™ÙYX™[Ë˜\[™
+¹å*9¢-ùd#HŠBˆB‚ˆYˆY]\ÜÝÛÜ™OHXØÛÝ[ÖÚ[™^Kœ\ÜÝÛÜ™ÂˆXØÛÝ[ÖÚ[™^Kœ\ÜÝÛÜ™HY]\ÜÝÛÜ™ˆXØÛÝ[ÖÚ[™^Kœ\ÜÝÛÜ™\]Y]\ÈH›ÝÂˆXØÛÝ[ÖÚ[™^Kœ\ÜÝÛÜ™\]Y]šXÙS˜[YHH]šXÙBˆÚ[™ÙYHYBˆÚ[™ÙYX™[Ë˜\[™
+¹ká¹è HŠBˆB‚ˆYˆY]ÝÙXÜ™]OHXØÛÝ[ÖÚ[™^KÝÙXÜ™]ÂˆXØÛÝ[ÖÚ[™^KÝÙXÜ™]HY]ÝÙXÜ™]ˆXØÛÝ[ÖÚ[™^KÝ\]Y]\ÈH›ÝÂˆXØÛÝ[ÖÚ[™^KÝ\]Y]šXÙS˜[YHH]šXÙBˆÚ[™ÙYHYBˆÚ[™ÙYX™[Ë˜\[™
+•ÕŠBˆB‚ˆYˆY]™XÛÝ™\žPÛÙ\ÈOHXØÛÝ[ÖÚ[™^Kœ™XÛÝ™\žPÛÙ\ÈÂˆXØÛÝ[ÖÚ[™^Kœ™XÛÝ™\žPÛÙ\ÈHY]™XÛÝ™\žPÛÙ\ÂˆXØÛÝ[ÖÚ[™^Kœ™XÛÝ™\žPÛÙ\Õ\]Y]\ÈH›ÝÂˆXØÛÝ[ÖÚ[™^Kœ™XÛÝ™\žPÛÙ\Õ\]Y]šXÙS˜[YHH]šXÙBˆÚ[™ÙYHYBˆÚ[™ÙYX™[Ë˜\[™
+¹ h¹i#yè HŠBˆB‚ˆYˆY]›ÝHOHXØÛÝ[ÖÚ[™^K››ÝHÂˆXØÛÝ[ÖÚ[™^K››ÝHHY]›ÝBˆXØÛÝ[ÖÚ[™^K››ÝU\]Y]\ÈH›ÝÂˆXØÛÝ[ÖÚ[™^K››ÝU\]Y]šXÙS˜[YHH]šXÙBˆÚ[™ÙYHYBˆÚ[™ÙYX™[Ë˜\[™
+¹i!ù¬êŠBˆB‚ˆÝX\™Ú[™ÙY[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹¬¨y§"ycëù/çykf9æ¡9cæ9¦í‚ˆ™]\›‚ˆB‚ˆ\P]]ÛX]XÑ›Û\”[\ÊÎˆ	˜XØÛÝ[ÖÚ[™^JBˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆÞ[˜Ð[X\ÑÜ›Ý\Ê
+BˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆBˆ]]TÝY™š^HÚ[™ÙYX™[Ëš\Ñ[\HÈˆˆˆ»ï"ˆ
+ÈÚ[™ÙYX™[Ëš›Ú[™Y
+Ù\\˜]ÜŽˆ¸à HŠH
+È»ï"H‚ˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆ¹ï%º/¤z-)¹cíûï&—
+XØÛÝ[ÖÚ[™^K˜XØÛÝ[Y
+W
+]TÝY™š^
+H‹ˆ[Y\Ý[\\Îˆ›ÝËˆ™Y›Ü™PXØÛÝ[ÎˆÛÜšYÚ[˜[XØÛÝ[KˆY\XØÛÝ[ÎˆØXØÛÝ[ÖÚ[™^WBˆ
+BˆÝ]\ÓY\ÜØYÙHHº-)¹cíùï%º/¤ymì¹/çykf‚ˆØ[˜Ù[Y][™Ê
+BˆB‚ˆ[˜ÈXØÛÝ[\Ô[›™Y
+ÈXØÛÝ[ˆ\ÜÝÛÜ™XØÛÝ[ØÛÜRÙ^NˆÝš[™ÈH˜[ŠHOˆ›ÛÛÂˆ[›™YÝ]J›ÜŽˆXØÛÝ[ØÛÜRÙ^NˆØÛÜRÙ^JKœ[›™YˆB‚ˆ[˜ÈÙÙÛT[Š›ÜˆXØÛÝ[ˆ\ÜÝÛÜ™XØÛÝ[ØÛÜRÙ^NˆÝš[™ÈH˜[‹ØÛÜSX™[ˆÝš[™ÈH¹aj:`êŠHÂˆÝX\™][™^HXØÛÝ[Ë™š\œÝ[™^
+Ú\™NˆÈ	šYOHXØÛÝ[šYJH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*¹¢o¹b,9æë¹¨!ú-)¹cíÈ‚ˆ™]\›‚ˆBˆÝX\™XXØÛÝ[ÖÚ[™^Kš\Ñ[]Y[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹fç¹¥-¹êæz-)¹cíù.#y¥+ù£ yïkºhmˆ‚ˆ™]\›‚ˆB‚ˆ]™Y›Ü™PXØÛÝ[HXØÛÝ[ÖÚ[™^Bˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+Bˆ˜\ˆ™^Ý]HH[›™YÝ]J›ÜŽˆXØÛÝ[ÖÚ[™^KØÛÜRÙ^NˆØÛÜRÙ^JBˆ]™^[›™YH[™^Ý]Kœ[›™YˆYˆ™^[›™YÂˆ™^Ý]Kœ[›™YHYBˆ™^Ý]Kœ[›™YÛÜÜ™\ˆH™^[›™YÛÜÜ™\ŠØÛÜRÙ^NˆØÛÜRÙ^JBˆH[ÙHÂˆ™^Ý]Kœ[›™YH˜[ÙBˆ™^Ý]Kœ[›™YÛÜÜ™\ˆHš[ˆ™^Ý]Kœ™YÝ[\”ÛÜÜ™\ˆHš[ˆBˆÙ][›™YÝ]J™^Ý]K›ÜŽˆ	˜XØÛÝ[ÖÚ[™^KØÛÜRÙ^NˆØÛÜRÙ^JBˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆBˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆ™^[›™YˆÈº-)¹cíùïkºhm–×
+ØÛÜSX™[
+W{ï&—
+XØÛÝ[ÖÚ[™^K˜XØÛÝ[Y
+H‚ˆˆ¹cå¹­¢:-)¹cíùïkºhm–×
+ØÛÜSX™[
+W{ï&—
+XØÛÝ[ÖÚ[™^K˜XØÛÝ[Y
+H‹ˆ[Y\Ý[\\Îˆ›ÝËˆ™Y›Ü™PXØÛÝ[ÎˆØ™Y›Ü™PXØÛÝ[KˆY\XØÛÝ[ÎˆØXØÛÝ[ÖÚ[™^WBˆ
+BˆÝ]\ÓY\ÜØYÙHH™^[›™YÈº-)¹cíùmì¹g*
+ØÛÜSX™[
+yïkºhmˆˆˆ¹mì¹cå¹­¢
+ØÛÜSX™[
+yïkºhmˆ‚ˆB‚ˆ[˜È[Ý™PXØÛÝ[™Y›Ü™JÛÝ\˜ÙRYˆURQ\™Ù]YˆURQØÛÜRÙ^NˆÝš[™ÈH˜[ŠHÂˆÝX\™Y][™ÐXØÛÝ[YOHš[[ÙHÂˆ™]\›‚ˆBˆÝX\™ÛÝ\˜ÙRYOH\™Ù]Y[ÙHÈ™]\›ˆBˆÝX\™]ÛÝ\˜ÙHHXØÛÝ[Ë™š\œÝ
+Ú\™NˆÈ	šYOHÛÝ\˜ÙRYJKˆ]\™Ù]HXØÛÝ[Ë™š\œÝ
+Ú\™NˆÈ	šYOH\™Ù]YJBˆ[ÙHÂˆ™]\›‚ˆBˆÝX\™\ÛÝ\˜ÙKš\Ñ[]Y]\™Ù]š\Ñ[]Y[ÙHÂˆ™]\›‚ˆB‚ˆ][›™YH[›™YÝ]J›ÜŽˆÛÝ\˜ÙKØÛÜRÙ^NˆØÛÜRÙ^JKœ[›™YˆÝX\™[›™YÝ]J›ÜŽˆ\™Ù]ØÛÜRÙ^NˆØÛÜRÙ^JKœ[›™YOH[›™Y[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹.áy¥+ù£ H9ïkºhm¸à zgg¹ïkºhmˆ:hnyæë¹a¡z`ê9£¤¹n£È‚ˆ™]\›‚ˆB‚ˆ]Ü›Ý\HÛÜYXØÛÝ[Ñ›Ü‘\Ü^JˆXØÛÝ[Ë™š[\ˆÈIš\Ñ[]Y	‰ˆ[›™YÝ]J›ÜŽˆ	ØÛÜRÙ^NˆØÛÜRÙ^JKœ[›™YOH[›™YKˆØÛÜRÙ^NˆØÛÜRÙ^Bˆ
+Bˆ˜\ˆÜ™\™YYÈHÜ›Ý\›X\
+šY
+BˆÝX\™]œ›ÛR[™^HÜ™\™YYË™š\œÝ[™^
+ÙŽˆÛÝ\˜ÙRY
+Kˆ]Ò[™^HÜ™\™YYË™š\œÝ[™^
+ÙŽˆ\™Ù]Y
+Bˆ[ÙHÂˆ™]\›‚ˆB‚ˆÜ™\™YYËœ™[[Ý™J]ˆœ›ÛR[™^
+BˆÜ™\™YYËš[œÙ\
+ÛÝ\˜ÙRY]ˆÒ[™^
+B‚ˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+Bˆ›Üˆ
+Ü™\‹Y
+H[ˆÜ™\™YYË™[[Y\˜]Y
+
+HÂˆÝX\™][™^HXØÛÝ[Ë™š\œÝ[™^
+Ú\™NˆÈ	šYOHYJH[ÙHÈÛÛ[YHBˆ˜\ˆÝ]HH[›™YÝ]J›ÜŽˆXØÛÝ[ÖÚ[™^KØÛÜRÙ^NˆØÛÜRÙ^JBˆYˆ[›™YÂˆÝ]Kœ[›™YÛÜÜ™\ˆH[
+Ü™\ŠBˆH[ÙHÂˆÝ]Kœ™YÝ[\”ÛÜÜ™\ˆH[
+Ü™\ŠBˆBˆÙ][›™YÝ]JÝ]K›ÜŽˆ	˜XØÛÝ[ÖÚ[™^KØÛÜRÙ^NˆØÛÜRÙ^JBˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆB‚ˆYˆØÛÜRÙ^HOH˜[ˆÂˆX\šÐ[™YÝ[\“Ü™\Ú[™ÙY
+]ˆ›ÝÊBˆB‚ˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆBˆ\[™\ÝÜžQ[žJXÝ[ÛŽˆ[›™YÈºaãy£¤¹ïkºhmº-)¹cíúhn¹n£Èˆˆºaãy£¤¹¦kº`&º-)¹cíúhn¹n£È‹[Y\Ý[\\Îˆ›ÝÊBˆB‚ˆ[˜ÈXÝ]™PXØÛÝ[Ê
+HOˆÔ\ÜÝÛÜ™XØÛÝ[HÂˆÛÜYXØÛÝ[Ñ›Ü‘\Ü^JXØÛÝ[Ë™š[\ˆÈIš\Ñ[]YKØÛÜRÙ^Nˆ˜[ŠBˆB‚ˆ[˜Èš[\™YXØÛÝ[Ê
+HOˆÔ\ÜÝÛÜ™XØÛÝ[HÂˆÚÝÑ[]YXØÛÝ[ÂˆÈXØÛÝ[Ë™š[\ˆÈ	š\Ñ[]Y	‰ˆIš\Ô\›X[™[Q[]YBˆˆXØÛÝ[Ë™š[\ˆÈIš\Ñ[]YBˆB‚ˆ[˜È\Ü^TÛÜYXØÛÝ[ÊÈÛÝ\˜ÙNˆÔ\ÜÝÛÜ™XØÛÝ[KØÛÜRÙ^NˆÝš[™ÈH˜[ŠHOˆÔ\ÜÝÛÜ™XØÛÝ[HÂˆÛÜYXØÛÝ[Ñ›Ü‘\Ü^JÛÝ\˜ÙKØÛÜRÙ^NˆØÛÜRÙ^JBˆB‚ˆš]˜]H[˜È[›™YÝ]J›ÜˆXØÛÝ[ˆ\ÜÝÛÜ™XØÛÝ[ØÛÜRÙ^NˆÝš[™ÊHOˆXØÛÝ[[›™YšY]ÔÝ]HÂˆ]YØXÞHHXØÛÝ[[›™YšY]ÔÝ]Jˆ[›™YˆXØÛÝ[š\Ô[›™YÏÈ˜[ÙKˆ[›™YÛÜÜ™\ŽˆXØÛÝ[œ[›™YÛÜÜ™\‹ˆ™YÝ[\”ÛÜÜ™\ŽˆXØÛÝ[œ™YÝ[\”ÛÜÜ™\‚ˆ
+Bˆ™]\›ˆXØÛÝ[œ[›™YšY]ÜÏÖÜØÛÜRÙ^WHÏÈ
+ØÛÜRÙ^HOH˜[ˆÈYØXÞHˆXØÛÝ[[›™YšY]ÔÝ]J[›™Yˆ˜[ÙK[›™YÛÜÜ™\Žˆš[™YÝ[\”ÛÜÜ™\Žˆš[
+JBˆB‚ˆš]˜]H[˜ÈÙ][›™YÝ]JÈÝ]NˆXØÛÝ[[›™YšY]ÔÝ]K›ÜˆXØÛÝ[ˆ[›Ý]\ÜÝÛÜ™XØÛÝ[ØÛÜRÙ^NˆÝš[™ÊHÂˆ˜\ˆ[›™YšY]ÜÈHXØÛÝ[œ[›™YšY]ÜÈÏÈÎ—Bˆ[›™YšY]ÜÖÜØÛÜRÙ^WHHÝ]BˆXØÛÝ[œ[›™YšY]ÜÈH[›™YšY]ÜÂˆYˆØÛÜRÙ^HOH˜[ˆÂˆXØÛÝ[š\Ô[›™YHÝ]Kœ[›™YˆXØÛÝ[œ[›™YÛÜÜ™\ˆHÝ]Kœ[›™YÛÜÜ™\‚ˆXØÛÝ[œ™YÝ[\”ÛÜÜ™\ˆHÝ]Kœ™YÝ[\”ÛÜÜ™\‚ˆBˆB‚ˆš]˜]H[˜È™^[›™YÛÜÜ™\ŠØÛÜRÙ^NˆÝš[™ÊHOˆ[Âˆ][›™YÜ™\œÈHXØÛÝ[Ë˜ÛÛ\XÝX\ÈXØÛÝ[Oˆ[È[‚ˆ]Ý]HH[›™YÝ]J›ÜŽˆXØÛÝ[ØÛÜRÙ^NˆØÛÜRÙ^JBˆÝX\™Ý]Kœ[›™Y[ÙHÈ™]\›ˆš[Bˆ™]\›ˆÝ]Kœ[›™YÛÜÜ™\‚ˆBˆ™]\›ˆ
+[›™YÜ™\œË›X^
+
+HÏÈLJH
+ÈBˆB‚ˆš]˜]H[˜ÈÛÜYXØÛÝ[Ñ›Ü‘\Ü^JÈÛÝ\˜ÙNˆÔ\ÜÝÛÜ™XØÛÝ[KØÛÜRÙ^NˆÝš[™ÊHOˆÔ\ÜÝÛÜ™XØÛÝ[HÂˆ]›Û\”ØÛÜRYHURQ
+]ZYÝš[™ÎˆØÛÜRÙ^JBˆÏÈURQ
+]ZYÝš[™ÎˆØÛÜRÙ^Kœ™\XÚ[™ÓØØÝ\œ™[˜Ù\ÊÙŽˆ™›Û\Žˆ‹Ú]ˆˆŠJBˆ]›Û\“Ü™\ŽˆÔÝš[™Îˆ[HH›Û\”ØÛÜRYˆ™›]X\È›Û\’Y[ˆ›Û\œË™š\œÝ
+Ú\™NˆÈ	šYOH›Û\’YJHBˆ›X\È›Û\ˆ[‚ˆXÝ[Û˜\žJ[š\]YRÙ^\ÕÚ]˜[Y\Îˆ›Û\‹œ™YÝ[\XØÛÝ[YË™[[Y\˜]Y
+
+K›X\Âˆ
+	™[[Y[›ÝÙ\˜Ø\ÙY
+
+K	›Ù™œÙ]
+BˆJBˆHÏÈÎ—Bˆ™]\›ˆÛÝ\˜ÙKœÛÜYÈËšÈ[‚ˆ]ÔÝ]HH[›™YÝ]J›ÜŽˆËØÛÜRÙ^NˆØÛÜRÙ^JBˆ]šÔÝ]HH[›™YÝ]J›ÜŽˆšËØÛÜRÙ^NˆØÛÜRÙ^JBˆ]Ô[›™YHÔÝ]Kœ[›™Yˆ]šÔ[›™YHšÔÝ]Kœ[›™YˆYˆÔ[›™YOHšÔ[›™YÂˆ™]\›ˆÔ[›™Y	‰ˆ\šÔ[›™YˆB‚ˆYˆ[Ô[›™Y	‰ˆ\šÔ[›™Y	‰ˆY›Û\“Ü™\‹š\Ñ[\HÂˆ]Y˜[šÈH›Û\“Ü™\–ÛËšY]ZYÝš[™Ë›ÝÙ\˜Ø\ÙY
+
+WHÏÈ[›X^ˆ]šYÚ˜[šÈH›Û\“Ü™\–ÜšËšY]ZYÝš[™Ë›ÝÙ\˜Ø\ÙY
+
+WHÏÈ[›X^ˆYˆY˜[šÈOHšYÚ˜[šÈÈ™]\›ˆY˜[šÈšYÚ˜[šÈBˆB‚ˆËÈ9§ :/äy/ë¹¥.y/&9ab;ï&ù h¹i#yfç¹¥-¹êæxà yï%º/¤y/çykf9d#¹/&º)é¹cäH\]Y]\È9¦í9¥¬9nm¹ïkºhm¸à ‚ˆYˆË\]Y]\ÈOHšË\]Y]\ÈÂˆ™]\›ˆË\]Y]\ÈˆšË\]Y]\ÂˆB‚ˆYˆÔ[›™Y	‰ˆšÔ[›™YÂˆÝÚ]Ú
+ÔÝ]Kœ[›™YÛÜÜ™\‹šÔÝ]Kœ[›™YÛÜÜ™\ŠHÂˆØ\ÙH]
+œÛÛYJÊKœÛÛYJ›ÊJHÚ\™HÈOH›Î‚ˆ™]\›ˆÈ›ÂˆØ\ÙH
+œÛÛYK››Û™JN‚ˆ™]\›ˆYBˆØ\ÙH
+››Û™KœÛÛYJN‚ˆ™]\›ˆ˜[ÙBˆY˜][‚ˆœ™XZÂˆBˆH[ÙHÂˆÝÚ]Ú
+ÔÝ]Kœ™YÝ[\”ÛÜÜ™\‹šÔÝ]Kœ™YÝ[\”ÛÜÜ™\ŠHÂˆØ\ÙH]
+œÛÛYJÊKœÛÛYJ›ÊJHÚ\™HÈOH›Î‚ˆ™]\›ˆÈ›ÂˆØ\ÙH
+œÛÛYK››Û™JN‚ˆ™]\›ˆYBˆØ\ÙH
+››Û™KœÛÛYJN‚ˆ™]\›ˆ˜[ÙBˆY˜][‚ˆœ™XZÂˆBˆBˆYˆË˜Ü™X]Y]\ÈOHšË˜Ü™X]Y]\ÈÂˆ™]\›ˆË˜Ü™X]Y]\ÈˆšË˜Ü™X]Y]\ÂˆBˆ™]\›ˆË˜XØÛÝ[Y›ØØ[^™YÝ[™\™ÛÛ\\™JšË˜XØÛÝ[Y
+HOH›Ü™\™Y\ØÙ[™[™ÂˆBˆB‚ˆš]˜]H[˜È\P]]ÛX]XÑ›Û\”[\ÊÈXØÛÝ[ˆ[›Ý]\ÜÝÛÜ™XØÛÝ[
+HÂˆ]XØÛÝ[Ú]\ÈHÙ]
+XØÛÝ[œÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JK™š[\ˆÈIš\Ñ[\HJBˆÝX\™XXØÛÝ[Ú]\Ëš\Ñ[\H[ÙHÈ™]\›ˆBˆ]X]Ú[™Ñ›Û\’YÈH›Û\œË˜ÛÛ\XÝX\È›Û\ˆOˆURQÈ[‚ˆÝX\™›Û\‹˜]]ÐYX]Ú[™ÔÚ]\È[ÙHÈ™]\›ˆš[Bˆ]›Û\”Ú]\ÈHÙ]
+›Û\‹›X]ÚYÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JK™š[\ˆÈIš\Ñ[\HJBˆÝX\™Y›Û\”Ú]\Ëš\Ñ\Ú›Ú[
+Ú]ˆXØÛÝ[Ú]\ÊH[ÙHÈ™]\›ˆš[Bˆ™]\›ˆ›Û\‹šYˆBˆÝX\™[X]Ú[™Ñ›Û\’YËš\Ñ[\H[ÙHÈ™]\›ˆBˆ]Y\™ÙY›Û\’YÈH›Ü›X[^™Q›Û\’YÊXØÛÝ[œ™\ÛÛ™Y›Û\’YÈ
+ÈX]Ú[™Ñ›Û\’YÊBˆXØÛÝ[œÙ]™\ÛÛ™Y›Û\’YÊY\™ÙY›Û\’YÊBˆB‚ˆËËÈÙY\H\‹Y›Û\ˆÜ™\ˆ\œ˜^H]]Üš]]]™HÚ[ˆXØÛÝ[È\™HYYˆËËÈ›ÝYÚ[žHY[X™\œÚ\]ˆHÙ[XÝYÜ™\ˆ\È[œÙ\Y\ÈBˆËËÈÛÛYÝ[Ý\È›ØÚÈ]HÜÈ^\Ý[™ÈY[X™\œÈÙY\Z\ˆ™[]]™HÜ™\‹‚ˆš]˜]H[˜È™\[™XØÛÝ[ÕÑ›Û\“Ü™\ŠˆXØÛÝ[YÎˆÕURQKˆ›Û\’YÎˆÕURQKˆ[Y\Ý[\ˆ[ˆ]šXÙS˜[YNˆÝš[™Âˆ
+HÂˆ]Ü™\™YYÈHXØÛÝ[YË›X\È	]ZYÝš[™Ë›ÝÙ\˜Ø\ÙY
+
+HBˆÝX\™[Ü™\™YYËš\Ñ[\H[ÙHÈ™]\›ˆBˆ›Üˆ[™^[ˆ›Û\œËš[™XÙ\ÈÚ\™H›Û\’YË˜ÛÛZ[œÊ›Û\œÖÚ[™^KšY
+HÂˆ˜\ˆYÈH›Û\œÖÚ[™^Kœ™YÝ[\XØÛÝ[YË™š[\ˆÈ^\Ý[™È[‚ˆ[Ü™\™YYË˜ÛÛZ[œÊ^\Ý[™Ë›ÝÙ\˜Ø\ÙY
+
+JBˆBˆYËš[œÙ\
+ÛÛ[ÓÙŽˆÜ™\™YYË]ˆ
+Bˆ›Û\œÖÚ[™^Kœ™YÝ[\XØÛÝ[YÈHYÂˆ›Û\œÖÚ[™^Kœ™YÝ[\“Ü™\•\]Y]\ÈH[Y\Ý[\ˆ›Û\œÖÚ[™^Kœ™YÝ[\“Ü™\•\]Y]šXÙS˜[YHH]šXÙS˜[YBˆBˆB‚ˆš]˜]H[˜È™[[Ý™PXØÛÝ[Ñœ›ÛQ›Û\“Ü™\ŠˆXØÛÝ[YÎˆÕURQKˆ^ÛY[™Ñ›Û\’YÎˆÕURQKˆ[Y\Ý[\ˆ[ˆ]šXÙS˜[YNˆÝš[™Âˆ
+HÂˆ]Ù[XÝYHÙ]
+XØÛÝ[YË›X\È	]ZYÝš[™Ë›ÝÙ\˜Ø\ÙY
+
+HJBˆ›Üˆ[™^[ˆ›Û\œËš[™XÙ\ÈÚ\™HY^ÛY[™Ñ›Û\’YË˜ÛÛZ[œÊ›Û\œÖÚ[™^KšY
+HÂˆ]š[\™YH›Û\œÖÚ[™^Kœ™YÝ[\XØÛÝ[YË™š[\ˆÂˆ\Ù[XÝY˜ÛÛZ[œÊ	›ÝÙ\˜Ø\ÙY
+
+JBˆBˆYˆš[\™YOH›Û\œÖÚ[™^Kœ™YÝ[\XØÛÝ[YÈÂˆ›Û\œÖÚ[™^Kœ™YÝ[\XØÛÝ[YÈHš[\™Yˆ›Û\œÖÚ[™^Kœ™YÝ[\“Ü™\•\]Y]\ÈH[Y\Ý[\ˆ›Û\œÖÚ[™^Kœ™YÝ[\“Ü™\•\]Y]šXÙS˜[YHH]šXÙS˜[YBˆBˆBˆB‚ˆ[˜ÈXØÛÝ[›Ü‘Y][™Ê
+HOˆ\ÜÝÛÜ™XØÛÝ[ÈÂˆÝX\™]Y][™ÐXØÛÝ[Y[ÙHÈ™]\›ˆš[Bˆ™]\›ˆXØÛÝ[Ë™š\œÝ
+Ú\™NˆÈ	šYOHY][™ÐXØÛÝ[YJBˆB‚ˆ[˜È\Ü^U[YJÈ\Îˆ[ÊHOˆÝš[™ÈÂˆÝX\™]\È[ÙHÈ™]\›ˆ‹HˆBˆ]]HH]J[YR[\˜[Ú[˜ÙLNMÌˆÝX›J\ÊHÈLŒ
+Bˆ™]\›ˆ\Ü^Q›Ü›X]\‹œÝš[™Êœ›ÛNˆ]JBˆB‚ˆ[˜ÈÞ[˜ÕÚ]PÛÝY›ÝÊ
+HÂˆÞ[˜Ó›ÝÊ
+BˆB‚ˆ[˜ÈÞ[˜Ó›ÝÊ[ÙSÝ™\œšYNˆÞ[˜Ó[ÙOÈHš[Ý\™\ÜÐ\ÞSY\ÜØYÙNˆ›ÛÛH˜[ÙJHÂˆYˆ]Þ[˜Ó›ÝÕ\ÚË\Þ[˜Ó›ÝÕ\ÚËš\ÐØ[˜Ù[YÂˆYˆ\Ý\™\ÜÐ\ÞSY\ÜØYÙHÂˆÝ]\ÓY\ÜØYÙHH¹d#9«iz/æú(c9.+{ï#:+íùê#y`&H‚ˆBˆ™]\›‚ˆBˆÞ[˜Ó›ÝÕ\ÚÈH\ÚÈÈÝÙXZÈÙ[—H[‚ˆÝX\™]Ù[ˆ[ÙHÈ™]\›ˆBˆ]ØZ]Ù[‹œ\™›Ü›TÞ[˜Ó›ÝÊˆ[ÙNˆ[ÙSÝ™\œšYHÏÈÙ[‹œÞ[˜Ó[ÙKˆ›Ü˜ÙSÝ]›Þ™]žNˆ\Ý\™\ÜÐ\ÞSY\ÜØYÙBˆ
+BˆÙ[‹œÞ[˜Ó›ÝÕ\ÚÈHš[ˆBˆB‚ˆš]˜]H[˜È\™›Ü›TÞ[˜Ó›ÝÊ[ÙNˆÞ[˜Ó[ÙK›Ü˜ÙSÝ]›Þ™]žNˆ›ÛÛ
+H\Þ[˜ÈÂˆ][˜X›YÛÝ\˜ÙS˜[Y\ÈHXÝ]™TÞ[˜ÔÛÝ\˜ÙS˜[Y\Ê
+BˆÝX\™Y[˜X›YÛÝ\˜ÙS˜[Y\Ëš\Ñ[\H[ÙHÂˆÛÝYÞ[˜ÔÝ]\ÈH¹§*¹d+ùå*9d#9«iy®¤‚ˆÝ]\ÓY\ÜØYÙHHº+íùab9d+ùå*:!ìùl$y. 9.*¹d#9«iy®¤‚ˆ™]\›‚ˆB‚ˆØYÞ[˜ÔÙXÜ™]ÒY“™YYY
+
+Bˆ]ØØ[^[ØYHØ[›ÛšXØ[^™TÞ[˜Ô^[ØY
+Z[Ý\œ™[Þ[˜Ô^[ØY
+
+JBˆÈÂˆžHØ]™SØØ[Þ[˜ÔØY™]TÛ˜\ÚÝ
+ØØ[^[ØY™X\ÛÛŽˆ¹d#9«iybcz!ê¹bª9i!ù.ïHŠBˆHØ]ÚÂˆÛÝYÞ[˜ÔÝ]\ÈH¹d#9«iymì¹`g9«h»ï&¹¥è9¬åyb&ùnî¹§+9g,9k¢yaj9i!ù.ïH‚ˆÝ]\ÓY\ÜØYÙHH¹d#9«iymì¹`g9«h»ï#9¥è9¬åyb&ùnî¹§+9g,9k¢yaj9i!ù.ï{ï&—
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆ™]\›‚ˆBˆ˜\ˆY\™ÙY^[ØYHØØ[^[ØYˆ˜\ˆÙ[’ÜÝYUYÎˆÝš[™ÏÂˆ˜\ˆÙX‘U‘UYÎˆÝš[™ÏÂˆ˜\ˆÙ[’ÜÝY™[[ÝQ[˜Üž\YH˜[ÙBˆ˜\ˆÙX‘U”™[[ÝQ[˜Üž\YH˜[ÙBˆ˜\ˆÙ[’ÜÝY™[[ÝT^[ØYˆÞ[˜Ð[™T^[ØYÂˆ˜\ˆÙX‘U”™[[ÝT^[ØYˆÞ[˜Ð[™T^[ØYÂˆ˜\ˆÛÛ™›XÝÛÝ[Hˆ˜\ˆ™[[ÝPYÙÜ™YØ]NˆÞ[˜Ð[™T^[ØYÂˆ˜\ˆš[X\žT™[[ÝT^[ØYˆÞ[˜Ð[™T^[ØYÂˆ˜\ˆš[X\žT™[[ÝT™]š\Ú[ÛŽˆ[Âˆ˜\ˆš[X\žT™[[ÝQUYÎˆÝš[™ÏÂˆ]š[X\žTÛÝ\˜ÙHH™\ÛÛ™Yš[X\žTÞ[˜ÔÛÝ\˜ÙJ
+Bˆ˜\ˆ[\œ›ÜœÎˆÔÝš[™×HH×B‚ˆYˆ[ÙHOH›ØØ[Ý™\Üš]T™[[ÝHÂˆYˆÞ[˜Ñ[˜X›RPÛÝYÂˆÈÂˆYˆ]™[[ÝT^[ØYHžH™]Ú™[[ÝT^[ØYœ›ÛRPÛÝY
+
+Kš[X\žTÛÝ\˜ÙHOHšPÛÝYÂˆ]Ø[›ÛšXØ[™[[ÝHHØ[›ÛšXØ[^™TÞ[˜Ô^[ØY
+™[[ÝT^[ØY
+Bˆš[X\žT™[[ÝT^[ØYHØ[›ÛšXØ[™[[ÝBˆ™[[ÝPYÙÜ™YØ]HHØ[›ÛšXØ[™[[ÝBˆBˆHØ]ÚÂˆYˆš[X\žTÛÝ\˜ÙHOHšPÛÝYÂˆÝ]\ÓY\ÜØYÙHHšPÛÝY9¢âycå¹i,z-)Nˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆ™]\›‚ˆBˆ[\œ›ÜœË˜\[™
+šPÛÝY9¢âycå¹i,z-)Nˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠHŠBˆBˆB‚ˆYˆÞ[˜Ñ[˜X›UÙX‘UˆÂˆYˆ]™\ÛÝ\˜ÙUT“HZ[ÙX‘U”™\ÛÝ\˜ÙUT“
+
+HÂˆÈÂˆ]]]Üš^˜][ÛˆHZ[˜\ÚXÐ]]Üš^˜][ÛŠˆ\Ù\›˜[YNˆÙX™]•\Ù\›˜[YKˆ\ÜÝÛÜ™ˆÙX™]”\ÜÝÛÜ™ˆ
+Bˆ]™[[ÝT™\ÜÛœÙHHžH]ØZ]™]Ú™[[ÝT^[ØY
+ˆœ›ÛNˆ™\ÛÝ\˜ÙUT“ˆ]]Üš^˜][ÛŽˆ]]Üš^˜][Û‚ˆ
+BˆÙX‘U‘UYÈH™[[ÝT™\ÜÛœÙK™]YÂˆžH™\]Z\™UÙX‘U‘UYÒY”™[[ÝQ^\ÝÊ^[ØYˆ™[[ÝT™\ÜÛœÙKœ^[ØY]YÎˆ™[[ÝT™\ÜÛœÙK™]YÊBˆÙX‘U”™[[ÝT^[ØYH™[[ÝT™\ÜÛœÙKœ^[ØY›X\
+Ø[›ÛšXØ[^™TÞ[˜Ô^[ØY
+BˆÙX‘U”™[[ÝQ[˜Üž\YH™[[ÝT™\ÜÛœÙKš\Ñ[˜Üž\YˆYˆ]™[[ÝT^[ØYH™[[ÝT™\ÜÛœÙKœ^[ØYš[X\žTÛÝ\˜ÙHOHÙX‘UˆÂˆ]Ø[›ÛšXØ[™[[ÝHHØ[›ÛšXØ[^™TÞ[˜Ô^[ØY
+™[[ÝT^[ØY
+Bˆš[X\žT™[[ÝT^[ØYHØ[›ÛšXØ[™[[ÝBˆš[X\žT™[[ÝQUYÈH™[[ÝT™\ÜÛœÙK™]YÂˆš[X\žT™[[ÝT™]š\Ú[ÛˆH™[[ÝT™\ÜÛœÙKœ™]š\Ú[Û‚ˆ™[[ÝPYÙÜ™YØ]HHØ[›ÛšXØ[™[[ÝBˆBˆHØ]ÚÂˆYˆš[X\žTÛÝ\˜ÙHOHÙX‘UˆÂˆÝ]\ÓY\ÜØYÙHH•ÙX‘Uˆ9¢âycå¹i,z-)Nˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆ™]\›‚ˆBˆ[\œ›ÜœË˜\[™
+•ÙX‘Uˆ9¢âycå¹i,z-)Nˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠHŠBˆBˆH[ÙHÂˆYˆš[X\žTÛÝ\˜ÙHOHÙX‘UˆÂˆÝ]\ÓY\ÜØYÙHH•ÙX‘Uˆ:acyïk¹.#yk£9¥m;ï&º+íùhjùa¦y§#yb¨yg,9g`9.#º/ç9êëù¥¡ù.íº-ëùo¡‚ˆ™]\›‚ˆBˆ[\œ›ÜœË˜\[™
+•ÙX‘Uˆ:acyïk¹.#yk£9¥mŠBˆBˆB‚ˆYˆÞ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\ˆÂˆYˆ]™\ÛÝ\˜ÙUT“HZ[Ù[’ÜÝY^[ØYT“
+
+HÂˆÈÂˆ]]]Üš^˜][ÛˆHZ[™X\™\]]Üš^˜][ÛŠÙ\™\]]ÚÙ[ŠBˆ]™[[ÝT™\ÜÛœÙHHžH]ØZ]™]Ú™[[ÝT^[ØY
+ˆœ›ÛNˆ™\ÛÝ\˜ÙUT“ˆ]]Üš^˜][ÛŽˆ]]Üš^˜][Û‚ˆ
+BˆÙ[’ÜÝYUYÈH™[[ÝT™\ÜÛœÙK™]YÂˆÙ[’ÜÝY™[[ÝT^[ØYH™[[ÝT™\ÜÛœÙKœ^[ØY›X\
+Ø[›ÛšXØ[^™TÞ[˜Ô^[ØY
+BˆÙ[’ÜÝY™[[ÝQ[˜Üž\YH™[[ÝT™\ÜÛœÙKš\Ñ[˜Üž\YˆYˆ]™[[ÝT^[ØYH™[[ÝT™\ÜÛœÙKœ^[ØYš[X\žTÛÝ\˜ÙHOHœÙ[’ÜÝYÙ\™\ˆÂˆ]Ø[›ÛšXØ[™[[ÝHHØ[›ÛšXØ[^™TÞ[˜Ô^[ØY
+™[[ÝT^[ØY
+Bˆš[X\žT™[[ÝT^[ØYHØ[›ÛšXØ[™[[ÝBˆš[X\žT™[[ÝQUYÈH™[[ÝT™\ÜÛœÙK™]YÂˆš[X\žT™[[ÝT™]š\Ú[ÛˆH™[[ÝT™\ÜÛœÙKœ™]š\Ú[Û‚ˆ™[[ÝPYÙÜ™YØ]HHØ[›ÛšXØ[™[[ÝBˆBˆHØ]ÚÂˆYˆš[X\žTÛÝ\˜ÙHOHœÙ[’ÜÝYÙ\™\ˆÂˆÝ]\ÓY\ÜØYÙHH¹§#yb¨yfj9¢âycå¹i,z-)Nˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆ™]\›‚ˆBˆ[\œ›ÜœË˜\[™
+¹§#yb¨yfj9¢âycå¹i,z-)Nˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠHŠBˆBˆH[ÙHÂˆYˆš[X\žTÛÝ\˜ÙHOHœÙ[’ÜÝYÙ\™\ˆÂˆÝ]\ÓY\ÜØYÙHH¹§#yb¨yfj:acyïk¹.#yk£9¥m;ï&º+íùhjùa¦y§#yb¨yg,9g`‚ˆ™]\›‚ˆBˆ[\œ›ÜœË˜\[™
+¹§#yb¨yfj:acyïk¹.#yk£9¥mŠBˆBˆB‚ˆÝÚ]Ú[ÙHÂˆØ\ÙH›Y\™ÙN‚ˆYˆ]™[[ÝPYÙÜ™YØ]HÂˆÛÛ™›XÝÛÝ[HÛÝ[Þ[˜ÐXØÛÝ[ÛÛ™›XÝÊØØ[ˆØØ[^[ØY˜XØÛÝ[Ë™[[ÝNˆ™[[ÝPYÙÜ™YØ]K˜XØÛÝ[ÊBˆYˆÛÛ™›XÝÛÝ[ˆÂˆžOÈØ]™SØØ[Þ[˜ÔØY™]TÛ˜\ÚÝ
+™[[ÝPYÙÜ™YØ]K™X\ÛÛŽˆ¹d#9«iya¬¹ê z/ç9êëù`&z`"yi!ù.ïHŠBˆBˆY\™ÙY^[ØYHØ[›ÛšXØ[^™TÞ[˜Ô^[ØY
+Y\™ÙT^[ØYÊØØ[ˆØØ[^[ØY™[[ÝNˆ™[[ÝPYÙÜ™YØ]JJBˆBˆØ\ÙHœ™[[ÝSÝ™\Üš]SØØ[‚ˆÝX\™]š[X\žT™[[ÝT^[ØYˆZ\ÔÞ[˜Ô^[ØY[\Jš[X\žT™[[ÝT^[ØY
+Bˆ[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹.¤yêëú)¡¹æå¹§+9g,9mì¹`g9«h»ï&¹..ùd#9«iy®¤9..¹ên»ï#:`oùacy®!yên¹§+9g,9¥l9£kˆ‚ˆ™]\›‚ˆBˆY\™ÙY^[ØYHØ[›ÛšXØ[^™TÞ[˜Ô^[ØY
+š[X\žT™[[ÝT^[ØY
+BˆØ\ÙH›ØØ[Ý™\Üš]T™[[ÝN‚ˆœ™XZÂˆBˆB‚ˆ]ØY™]T™X\ÛÛœÈHÞ[˜ÔØY™]T™X\ÛÛœÊˆØØ[ˆØØ[^[ØYˆ™[[ÝNˆ[ÙHOH›ØØ[Ý™\Üš]T™[[ÝHÈš[ˆ™[[ÝPYÙÜ™YØ]KˆY\™ÙYˆY\™ÙY^[ØYˆ[ÙNˆ[ÙBˆ
+BˆYˆ\ØY™]T™X\ÛÛœËš\Ñ[\HÂˆÛÝYÞ[˜ÔÝ]\ÈH¹d#9«iymì¹`g9«h»ï&¹k¢yaj9¨à9§éy§*º`&º/áûï"
+ØY™]T™X\ÛÛœËš›Ú[™Y
+Ù\\˜]ÜŽˆ‹ŠJ{ï"H‚ˆÝ]\ÓY\ÜØYÙHH¹d#9«iymì¹`g9«h»ï#9§*¹/ë¹¥.y§+9g,9¥l9£k»ï&—
+ØY™]T™X\ÛÛœËš›Ú[™Y
+Ù\\˜]ÜŽˆ¸à HŠJH‚ˆ™]\›‚ˆB‚ˆËÈH™]ÛÜšÈ\ÙHX^H]™HZY[YÈØØ[Y]Ëˆ™]™\ˆ\H[‚ˆËÈÛ\ˆY\™ÙH™\Ý[Ý™\ˆH™]Ù\ˆ[‹[Y[[ÜžH^[ØY‚ˆÝX\™Þ[˜Ô^[ØY\]X[ÊZ[Ý\œ™[Þ[˜Ô^[ØY
+
+KØØ[^[ØY
+H[ÙHÂˆÛÝYÞ[˜ÔÝ]\ÈH¹d#9«iymì¹`g9«h»ï&¹d#9«iy§'úeí9§+9g,9¥l9£k¹cäyå'ùcæ9c%ˆ‚ˆÝ]\ÓY\ÜØYÙHH¹d#9«iy§'úeí9§+9g,9¥l9£k¹cäyå'ùcæ9c%»ï#:+íúaãy¥¬9d#9«iH‚ˆ™]\›‚ˆB‚ˆÞ[˜ÑXYÛ›ÜÝXÜÈHÞ[˜ÑXYÛ›ÜÝXÜÊˆØØ[XØÛÝ[Îˆš\ÚX›PXØÛÝ[ÛÝ[
+ØØ[^[ØY˜XØÛÝ[ÊKˆØØ[\ÜÚÙ^\Îˆš\ÚX›T\ÜÚÙ^PÛÝ[
+ØØ[^[ØYœ\ÜÚÙ^\ÊKˆØØ[›Û\œÎˆš\ÚX›Q›Û\ÛÝ[
+ØØ[^[ØY™›Û\œÊKˆ™[[ÝPXØÛÝ[Îˆ™[[ÝPYÙÜ™YØ]K›X\Èš\ÚX›PXØÛÝ[ÛÝ[
+	˜XØÛÝ[ÊHHÏÈˆ™[[ÝT\ÜÚÙ^\Îˆ™[[ÝPYÙÜ™YØ]K›X\Èš\ÚX›T\ÜÚÙ^PÛÝ[
+	œ\ÜÚÙ^\ÊHHÏÈˆ™[[ÝQ›Û\œÎˆ™[[ÝPYÙÜ™YØ]K›X\Èš\ÚX›Q›Û\ÛÝ[
+	™›Û\œÊHHÏÈˆÛÛ™›XÝÛÝ[ˆÛÛ™›XÝÛÝ[ˆ™]š\Ú[ÛŽˆš[X\žT™[[ÝT™]š\Ú[Û‹ˆ]YÎˆš[X\žT™[[ÝQUYËˆ\ÝÞ[˜Ð]\Îˆ›ÝÓ\Ê
+KˆÛÝ\˜ÙTÝ[[X\žNˆ[˜X›YÛÝ\˜ÙS˜[Y\Ëš›Ú[™Y
+Ù\\˜]ÜŽˆˆ
+ÈŠBˆ
+Bˆ\œÚ\ÝÞ[˜ÑXYÛ›ÜÝXÜÊ
+B‚ˆ]ÛÛ™›XÝÝY™š^HÛÛ™›XÝÛÝ[ˆÈ»ï#9¨à9­bùb,
+ÛÛ™›XÝÛÝ[
+H9.*¹keù«­ya¬¹ê ynm¹£"y¥íºeíú+¯¹i!ú)á9b&z(àya¬Èˆˆˆ‚ˆ]Þ[˜Õ]HH¹d#9«iynm¹¦í9¥¬9§+9g,;ï"
+[˜X›YÛÝ\˜ÙS˜[Y\Ëš›Ú[™Y
+Ù\\˜]ÜŽˆˆ
+ÈŠJ{ï#
+[ÙK›X™[
+{ï"W
+ÛÛ™›XÝÝY™š^
+H‚ˆ˜\ˆÚ[™ÙYH\SY\™ÙY^[ØYY“™YYY
+Y\™ÙY^[ØY\ÝÜžU]NˆÞ[˜Õ]JBˆ˜\ˆ\Ú\œ›ÜœÎˆÔÝš[™×HH[\œ›ÜœÂˆ˜\ˆš[X\žT\Ú˜Z[YH˜[ÙB‚ˆYˆÞ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\ˆÂˆ]ÛÝ\˜ÙRÙ^HHÞ[˜ÓÝ]›ÞÛÝ\˜ÙRÙ^JÚ[™ˆœÙ\™\ˆ‹\›ˆZ[Ù[’ÜÝY^[ØYT“
+
+JBˆYˆ\ÚÝ[][\Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^K›Ü˜ÙNˆ›Ü˜ÙSÝ]›Þ™]žJHÂˆ\Ú\œ›ÜœË˜\[™
+¹§#yb¨yfjˆ:(iy`où.îùb¨yëbyo¡z` :`où¥íºeíŠBˆH[ÙHÂˆÝX\™]™\ÛÝ\˜ÙUT“HZ[Ù[’ÜÝY^[ØYT“
+
+H[ÙHÂˆ™XÛÜ™Þ[˜ÓÝ]›Þ˜Z[\™JˆÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^Kˆ^[ØYˆY\™ÙY^[ØYˆ\œ›ÜŽˆ”Ñ\œ›ÜŠÛXZ[ŽˆXØÛÝ[ÝÜ™K”Þ[˜Ô™[[ÝH‹ÛÙNˆ\Ù\’[™›ÎˆÓ”ÓØØ[^™Y\ØÜš\[Û’Ù^Nˆºacyïk¹.#yk£9¥m—JBˆ
+Bˆ\Ú\œ›ÜœË˜\[™
+¹§#yb¨yfjˆ:acyïk¹.#yk£9¥mŠBˆ\]TÞ[˜ÔÝ]\ÐY\”Þ[˜ÊˆÚ[™ÙYˆÚ[™ÙYˆØØ[^[ØYˆØØ[^[ØYˆš[˜[^[ØYˆY\™ÙY^[ØYˆ[˜X›YÛÝ\˜ÙS˜[Y\Îˆ[˜X›YÛÝ\˜ÙS˜[Y\Ëˆ\Ú\œ›ÜœÎˆ\Ú\œ›ÜœËˆ[ÙNˆ[ÙKˆÛÛ™›XÝÛÝ[ˆÛÛ™›XÝÛÝ[ˆ
+Bˆ™]\›‚ˆBˆÈÂˆ]]]Üš^˜][ÛˆHZ[™X\™\]]Üš^˜][ÛŠÙ\™\]]ÚÙ[ŠBˆÝÚ]Ú[ÙHÂˆØ\ÙH›Y\™ÙN‚ˆYˆÙ[’ÜÝY™[[ÝQ[˜Üž\Yˆ]Ù[’ÜÝY™[[ÝT^[ØYˆÞ[˜Ô^[ØY\]X[ÊY\™ÙY^[ØYÙ[’ÜÝY™[[ÝT^[ØY
+BˆÂˆÛX\”Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^JBˆœ™XZÂˆBˆ]\Ú™\Ý[HžH]ØZ]\ÚÙ[’ÜÝY^[ØYÚ]™]žJˆY\™ÙY^[ØYˆÎˆ™\ÛÝ\˜ÙUT“ˆ]]Üš^˜][ÛŽˆ]]Üš^˜][Û‹ˆ]YÎˆÙ[’ÜÝYUYËˆ\ÝÜžU]Nˆ¹d#9«iya¬¹ê yd#ºaãy¥¬9d"9nm»ï"9§#yb¨yfj;ï#
+[ÙK›X™[
+{ï"H‹ˆY\™ÙSÛÛÛ™›XÝˆš[X\žTÛÝ\˜ÙHOHœÙ[’ÜÝYÙ\™\‚ˆ
+BˆY\™ÙY^[ØYH\Ú™\Ý[œ^[ØYˆÚ[™ÙYHÚ[™ÙY\Ú™\Ý[˜Ú[™ÙYØØ[]BˆÛX\”Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^JBˆØ\ÙHœ™[[ÝSÝ™\Üš]SØØ[‚ˆYˆÙ[’ÜÝY™[[ÝQ[˜Üž\Yˆ]Ù[’ÜÝY™[[ÝT^[ØYˆÞ[˜Ô^[ØY\]X[ÊY\™ÙY^[ØYÙ[’ÜÝY™[[ÝT^[ØY
+BˆÂˆÛX\”Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^JBˆœ™XZÂˆBˆ]\Ú™\Ý[HžH]ØZ]\ÚÙ[’ÜÝY™[[ÝT^[ØYÚ]™]žJˆY\™ÙY^[ØYˆÎˆ™\ÛÝ\˜ÙUT“ˆ]]Üš^˜][ÛŽˆ]]Üš^˜][Û‹ˆ]YÎˆÙ[’ÜÝYUYËˆ\ÝÜžU]Nˆº/ç9êëú)¡¹æå¹§+9g,;ï"9§#yb¨yfj;ï#
+[ÙK›X™[
+{ï"H‹ˆY\™ÙSÛÛÛ™›XÝˆš[X\žTÛÝ\˜ÙHOHœÙ[’ÜÝYÙ\™\‚ˆ
+BˆY\™ÙY^[ØYH\Ú™\Ý[œ^[ØYˆÚ[™ÙYHÚ[™ÙY\Ú™\Ý[˜Ú[™ÙYØØ[]BˆÛX\”Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^JBˆØ\ÙH›ØØ[Ý™\Üš]T™[[ÝN‚ˆÈHžH]ØZ]\Ú™[[ÝT^[ØY
+ˆY\™ÙY^[ØYˆÎˆ™\ÛÝ\˜ÙUT“ˆ]]Üš^˜][ÛŽˆ]]Üš^˜][Û‹ˆY[\Ý[˜ÞRÙ^Nˆœ\ÜËW
+Þ[˜Ñ]šXÙRY
+
+JKW
+URQ
+
+K]ZYÝš[™ÊH‚ˆ
+BˆÛX\”Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^JBˆBˆHØ]ÚÂˆ™XÛÜ™Þ[˜ÓÝ]›Þ˜Z[\™JÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^K^[ØYˆY\™ÙY^[ØY\œ›ÜŽˆ\œ›ÜŠBˆ\Ú\œ›ÜœË˜\[™
+¹§#yb¨yfjˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠHŠBˆYˆš[X\žTÛÝ\˜ÙHOHœÙ[’ÜÝYÙ\™\ˆÂˆš[X\žT\Ú˜Z[YHYBˆBˆBˆBˆB‚ˆYˆÞ[˜Ñ[˜X›RPÛÝYÂˆYˆš[X\žT\Ú˜Z[YÂˆ\Ú\œ›ÜœË˜\[™
+šPÛÝYˆ9..ùd#9«iy®¤9£ª:` yi,z-){ï#9mìº-ìú/áúeg9`ãùa¦yaiHŠBˆH[ÙHÂˆ]ÛÝ\˜ÙRÙ^HHÞ[˜ÓÝ]›ÞÛÝ\˜ÙRÙ^JÚ[™ˆšXÛÝYŠBˆYˆ\ÚÝ[][\Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^K›Ü˜ÙNˆ›Ü˜ÙSÝ]›Þ™]žJHÂˆ\Ú\œ›ÜœË˜\[™
+šPÛÝYˆ:(iy`où.îùb¨yëbyo¡z` :`où¥íºeíŠBˆH[ÙHÂˆÈÂˆÈHžH\Ú^[ØYÒPÛÝY
+Y\™ÙY^[ØY
+BˆÛX\”Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^JBˆHØ]ÚÂˆ™XÛÜ™Þ[˜ÓÝ]›Þ˜Z[\™JÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^K^[ØYˆY\™ÙY^[ØY\œ›ÜŽˆ\œ›ÜŠBˆ\Ú\œ›ÜœË˜\[™
+šPÛÝYˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠHŠBˆYˆš[X\žTÛÝ\˜ÙHOHšPÛÝYÂˆš[X\žT\Ú˜Z[YHYBˆBˆBˆBˆBˆB‚ˆYˆÞ[˜Ñ[˜X›UÙX‘UˆÂˆYˆš[X\žT\Ú˜Z[YÂˆ\Ú\œ›ÜœË˜\[™
+•ÙX‘UŽˆ9..ùd#9«iy®¤9£ª:` yi,z-){ï#9mìº-ìú/áúeg9`ãùa¦yaiHŠBˆH[ÙHÂˆ]ÛÝ\˜ÙRÙ^HHÞ[˜ÓÝ]›ÞÛÝ\˜ÙRÙ^JÚ[™ˆÙX™]ˆ‹\›ˆZ[ÙX‘U”™\ÛÝ\˜ÙUT“
+
+JBˆYˆ\ÚÝ[][\Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^K›Ü˜ÙNˆ›Ü˜ÙSÝ]›Þ™]žJHÂˆ\Ú\œ›ÜœË˜\[™
+•ÙX‘UŽˆ:(iy`où.îùb¨yëbyo¡z` :`où¥íºeíŠBˆH[ÙHÂˆÝX\™]™\ÛÝ\˜ÙUT“HZ[ÙX‘U”™\ÛÝ\˜ÙUT“
+
+H[ÙHÂˆ™XÛÜ™Þ[˜ÓÝ]›Þ˜Z[\™JˆÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^Kˆ^[ØYˆY\™ÙY^[ØYˆ\œ›ÜŽˆ”Ñ\œ›ÜŠÛXZ[ŽˆXØÛÝ[ÝÜ™K”Þ[˜Ô™[[ÝH‹ÛÙNˆ\Ù\’[™›ÎˆÓ”ÓØØ[^™Y\ØÜš\[Û’Ù^Nˆºacyïk¹.#yk£9¥m—JBˆ
+Bˆ\Ú\œ›ÜœË˜\[™
+•ÙX‘UŽˆ:acyïk¹.#yk£9¥mŠBˆ\]TÞ[˜ÔÝ]\ÐY\”Þ[˜ÊˆÚ[™ÙYˆÚ[™ÙYˆØØ[^[ØYˆØØ[^[ØYˆš[˜[^[ØYˆY\™ÙY^[ØYˆ[˜X›YÛÝ\˜ÙS˜[Y\Îˆ[˜X›YÛÝ\˜ÙS˜[Y\Ëˆ\Ú\œ›ÜœÎˆ\Ú\œ›ÜœËˆ[ÙNˆ[ÙKˆÛÛ™›XÝÛÝ[ˆÛÛ™›XÝÛÝ[ˆ
+Bˆ™]\›‚ˆBˆÈÂˆ]]]Üš^˜][ÛˆHZ[˜\ÚXÐ]]Üš^˜][ÛŠˆ\Ù\›˜[YNˆÙX™]•\Ù\›˜[YKˆ\ÜÝÛÜ™ˆÙX™]”\ÜÝÛÜ™ˆ
+BˆÝÚ]Ú[ÙHÂˆØ\ÙH›Y\™ÙN‚ˆYˆÙX‘U”™[[ÝQ[˜Üž\Yˆ]ÙX‘U”™[[ÝT^[ØYˆÞ[˜Ô^[ØY\]X[ÊY\™ÙY^[ØYÙX‘U”™[[ÝT^[ØY
+BˆÂˆÛX\”Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^JBˆœ™XZÂˆBˆ]\Ú™\Ý[HžH]ØZ]\ÚÙX‘U”^[ØYÚ]™]žJˆY\™ÙY^[ØYˆÎˆ™\ÛÝ\˜ÙUT“ˆ]]Üš^˜][ÛŽˆ]]Üš^˜][Û‹ˆ]YÎˆÙX‘U‘UYËˆ\ÝÜžU]Nˆ¹d#9«iya¬¹ê yd#ºaãy¥¬9d"9nm»ï"ÙX‘U»ï#
+[ÙK›X™[
+{ï"H‹ˆY\™ÙSÛÛÛ™›XÝˆš[X\žTÛÝ\˜ÙHOHÙX‘U‚ˆ
+BˆÙX‘U‘UYÈH\Ú™\Ý[™]YÂˆY\™ÙY^[ØYH\Ú™\Ý[œ^[ØYˆÚ[™ÙYHÚ[™ÙY\Ú™\Ý[˜Ú[™ÙYØØ[]BˆÛX\”Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^JBˆØ\ÙHœ™[[ÝSÝ™\Üš]SØØ[‚ˆYˆÙX‘U”™[[ÝQ[˜Üž\Yˆ]ÙX‘U”™[[ÝT^[ØYˆÞ[˜Ô^[ØY\]X[ÊY\™ÙY^[ØYÙX‘U”™[[ÝT^[ØY
+BˆÂˆÛX\”Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^JBˆœ™XZÂˆBˆ]\Ú™\Ý[HžH]ØZ]\ÚÙX‘U”™[[ÝT^[ØYÚ]™]žJˆY\™ÙY^[ØYˆÎˆ™\ÛÝ\˜ÙUT“ˆ]]Üš^˜][ÛŽˆ]]Üš^˜][Û‹ˆ]YÎˆÙX‘U‘UYËˆ\ÝÜžU]Nˆº/ç9êëú)¡¹æå¹§+9g,;ï"ÙX‘U»ï#
+[ÙK›X™[
+{ï"H‹ˆY\™ÙSÛÛÛ™›XÝˆš[X\žTÛÝ\˜ÙHOHÙX‘U‚ˆ
+BˆÙX‘U‘UYÈH\Ú™\Ý[™]YÂˆY\™ÙY^[ØYH\Ú™\Ý[œ^[ØYˆÚ[™ÙYHÚ[™ÙY\Ú™\Ý[˜Ú[™ÙYØØ[]BˆÛX\”Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^JBˆØ\ÙH›ØØ[Ý™\Üš]T™[[ÝN‚ˆ]ÛÛ™š\›X][ÛˆHžH]ØZ]\Ú™[[ÝT^[ØY
+ˆY\™ÙY^[ØYˆÎˆ™\ÛÝ\˜ÙUT“ˆ]]Üš^˜][ÛŽˆ]]Üš^˜][Û‹ˆY“›Û™SX]ÚÝ\ŽˆYKˆY[\Ý[˜ÞRÙ^Nˆœ\ÜËW
+Þ[˜Ñ]šXÙRY
+
+JKW
+URQ
+
+K]ZYÝš[™ÊH‚ˆ
+BˆÙX‘U‘UYÈHÛÛ™š\›X][Û‹™]YÂˆÛX\”Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^JBˆBˆHØ]ÚÂˆ™XÛÜ™Þ[˜ÓÝ]›Þ˜Z[\™JÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^K^[ØYˆY\™ÙY^[ØY\œ›ÜŽˆ\œ›ÜŠBˆ\Ú\œ›ÜœË˜\[™
+•ÙX‘UŽˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠHŠBˆYˆš[X\žTÛÝ\˜ÙHOHÙX‘UˆÂˆš[X\žT\Ú˜Z[YHYBˆBˆBˆBˆBˆB‚ˆ\]TÞ[˜ÔÝ]\ÐY\”Þ[˜ÊˆÚ[™ÙYˆÚ[™ÙYˆØØ[^[ØYˆØØ[^[ØYˆš[˜[^[ØYˆY\™ÙY^[ØYˆ[˜X›YÛÝ\˜ÙS˜[Y\Îˆ[˜X›YÛÝ\˜ÙS˜[Y\Ëˆ\Ú\œ›ÜœÎˆ\Ú\œ›ÜœËˆ[ÙNˆ[ÙKˆÛÛ™›XÝÛÝ[ˆÛÛ™›XÝÛÝ[ˆ
+BˆB‚ˆš]˜]H[˜È\]TÞ[˜ÔÝ]\ÐY\”Þ[˜ÊˆÚ[™ÙYˆ›ÛÛˆØØ[^[ØYˆÞ[˜Ð[™T^[ØYˆš[˜[^[ØYˆÞ[˜Ð[™T^[ØYˆ[˜X›YÛÝ\˜ÙS˜[Y\ÎˆÔÝš[™×Kˆ\Ú\œ›ÜœÎˆÔÝš[™×Kˆ[ÙNˆÞ[˜Ó[ÙKˆÛÛ™›XÝÛÝ[ˆ[ˆ
+HÂˆ]ÛÝ\˜ÙTÝ[[X\žHH[˜X›YÛÝ\˜ÙS˜[Y\Ëš›Ú[™Y
+Ù\\˜]ÜŽˆˆ
+ÈŠBˆ]^[ØYÝ[[X\žHHÞ[˜Ô^[ØYÝ[[X\žJ™Y›Ü™NˆØØ[^[ØYY\Žˆš[˜[^[ØY
+Bˆ]ÛÛ™›XÝÝ[[X\žHHÛÛ™›XÝÛÝ[ˆÈ—¹keù«­ya¬¹ê {ï&—
+ÛÛ™›XÝÛÝ[
+H9.*ˆˆˆˆ‚ˆYˆ\Ú\œ›ÜœËš\Ñ[\HÂˆÛÝYÞ[˜ÔÝ]\ÈHÚ[™ÙYˆÈ—
+[ÙK˜ÛÛ\][Û•™\˜Š{ï"
+ÛÝ\˜ÙTÝ[[X\žJ{ï"W—
+^[ØYÝ[[X\žJW
+ÛÛ™›XÝÝ[[X\žJW¹¥íºeí;ï&—
+\Ü^U[YJ›ÝÓ\Ê
+JJH‚ˆˆ—
+[ÙK›X™[
+yd#¹¥è9keù«­ycæ9c%»ï#9mìº-ìú/áù§+9g,9a¦yai{ï"
+ÛÝ\˜ÙTÝ[[X\žJ{ï"W—
+^[ØYÝ[[X\žJW
+ÛÛ™›XÝÝ[[X\žJW¹¥íºeí;ï&—
+\Ü^U[YJ›ÝÓ\Ê
+JJH‚ˆÝ]\ÓY\ÜØYÙHHÚ[™ÙYˆÈ—
+ÛÝ\˜ÙTÝ[[X\žJH
+[ÙK˜ÛÛ\][Û•™\˜ŠW—
+^[ØYÝ[[X\žJW
+ÛÛ™›XÝÝ[[X\žJH‚ˆˆ—
+ÛÝ\˜ÙTÝ[[X\žJH9¥è9keù«­ycæ9c%»ï#9mìº-ìú/áù§+9g,9a¦yaiW—
+^[ØYÝ[[X\žJW
+ÛÛ™›XÝÝ[[X\žJH‚ˆH[ÙHÂˆÛÝYÞ[˜ÔÝ]\ÈH¹d#9«iz`ê9b!¹i,z-){ï"
+ÛÝ\˜ÙTÝ[[X\žJ{ï"W—
+\Ú\œ›ÜœËš›Ú[™Y
+Ù\\˜]ÜŽˆ»ï&ÈŠJW—
+^[ØYÝ[[X\žJW
+ÛÛ™›XÝÝ[[X\žJH‚ˆÝ]\ÓY\ÜØYÙHH¹d#9«iyk£9¢$9/aº`ê9b!¹®¤9i,z-)W—
+\Ú\œ›ÜœËš›Ú[™Y
+Ù\\˜]ÜŽˆ»ï&ÈŠJW—
+^[ØYÝ[[X\žJW
+ÛÛ™›XÝÝ[[X\žJH‚ˆBˆB‚ˆš]˜]H[˜ÈÞ[˜Ô^[ØYÝ[[X\žJ™Y›Ü™NˆÞ[˜Ð[™T^[ØYY\ŽˆÞ[˜Ð[™T^[ØY
+HOˆÝš[™ÈÂˆÂˆº-)¹cíÈ
+š\ÚX›PXØÛÝ[ÛÝ[
+™Y›Ü™K˜XØÛÝ[ÊJKO—
+š\ÚX›PXØÛÝ[ÛÝ[
+Y\‹˜XØÛÝ[ÊJH‹ˆº`&º(c9káºd©H
+š\ÚX›T\ÜÚÙ^PÛÝ[
+™Y›Ü™Kœ\ÜÚÙ^\ÊJKO—
+š\ÚX›T\ÜÚÙ^PÛÝ[
+Y\‹œ\ÜÚÙ^\ÊJH‹ˆ¹¥¡ù.í¹i.H
+š\ÚX›Q›Û\ÛÝ[
+™Y›Ü™K™›Û\œÊJKO—
+š\ÚX›Q›Û\ÛÝ[
+Y\‹™›Û\œÊJH‚ˆKš›Ú[™Y
+Ù\\˜]ÜŽˆ—ˆŠBˆB‚ˆš]˜]H[˜Èš\ÚX›PXØÛÝ[ÛÝ[
+È˜[Y\ÎˆÔ\ÜÝÛÜ™XØÛÝ[JHOˆ[Âˆ˜[Y\Ëœ™YXÙJ[Îˆ
+HÈÛÝ[XØÛÝ[[‚ˆYˆXXØÛÝ[š\Ô\›X[™[Q[]YÈÛÝ[
+ÏHHBˆBˆB‚ˆš]˜]H[˜Èš\ÚX›Q›Û\ÛÝ[
+È˜[Y\ÎˆÐXØÛÝ[›Û\—JHOˆ[Âˆ˜[Y\Ëœ™YXÙJ[Îˆ
+HÈÛÝ[›Û\ˆ[‚ˆYˆY›Û\‹š\Ô\›X[™[Q[]YÈÛÝ[
+ÏHHBˆBˆB‚ˆš]˜]H[˜Èš\ÚX›T\ÜÚÙ^PÛÝ[
+È˜[Y\ÎˆÔ\ÜÚÙ^T™XÛÜ™JHOˆ[Âˆ˜[Y\Ëœ™YXÙJ[Îˆ
+HÈÛÝ[\ÜÚÙ^H[‚ˆYˆ\ÜÚÙ^Kš\Ô\›X[™[Q[]YOHYHÈÛÝ[
+ÏHHBˆBˆB‚ˆš]˜]H[˜ÈÛÝ[Þ[˜ÐXØÛÝ[ÛÛ™›XÝÊØØ[ˆÔ\ÜÝÛÜ™XØÛÝ[K™[[ÝNˆÔ\ÜÝÛÜ™XØÛÝ[JHOˆ[Âˆ]ØØ[žT™XÛÜ™HXÝ[Û˜\žJØØ[›X\È
+œ™XÛÜ™—
+	šY]ZYÝš[™Ë›ÝÙ\˜Ø\ÙY
+
+JH‹	
+HJHÈš\œÝÈ[ˆš\œÝBˆ]šY[ÎˆÊ\ÜÝÛÜ™XØÛÝ[
+HOˆÝš[™×HHÂˆÈ	\Ù\›˜[YHKÈ	œ\ÜÝÛÜ™KÈ	ÝÙXÜ™]KˆÈ	œ™XÛÝ™\žPÛÙ\ÈKÈ	››ÝHKÈÝš[™Ê	š\Ñ[]Y
+HKˆBˆ˜\ˆÛÝ[Hˆ›ÜˆXØÛÝ[[ˆ™[[ÝHÂˆËÈÝX›H™XÛÜ™Y[]H\È]]Üš]]]™KˆÈ›Ý\ÙHHYØXÞBˆËÈXØÛÝ[Y˜[˜XÚÈÚ[ˆ›Ý™XÛÜ™È]™HÝX›HQËÝ\Ú\ÙBˆËÈ™XÜ™X]YXØÛÝ[ÈÚ]HØ[YH\ÝÜšXØ[XØÛÝ[YÛÚÈZÙBˆËÈšY[ÛÛ™›XÝÈ[œÝXYÙˆ\Ý[˜Ý™XÛÜ™Ë‚ˆ]ØØ[XØÛÝ[HØØ[žT™XÛÜ™Èœ™XÛÜ™—
+XØÛÝ[šY]ZYÝš[™Ë›ÝÙ\˜Ø\ÙY
+
+JH—BˆÝX\™]ØØ[XØÛÝ[[ÙHÈÛÛ[YHBˆÛÝ[
+ÏHšY[Ëœ™YXÙJ[Îˆ
+HÈ™\Ý[šY[[‚ˆYˆšY[
+ØØ[XØÛÝ[
+HOHšY[
+XØÛÝ[
+HÈ™\Ý[
+ÏHHBˆBˆBˆ™]\›ˆÛÝ[ˆB‚ˆš]˜]H[˜È\ÔÞ[˜Ô^[ØY[\JÈ^[ØYˆÞ[˜Ð[™T^[ØY
+HOˆ›ÛÛÂˆš\ÚX›PXØÛÝ[ÛÝ[
+^[ØY˜XØÛÝ[ÊHOHˆ	‰ˆš\ÚX›T\ÜÚÙ^PÛÝ[
+^[ØYœ\ÜÚÙ^\ÊHOHˆ	‰ˆš\ÚX›Q›Û\ÛÝ[
+^[ØY™›Û\œÊHOHˆB‚ˆš]˜]H[˜ÈÞ[˜ÔØY™]T™X\ÛÛœÊˆØØ[ˆÞ[˜Ð[™T^[ØYˆ™[[ÝNˆÞ[˜Ð[™T^[ØYËˆY\™ÙYˆÞ[˜Ð[™T^[ØYˆ[ÙNˆÞ[˜Ó[ÙBˆ
+HOˆÔÝš[™×HÂˆÝX\™[ÙHOH›Y\™ÙH[ÙHOHœ™[[ÝSÝ™\Üš]SØØ[[ÙHÈ™]\›ˆ×HBˆYˆT\ÜÐÛÜ™Q‘’K™›Ü˜ÙTÝÚYY\™ÙHÂˆÈÂˆ]ØØ[”ÓÓˆHžH[˜ÛÙTÞ[˜Ô^[ØY”ÓÓŠØØ[
+Bˆ]™[[ÝR”ÓÓˆHžH™[[ÝK›X\ÈžH[˜ÛÙTÞ[˜Ô^[ØY”ÓÓŠ	
+HBˆ]Y\™ÙY”ÓÓˆHžH[˜ÛÙTÞ[˜Ô^[ØY”ÓÓŠY\™ÙY
+Bˆ][ÙTÝš[™ÈH[ÙHOHœ™[[ÝSÝ™\Üš]SØØ[Èœ™[[ÝSÝ™\Üš]SØØ[ˆˆ›Y\™ÙH‚ˆ]™\ÜHžH\ÜÐÛÜ™Q‘’K™]˜[X]TÞ[˜ÔØY™]R”ÓÓŠˆØØ[”ÓÓŽˆØØ[”ÓÓ‹ˆ™[[ÝR”ÓÓŽˆ™[[ÝR”ÓÓ‹ˆY\™ÙY”ÓÓŽˆY\™ÙY”ÓÓ‹ˆ[ÙNˆ[ÙTÝš[™Âˆ
+Bˆ™]\›ˆ™\Üœ™X\ÛÛœÂˆHØ]ÚÂˆ”ÓÙÊ–Ô\ÜÐÛÜ™WH\ÝØY™]H˜Z[Y˜[˜XÚÈÝÚYˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠHŠBˆBˆBˆ™]\›ˆÞ[˜ÔØY™]T™X\ÛÛœÔÝÚY
+ØØ[ˆØØ[™[[ÝNˆ™[[ÝKY\™ÙYˆY\™ÙY[ÙNˆ[ÙJBˆB‚ˆš]˜]H[˜ÈÞ[˜ÔØY™]T™X\ÛÛœÔÝÚY
+ˆØØ[ˆÞ[˜Ð[™T^[ØYˆ™[[ÝNˆÞ[˜Ð[™T^[ØYËˆY\™ÙYˆÞ[˜Ð[™T^[ØYˆ[ÙNˆÞ[˜Ó[ÙBˆ
+HOˆÔÝš[™×HÂˆ]ØØ[›Û‘[\HHZ\ÔÞ[˜Ô^[ØY[\JØØ[
+Bˆ]™[[ÝS›Û‘[\HH™[[ÝK›X\ÈZ\ÔÞ[˜Ô^[ØY[\J	
+HHÏÈ˜[ÙBˆ˜\ˆ™X\ÛÛœÎˆÔÝš[™×HH×BˆYˆ[ÙHOHœ™[[ÝSÝ™\Üš]SØØ[ØØ[›Û‘[\K\™[[ÝS›Û‘[\HÂˆ™X\ÛÛœË˜\[™
+”‘SSÕWÑSTWÑ“Ô—Ó“Ó—ÑSTWÓÐÐSŠBˆBˆÝX\™[ÙHOH›Y\™ÙH[ÙHÈ™]\›ˆ™X\ÛÛœÈBˆYˆØØ[›Û‘[\K™[[ÝHOHš[\™[[ÝS›Û‘[\HÂˆ™X\ÛÛœË˜\[™
+”‘SSÕWÑSTWÑ“Ô—Ó“Ó—ÑSTWÓÐÐSŠBˆB‚ˆ]ØØ[XØÛÝ[YÈHÙ]
+ØØ[˜XØÛÝ[Ë›X\È	šY]ZYÝš[™Ë›ÝÙ\˜Ø\ÙY
+
+HJBˆ]Y\™ÙYXØÛÝ[YÈHÙ]
+Y\™ÙY˜XØÛÝ[Ë›X\È	šY]ZYÝš[™Ë›ÝÙ\˜Ø\ÙY
+
+HJBˆYˆ[ØØ[XØÛÝ[YËš\ÔÝXœÙ]
+ÙŽˆY\™ÙYXØÛÝ[YÊHÂˆ™X\ÛÛœË˜\[™
+“ÐÐSÐPÐÓÕS•×Ñ“ÔQŠBˆBˆ]ØØ[›Û\’YÈHÙ]
+ØØ[™›Û\œË›X\È	šY]ZYÝš[™Ë›ÝÙ\˜Ø\ÙY
+
+HJBˆ]Y\™ÙY›Û\’YÈHÙ]
+Y\™ÙY™›Û\œË›X\È	šY]ZYÝš[™Ë›ÝÙ\˜Ø\ÙY
+
+HJBˆYˆ[ØØ[›Û\’YËš\ÔÝXœÙ]
+ÙŽˆY\™ÙY›Û\’YÊHÂˆ™X\ÛÛœË˜\[™
+“ÐÐSÑ“ÓT”×Ñ“ÔQŠBˆBˆ]ØØ[\ÜÚÙ^RYÈHÙ]
+ØØ[œ\ÜÚÙ^\Ë›X\
+˜Ü™Y[X[YJK™š[\ˆÈIš\Ñ[\HJBˆ]Y\™ÙY\ÜÚÙ^RYÈHÙ]
+Y\™ÙYœ\ÜÚÙ^\Ë›X\
+˜Ü™Y[X[YJK™š[\ˆÈIš\Ñ[\HJBˆYˆ[ØØ[\ÜÚÙ^RYËš\ÔÝXœÙ]
+ÙŽˆY\™ÙY\ÜÚÙ^RYÊHÂˆ™X\ÛÛœË˜\[™
+“ÐÐSÔTÔÒÑVT×Ñ“ÔQŠBˆBˆYˆ]™[[ÝHÂˆ]™[[ÝPXØÛÝ[YÈHÙ]
+™[[ÝK˜XØÛÝ[Ë›X\È	šY]ZYÝš[™Ë›ÝÙ\˜Ø\ÙY
+
+HJBˆYˆ\™[[ÝPXØÛÝ[YËš\ÔÝXœÙ]
+ÙŽˆY\™ÙYXØÛÝ[YÊHÂˆ™X\ÛÛœË˜\[™
+”‘SSÕWÐPÐÓÕS•×Ñ“ÔQŠBˆBˆ]™[[ÝQ›Û\’YÈHÙ]
+™[[ÝK™›Û\œË›X\È	šY]ZYÝš[™Ë›ÝÙ\˜Ø\ÙY
+
+HJBˆYˆ\™[[ÝQ›Û\’YËš\ÔÝXœÙ]
+ÙŽˆY\™ÙY›Û\’YÊHÂˆ™X\ÛÛœË˜\[™
+”‘SSÕWÑ“ÓT”×Ñ“ÔQŠBˆBˆ]™[[ÝT\ÜÚÙ^RYÈHÙ]
+™[[ÝKœ\ÜÚÙ^\Ë›X\
+˜Ü™Y[X[YJK™š[\ˆÈIš\Ñ[\HJBˆYˆ\™[[ÝT\ÜÚÙ^RYËš\ÔÝXœÙ]
+ÙŽˆY\™ÙY\ÜÚÙ^RYÊHÂˆ™X\ÛÛœË˜\[™
+”‘SSÕWÔTÔÒÑVT×Ñ“ÔQŠBˆBˆBˆ™]\›ˆ™X\ÛÛœÂˆB‚ˆš]˜]H[˜ÈXÝ]™TÞ[˜ÔÛÝ\˜ÙS˜[Y\Ê
+HOˆÔÝš[™×HÂˆ˜\ˆ˜[Y\ÎˆÔÝš[™×HH×Bˆ]š[X\žHH™\ÛÛ™Yš[X\žTÞ[˜ÔÛÝ\˜ÙJ
+BˆYˆÞ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\ˆ	‰ˆš[X\žHOHœÙ[’ÜÝYÙ\™\ˆÈ˜[Y\Ë˜\[™
+¹..ûï&¹§#yb¨yfjŠHBˆYˆÞ[˜Ñ[˜X›UÙX‘Uˆ	‰ˆš[X\žHOHÙX‘UˆÈ˜[Y\Ë˜\[™
+¹..ûï&•ÙX‘UˆŠHBˆYˆÞ[˜Ñ[˜X›RPÛÝY	‰ˆš[X\žHOHšPÛÝYÈ˜[Y\Ë˜\[™
+¹..ûï&šPÛÝYŠHBˆYˆÞ[˜Ñ[˜X›RPÛÝY	‰ˆš[X\žHOHšPÛÝYÈ˜[Y\Ë˜\[™
+šPÛÝY:eg9`ãÈŠHBˆYˆÞ[˜Ñ[˜X›UÙX‘Uˆ	‰ˆš[X\žHOHÙX‘UˆÈ˜[Y\Ë˜\[™
+•ÙX‘Uˆ:eg9`ãÈŠHBˆYˆÞ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\ˆ	‰ˆš[X\žHOHœÙ[’ÜÝYÙ\™\ˆÈ˜[Y\Ë˜\[™
+¹§#yb¨yfj:eg9`ãÈŠHBˆ™]\›ˆ˜[Y\ÂˆB‚ˆš]˜]H[˜È™\ÛÛ™Yš[X\žTÞ[˜ÔÛÝ\˜ÙJ
+HOˆÞ[˜Ôš[X\žTÛÝ\˜ÙHÂˆÝÚ]ÚÞ[˜Ôš[X\žTÛÝ\˜ÙHÂˆØ\ÙHœÙ[’ÜÝYÙ\™\ˆÚ\™HÞ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\Ž‚ˆ™]\›ˆœÙ[’ÜÝYÙ\™\‚ˆØ\ÙHÙX‘UˆÚ\™HÞ[˜Ñ[˜X›UÙX‘UŽ‚ˆ™]\›ˆÙX‘U‚ˆØ\ÙHšPÛÝYÚ\™HÞ[˜Ñ[˜X›RPÛÝY‚ˆ™]\›ˆšPÛÝYˆY˜][‚ˆYˆÞ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\ˆÈ™]\›ˆœÙ[’ÜÝYÙ\™\ˆBˆYˆÞ[˜Ñ[˜X›UÙX‘UˆÈ™]\›ˆÙX‘UˆBˆ™]\›ˆšPÛÝYˆBˆB‚ˆ˜\ˆ]]ÔÞ[˜Ò[\˜[Ü[ÛœÎˆÐ]]ÔÞ[˜Ò[\˜[HÂˆ]]ÔÞ[˜Ò[\˜[˜[Ø\Ù\ÂˆB‚ˆ˜\ˆÞ[˜Ñ[˜Üž\[Û’Ù^RY[YšY\ŽˆÝš[™ÈÂˆ\ÜÔÞ[˜ÐÜž\ËšÙ^RY
+›ÜŽˆÞ[˜Ñ[˜Üž\[Û’Ù^JBˆB‚ˆ˜\ˆ™]š[Ý\ÔÞ[˜Ñ[˜Üž\[Û’Ù^RY[YšY\ŽˆÝš[™ÈÂˆ\ÜÔÞ[˜ÐÜž\ËšÙ^RY
+›ÜŽˆ™]š[Ý\ÔÞ[˜Ñ[˜Üž\[Û’Ù^JBˆB‚ˆ˜\ˆ]]ÔÞ[˜ÔÝ]\Ñ\ØÜš\[ÛŽˆÝš[™ÈÂˆ][\˜[H]]ÔÞ[˜Ò[\˜[
+˜]Õ˜[YNˆ]]ÔÞ[˜Ò[\˜[Z[]\ÊHÏÈ™\ØX›Yˆ][˜X›YÛÝ\˜ÙS˜[Y\ÈHXÝ]™TÞ[˜ÔÛÝ\˜ÙS˜[Y\Ê
+BˆYˆ[\˜[OH™\ØX›YÂˆ™]\›ˆº!ê¹bª9d#9«iymì¹alúeëH‚ˆBˆYˆ[˜X›YÛÝ\˜ÙS˜[Y\Ëš\Ñ[\HÂˆ™]\›ˆº!ê¹bª9d#9«iymì¹o 9d+ûï#9/a¹odùbcy¬¨y§"ycëùå*9d#9«iy®¤‚ˆBˆ™]\›ˆº!ê¹bª9£"x '9d"9nm¸ 'yª(yo#ù¢iú(c
+[\˜[›X™[
+{ï#9d#9«iy®¤;ï&—
+[˜X›YÛÝ\˜ÙS˜[Y\Ëš›Ú[™Y
+Ù\\˜]ÜŽˆˆ
+ÈŠJH‚ˆB‚ˆš]˜]H[˜ÈZ[Ý\œ™[Þ[˜Ô^[ØY
+
+HOˆÞ[˜Ð[™T^[ØYÂˆ]Ü™\™YXØÛÝ[ÈHÛÜYXØÛÝ[Ñ›Ü‘\Ü^JXØÛÝ[Ë™š[\ˆÈIš\Ñ[]YKØÛÜRÙ^Nˆ˜[ŠBˆ]XÝ]™PXØÛÝ[ÈHXØÛÝ[Ë™š[\ˆÈIš\Ñ[]Y	‰ˆIš\Ô\›X[™[Q[]YBˆ˜\ˆ^[ØY›Û\œÈH›Û\œÂˆ›Üˆ[™^[ˆ^[ØY›Û\œËš[™XÙ\ÈÂˆ]›Û\’YH^[ØY›Û\œÖÚ[™^KšYˆ]XÝ]™SY[X™\œÈHXÝ]™PXØÛÝ[Ë™š[\ˆÈ	š\Ò[‘›Û\Š›Û\’Y
+HBˆ]XÝ]™RYÈHÙ]
+XÝ]™SY[X™\œË›X\È	šY]ZYÝš[™Ë›ÝÙ\˜Ø\ÙY
+
+HJBˆ˜\ˆÙY[ˆHÙ]Ýš[™ÏŠ
+Bˆ˜\ˆ›Ü›X[^™YYÈH^[ØY›Û\œÖÚ[™^Kœ™YÝ[\XØÛÝ[YË™š[\ˆÂˆ]Ù^HH	›ÝÙ\˜Ø\ÙY
+
+Bˆ™]\›ˆXÝ]™RYË˜ÛÛZ[œÊÙ^JH	‰ˆÙY[‹š[œÙ\
+Ù^JKš[œÙ\YˆBˆ›ÜˆXØÛÝ[[ˆXÝ]™SY[X™\œÈÂˆ]Ù^HHXØÛÝ[šY]ZYÝš[™Ë›ÝÙ\˜Ø\ÙY
+
+BˆYˆÙY[‹š[œÙ\
+Ù^JKš[œÙ\YÈ›Ü›X[^™YYË˜\[™
+Ù^JHBˆBˆ^[ØY›Û\œÖÚ[™^Kœ™YÝ[\XØÛÝ[YÈH›Ü›X[^™YYÂˆBˆ][Ü™\ÛØÚÈH\œÚ\ÝYÜ™\ÛØÚÊˆÙ^NˆÙ^\Ë˜[™YÝ[\“Ü™\•\]Y]\Ëˆ˜[˜XÚÎˆXØÛÝ[Ë›X\
+\]Y]\ÊK›X^
+
+HÏÈˆ
+Bˆ]›Û\“Ü™\ÛØÚÈH\œÚ\ÝYÜ™\ÛØÚÊˆÙ^NˆÙ^\Ë™›Û\“Ü™\•\]Y]\Ëˆ˜[˜XÚÎˆ›Û\œË›X\
+\]Y]\ÊK›X^
+
+HÏÈˆ
+Bˆ™]\›ˆÞ[˜Ð[™T^[ØY
+ˆXØÛÝ[ÎˆXØÛÝ[Ëˆ›Û\œÎˆ^[ØY›Û\œËˆ\ÜÚÙ^\Îˆ\ÜÚÙ^\Ëˆ[™YÝ[\XØÛÝ[YÎˆÜ™\™YXØÛÝ[Ë›X\È	šY]ZYÝš[™ÈKˆ[™YÝ[\“Ü™\•\]Y]\Îˆ[Ü™\ÛØÚËˆ[™YÝ[\“Ü™\•\]Y]šXÙS˜[YNˆÝ\œ™[]šXÙS˜[YJ
+Kˆ›Û\“Ü™\’YÎˆ›Û\œË™š[\ˆÈIš\Ñ[]Y	‰ˆIš\Ô\›X[™[Q[]YK›X\È	šY]ZYÝš[™ÈKˆ›Û\“Ü™\•\]Y]\Îˆ›Û\“Ü™\ÛØÚËˆ›Û\“Ü™\•\]Y]šXÙS˜[YNˆÝ\œ™[]šXÙS˜[YJ
+Bˆ
+BˆB‚ˆ[˜È™]šY]ÔÞ[˜Ê
+H\Þ[˜ÈÂˆØYÞ[˜ÔÙXÜ™]ÒY“™YYY
+
+Bˆ]ØØ[^[ØYHØ[›ÛšXØ[^™TÞ[˜Ô^[ØY
+Z[Ý\œ™[Þ[˜Ô^[ØY
+
+JBˆ]š[X\žTÛÝ\˜ÙHH™\ÛÛ™Yš[X\žTÞ[˜ÔÛÝ\˜ÙJ
+BˆÈÂˆ]™[[ÝT^[ØYˆÞ[˜Ð[™T^[ØYÂˆÝÚ]Úš[X\žTÛÝ\˜ÙHÂˆØ\ÙHšPÛÝY‚ˆ™[[ÝT^[ØYHžH™]Ú™[[ÝT^[ØYœ›ÛRPÛÝY
+
+K›X\
+Ø[›ÛšXØ[^™TÞ[˜Ô^[ØY
+BˆØ\ÙHÙX‘UŽ‚ˆÝX\™]\›HZ[ÙX‘U”™\ÛÝ\˜ÙUT“
+
+H[ÙHÂˆ›ÝÈ”Ñ\œ›ÜŠÛXZ[ŽˆXØÛÝ[ÝÜ™K”Þ[˜Ô™]šY]È‹ÛÙNˆK\Ù\’[™›ÎˆÓ”ÓØØ[^™Y\ØÜš\[Û’Ù^Nˆ•ÙX‘Uˆ:acyïk¹.#yk£9¥m—JBˆBˆ]™\ÜÛœÙHHžH]ØZ]™]Ú™[[ÝT^[ØY
+ˆœ›ÛNˆ\›ˆ]]Üš^˜][ÛŽˆZ[˜\ÚXÐ]]Üš^˜][ÛŠ\Ù\›˜[YNˆÙX™]•\Ù\›˜[YK\ÜÝÛÜ™ˆÙX™]”\ÜÝÛÜ™
+Bˆ
+Bˆ™[[ÝT^[ØYH™\ÜÛœÙKœ^[ØY›X\
+Ø[›ÛšXØ[^™TÞ[˜Ô^[ØY
+BˆØ\ÙHœÙ[’ÜÝYÙ\™\Ž‚ˆÝX\™]\›HZ[Ù[’ÜÝY^[ØYT“
+
+H[ÙHÂˆ›ÝÈ”Ñ\œ›ÜŠÛXZ[ŽˆXØÛÝ[ÝÜ™K”Þ[˜Ô™]šY]È‹ÛÙNˆ‹\Ù\’[™›ÎˆÓ”ÓØØ[^™Y\ØÜš\[Û’Ù^Nˆ¹§#yb¨yfj:acyïk¹.#yk£9¥m—JBˆBˆ]™\ÜÛœÙHHžH]ØZ]™]Ú™[[ÝT^[ØY
+ˆœ›ÛNˆ\›ˆ]]Üš^˜][ÛŽˆZ[™X\™\]]Üš^˜][ÛŠÙ\™\]]ÚÙ[ŠBˆ
+Bˆ™[[ÝT^[ØYH™\ÜÛœÙKœ^[ØY›X\
+Ø[›ÛšXØ[^™TÞ[˜Ô^[ØY
+BˆB‚ˆËÈ™]šY]È\Ù\ÈHØ[YHš[X\žK\ÛÝ\˜ÙHY\™ÙHÙ[X[XÜÈ\ÈBˆËÈXÝX[Þ[˜È]ˆHZ\ÜÚ[™È™[[ÝHØš™XÝYX[œÈš\œÝ][YBˆËÈ[š]X[^˜][Û‹›ÝHÛÛ™š\›YY[\H^[ØY‚ˆ]Y\™ÙYH™[[ÝT^[ØY›X\ÈY\™ÙT^[ØYÊØØ[ˆØØ[^[ØY™[[ÝNˆ	
+HHÏÈØØ[^[ØYˆ]ØY™]T™X\ÛÛœÈHÞ[˜ÔØY™]T™X\ÛÛœÊØØ[ˆØØ[^[ØY™[[ÝNˆ™[[ÝT^[ØYY\™ÙYˆY\™ÙY[ÙNˆ›Y\™ÙJBˆÝX\™ØY™]T™X\ÛÛœËš\Ñ[\H[ÙHÂˆÞ[˜Ô™]šY]ÔÝ]\ÈHºh¡:)â9`g9«h»ï&¹k¢yaj9¨à9§éy§*º`&º/áûï"
+ØY™]T™X\ÛÛœËš›Ú[™Y
+Ù\\˜]ÜŽˆ‹ŠJ{ï"H‚ˆ™]\›‚ˆBˆÞ[˜Ô™]šY]ÔÝ]\ÈHºh¡:)â;ï"9§*¹a¦yai{ï#9..ù®¤;ï&—
+š[X\žTÛÝ\˜ÙK›X™[
+{ï"{ï&º-)¹cíÈ
+š\ÚX›PXØÛÝ[ÛÝ[
+ØØ[^[ØY˜XØÛÝ[ÊJKO—
+š\ÚX›PXØÛÝ[ÛÝ[
+Y\™ÙY˜XØÛÝ[ÊJ{ï#:`&º(c9káºd©H
+š\ÚX›T\ÜÚÙ^PÛÝ[
+ØØ[^[ØYœ\ÜÚÙ^\ÊJKO—
+š\ÚX›T\ÜÚÙ^PÛÝ[
+Y\™ÙYœ\ÜÚÙ^\ÊJ{ï#9¥¡ù.í¹i.H
+š\ÚX›Q›Û\ÛÝ[
+ØØ[^[ØY™›Û\œÊJKO—
+š\ÚX›Q›Û\ÛÝ[
+Y\™ÙY™›Û\œÊJH‚ˆHØ]ÚÂˆÞ[˜Ô™]šY]ÔÝ]\ÈHºh¡:)â9i,z-){ï&—
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆBˆB‚ˆ[˜È™[[ÝSÝ™\Üš]T™Y›YÚ
+
+H\Þ[˜ÈOˆ™[[ÝSÝ™\Üš]T™Y›YÚ™\Ý[Âˆ˜\ˆ[œ™XXÚX›TÛÝ\˜Ù\ÎˆÔÝš[™×HH×Bˆ˜\ˆ[\TÛÝ\˜Ù\ÎˆÔÝš[™×HH×B‚ˆYˆÞ[˜Ñ[˜X›RPÛÝYÂˆÈÂˆYˆžH™]Ú™[[ÝT^[ØYœ›ÛRPÛÝY
+
+HOHš[Âˆ[\TÛÝ\˜Ù\Ë˜\[™
+šPÛÝYŠBˆBˆHØ]ÚÂˆ[œ™XXÚX›TÛÝ\˜Ù\Ë˜\[™
+šPÛÝY;ï"
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠ{ï"HŠBˆBˆB‚ˆYˆÞ[˜Ñ[˜X›UÙX‘UˆÂˆÝX\™]™\ÛÝ\˜ÙUT“HZ[ÙX‘U”™\ÛÝ\˜ÙUT“
+
+H[ÙHÂˆ[œ™XXÚX›TÛÝ\˜Ù\Ë˜\[™
+•ÙX‘U»ï":acyïk¹.#yk£9¥m;ï"HŠBˆ™]\›ˆ™[[ÝSÝ™\Üš]T™Y›YÚ™\Ý[
+[œ™XXÚX›TÛÝ\˜Ù\Îˆ[œ™XXÚX›TÛÝ\˜Ù\Ë[\TÛÝ\˜Ù\Îˆ[\TÛÝ\˜Ù\ÊBˆBˆÈÂˆ]]]Üš^˜][ÛˆHZ[˜\ÚXÐ]]Üš^˜][ÛŠˆ\Ù\›˜[YNˆÙX™]•\Ù\›˜[YKˆ\ÜÝÛÜ™ˆÙX™]”\ÜÝÛÜ™ˆ
+Bˆ]™[[ÝT™\ÜÛœÙHHžH]ØZ]™]Ú™[[ÝT^[ØY
+ˆœ›ÛNˆ™\ÛÝ\˜ÙUT“ˆ]]Üš^˜][ÛŽˆ]]Üš^˜][Û‚ˆ
+BˆYˆ™[[ÝT™\ÜÛœÙKœ^[ØYOHš[Âˆ[\TÛÝ\˜Ù\Ë˜\[™
+•ÙX‘UˆŠBˆBˆHØ]ÚÂˆ[œ™XXÚX›TÛÝ\˜Ù\Ë˜\[™
+•ÙX‘U»ï"
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠ{ï"HŠBˆBˆB‚ˆYˆÞ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\ˆÂˆÝX\™]™\ÛÝ\˜ÙUT“HZ[Ù[’ÜÝY^[ØYT“
+
+H[ÙHÂˆ[œ™XXÚX›TÛÝ\˜Ù\Ë˜\[™
+¹§#yb¨yfj;ï":acyïk¹.#yk£9¥m;ï"HŠBˆ™]\›ˆ™[[ÝSÝ™\Üš]T™Y›YÚ™\Ý[
+[œ™XXÚX›TÛÝ\˜Ù\Îˆ[œ™XXÚX›TÛÝ\˜Ù\Ë[\TÛÝ\˜Ù\Îˆ[\TÛÝ\˜Ù\ÊBˆBˆÈÂˆ]]]Üš^˜][ÛˆHZ[™X\™\]]Üš^˜][ÛŠÙ\™\]]ÚÙ[ŠBˆ]™[[ÝT™\ÜÛœÙHHžH]ØZ]™]Ú™[[ÝT^[ØY
+ˆœ›ÛNˆ™\ÛÝ\˜ÙUT“ˆ]]Üš^˜][ÛŽˆ]]Üš^˜][Û‚ˆ
+BˆYˆ™[[ÝT™\ÜÛœÙKœ^[ØYOHš[Âˆ[\TÛÝ\˜Ù\Ë˜\[™
+¹§#yb¨yfjŠBˆBˆHØ]ÚÂˆ[œ™XXÚX›TÛÝ\˜Ù\Ë˜\[™
+¹§#yb¨yfj;ï"
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠ{ï"HŠBˆBˆB‚ˆ™]\›ˆ™[[ÝSÝ™\Üš]T™Y›YÚ™\Ý[
+ˆ[œ™XXÚX›TÛÝ\˜Ù\Îˆ[œ™XXÚX›TÛÝ\˜Ù\Ëˆ[\TÛÝ\˜Ù\Îˆ[\TÛÝ\˜Ù\Âˆ
+BˆB‚ˆ[˜ÈØYÞ[˜Õ™\œÚ[ÛœÊ
+H\Þ[˜ÈÂˆØYÞ[˜ÔÙXÜ™]ÒY“™YYY
+
+BˆÝX\™Þ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\ˆ[ÙHÂˆÞ[˜Õ™\œÚ[ÛœÔÝ]\ÈHº+íùab9d+ùå*:!ê¹nî¹§#yb¨yfj‚ˆÞ[˜Õ™\œÚ[Û”Ý[[X\šY\ÈH×Bˆ™]\›‚ˆBˆÝX\™]™\œÚ[ÛœÕT“HZ[Ù[’ÜÝY™\œÚ[ÛœÕT“
+
+H[ÙHÂˆÞ[˜Õ™\œÚ[ÛœÔÝ]\ÈH¹§#yb¨yfj9g,9g`:acyïk¹.#yk£9¥m‚ˆÞ[˜Õ™\œÚ[Û”Ý[[X\šY\ÈH×Bˆ™]\›‚ˆBˆÈÂˆ˜\ˆ™\]Y\ÝHT“™\]Y\Ý
+\›ˆ™\œÚ[ÛœÕT“
+Bˆ™\]Y\ÝšY]ÙH‘ÑU‚ˆ™\]Y\Ý[Y[Ý][\˜[HÌˆ™\]Y\ÝœÙ]˜[YJ˜\XØ][Û‹ÚœÛÛˆ‹›Ü’XY\‘šY[ˆXØÙ\ŠBˆYˆ]]]Üš^˜][ÛˆHZ[™X\™\]]Üš^˜][ÛŠÙ\™\]]ÚÙ[ŠHÂˆ™\]Y\ÝœÙ]˜[YJ]]Üš^˜][Û‹›Ü’XY\‘šY[ˆ]]Üš^˜][ÛˆŠBˆBˆ]
+]K™\ÜÛœÙJHHžH]ØZ]T“Ù\ÜÚ[Û‹œÚ\™Y™]J›ÜŽˆ™\]Y\Ý
+BˆÝX\™]H™\ÜÛœÙH\ÏÈT“™\ÜÛœÙKˆ
+Œ‹‹ˆŽNJK˜ÛÛZ[œÊœÝ]\ÐÛÙJBˆ[ÙHÂˆ]Ý]\ÐÛÙHH
+™\ÜÛœÙH\ÏÈT“™\ÜÛœÙJOËœÝ]\ÐÛÙHÏÈˆ›ÝÈ”Ñ\œ›ÜŠÛXZ[ŽˆXØÛÝ[ÝÜ™K”Þ[˜Õ™\œÚ[ÛœÈ‹ÛÙNˆÝ]\ÐÛÙK\Ù\’[™›ÎˆÓ”ÓØØ[^™Y\ØÜš\[Û’Ù^Nˆ¹§#yb¨yfj:/å9fçˆ
+Ý]\ÐÛÙJH—JBˆBˆ]XÛÙYHžHXÛÙ\‹™XÛÙJÞ[˜Õ™\œÚ[ÛœÔ™\ÜÛœÙKœÙ[‹œ›ÛNˆ]JBˆÞ[˜Õ™\œÚ[Û”Ý[[X\šY\ÈHXÛÙY™\œÚ[ÛœË›X\ÂˆÞ[˜Õ™\œÚ[Û”Ý[[X\žJˆYˆ	™\œÚ[Û’Yˆ^ÜY]\Îˆ	™^ÜY]\Ëˆ\]Y]\Îˆ	\]Y]\ËˆØ]™Y]\Îˆ	œØ]™Y]\Ëˆ^[ØYÚLMŽˆ	œ^[ØYÚLM‚ˆ
+BˆBˆÞ[˜Õ™\œÚ[ÛœÔÝ]\ÈH¹alH
+Þ[˜Õ™\œÚ[Û”Ý[[X\šY\Ë˜ÛÝ[
+H9.*¹§#yb¨yfj9oêùáiÈ‚ˆHØ]ÚÂˆÞ[˜Õ™\œÚ[Û”Ý[[X\šY\ÈH×BˆÞ[˜Õ™\œÚ[ÛœÔÝ]\ÈHº+îùcå¹oêùáiùi,z-){ï&—
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆBˆB‚ˆ[˜È™\ÝÜ™TÞ[˜Õ™\œÚ[ÛŠÈ™\œÚ[ÛŽˆÞ[˜Õ™\œÚ[Û”Ý[[X\žJH\Þ[˜ÈÂˆØYÞ[˜ÔÙXÜ™]ÒY“™YYY
+
+BˆÝX\™Þ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\ˆ[ÙHÂˆÞ[˜Õ™\œÚ[ÛœÔÝ]\ÈHº+íùab9d+ùå*:!ê¹nî¹§#yb¨yfj‚ˆ™]\›‚ˆBˆÝX\™]^[ØYT“HZ[Ù[’ÜÝY^[ØYT“
+
+Kˆ]™\œÚ[ÛœÕT“HZ[Ù[’ÜÝY™\œÚ[ÛœÕT“
+
+Bˆ[ÙHÂˆÞ[˜Õ™\œÚ[ÛœÔÝ]\ÈH¹§#yb¨yfj9g,9g`:acyïk¹.#yk£9¥m‚ˆ™]\›‚ˆBˆÈÂˆ]]]Üš^˜][ÛˆHZ[™X\™\]]Üš^˜][ÛŠÙ\™\]]ÚÙ[ŠBˆ]Ý\œ™[™\ÜÛœÙHHžH]ØZ]™]Ú™[[ÝT^[ØY
+œ›ÛNˆ^[ØYT“]]Üš^˜][ÛŽˆ]]Üš^˜][ÛŠBˆÝX\™Ý\œ™[™\ÜÛœÙKœ^[ØYOHš[]Ý\œ™[UYÈHÝ\œ™[™\ÜÛœÙK™]YÈ[ÙHÂˆ›ÝÈ”Ñ\œ›ÜŠÛXZ[ŽˆXØÛÝ[ÝÜ™K”Þ[˜Õ™\œÚ[ÛœÈ‹ÛÙNˆK\Ù\’[™›ÎˆÓ”ÓØØ[^™Y\ØÜš\[Û’Ù^Nˆ¹§#yb¨yfj9odùbcy¥l9£k¹¬¨y§"HUYûï#9¥è9¬åyk¢yaj9 h¹i#H—JBˆBˆžHØ]™SØØ[Þ[˜ÔØY™]TÛ˜\ÚÝ
+Z[Ý\œ™[Þ[˜Ô^[ØY
+
+K™X\ÛÛŽˆ¹ h¹i#y§#yb¨yfj9oêùáiùâb9§+
+™\œÚ[Û‹šY
+H9bcHŠB‚ˆ˜\ˆ™\]Y\ÝHT“™\]Y\Ý
+\›ˆ™\œÚ[ÛœÕT“˜\[™[™Ô]ÛÛ\Û™[
+Ýš[™Ê™\œÚ[Û‹šY
+JK˜\[™[™Ô]ÛÛ\Û™[
+œ™\ÝÜ™HŠJBˆ™\]Y\ÝšY]ÙH”ÔÕ‚ˆ™\]Y\Ý[Y[Ý][\˜[HÌˆ™\]Y\ÝœÙ]˜[YJ˜\XØ][Û‹ÚœÛÛˆ‹›Ü’XY\‘šY[ˆXØÙ\ŠBˆ™\]Y\ÝœÙ]˜[YJÝ\œ™[UYË›Ü’XY\‘šY[ˆ’Y‹SX]ÚŠBˆ]Y[\Ý[˜ÞRÙ^HHœ\ÜË\™\ÝÜ™KW
+Þ[˜Ñ]šXÙRY
+
+JKW
+URQ
+
+K]ZYÝš[™ÊH‚ˆ™\]Y\ÝœÙ]˜[YJY[\Ý[˜ÞRÙ^K›Ü’XY\‘šY[ˆ’Y[\Ý[˜ÞKRÙ^HŠBˆYˆ]]]Üš^˜][ÛˆÂˆ™\]Y\ÝœÙ]˜[YJ]]Üš^˜][Û‹›Ü’XY\‘šY[ˆ]]Üš^˜][ÛˆŠBˆBˆ]
+™\ÜÛœÙQ]K™\ÜÛœÙJHHžH]ØZ]T“Ù\ÜÚ[Û‹œÚ\™Y™]J›ÜŽˆ™\]Y\Ý
+BˆÝX\™]H™\ÜÛœÙH\ÏÈT“™\ÜÛœÙH[ÙHÂˆ›ÝÈ”Ñ\œ›ÜŠÛXZ[ŽˆXØÛÝ[ÝÜ™K”Þ[˜Õ™\œÚ[ÛœÈ‹ÛÙNˆ‹\Ù\’[™›ÎˆÓ”ÓØØ[^™Y\ØÜš\[Û’Ù^Nˆ¹ h¹i#ydãyn¥9.#ycëú+á¹b*È—JBˆBˆYˆœÝ]\ÐÛÙHOHLˆœÝ]\ÐÛÙHOHŽÂˆ›ÝÈÞ[˜Ô™[[ÝQ\œ›Ü‹œ™XÛÛ™][Û‘˜Z[YˆBˆÝX\™
+Œ‹‹ˆŽNJK˜ÛÛZ[œÊœÝ]\ÐÛÙJH[ÙHÂˆ›ÝÈ”Ñ\œ›ÜŠÛXZ[ŽˆXØÛÝ[ÝÜ™K”Þ[˜Õ™\œÚ[ÛœÈ‹ÛÙNˆœÝ]\ÐÛÙK\Ù\’[™›ÎˆÓ”ÓØØ[^™Y\ØÜš\[Û’Ù^Nˆ¹ h¹i#yi,z-){ï#
+œÝ]\ÐÛÙJH—JBˆBˆÝX\™]™XÙZ\HžOÈXÛÙ\‹™XÛÙJÙ[’ÜÝYÜš]T™XÙZ\œÙ[‹œ›ÛNˆ™\ÜÛœÙQ]JKˆ™XÙZ\›ÚËˆ™XÙZ\˜ÛÛ[Z]Yˆ™XÙZ\œØÛÜHOH˜[YJ›Ü’XY\‘šY[ˆ–TÞ[˜ËTØÛÜHŠKˆ™XÙZ\™]YÈOH˜[YJ›Ü’XY\‘šY[ˆ‘UYÈŠKˆ™XÙZ\œ^[ØYÚLMˆOH˜[YJ›Ü’XY\‘šY[ˆ–T^[ØYTÚLMˆŠKˆ™XÙZ\œ™]š\Ú[ÛˆOH˜[YJ›Ü’XY\‘šY[ˆ–TÞ[˜ËT™]š\Ú[ÛˆŠK™›]X\
+[š[š]
+Kˆ™XÙZ\šY[\Ý[˜ÞRÙ^HOHY[\Ý[˜ÞRÙ^Kˆ˜[YJ›Ü’XY\‘šY[ˆ–TÞ[˜ËRY[\Ý[˜ÞKRÙ^HŠHOHY[\Ý[˜ÞRÙ^Bˆ[ÙHÂˆ›ÝÈ”Ñ\œ›ÜŠÛXZ[ŽˆXØÛÝ[ÝÜ™K”Þ[˜Õ™\œÚ[ÛœÈ‹ÛÙNˆ\Ù\’[™›ÎˆÓ”ÓØØ[^™Y\ØÜš\[Û’Ù^Nˆ¹§#yb¨yfj9§*º/å9fç¹cëúj£:+àyæ¡9 h¹i#y£ä9.©9fç¹¢iÈ—JBˆBˆ]™\ÝÜ™Y™\ÜÛœÙHHžH]ØZ]™]Ú™[[ÝT^[ØY
+œ›ÛNˆ^[ØYT“]]Üš^˜][ÛŽˆ]]Üš^˜][ÛŠBˆÝX\™]™\ÝÜ™Y^[ØYH™\ÝÜ™Y™\ÜÛœÙKœ^[ØY[ÙHÂˆ›ÝÈ”Ñ\œ›ÜŠÛXZ[ŽˆXØÛÝ[ÝÜ™K”Þ[˜Õ™\œÚ[ÛœÈ‹ÛÙNˆË\Ù\’[™›ÎˆÓ”ÓØØ[^™Y\ØÜš\[Û’Ù^Nˆ¹ h¹i#yd#¹§#yb¨yfj9¥l9£k¹..¹ênˆ—JBˆBˆÈH\SY\™ÙY^[ØYY“™YYY
+™\ÝÜ™Y^[ØY\ÝÜžU]Nˆ¹ h¹i#y§#yb¨yfj9oêùáiùâb9§+
+™\œÚ[Û‹šY
+HŠBˆÞ[˜Õ™\œÚ[ÛœÔÝ]\ÈH¹âb9§+
+™\œÚ[Û‹šY
+H9 h¹i#yk£9¢$‚ˆ]ØZ]ØYÞ[˜Õ™\œÚ[ÛœÊ
+BˆHØ]ÚÂˆÞ[˜Õ™\œÚ[ÛœÔÝ]\ÈH¹ h¹i#yi,z-){ï&—
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆBˆB‚ˆ[˜È\ÐÝ\œ™[ØØ[^[ØY[\J
+HOˆ›ÛÛÂˆ]^[ØYHZ[Ý\œ™[Þ[˜Ô^[ØY
+
+Bˆ™]\›ˆ^[ØY˜XØÛÝ[Ëš\Ñ[\H	‰ˆ^[ØY™›Û\œËš\Ñ[\H	‰ˆ^[ØYœ\ÜÚÙ^\Ëš\Ñ[\BˆB‚ˆš]˜]H[˜È[\TÞ[˜Ô^[ØY
+
+HOˆÞ[˜Ð[™T^[ØYÂˆÞ[˜Ð[™T^[ØY
+XØÛÝ[Îˆ×K›Û\œÎˆ×K\ÜÚÙ^\Îˆ×JBˆB‚ˆš]˜]H[˜ÈY\™ÙT^[ØYÒY“™YYY
+Ý\œ™[ˆÞ[˜Ð[™T^[ØYË[˜ÛÛZ[™ÎˆÞ[˜Ð[™T^[ØY
+HOˆÞ[˜Ð[™T^[ØYÂˆÝX\™]Ý\œ™[[ÙHÈ™]\›ˆ[˜ÛÛZ[™ÈBˆ™]\›ˆY\™ÙT^[ØYÊØØ[ˆÝ\œ™[™[[ÝNˆ[˜ÛÛZ[™ÊBˆB‚ˆš]˜]H[˜ÈZ[Þ[˜Ð[™QØÝ[Y[
+^[ØYˆÞ[˜Ð[™T^[ØY
+HOˆÞ[˜Ð[™UŒˆÂˆ]ÙÚXØ[ÛØÚÓ\ÈH›ÝÓ\Ê
+Bˆ™]\›ˆÞ[˜Ð[™UŒŠˆØÚ[XNˆÙ[‹œÞ[˜Ð[™TØÚ[XUŒ‹ˆ^ÜY]\ÎˆÙÚXØ[ÛØÚÓ\ËˆÛÝ\˜ÙNˆÞ[˜Ð[™TÛÝ\˜ÙJˆ\ˆœ\ÜË[XXÈ‹ˆ]›Ü›Nˆ›XXÛÜËX\‹ˆ]šXÙS˜[YNˆÝ\œ™[]šXÙS˜[YJ
+Kˆ]šXÙRYˆÞ[˜Ñ]šXÙRY
+
+KˆÙÚXØ[ÛØÚÓ\ÎˆÙÚXØ[ÛØÚÓ\Ëˆ›Ü›X]™\œÚ[ÛŽˆ‚ˆ
+Kˆ^[ØYˆØ[›ÛšXØ[Þ[˜Ô^[ØY
+^[ØY
+Bˆ
+BˆB‚ˆš]˜]H[˜ÈY\™ÙT^[ØYÊØØ[ˆÞ[˜Ð[™T^[ØY™[[ÝNˆÞ[˜Ð[™T^[ØY
+HOˆÞ[˜Ð[™T^[ØYÂˆYˆT\ÜÐÛÜ™Q‘’K™›Ü˜ÙTÝÚYY\™ÙHÂˆÈÂˆ™]\›ˆžHY\™ÙT^[ØYÕšXT\Ý
+ØØ[ˆØØ[™[[ÝNˆ™[[ÝJBˆHØ]ÚÂˆ”ÓÙÊ–Ô\ÜÐÛÜ™WH\ÝY\™ÙH˜Z[Y˜[˜XÚÈÝÚYˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠHŠBˆBˆBˆ™]\›ˆY\™ÙT^[ØYÔÝÚY
+ØØ[ˆØØ[™[[ÝNˆ™[[ÝJBˆB‚ˆ5Ó:¶‰žËkºwµç]\Ú™\Ý[
+^[ØYˆØ[™Y]KÚ[™ÙYØØ[]NˆÚ[™ÙY
+BˆHØ]ÚÞ[˜Ô™[[ÝQ\œ›Ü‹œ™XÛÛ™][Û‘˜Z[YÂˆÝX\™][\\ÜÔÞ[˜ÔÛXÞKœÞ[˜Ô\ÚÛÛ™›XÝX^][\ÈHH[ÙHÈ›ÝÈÞ[˜Ô™[[ÝQ\œ›Ü‹œ™XÛÛ™][Û‘˜Z[YBˆ]]\Ý™\ÜÛœÙHHžH]ØZ]™]Ú™[[ÝT^[ØY
+œ›ÛNˆ\›]]Üš^˜][ÛŽˆ]]Üš^˜][ÛŠBˆžH[œÝ\™PÝ\œ™[Þ[˜Ô^[ØY[˜Ú[™ÙY
+Ø[™Y]JBˆÝ\œ™[UYÈH]\Ý™\ÜÛœÙK™]YÂˆ]]\Ý^[ØYH]\Ý™\ÜÛœÙKœ^[ØYÏÈ[\TÞ[˜Ô^[ØY
+
+BˆYˆ[Y\™ÙSÛÛÛ™›XÝÈÛÛ[YHBˆ]ØY™]T™X\ÛÛœÈHÞ[˜ÔØY™]T™X\ÛÛœÊˆØØ[ˆØ[™Y]Kˆ™[[ÝNˆ]\Ý^[ØYˆY\™ÙYˆ]\Ý^[ØYˆ[ÙNˆœ™[[ÝSÝ™\Üš]SØØ[ˆ
+BˆYˆ\ØY™]T™X\ÛÛœËš\Ñ[\HÂˆ›ÝÈ”Ñ\œ›ÜŠˆÛXZ[ŽˆXØÛÝ[ÝÜ™K”Þ[˜ÔØY™]H‹ˆÛÙNˆKˆ\Ù\’[™›ÎˆÓ”ÓØØ[^™Y\ØÜš\[Û’Ù^Nˆ¹nm¹cäzaãz+åyæ¡9.¤yêëú)¡¹æåº(ªùk¢yaj9¨à9§ézf.ù«h»ï&—
+ØY™]T™X\ÛÛœËš›Ú[™Y
+Ù\\˜]ÜŽˆ‹ŠJH—Bˆ
+BˆBˆØ[™Y]HHØ[›ÛšXØ[^™TÞ[˜Ô^[ØY
+]\Ý^[ØY
+Bˆ]\YYH\SY\™ÙY^[ØYY“™YYY
+Ø[™Y]K\ÝÜžU]Nˆ\ÝÜžU]JBˆÚ[™ÙYHÚ[™ÙY\YYˆHØ]ÚÂˆYˆ]›Ø™HHžOÈ]ØZ]™]Ú™[[ÝT^[ØY
+œ›ÛNˆ\›]]Üš^˜][ÛŽˆ]]Üš^˜][ÛŠKˆ]™[[ÝHH›Ø™Kœ^[ØYˆÞ[˜Ô^[ØY\]X[Ê™[[ÝKØ[™Y]JBˆÂˆ™]\›ˆÙ[’ÜÝY\Ú™\Ý[
+^[ØYˆØ[™Y]KÚ[™ÙYØØ[]NˆÚ[™ÙY
+BˆBˆ›ÝÈ\œ›Ü‚ˆBˆBˆ›ÝÈÞ[˜Ô™[[ÝQ\œ›Ü‹œ™XÛÛ™][Û‘˜Z[YˆB‚ˆš]˜]H[˜ÈØ]™TÙXÜ™]
+ÈÙXÜ™]ˆÝš[™ËXØÛÝ[ˆÝš[™ÊHOˆ›ÛÛÂˆØYÞ[˜ÔÙXÜ™]š[RY“™YYY
+
+BˆÝX\™\Þ[˜ÔÙXÜ™]š[PÛÜœ\[ÙHÈ™]\›ˆ˜[ÙHBˆ]›Ü›X[^™YHÙXÜ™]š[[Z[™ÐÚ\˜XÝ\œÊ[Žˆ›™]Û[™\ÊBˆYˆ›Ü›X[^™Yš\Ñ[\HÂˆÞ[˜ÔÙXÜ™]Ëœ™[[Ý™U˜[YJ›Ü’Ù^NˆXØÛÝ[
+BˆH[ÙHÂˆÞ[˜ÔÙXÜ™]ÖØXØÛÝ[HHÙXÜ™]ˆBˆ™]\›ˆ\œÚ\ÝÞ[˜ÔÙXÜ™]š[J
+BˆB‚ˆš]˜]H[˜È™XYÙXÜ™]
+XØÛÝ[ˆÝš[™ÊHOˆÝš[™ÈÂˆØYÞ[˜ÔÙXÜ™]š[RY“™YYY
+
+Bˆ™]\›ˆÞ[˜ÔÙXÜ™]ÖØXØÛÝ[HÏÈˆ‚ˆB‚ˆ[˜ÈØYÞ[˜ÔÙXÜ™]Ñ›Ü•RJ
+HÂˆØYÞ[˜ÔÙXÜ™]ÒY“™YYY
+
+BˆB‚ˆ[˜ÈØ]™YÙ\™\”ÔÒÜ™Y[X[
+›ÜˆÙ\™\•T“ˆÝš[™ÊHOˆÙ\™\”ÔÒÜ™Y[X[ÂˆØYÞ[˜ÔÙXÜ™]ÒY“™YYY
+
+BˆÝX\™]ÜÝHÙ\™\”›Ýš\Ú[Ûš[™ÔÙ\šXÙKšÜÝ
+œ›ÛNˆÙ\™\•T“
+Kˆ]Ø]™YHÙ\™\”ÔÒÜ™Y[X[ÝÜ™K›ØY
+ÜÝˆÜÝ
+Bˆ[ÙHÂˆ™]\›ˆÙ\™\”ÔÒÜ™Y[X[
+
+BˆBˆ™]\›ˆØ]™YˆB‚ˆ[˜È›Ýš\Ú[Û”Ù[’ÜÝYÙ\™\ŠˆÙ\™\•T“ˆÝš[™ËˆÜ™Y[X[ˆÙ\™\”ÔÒÜ™Y[X[ˆXØÙ\ÜÕÚÙ[ŽˆÝš[™ËˆÞ[˜Ñ[˜Üž\[Û’Ù^NˆÝš[™Âˆ
+H\Þ[˜È›ÝÜÈÂˆØYÞ[˜ÔÙXÜ™]ÒY“™YYY
+
+Bˆ]™\Ý[HžH]ØZ]Ù\™\”›Ýš\Ú[Ûš[™ÔÙ\šXÙK™\ÞJˆÙ\™\•T“ˆÙ\™\•T“ˆÜ™Y[X[ˆÜ™Y[X[ˆXØÙ\ÜÕÚÙ[ŽˆXØÙ\ÜÕÚÙ[‹ˆÞ[˜Ñ[˜Üž\[Û’Ù^NˆÞ[˜Ñ[˜Üž\[Û’Ù^Bˆ
+BˆÝX\™Ù\™\”ÔÒÜ™Y[X[ÝÜ™KœØ]™JÜ™Y[X[ÜÝˆ™\Ý[šÜÝ
+H[ÙHÂˆ›ÝÈÙ\™\”›Ýš\Ú[Ûš[™Ñ\œ›Ü‹˜ÛÛ[X[™˜Z[Y
+¹§#yb¨yfj9mì¹£©yai{ï#9/aˆÔÒ9aëy£k¹/çykf9i,z-)HŠBˆBˆ]›Ü›X[^™YÚÙ[ˆHXØÙ\ÜÕÚÙ[‹š[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ]›Ü›X[^™YÙ^HHÞ[˜Ñ[˜Üž\[Û’Ù^Kš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆÙ\™\˜\ÙUT“H™\Ý[™[™Ú[ˆÙ\™\]]ÚÙ[ˆH›Ü›X[^™YÚÙ[‚ˆÙ[‹œÞ[˜Ñ[˜Üž\[Û’Ù^HH›Ü›X[^™YÙ^BˆÞ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\ˆHYB‚ˆÝX\™]ØZ]Ù\™\”›Ýš\Ú[Ûš[™ÔÙ\šXÙK™\šYžTX›XÑ[™Ú[
+™\Ý[™[™Ú[
+H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§#yb¨yfj9mì¹k¢z(á{ï#9/a¹¦ ¹¥í¹¥è9¬åy.ã¹§+9§.º+¯úeë»ï&—
+™\Ý[™[™Ú[
+KÚX[ˆ‚ˆ›ÝÈÙ\™\”›Ýš\Ú[Ûš[™Ñ\œ›Ü‹˜ÛÛ[X[™˜Z[Y
+ˆ¹§#yb¨yfj9§#yb¨ymì¹k¢z(áy.%:/ç¹£©y/èy kùmì¹/çykf;ï#9/a¹¥è9¬åy.ã¹§+9§.º+¯úeëˆ
+™\Ý[™[™Ú[
+KÚX[»ï&ú+íù¨à9§ézf,¹àjùh¦xà Q”øà yêëùcèù¦(9l!9d£:+ày.iˆ‚ˆ
+BˆBˆÝ]\ÓY\ÜØYÙHH¹§#yb¨yfj9£©yaiyk£9¢$;ï&—
+™\Ý[™[™Ú[
+H‚ˆB‚ˆš]˜]H[˜ÈØYÞ[˜ÔÙXÜ™]ÒY“™YYY
+
+HÂˆÝX\™\Þ[˜ÔÙXÜ™]ÓØYY[ÙHÈ™]\›ˆBˆ\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\ÈHYBˆØYÞ[˜ÔÙXÜ™]š[RY“™YYY
+
+BˆÙX™]”\ÜÝÛÜ™H™XYÙXÜ™]
+XØÛÝ[ˆÙXÜ™]Ù^\ËÙX™]”\ÜÝÛÜ™XØÛÝ[
+BˆÙ\™\]]ÚÙ[ˆH™XYÙXÜ™]
+XØÛÝ[ˆÙXÜ™]Ù^\ËœÙ\™\•ÚÙ[XØÛÝ[
+BˆÞ[˜Ñ[˜Üž\[Û’Ù^HH™XYÙXÜ™]
+XØÛÝ[ˆÙXÜ™]Ù^\ËœÞ[˜Ñ[˜Üž\[Û’Ù^PXØÛÝ[
+Bˆ™]š[Ý\ÔÞ[˜Ñ[˜Üž\[Û’Ù^HH™XYÙXÜ™]
+XØÛÝ[ˆÙXÜ™]Ù^\Ëœ™]š[Ý\ÔÞ[˜Ñ[˜Üž\[Û’Ù^PXØÛÝ[
+BˆYˆT\ÜÔÞ[˜ÐÜž\Ëš\Õ˜[YÙ^TÝš[™ÊÞ[˜Ñ[˜Üž\[Û’Ù^JHÂˆÞ[˜Ñ[˜Üž\[Û’Ù^HHˆ‚ˆÈHØ]™TÙXÜ™]
+Þ[˜Ñ[˜Üž\[Û’Ù^KXØÛÝ[ˆÙXÜ™]Ù^\ËœÞ[˜Ñ[˜Üž\[Û’Ù^PXØÛÝ[
+BˆBˆYˆT\ÜÔÞ[˜ÐÜž\Ëš\Õ˜[YÙ^TÝš[™Ê™]š[Ý\ÔÞ[˜Ñ[˜Üž\[Û’Ù^JH™]š[Ý\ÔÞ[˜Ñ[˜Üž\[Û’Ù^HOHÞ[˜Ñ[˜Üž\[Û’Ù^HÂˆ™]š[Ý\ÔÞ[˜Ñ[˜Üž\[Û’Ù^HHˆ‚ˆÈHØ]™TÙXÜ™]
+™]š[Ý\ÔÞ[˜Ñ[˜Üž\[Û’Ù^KXØÛÝ[ˆÙXÜ™]Ù^\Ëœ™]š[Ý\ÔÞ[˜Ñ[˜Üž\[Û’Ù^PXØÛÝ[
+BˆBˆ\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\ÈH˜[ÙBˆÞ[˜ÔÙXÜ™]ÓØYYHYBˆB‚ˆš]˜]H[˜ÈØYÞ[˜ÔÙXÜ™]š[RY“™YYY
+
+HÂˆÝX\™\Þ[˜ÔÙXÜ™]š[SØYY[ÙHÈ™]\›ˆBˆ]š[S˜[YHHÙXÜ™]Ù^\Ë™š[S˜[YBˆ]^\Ý[™Ñš[Q]HH\ÜÔÚ\™Yš[TÙXÜ™]ÝÜ™Kœ™XY
+˜[YYˆš[S˜[YJBˆYˆ]]HH^\Ý[™Ñš[Q]Kˆ]Z[^HžOÈ\ÜÔÚ\™YÜž\Ë™XÜž\ØØ[ÙXÜ™]
+]JKˆ]ÝÜ™YHžOÈXÛÙ\‹™XÛÙJÞ[˜ÔÙXÜ™]š[KœÙ[‹œ›ÛNˆZ[^
+KˆÝÜ™Y™\œÚ[ÛˆOHÞ[˜ÔÙXÜ™]š[K˜Ý\œ™[™\œÚ[Û‚ˆÂˆÞ[˜ÔÙXÜ™]ÈHÝÜ™Y˜[Y\ÂˆÞ[˜ÔÙXÜ™]š[SØYYHYBˆ™]\›‚ˆB‚ˆËÈZYÜ˜]HHÛZ[^š[H™Y›Ü™H›Øš[™ÈHYØXÞHÙ^XÚZ[‹‚ˆËÈ]\È™[[Ý™YÛ›HY\ˆH™\XÙ[Y[š[H\È™Y[ˆÜš][‹‚ˆ]YØXÞUT“H]Q\™XÝÜžUT“
+
+K˜\[™[™Ô]ÛÛ\Û™[
+ˆÙXÜ™]Ù^\Ë›YØXÞQš[S˜[YKˆ\Ñ\™XÝÜžNˆ˜[ÙBˆ
+BˆYˆ]]HHžOÈ]JÛÛ[ÓÙŽˆYØXÞUT“
+Kˆ]YØXÞHHžOÈXÛÙ\‹™XÛÙJÔÝš[™ÎˆÝš[™×KœÙ[‹œ›ÛNˆ]JBˆÂˆÞ[˜ÔÙXÜ™]ÈHYØXÞK™š[\ˆÈÙXÜ™]Ù^\Ë˜[XØÛÝ[Ë˜ÛÛZ[œÊ	šÙ^JHBˆYˆ\œÚ\ÝÞ[˜ÔÙXÜ™]š[J
+HÂˆžOÈš[SX[˜YÙ\‹™Y˜][œ™[[Ý™R][J]ˆYØXÞUT“
+BˆÞ[˜ÔÙXÜ™]š[SØYYHYBˆ™]\›‚ˆBˆB‚ˆËÈHš[HÜš][ˆžH[ˆ[\›YYX]H]™[ÜY[Z[X^HÝ[™BˆËÈZ[^”ÓÓ‹ˆZYÜ˜]H]ÈH]][XØ]YØØ[\ÙXÜ™]›Ü›X]ˆËÈ™Y›Ü™H˜[[™È˜XÚÈÈHYØXÞHÙ^XÚZ[‹‚ˆYˆ]]HH^\Ý[™Ñš[Q]Kˆ]ÝÜ™YHžOÈXÛÙ\‹™XÛÙJÞ[˜ÔÙXÜ™]š[KœÙ[‹œ›ÛNˆ]JBˆÂˆÞ[˜ÔÙXÜ™]ÈHÝÜ™Y˜[Y\ÂˆÞ[˜ÔÙXÜ™]š[SØYYH\œÚ\ÝÞ[˜ÔÙXÜ™]š[J
+Bˆ™]\›‚ˆB‚ˆYˆ^\Ý[™Ñš[Q]HOHš[ÂˆÞ[˜ÔÙXÜ™]š[PÛÜœ\HYBˆÝÜ˜YÙR[YÜš]TÝ]\ÈH¹d#9«iyaëy£k¹¥¡ù.í¹¥è9¬åz)èùká»ï#9c§ù¥¡ù.í¹§*¹¥.ybª;ï&ú+íù.ã¹i!ù.ïy h¹i#HÞ[˜ËXÜ™Y[X[Ë]ŒKšœÛÛˆ‚ˆÞ[˜ÔÙXÜ™]š[SØYYHYBˆ™]\›‚ˆB‚ˆËÈÛ™K][YK›Û‹Z[\˜XÝ]™HZYÜ˜][Ûˆœ›ÛHHÛÙ^XÚZ[ˆ[šY\Ë‚ˆËÈÜš]HH™]Èš[H]™[ˆÚ[ˆ]\È[\HÛÈÝXœÙ\]Y[][˜Ú\È™]™\‚ˆËÈ›Ø™HHÙ^XÚZ[ˆYØZ[‹‚ˆ˜\ˆZYÜ˜]YˆÔÝš[™ÎˆÝš[™×HHÎ—Bˆ›ÜˆXØÛÝ[[ˆÙXÜ™]Ù^\Ë˜[XØÛÝ[ÈÂˆYˆ]]HHØØ[Ù^XÚZ[‹œ™XY
+Ù\šXÙNˆÙXÜ™]Ù^\ËœÙ\šXÙKXØÛÝ[ˆXØÛÝ[
+Kˆ]˜[YHHÝš[™Ê]Nˆ]K[˜ÛÙ[™Îˆ]Ž
+Kˆ]˜[YKš\Ñ[\BˆÂˆZYÜ˜]YØXØÛÝ[HH˜[YBˆBˆBˆÞ[˜ÔÙXÜ™]ÈHZYÜ˜]YˆYˆÞ[˜ÔÙXÜ™]š[PÛÜœ\ÂˆÞ[˜ÔÙXÜ™]š[SØYYHYBˆH[ÙHÂˆÞ[˜ÔÙXÜ™]š[SØYYH\œÚ\ÝÞ[˜ÔÙXÜ™]š[J
+BˆBˆB‚ˆ\ØØ\™X›T™\Ý[ˆš]˜]H[˜È\œÚ\ÝÞ[˜ÔÙXÜ™]š[J
+HOˆ›ÛÛÂˆ]š[HHÞ[˜ÔÙXÜ™]š[J™\œÚ[ÛŽˆÞ[˜ÔÙXÜ™]š[K˜Ý\œ™[™\œÚ[Û‹˜[Y\ÎˆÞ[˜ÔÙXÜ™]ÊBˆÝX\™]Z[^HžOÈ[˜ÛÙ\‹™[˜ÛÙJš[JKˆ]]HHžOÈ\ÜÔÚ\™YÜž\Ë™[˜Üž\ØØ[ÙXÜ™]
+Z[^
+Bˆ[ÙHÈ™]\›ˆ˜[ÙHBˆ™]\›ˆ\ÜÔÚ\™Yš[TÙXÜ™]ÝÜ™KÜš]J]K˜[YYˆÙXÜ™]Ù^\Ë™š[S˜[YJBˆB‚ˆ[˜ÈÝ\œ™[ÝÛÙJ›ÜˆXØÛÝ[ˆ\ÜÝÛÜ™XØÛÝ[]]Nˆ]HH]J
+JHOˆÝš[™ÏÈÂˆ]ÙXÜ™]HXØÛÝ[ÝÙXÜ™]š[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆÝX\™\ÙXÜ™]š\Ñ[\H[ÙHÈ™]\›ˆš[Bˆ™]\›ˆÝÙ[™\˜]Ü‹˜Ý\œ™[ÛÙJÙXÜ™]ˆÙXÜ™]]ˆ]JBˆB‚ˆ[˜ÈÝ™[XZ[š[™ÔÙXÛÛ™Ê]]Nˆ]HH]J
+JHOˆ[ÂˆÝÙ[™\˜]Ü‹œ™[XZ[š[™ÔÙXÛÛ™Ê]ˆ]JBˆB‚ˆš]˜]H[˜ÈØY
+
+HÂˆ\ÜÔÚ\™Y]K›ZYÜ˜]SYØXÞTÝÜ™UÔÚ\™YÛÛZ[™\’Y“™YYY
+
+B‚ˆ]Y˜][ÈH\Ù\‘Y˜][ËœÝ[™\™ˆZYÜ˜]SYØXÞTÞ[˜Ô™Y™\™[˜Ù\ÒY“™YYY
+
+Bˆ]šXÙS˜[YHHY˜][ËœÝš[™Ê›Ü’Ù^NˆÙ^\Ë™]šXÙS˜[YJHÏÈˆ‚ˆ^Ü\™XÝÜžT]HY˜][ËœÝš[™Ê›Ü’Ù^NˆÙ^\Ë™^Ü\™XÝÜžT]
+HÏÈˆ‚ˆ\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\ÈHYBˆÞ[˜Ñ[˜X›RPÛÝYHY˜][Ë›Øš™XÝ
+›Ü’Ù^NˆÙ^\ËœÞ[˜Ñ[˜X›RPÛÝY
+H\ÏÈ›ÛÛÏÈYBˆÞ[˜Ñ[˜X›UÙX‘UˆHY˜][Ë›Øš™XÝ
+›Ü’Ù^NˆÙ^\ËœÞ[˜Ñ[˜X›UÙX‘UŠH\ÏÈ›ÛÛÏÈ˜[ÙBˆÞ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\ˆHY˜][Ë›Øš™XÝ
+›Ü’Ù^NˆÙ^\ËœÞ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\ŠH\ÏÈ›ÛÛÏÈ˜[ÙBˆÞ[˜Ôš[X\žTÛÝ\˜ÙHHÞ[˜Ôš[X\žTÛÝ\˜ÙJ˜]Õ˜[YNˆY˜][ËœÝš[™Ê›Ü’Ù^NˆÙ^\ËœÞ[˜Ôš[X\žTÛÝ\˜ÙJHÏÈˆŠHÏÈœÙ[’ÜÝYÙ\™\‚ˆÞ[˜Ó[ÙHHÞ[˜Ó[ÙJ˜]Õ˜[YNˆY˜][ËœÝš[™Ê›Ü’Ù^NˆÙ^\ËœÞ[˜Ó[ÙJHÏÈˆŠHÏÈ›Y\™ÙBˆ]]ÔÞ[˜Ò[\˜[Z[]\ÈH]]ÔÞ[˜Ò[\˜[
+˜]Õ˜[YNˆY˜][Ëš[YÙ\Š›Ü’Ù^NˆÙ^\Ë˜]]ÔÞ[˜Ò[\˜[Z[]\ÊJOËœ˜]Õ˜[YHÏÈ]]ÔÞ[˜Ò[\˜[™\ØX›Yœ˜]Õ˜[YBˆÙX™]˜\ÙUT“HY˜][ËœÝš[™Ê›Ü’Ù^NˆÙ^\ËÙX™]˜\ÙUT“
+HÏÈˆ‚ˆÙX™]”™[[ÝT]HY˜][ËœÝš[™Ê›Ü’Ù^NˆÙ^\ËÙX™]”™[[ÝT]
+HÏÈœ\ÜË\Þ[˜ËX[™K]Œ‹šœÛÛˆ‚ˆÙX™]•\Ù\›˜[YHHY˜][ËœÝš[™Ê›Ü’Ù^NˆÙ^\ËÙX™]•\Ù\›˜[YJHÏÈˆ‚ˆÙX™]”\ÜÝÛÜ™Hˆ‚ˆÙ\™\˜\ÙUT“H›Ü›X[^™YÙ[’ÜÝYÙ\™\˜\ÙUT“
+ˆY˜][ËœÝš[™Ê›Ü’Ù^NˆÙ^\ËœÙ\™\˜\ÙUT“
+HÏÈÙ[‹™Y˜][Ù[’ÜÝYÙ\™\˜\ÙUT“ˆ
+BˆÙ\™\]]ÚÙ[ˆHˆ‚ˆÞ[˜Ñ[˜Üž\[Û’Ù^HHˆ‚ˆ™]š[Ý\ÔÞ[˜Ñ[˜Üž\[Û’Ù^HHˆ‚ˆÞ[˜ÔÙXÜ™]ÓØYYH˜[ÙBˆÞ[˜ÔÙXÜ™]š[SØYYH˜[ÙBˆ\ÓØY[™ÔÞ[˜Ô™Y™\™[˜Ù\ÈH˜[ÙB‚ˆ]›Û\œÑ]Qœ›ÛQ]X˜\ÙHHØYÛÛXÝ[Û‘]Qœ›ÛSØØ[]X˜\ÙJ›ÜŽˆØØ[]X˜\ÙRÙ^\Ë™›Û\œÊBˆ˜\ˆZYÜ˜]Y›Û\œÑœ›ÛQY˜][ÈH˜[ÙBˆYˆ]›Û\œÑ]Qœ›ÛQ]X˜\ÙKˆ]XÛÙY›Û\œÈHžOÈXÛÙ\‹™XÛÙJÐXØÛÝ[›Û\—KœÙ[‹œ›ÛNˆ›Û\œÑ]Qœ›ÛQ]X˜\ÙJBˆÂˆ›Û\œÈHXÛÙY›Û\œÂˆH[ÙHYˆ[ØØ[]X˜\ÙT™XY˜Z[Yˆ]›Û\œÑ]HHY˜][Ë™]J›Ü’Ù^NˆÙ^\Ë™›Û\œÑ]JKˆ]XÛÙY›Û\œÈHžOÈXÛÙ\‹™XÛÙJÐXØÛÝ[›Û\—KœÙ[‹œ›ÛNˆ›Û\œÑ]JBˆÂˆ›Û\œÈHXÛÙY›Û\œÂˆZYÜ˜]Y›Û\œÑœ›ÛQY˜][ÈHYBˆH[ÙHÂˆ›Û\œÈH×BˆBˆ]›Û\“›Ü›X[^˜][ÛˆH›Ü›X[^™Q›Û\œÑ[œÝ\š[™Ñš^Y™]ÐXØÛÝ[›Û\Š
+B‚ˆ]Ø]™Y›Û˜[Z[HHY˜][ËœÝš[™Ê›Ü’Ù^NˆÙ^\ËZQ›Û˜[Z[JHÏÈÙ[‹œÞ\Ý[QY˜][›Û˜[Z[BˆYˆØ]™Y›Û˜[Z[HOHÙ[‹œÞ\Ý[QY˜][›Û˜[Z[HÙ[‹š[œÝ[Y›Û˜[Z[Y\Ë˜ÛÛZ[œÊØ]™Y›Û˜[Z[JHÂˆZQ›Û˜[Z[HHØ]™Y›Û˜[Z[BˆH[ÙHÂˆZQ›Û˜[Z[HHÙ[‹œÞ\Ý[QY˜][›Û˜[Z[BˆB‚ˆ]Ø]™Y^›ÛÚ^™HHY˜][Ë™ÝX›J›Ü’Ù^NˆÙ^\ËZU^›ÛÚ^™JBˆZU^›ÛÚ^™HHØ]™Y^›ÛÚ^™HˆÈØ]™Y^›ÛÚ^™HˆŒ‚ˆ]Ø]™Y]Û‘›ÛÚ^™HHY˜][Ë™ÝX›J›Ü’Ù^NˆÙ^\ËZP]Û‘›ÛÚ^™JBˆZP]Û‘›ÛÚ^™HHØ]™Y]Û‘›ÛÚ^™HˆÈØ]™Y]Û‘›ÛÚ^™HˆŒ‚ˆ]Ø]™YØ\Ý\˜][ÛˆHY˜][Ë™ÝX›J›Ü’Ù^NˆÙ^\ËZUØ\Ý\˜][Û”ÙXÛÛ™ÊBˆZUØ\Ý\˜][Û”ÙXÛÛ™ÈHØ]™YØ\Ý\˜][ÛˆˆÈØ]™YØ\Ý\˜][ÛˆˆB‚ˆÚÝÔ\ÜÝÛÜ™ÑÛØ˜[HHY˜][Ë›Øš™XÝ
+›Ü’Ù^NˆÙ^\ËœÚÝÔ\ÜÝÛÜ™ÑÛØ˜[JH\ÏÈ›ÛÛÏÈYB‚ˆ\ÜÚÙ^\ÈHØY\ÜÚÙ^\Ñœ›ÛSØØ[\ÚÊ
+Bˆ\ÝÜžQ[šY\ÈHØY\ÝÜžQœ›ÛSØØ[\ÚÊ
+B‚ˆ]XØÛÝ[]Qœ›ÛQ]X˜\ÙHHØYÛÛXÝ[Û‘]Qœ›ÛSØØ[]X˜\ÙJ›ÜŽˆØØ[]X˜\ÙRÙ^\Ë˜XØÛÝ[ÊBˆ]š[UT“H]Qš[UT“
+
+Bˆ]]X˜\ÙQ^\ÝÈHš[SX[˜YÙ\‹™Y˜][™š[Q^\ÝÊ]]ˆ\ÜÔÚ\™Y]K™]X˜\ÙUT“
+
+Kœ]
+Bˆ]XØÛÝ[]Qœ›ÛSYØXÞQš[HH]X˜\ÙQ^\ÝÈ	‰ˆØØ[]X˜\ÙT™XY˜Z[YˆÈš[ˆˆžOÈ]JÛÛ[ÓÙŽˆš[UT“
+Bˆ]XØÛÝ[]PØ[™Y]\ÈHØXØÛÝ[]Qœ›ÛQ]X˜\ÙKXØÛÝ[]Qœ›ÛSYØXÞQš[WK˜ÛÛ\XÝX\È	BˆÝX\™XXØÛÝ[]PØ[™Y]\Ëš\Ñ[\H[ÙHÂˆXØÛÝ[ÈH×BˆYˆØØ[]X˜\ÙT™XY˜Z[YÂˆÝÜ˜YÙR[YÜš]TÝ]\ÈH¹§+9g,9¥l9£k¹n¤ù¥è9¬åz)èùká»ï#9mì¹`g9«hº+îùcå¹¥éùfçº` 9¥¡ù.í»ï&ú+íù h¹i#H\ÜË™ˆ9.#ˆ\ÜËY‹ZÙ^K]ŒH9i!ù.ïH‚ˆBˆÜ™Y[X[Y[]TÞ[˜Ëœ™\XÙPÜ™Y[X[Y[]Y\ÊXØÛÝ[ÎˆXØÛÝ[ÊBˆYˆ›Û\“›Ü›X[^˜][Û‹™›Û\œÐÚ[™ÙYZYÜ˜]Y›Û\œÑœ›ÛQY˜][ÈÂˆÈHØ]™Q›Û\œÕÑY˜][Ê
+BˆBˆ™]\›‚ˆB‚ˆ›Üˆ]H[ˆXØÛÝ[]PØ[™Y]\ÈÂˆYˆ]XÛÙYHžOÈXÛÙ\‹™XÛÙJÔ\ÜÝÛÜ™XØÛÝ[KœÙ[‹œ›ÛNˆ]JHÂˆXØÛÝ[ÈH›Ü›X[^™QXÛÙYXØÛÝ[ÊXÛÙY
+Bˆ]XØÛÝ[ÐÚ[™ÙYHZYÜ˜]PXØÛÝ[›Û\’YÑœ›ÛSYØXÞS™]ÐXØÛÝ[›Û\ŠˆYØXÞQ›Û\’YÎˆ›Û\“›Ü›X[^˜][Û‹›YØXÞS™]ÐXØÛÝ[›Û\’YÂˆ
+Bˆ]\Ú[™Ñ]X˜\ÙQ]HHXØÛÝ[]Qœ›ÛQ]X˜\ÙK›X\È	OH]HHÏÈ˜[ÙBˆ]›Û\œÐÚ[™ÙYH›Û\“›Ü›X[^˜][Û‹™›Û\œÐÚ[™ÙYZYÜ˜]Y›Û\œÑœ›ÛQY˜][Âˆ]XØÛÝ[Ó™YYØ]™HHXØÛÝ[ÐÚ[™ÙY]\Ú[™Ñ]X˜\ÙQ]BˆYˆXØÛÝ[Ó™YYØ]™H	‰ˆ›Û\œÐÚ[™ÙYÂˆÈHØ]™PXØÛÝ[Ð[™›Û\œÐ]ÛZXØ[J\ÚPÛÝYˆ˜[ÙJBˆH[ÙHYˆXØÛÝ[Ó™YYØ]™HÂˆÈHØ]™PXØÛÝ[ÕÓØØ[\ÚÊ
+BˆH[ÙHYˆ›Û\œÐÚ[™ÙYÂˆÈHØ]™Q›Û\œÕÑY˜][Ê
+BˆBˆÜ™Y[X[Y[]TÞ[˜Ëœ™\XÙPÜ™Y[X[Y[]Y\ÊXØÛÝ[ÎˆXØÛÝ[ÊBˆ™]\›‚ˆB‚ˆYˆ]YØXÞHHžOÈXÛÙ\‹™XÛÙJÓYØXÞT\ÜÝÛÜ™XØÛÝ[KœÙ[‹œ›ÛNˆ]JHÂˆXØÛÝ[ÈHYØXÞK›X\È	ÐÝ\œ™[
+]šXÙS˜[YNˆÝ\œ™[]šXÙS˜[YJ
+JHBˆÈHZYÜ˜]PXØÛÝ[›Û\’YÑœ›ÛSYØXÞS™]ÐXØÛÝ[›Û\ŠˆYØXÞQ›Û\’YÎˆ›Û\“›Ü›X[^˜][Û‹›YØXÞS™]ÐXØÛÝ[›Û\’YÂˆ
+Bˆ]›Û\œÐÚ[™ÙYH›Û\“›Ü›X[^˜][Û‹™›Û\œÐÚ[™ÙYZYÜ˜]Y›Û\œÑœ›ÛQY˜][ÂˆYˆ›Û\œÐÚ[™ÙYÂˆÈHØ]™PXØÛÝ[Ð[™›Û\œÐ]ÛZXØ[J\ÚPÛÝYˆYJBˆH[ÙHÂˆÈHØ]™PXØÛÝ[Ê
+BˆBˆÜ™Y[X[Y[]TÞ[˜Ëœ™\XÙPÜ™Y[X[Y[]Y\ÊXØÛÝ[ÎˆXØÛÝ[ÊBˆ™]\›‚ˆBˆB‚ˆXØÛÝ[ÈH×BˆÜ™Y[X[Y[]TÞ[˜Ëœ™\XÙPÜ™Y[X[Y[]Y\ÊXØÛÝ[ÎˆXØÛÝ[ÊBˆYˆ›Û\“›Ü›X[^˜][Û‹™›Û\œÐÚ[™ÙYZYÜ˜]Y›Û\œÑœ›ÛQY˜][ÈÂˆÈHØ]™Q›Û\œÕÑY˜][Ê
+BˆBˆB‚ˆ\ØØ\™X›T™\Ý[ˆš]˜]H[˜ÈØ]™PXØÛÝ[Ê
+HOˆ›ÛÛÂˆØ]™PXØÛÝ[ÕÓØØ[\ÚÊ\ÚPÛÝYˆYJBˆB‚ˆ\ØØ\™X›T™\Ý[ˆš]˜]H[˜ÈØ]™PXØÛÝ[ÕÓØØ[\ÚÊ\ÚPÛÝYˆ›ÛÛH˜[ÙJHOˆ›ÛÛÂˆÈÂˆžHÜš]PÛÛXÝ[ÛœÐ]ÛZXØ[Jˆ[˜ÛYPXØÛÝ[ÎˆYKˆ[˜ÛYQ›Û\œÎˆ˜[ÙKˆ[˜ÛYT\ÜÚÙ^\Îˆ˜[ÙKˆ\ÚPÛÝYˆ\ÚPÛÝYˆ
+Bˆ™]\›ˆYBˆHØ]ÚÂˆ]™\ÝÜ™YH™[ØYÛÛXÝ[ÛœÐY\”Ø]™Q˜Z[\™JˆXØÛÝ[ÎˆYKˆ›Û\œÎˆ˜[ÙKˆ\ÜÚÙ^\Îˆ˜[ÙBˆ
+BˆÝ]\ÓY\ÜØYÙHH™\ÝÜ™YˆÈ¹/çykf9i,z-){ï#9mì¹ h¹i#yèàyææ9¥l9£kŽˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆˆ¹/çykf9i,z-)y.%9¥è9¬åzaãz/oyèàyææ9¥l9£kŽˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆ™]\›ˆ˜[ÙBˆBˆB‚‚ˆš]˜]H[˜ÈØY\ÜÚÙ^\Ñœ›ÛSØØ[\ÚÊ
+HOˆÔ\ÜÚÙ^T™XÛÜ™HÂˆYˆ]]HHØYÛÛXÝ[Û‘]Qœ›ÛSØØ[]X˜\ÙJ›ÜŽˆØØ[]X˜\ÙRÙ^\Ëœ\ÜÚÙ^\ÊKˆ]XÛÙYHžOÈXÛÙ\‹™XÛÙJÔ\ÜÚÙ^T™XÛÜ™KœÙ[‹œ›ÛNˆ]JBˆÂˆ™]\›ˆXÛÙY›X\
+›Ü›X[^™T\ÜÚÙ^T™XÛÜ™
+BˆB‚ˆÝX\™[ØØ[]X˜\ÙT™XY˜Z[Y[ÙHÈ™]\›ˆ×HBˆ]š[UT“H\ÜÚÙ^\Ñš[UT“
+
+BˆÝX\™]]HHžOÈ]JÛÛ[ÓÙŽˆš[UT“
+Kˆ]XÛÙYHžOÈXÛÙ\‹™XÛÙJÔ\ÜÚÙ^T™XÛÜ™KœÙ[‹œ›ÛNˆ]JBˆ[ÙHÂˆ™]\›ˆ×BˆBˆ]›Ü›X[^™YHXÛÙY›X\
+›Ü›X[^™T\ÜÚÙ^T™XÛÜ™
+BˆÈÂˆ]ZYÜ˜]Y]HHžH[˜ÛÙ\‹™[˜ÛÙJ›Ü›X[^™Y
+BˆžHØ]™PÛÛXÝ[Û‘]UÓØØ[]X˜\ÙJZYÜ˜]Y]K›ÜŽˆØØ[]X˜\ÙRÙ^\Ëœ\ÜÚÙ^\ÊBˆHØ]ÚÂˆÝ]\ÓY\ÜØYÙHHº/àyéîú`&º(c9káºd©yb,ÔS]H9i,z-)Nˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆBˆ™]\›ˆ›Ü›X[^™YˆB‚ˆ\ØØ\™X›T™\Ý[ˆš]˜]H[˜ÈØ]™T\ÜÚÙ^\ÕÓØØ[\ÚÊ
+HOˆ›ÛÛÂˆÈÂˆ]]HHžH[˜ÛÙ\‹™[˜ÛÙJ\ÜÚÙ^\Ë›X\
+›Ü›X[^™T\ÜÚÙ^T™XÛÜ™
+JBˆžHØ]™PÛÛXÝ[Û‘]UÓØØ[]X˜\ÙJ]K›ÜŽˆØØ[]X˜\ÙRÙ^\Ëœ\ÜÚÙ^\ÊBˆYˆ\Ý\™\ÜÐÛÝY\Ú	‰ˆÞ[˜Ñ[˜X›RPÛÝYÂˆ\ÚÞ[˜Ñ]UÒPÛÝY
+šYÙÙ\Žˆ›ØØ[Ý\]HŠBˆBˆ™]\›ˆYBˆHØ]ÚÂˆÝ]\ÓY\ÜØYÙHH¹/çykf:`&º(c9káºd©yi,z-)Nˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆYˆ]\œÚ\ÝY]HHžOÈØØ[ÔS]TÝÜ™Kœ™XY]J›ÜŽˆØØ[]X˜\ÙRÙ^\Ëœ\ÜÚÙ^\ÊKˆ]\œÚ\ÝYHžOÈXÛÙ\‹™XÛÙJÔ\ÜÚÙ^T™XÛÜ™KœÙ[‹œ›ÛNˆ\œÚ\ÝY]JBˆÂˆ\ÜÚÙ^\ÈH\œÚ\ÝY›X\
+›Ü›X[^™T\ÜÚÙ^T™XÛÜ™
+BˆBˆ™]\›ˆ˜[ÙBˆBˆB‚ˆš]˜]H[˜ÈØ]™PÛÜ™PÛÛXÝ[ÛœÐ]ÛZXØ[J
+H›ÝÜÈÂˆžHÜš]PÛÛXÝ[ÛœÐ]ÛZXØ[Jˆ[˜ÛYPXØÛÝ[ÎˆYKˆ[˜ÛYQ›Û\œÎˆYKˆ[˜ÛYT\ÜÚÙ^\ÎˆYKˆ\ÚPÛÝYˆYBˆ
+BˆB‚ˆËËÈ\œÚ\ÝÈ[žHÛÛXš[˜][ÛˆÙˆXØÛÝ[Ù›Û\‹Ü\ÜÚÙ^HÛÛXÝ[ÛœÈ[ˆÛ™HÔS]H˜[œØXÝ[Û‹‚ˆËËÈÛˆ˜Z[\™KY[[ÜžH\È™\ÝÜ™YÈH™K]Üš]HÛ˜\ÚÝÛÈRHÝ]HX]Ú\È\ÚË‚ˆ\ØØ\™X›T™\Ý[ˆš]˜]H[˜ÈØ]™PXØÛÝ[Ð[™›Û\œÐ]ÛZXØ[Jˆ[˜ÛYT\ÜÚÙ^\Îˆ›ÛÛH˜[ÙKˆ\ÚPÛÝYˆ›ÛÛHYBˆ
+HOˆ›ÛÛÂˆÈÂˆžHÜš]PÛÛXÝ[ÛœÐ]ÛZXØ[Jˆ[˜ÛYPXØÛÝ[ÎˆYKˆ[˜ÛYQ›Û\œÎˆYKˆ[˜ÛYT\ÜÚÙ^\Îˆ[˜ÛYT\ÜÚÙ^\Ëˆ\ÚPÛÝYˆ\ÚPÛÝYˆ
+Bˆ™]\›ˆYBˆHØ]ÚÂˆ]™\ÝÜ™YH™[ØYÛÛXÝ[ÛœÐY\”Ø]™Q˜Z[\™JˆXØÛÝ[ÎˆYKˆ›Û\œÎˆYKˆ\ÜÚÙ^\Îˆ[˜ÛYT\ÜÚÙ^\Âˆ
+BˆÝ]\ÓY\ÜØYÙHH™\ÝÜ™YˆÈ¹/çykf:-)¹cíËù¥¡ù.í¹i.yi,z-){ï#9mì¹ h¹i#yèàyææ9¥l9£kŽˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆˆ¹/çykf:-)¹cíËù¥¡ù.í¹i.yi,z-)y.%9¥è9¬åzaãz/oyèàyææ9¥l9£kŽˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆ™]\›ˆ˜[ÙBˆBˆB‚ˆ\ØØ\™X›T™\Ý[ˆš]˜]H[˜È™[ØYÛÛXÝ[ÛœÐY\”Ø]™Q˜Z[\™JˆXØÛÝ[È™[ØYXØÛÝ[Îˆ›ÛÛˆ›Û\œÈ™[ØY›Û\œÎˆ›ÛÛˆ\ÜÚÙ^\È™[ØY\ÜÚÙ^\Îˆ›ÛÛˆ
+HOˆ›ÛÛÂˆÈÂˆYˆ™[ØYXØÛÝ[ÈÂˆYˆ]]HHžHØØ[ÔS]TÝÜ™Kœ™XY]J›ÜŽˆØØ[]X˜\ÙRÙ^\Ë˜XØÛÝ[ÊHÂˆXØÛÝ[ÈH›Ü›X[^™QXÛÙYXØÛÝ[ÊˆžHXÛÙ\‹™XÛÙJÔ\ÜÝÛÜ™XØÛÝ[KœÙ[‹œ›ÛNˆ]JBˆ
+BˆH[ÙHÂˆXØÛÝ[ÈH×BˆBˆÜ™Y[X[Y[]TÞ[˜Ëœ™\XÙPÜ™Y[X[Y[]Y\ÊXØÛÝ[ÎˆXØÛÝ[ÊBˆBˆYˆ™[ØY›Û\œÈÂˆYˆ]]HHžHØØ[ÔS]TÝÜ™Kœ™XY]J›ÜŽˆØØ[]X˜\ÙRÙ^\Ë™›Û\œÊHÂˆ›Û\œÈHžHXÛÙ\‹™XÛÙJÐXØÛÝ[›Û\—KœÙ[‹œ›ÛNˆ]JBˆH[ÙHÂˆ›Û\œÈH×BˆBˆÈH›Ü›X[^™Q›Û\œÑ[œÝ\š[™Ñš^Y™]ÐXØÛÝ[›Û\Š
+BˆBˆYˆ™[ØY\ÜÚÙ^\ÈÂˆYˆ]]HHžHØØ[ÔS]TÝÜ™Kœ™XY]J›ÜŽˆØØ[]X˜\ÙRÙ^\Ëœ\ÜÚÙ^\ÊHÂˆ\ÜÚÙ^\ÈHžHXÛÙ\‹™XÛÙJÔ\ÜÚÙ^T™XÛÜ™KœÙ[‹œ›ÛNˆ]JBˆ›X\
+›Ü›X[^™T\ÜÚÙ^T™XÛÜ™
+BˆH[ÙHÂˆ\ÜÚÙ^\ÈH×BˆBˆBˆ™]\›ˆYBˆHØ]ÚÂˆ™]\›ˆ˜[ÙBˆBˆB‚ˆš]˜]H[˜ÈÜš]PÛÛXÝ[ÛœÐ]ÛZXØ[Jˆ[˜ÛYPXØÛÝ[Îˆ›ÛÛˆ[˜ÛYQ›Û\œÎˆ›ÛÛˆ[˜ÛYT\ÜÚÙ^\Îˆ›ÛÛˆ\ÚPÛÝYˆ›ÛÛˆ
+H›ÝÜÈÂˆ]XØÛÝ[Ñ]HH[˜ÛYPXØÛÝ[ÈÈžH[˜ÛÙ\‹™[˜ÛÙJXØÛÝ[ÊHˆš[ˆ]›Û\œÑ]HH[˜ÛYQ›Û\œÈÈžH[˜ÛÙ\‹™[˜ÛÙJ›Û\œÊHˆš[ˆ]\ÜÚÙ^\Ñ]HH[˜ÛYT\ÜÚÙ^\ÈÈžH[˜ÛÙ\‹™[˜ÛÙJ\ÜÚÙ^\Ë›X\
+›Ü›X[^™T\ÜÚÙ^T™XÛÜ™
+JHˆš[ˆ][Y\Ý[\H›ÝÓ\Ê
+BˆžHØØ[ÔS]TÝÜ™K˜[œØXÝ[ÛˆÂˆYˆ]XØÛÝ[Ñ]HÂˆžHØØ[ÔS]TÝÜ™KÜš]Q]JXØÛÝ[Ñ]K›ÜŽˆØØ[]X˜\ÙRÙ^\Ë˜XØÛÝ[Ë\]Y]\Îˆ[Y\Ý[\
+BˆBˆYˆ]›Û\œÑ]HÂˆžHØØ[ÔS]TÝÜ™KÜš]Q]J›Û\œÑ]K›ÜŽˆØØ[]X˜\ÙRÙ^\Ë™›Û\œË\]Y]\Îˆ[Y\Ý[\
+BˆBˆYˆ]\ÜÚÙ^\Ñ]HÂˆžHØØ[ÔS]TÝÜ™KÜš]Q]J\ÜÚÙ^\Ñ]K›ÜŽˆØØ[]X˜\ÙRÙ^\Ëœ\ÜÚÙ^\Ë\]Y]\Îˆ[Y\Ý[\
+BˆBˆBˆYˆ]›Û\œÑ]HÂˆ\Ù\‘Y˜][ËœÝ[™\™œÙ]
+›Û\œÑ]K›Ü’Ù^NˆÙ^\Ë™›Û\œÑ]JBˆBˆYˆ[˜ÛYPXØÛÝ[ÈÂˆÜ™Y[X[Y[]TÞ[˜Ëœ™\XÙPÜ™Y[X[Y[]Y\ÊXØÛÝ[ÎˆXØÛÝ[ÊBˆBˆYˆ\ÚPÛÝY	‰ˆ\Ý\™\ÜÐÛÝY\Ú	‰ˆÞ[˜Ñ[˜X›RPÛÝYÂˆ\ÚÞ[˜Ñ]UÒPÛÝY
+šYÙÙ\Žˆ›ØØ[Ý\]HŠBˆBˆB‚ˆ[˜ÈÛX\’\ÝÜžQ[šY\Ê
+HÂˆ\ÝÜžQ[šY\ÈH×BˆØ]™R\ÝÜžUÓØØ[\ÚÊ
+BˆÝ]\ÓY\ÜØYÙHH¹c¡¹cìº+¬9oeymì¹®!yênˆ‚ˆB‚ˆ[˜ÈÛX\’\ÝÜžQ[šY\ÊØ]YÛÜžNˆ\ÝÜžQ[žPØ]YÛÜžJHÂˆ\ÝÜžQ[šY\Ëœ™[[Ý™P[È	˜Ø]YÛÜžHOHØ]YÛÜžHBˆØ]™R\ÝÜžUÓØØ[\ÚÊ
+BˆÝ]\ÓY\ÜØYÙHH—
+Ø]YÛÜžK›Y[U]Jymì¹®!yênˆ‚ˆB‚ˆ[˜È\ÝÜžQ[šY\ÊØ]YÛÜžNˆ\ÝÜžQ[žPØ]YÛÜžJHOˆÓÜ\˜][Û’\ÝÜžQ[žWHÂˆ\ÝÜžQ[šY\Ë™š[\ˆÈ	˜Ø]YÛÜžHOHØ]YÛÜžHBˆB‚ˆ[˜ÈØ[”™]™\\ÝÜžQ[žJÈ[žNˆÜ\˜][Û’\ÝÜžQ[žJHOˆ›ÛÛÂˆYˆ[žK˜XØÛÝ[™Y›Ü™HOHš[[žK˜XØÛÝ[Y\ˆOHš[Âˆ]XØÛÝ[YH\ÝÜžPXØÛÝ[Y
+›ÜŽˆ[žJBˆ™]\›ˆXØÛÝ[YOHš[ˆBˆ™]\›ˆ[žK™šY[Ù^HOH››ÝHˆ	‰ˆ[žK˜XØÛÝ[YOHš[	‰ˆ[žK›Û˜[YHOHš[ˆB‚ˆ[˜ÈØ[”™]™\\ÝÜžSÜ\˜][ÛŠÈ[šY\ÎˆÓÜ\˜][Û’\ÝÜžQ[žWJHOˆ›ÛÛÂˆY[šY\Ëš\Ñ[\H	‰ˆ[šY\Ë˜[Ø]\ÙžJØ[”™]™\\ÝÜžQ[žJBˆB‚ˆ[˜ÈÛX\’\ÝÜžQ[šY\Ê›ÜXØÛÝ[YXØÛÝ[YˆÝš[™ÊHÂˆ]™Yš^H—
+XØÛÝ[Y
+{ï&ˆ‚ˆ\ÝÜžQ[šY\Ëœ™[[Ý™P[È[žH[‚ˆ[žK˜XØÛÝ[YOHXØÛÝ[Y[žK˜XÝ[Û‹š\Ô™Yš^
+™Yš^
+BˆBˆØ]™R\ÝÜžUÓØØ[\ÚÊ
+BˆÝ]\ÓY\ÜØYÙHH¹c¡¹cìº+¬9oeymì¹®!yênˆ‚ˆB‚ˆ[˜È™]™\\ÝÜžQ[žJÈ[žNˆÜ\˜][Û’\ÝÜžQ[žJHÂˆYˆ[žK˜XØÛÝ[™Y›Ü™HOHš[[žK˜XØÛÝ[Y\ˆOHš[Âˆ™]™\XØÛÝ[Û˜\ÚÝ\ÝÜžQ[žJ[žJBˆ™]\›‚ˆBˆÝX\™[žK™šY[Ù^HOH››ÝH‹ˆ]XØÛÝ[YH[žK˜XØÛÝ[Yˆ]™\ÝÜ™Y›ÝHH[žK›Û˜[YBˆ[ÙHÂˆÝ]\ÓY\ÜØYÙHHº+éyc¡¹cìº+¬9oey¦ ¹.#y¥+ù£ yfçº` ‚ˆ™]\›‚ˆBˆÝX\™][™^HXØÛÝ[Ë™š\œÝ[™^
+Ú\™NˆÈ	˜XØÛÝ[YOHXØÛÝ[YJH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*¹¢o¹b,9c¡¹cìº+¬9oeykîyn¥9æ¡:-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆ]Ý\œ™[›ÝHHXØÛÝ[ÖÚ[™^K››ÝBˆÝX\™Ý\œ™[›ÝHOH™\ÝÜ™Y›ÝH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹i!ù¬ê9mì¹îãù¦+ú+éyc¡¹cì¹âb9§+‚ˆ™]\›‚ˆB‚ˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+BˆXØÛÝ[ÖÚ[™^K››ÝHH™\ÝÜ™Y›ÝBˆXØÛÝ[ÖÚ[™^K››ÝU\]Y]\ÈH›ÝÂˆXØÛÝ[ÖÚ[™^K››ÝU\]Y]šXÙS˜[YHH]šXÙBˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆB‚ˆYˆY][™ÐXØÛÝ[YOHXØÛÝ[ÖÚ[™^KšYÂˆY]›ÝHH™\ÝÜ™Y›ÝBˆB‚ˆ\[™\ÝÜžQ[žJˆXÝ[ÛŽˆ—
+XØÛÝ[Y
+{ï&¹i!ù¬ê9¥.y..ˆ‹ˆ[Y\Ý[\\Îˆ›ÝËˆXØÛÝ[YˆXØÛÝ[YˆšY[Ù^Nˆ››ÝH‹ˆÛ˜[YNˆÝ\œ™[›ÝKˆ™]Õ˜[YNˆ™\ÝÜ™Y›ÝBˆ
+BˆÝ]\ÓY\ÜØYÙHH¹mì¹fçº` 9b,:+éy«(y/ë¹¥.ybcyæ¡9i!ù¬ê‚ˆB‚ˆ[˜È™]™\\ÝÜžSÜ\˜][ÛŠÈ[šY\ÎˆÓÜ\˜][Û’\ÝÜžQ[žWJHÂˆÝX\™Ø[”™]™\\ÝÜžSÜ\˜][ÛŠ[šY\ÊH[ÙHÂˆÝ]\ÓY\ÜØYÙHHº+éyc¡¹cìº+¬9oey¦ ¹.#y¥+ù£ y¥m9«(y¤©:e ‚ˆ™]\›‚ˆB‚ˆ]ÛÜY[šY\ÈH[šY\ËœÛÜYÈËšÈ[‚ˆ]ÐXØÛÝ[YH\ÝÜžPXØÛÝ[Y
+›ÜŽˆÊHÏÈË˜XØÛÝ[YÏÈˆ‚ˆ]šÐXØÛÝ[YH\ÝÜžPXØÛÝ[Y
+›ÜŽˆšÊHÏÈšË˜XØÛÝ[YÏÈˆ‚ˆYˆÐXØÛÝ[YOHšÐXØÛÝ[YÂˆ™]\›ˆÐXØÛÝ[YšÐXØÛÝ[YˆBˆ™]\›ˆËšY]ZYÝš[™ÈšËšY]ZYÝš[™ÂˆB‚ˆ˜\ˆ™^XØÛÝ[ÈHXØÛÝ[Âˆ˜\ˆ™Y›Ü™PžPXØÛÝ[YˆÔÝš[™Îˆ\ÜÝÛÜ™XØÛÝ[HHÎ—Bˆ˜\ˆY\žPXØÛÝ[YˆÔÝš[™Îˆ\ÜÝÛÜ™XØÛÝ[×HHÎ—B‚ˆ›Üˆ[žH[ˆÛÜY[šY\ÈÂˆYˆ[žK˜XØÛÝ[™Y›Ü™HOHš[[žK˜XØÛÝ[Y\ˆOHš[ÂˆÝX\™]XØÛÝ[YH\ÝÜžPXØÛÝ[Y
+›ÜŽˆ[žJH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*¹¢o¹b,9c¡¹cìº+¬9oeykîyn¥9æ¡:-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆ]Ý\œ™[[™^H™^XØÛÝ[Ë™š\œÝ[™^
+Ú\™NˆÈ	˜XØÛÝ[YOHXØÛÝ[YJBˆ]Ý\œ™[XØÛÝ[HÝ\œ™[[™^›X\È™^XØÛÝ[ÖÉHBˆ]™\ÝÜ™YXØÛÝ[H[žK˜XØÛÝ[™Y›Ü™B‚ˆYˆ™Y›Ü™PžPXØÛÝ[YØXØÛÝ[YHOHš[]Ý\œ™[XØÛÝ[Âˆ™Y›Ü™PžPXØÛÝ[YØXØÛÝ[YHHÝ\œ™[XØÛÝ[ˆB‚ˆYˆ]Ý\œ™[[™^ÂˆYˆ]™\ÝÜ™YXØÛÝ[Âˆ™^XØÛÝ[ÖØÝ\œ™[[™^HH™\ÝÜ™YXØÛÝ[ˆH[ÙHÂˆ™^XØÛÝ[Ëœ™[[Ý™J]ˆÝ\œ™[[™^
+BˆBˆH[ÙHYˆ]™\ÝÜ™YXØÛÝ[Âˆ™^XØÛÝ[Ë˜\[™
+™\ÝÜ™YXØÛÝ[
+BˆB‚ˆY\žPXØÛÝ[YØXØÛÝ[YHH™\ÝÜ™YXØÛÝ[ˆÛÛ[YBˆB‚ˆÝX\™[žK™šY[Ù^HOH››ÝH‹ˆ]XØÛÝ[YH[žK˜XØÛÝ[Yˆ]™\ÝÜ™Y›ÝHH[žK›Û˜[YKˆ]Ý\œ™[[™^H™^XØÛÝ[Ë™š\œÝ[™^
+Ú\™NˆÈ	˜XØÛÝ[YOHXØÛÝ[YJBˆ[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*¹¢o¹b,9c¡¹cìº+¬9oeykîyn¥9æ¡:-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆYˆ™Y›Ü™PžPXØÛÝ[YØXØÛÝ[YHOHš[Âˆ™Y›Ü™PžPXØÛÝ[YØXØÛÝ[YHH™^XØÛÝ[ÖØÝ\œ™[[™^BˆB‚ˆ]›ÝÈH›ÝÓ\Ê
+Bˆ]]šXÙHHÝ\œ™[]šXÙS˜[YJ
+Bˆ™^XØÛÝ[ÖØÝ\œ™[[™^K››ÝHH™\ÝÜ™Y›ÝBˆ™^XØÛÝ[ÖØÝ\œ™[[™^K››ÝU\]Y]\ÈH›ÝÂˆ™^XØÛÝ[ÖØÝ\œ™[[™^K››ÝU\]Y]šXÙS˜[YHH]šXÙBˆ™^XØÛÝ[ÖØÝ\œ™[[™^KÝXÚ\]Y]
+›ÝË]šXÙS˜[YNˆ]šXÙJBˆY\žPXØÛÝ[YØXØÛÝ[YHH™^XØÛÝ[ÖØÝ\œ™[[™^BˆB‚ˆ]Ú[™ÙYXØÛÝ[YÈHÙ]
+™Y›Ü™PžPXØÛÝ[YšÙ^\ÊK[š[ÛŠY\žPXØÛÝ[YšÙ^\ÊBˆÝX\™XÚ[™ÙYXØÛÝ[YËš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHHº/æy«(y¤ãy/g9mì¹îãù¦+ùc¡¹cì¹âb9§+‚ˆ™]\›‚ˆB‚ˆXØÛÝ[ÈH™^XØÛÝ[ÂˆÞ[˜Ð[X\ÑÜ›Ý\Ê
+BˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆB‚ˆYˆ]Y][™ÐXØÛÝ[YÂˆYˆ]Y][™Ò[™^HXØÛÝ[Ë™š\œÝ[™^
+Ú\™NˆÈ	šYOHY][™ÐXØÛÝ[YJHÂˆ™YÚ[‘Y][™ÊXØÛÝ[ÖÙY][™Ò[™^JBˆH[ÙHÂˆØ[˜Ù[Y][™Ê
+BˆBˆB‚ˆ]›ÝÈH›ÝÓ\Ê
+Bˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆ¹.ã—
+ÛÜY[šY\Ë™š\œÝË˜Ø]YÛÜžK›Ü\˜][Û”™Yš^ÏÈ\ÝÜžQ[žPØ]YÛÜžK›ØØ[›Ü\˜][Û”™Yš^
+yc¡¹cì¹¤©9fçˆ
+Ú[™ÙYXØÛÝ[YË˜ÛÝ[
+H9.*º-)¹cíÈ‹ˆ[Y\Ý[\\Îˆ›ÝËˆ™Y›Ü™PXØÛÝ[ÎˆÚ[™ÙYXØÛÝ[YË˜ÛÛ\XÝX\È™Y›Ü™PžPXØÛÝ[YÉHKˆY\XØÛÝ[ÎˆÚ[™ÙYXØÛÝ[YË˜ÛÛ\XÝX\ÈY\žPXØÛÝ[YÉHÏÈš[Bˆ
+BˆÝ]\ÓY\ÜØYÙHH¹mì¹¤©:e 9«i9«(y¤ãy/g;ï&—
+Ú[™ÙYXØÛÝ[YË˜ÛÝ[
+H9.*º-)¹cíÈ‚ˆB‚ˆš]˜]H[˜È™]™\XØÛÝ[Û˜\ÚÝ\ÝÜžQ[žJÈ[žNˆÜ\˜][Û’\ÝÜžQ[žJHÂˆÝX\™]XØÛÝ[YH\ÝÜžPXØÛÝ[Y
+›ÜŽˆ[žJH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹§*¹¢o¹b,9c¡¹cìº+¬9oeykîyn¥9æ¡:-)¹cíÈ‚ˆ™]\›‚ˆB‚ˆ]Ý\œ™[[™^HXØÛÝ[Ë™š\œÝ[™^
+Ú\™NˆÈ	˜XØÛÝ[YOHXØÛÝ[YJBˆ]Ý\œ™[XØÛÝ[HÝ\œ™[[™^›X\ÈXØÛÝ[ÖÉHBˆ]™\ÝÜ™YXØÛÝ[H[žK˜XØÛÝ[™Y›Ü™B‚ˆYˆÝ\œ™[XØÛÝ[OH™\ÝÜ™YXØÛÝ[ÂˆÝ]\ÓY\ÜØYÙHHº+éz-)¹cíùmì¹îãù¦+ú+éyc¡¹cì¹âb9§+‚ˆ™]\›‚ˆB‚ˆYˆ]Ý\œ™[[™^ÂˆYˆ]™\ÝÜ™YXØÛÝ[ÂˆXØÛÝ[ÖØÝ\œ™[[™^HH™\ÝÜ™YXØÛÝ[ˆH[ÙHÂˆXØÛÝ[Ëœ™[[Ý™J]ˆÝ\œ™[[™^
+BˆBˆH[ÙHYˆ]™\ÝÜ™YXØÛÝ[ÂˆXØÛÝ[Ë˜\[™
+™\ÝÜ™YXØÛÝ[
+BˆH[ÙHÂˆÝ]\ÓY\ÜØYÙHHº+éz-)¹cíùmì¹.#ykf9g*;ï#9¥è:g 9¤©9fçˆ‚ˆ™]\›‚ˆB‚ˆÞ[˜Ð[X\ÑÜ›Ý\Ê
+BˆÝX\™Ø]™PXØÛÝ[Ê
+H[ÙHÈ™]\›ˆB‚ˆYˆ]Y][™ÐXØÛÝ[YÂˆYˆ]Y][™Ò[™^HXØÛÝ[Ë™š\œÝ[™^
+Ú\™NˆÈ	šYOHY][™ÐXØÛÝ[YJHÂˆ™YÚ[‘Y][™ÊXØÛÝ[ÖÙY][™Ò[™^JBˆH[ÙHÂˆØ[˜Ù[Y][™Ê
+BˆBˆB‚ˆ]›ÝÈH›ÝÓ\Ê
+Bˆ\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ›ØØ[ˆ]Nˆ¹.ã—
+[žK˜Ø]YÛÜžK›Ü\˜][Û”™Yš^
+yc¡¹cì¹¤©9fçˆH9.*º-)¹cíÈ‹ˆ[Y\Ý[\\Îˆ›ÝËˆ™Y›Ü™PXØÛÝ[ÎˆÝ\œ™[XØÛÝ[›X\ÈÉHHÏÈ×KˆY\XØÛÝ[Îˆ™\ÝÜ™YXØÛÝ[›X\ÈÉHHÏÈ×Bˆ
+BˆÝ]\ÓY\ÜØYÙHH¹mì¹£"yc¡¹cìº+¬9oey¤©9fçº-)¹cíûï&—
+XØÛÝ[Y
+H‚ˆB‚ˆš]˜]H[˜ÈØY\ÝÜžQœ›ÛSØØ[\ÚÊ
+HOˆÓÜ\˜][Û’\ÝÜžQ[žWHÂˆÈÂˆÝX\™]]HHžHØØ[ÔS]TÝÜ™Kœ™XY]J›ÜŽˆØØ[]X˜\ÙRÙ^\Ëš\ÝÜžJH[ÙHÂˆ™]\›ˆ×BˆBˆÝX\™]XÛÙYHžOÈXÛÙ\‹™XÛÙJÓÜ\˜][Û’\ÝÜžQ[žWKœÙ[‹œ›ÛNˆ]JH[ÙHÂˆ›ÝÈ\ÜÔÚ\™YÜž\Ñ\œ›Ü‹š[˜[YÚ\\^ˆBˆ™]\›ˆXÛÙYˆ™š[\ˆÈI˜XÝ[Û‹š[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊKš\Ñ[\HBˆœÛÜYÈËšÈ[‚ˆYˆË[Y\Ý[\\ÈOHšË[Y\Ý[\\ÈÂˆ™]\›ˆË[Y\Ý[\\ÈˆšË[Y\Ý[\\ÂˆBˆ™]\›ˆËšY]ZYÝš[™ÈšËšY]ZYÝš[™ÂˆBˆHØ]ÚÂˆËÈ\ÝÜžH9¦+ùcëù.(¹o ùæ¡9­/¹å'ùk¨z+¨z+¬9oe{ï#9.#z ïzf.ùhgº-)¹cíøà y¥¡ù.í¹i.y¢%ˆ\ÜÚÙ^H9b¨:/oxà ‚ˆËÈ9ab9¢¢¹c§ùiâùká¹¥¡úf¥9é®ùb,9âë9êâù¥¡ù.í»ï#9a£yå*9odùbcykáºd©ya¦yaiyên¹¥l9îá;ï#:`oùacy«ãù«(yd+ùbª:aãyi#y¢©ze&xà ‚ˆ]˜XÚÝ\\™XÝÜžHH]Q\™XÝÜžUT“
+
+K˜\[™[™Ô]ÛÛ\Û™[
+ˆ˜ÛÜœ\Y]KX˜XÚÝ\È‹ˆ\Ñ\™XÝÜžNˆYBˆ
+BˆÈÂˆ]˜XÚÝ\T“HžHØØ[ÔS]TÝÜ™Kœ]X\˜[[™P[™™\XÙQ]Jˆ›ÜŽˆØØ[]X˜\ÙRÙ^\Ëš\ÝÜžKˆÚ]ˆ]J–×H‹]Ž
+Kˆ˜XÚÝ\\™XÝÜžNˆ˜XÚÝ\\™XÝÜžKˆ\]Y]\Îˆ›ÝÓ\Ê
+Bˆ
+BˆYˆ]˜XÚÝ\T“ÂˆÝ]\ÓY\ÜØYÙHH¹c¡¹cìº+¬9oez)èùká¹i,z-){ï#9mì¹i!ù.ïy£gùgcù¥l9£k¹nmºaãynî¹..¹ên»ï"
+˜XÚÝ\T“›\Ý]ÛÛ\Û™[
+{ï"H‚ˆH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹c¡¹cìº+¬9oez)èùká¹i,z-){ï#9mìºaãynî¹..¹ênˆ‚ˆBˆHØ]ÚÂˆÝ]\ÓY\ÜØYÙHH¹c¡¹cìº+¬9oez)èùká¹i,z-){ï#9c§ùiâù¥l9£k¹§*¹¥.ybª;ï&—
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆBˆ™]\›ˆ×BˆBˆB‚ˆš]˜]H[˜ÈØ]™R\ÝÜžUÓØØ[\ÚÊ
+HÂˆÈÂˆ]]HHžH[˜ÛÙ\‹™[˜ÛÙJ\ÝÜžQ[šY\ÊBˆžHØ]™PÛÛXÝ[Û‘]UÓØØ[]X˜\ÙJ]K›ÜŽˆØØ[]X˜\ÙRÙ^\Ëš\ÝÜžJBˆHØ]ÚÂˆÝ]\ÓY\ÜØYÙHH¹/çykf9c¡¹cìº+¬9oeyi,z-)Nˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆBˆB‚ˆš]˜]H[˜È\ÝÜžPXØÛÝ[Y
+›Üˆ[žNˆÜ\˜][Û’\ÝÜžQ[žJHOˆÝš[™ÏÈÂˆYˆ]XØÛÝ[YH[žK˜XØÛÝ[YXXØÛÝ[Yš\Ñ[\HÂˆ™]\›ˆXØÛÝ[YˆBˆYˆ]XØÛÝ[YH[žK˜XØÛÝ[™Y›Ü™OË˜XØÛÝ[YXXØÛÝ[Yš\Ñ[\HÂˆ™]\›ˆXØÛÝ[YˆBˆYˆ]XØÛÝ[YH[žK˜XØÛÝ[Y\Ë˜XØÛÝ[YXXØÛÝ[Yš\Ñ[\HÂˆ™]\›ˆXØÛÝ[YˆBˆ™]\›ˆš[ˆB‚ˆš]˜]H[˜È\[™XØÛÝ[\ÝÜžP˜]Ú
+ˆØ]YÛÜžNˆ\ÝÜžQ[žPØ]YÛÜžKˆ]NˆÝš[™Ëˆ[Y\Ý[\\Îˆ[ÈHš[ˆ™Y›Ü™PXØÛÝ[ÎˆÔ\ÜÝÛÜ™XØÛÝ[KˆY\XØÛÝ[ÎˆÔ\ÜÝÛÜ™XØÛÝ[Bˆ
+HÂˆ]›ÝÈH[Y\Ý[\\ÈÏÈ›ÝÓ\Ê
+Bˆ]Ü\˜][Û’YHURQ
+
+Bˆ]™Y›Ü™PžPXØÛÝ[YHXÝ[Û˜\žJ[š\]YRÙ^\ÕÚ]˜[Y\Îˆ™Y›Ü™PXØÛÝ[Ë›X\È
+	˜XØÛÝ[Y	
+HJBˆ]Y\žPXØÛÝ[YHXÝ[Û˜\žJ[š\]YRÙ^\ÕÚ]˜[Y\ÎˆY\XØÛÝ[Ë›X\È
+	˜XØÛÝ[Y	
+HJBˆ]XØÛÝ[YÈHÙ]
+™Y›Ü™PžPXØÛÝ[YšÙ^\ÊK[š[ÛŠY\žPXØÛÝ[YšÙ^\ÊKœÛÜY
+
+BˆÝX\™XXØÛÝ[YËš\Ñ[\H[ÙHÈ™]\›ˆB‚ˆ›ÜˆXØÛÝ[Y[ˆXØÛÝ[YÈÂˆ]™Y›Ü™HH™Y›Ü™PžPXØÛÝ[YØXØÛÝ[YBˆ]Y\ˆHY\žPXØÛÝ[YØXØÛÝ[YBˆÝX\™™Y›Ü™HOHY\ˆ[ÙHÈÛÛ[YHB‚ˆ]]Z[H\ÝÜžQ]Z[^
+™Y›Ü™Nˆ™Y›Ü™KY\ŽˆY\ŠBˆ][žHHÜ\˜][Û’\ÝÜžQ[žJˆYˆURQ
+
+Kˆ[Y\Ý[\\Îˆ›ÝËˆØ]YÛÜžNˆØ]YÛÜžKˆÜ\˜][Û’YˆÜ\˜][Û’YˆÜ\˜][Û•]Nˆ]KˆXÝ[ÛŽˆ]Z[ˆXØÛÝ[YˆXØÛÝ[YˆXØÛÝ[™Y›Ü™Nˆ™Y›Ü™KˆXØÛÝ[Y\ŽˆY\‚ˆ
+Bˆ\ÝÜžQ[šY\Ëš[œÙ\
+[žK]ˆ
+BˆB‚ˆYˆ\ÝÜžQ[šY\Ë˜ÛÝ[ˆÙ[‹›X^\ÝÜžQ[šY\ÈÂˆ\ÝÜžQ[šY\Ëœ™[[Ý™S\Ý
+\ÝÜžQ[šY\Ë˜ÛÝ[HÙ[‹›X^\ÝÜžQ[šY\ÊBˆBˆØ]™R\ÝÜžUÓØØ[\ÚÊ
+BˆB‚ˆš]˜]H[˜È\ÝÜžQ]Z[^
+™Y›Ü™Nˆ\ÜÝÛÜ™XØÛÝ[ËY\Žˆ\ÜÝÛÜ™XØÛÝ[ÊHOˆÝš[™ÈÂˆÝÚ]Ú
+™Y›Ü™KY\ŠHÂˆØ\ÙH
+š[]Ü™X]YÊN‚ˆ™]\›ˆ¹b&ùnîº-)¹cíûï&—
+Ü™X]Y˜XØÛÝ[Y
+H‚ˆØ\ÙH
+]™[[Ý™YËš[
+N‚ˆ™]\›ˆ¹b(:fi:-)¹cíûï&—
+™[[Ý™Y˜XØÛÝ[Y
+H‚ˆØ\ÙH
+]™Y›Ü™OË]Y\ÊN‚ˆ]Ú[™ÙYšY[ÈH\ÝÜžPÚ[™ÙYšY[X™[Ê™Y›Ü™Nˆ™Y›Ü™KY\ŽˆY\ŠBˆYˆÚ[™ÙYšY[Ëš\Ñ[\HÂˆ™]\›ˆ¹¦í9¥¬:-)¹cíûï&—
+Y\‹˜XØÛÝ[Y
+H‚ˆBˆ™]\›ˆ¹¦í9¥¬:-)¹cíûï&—
+Y\‹˜XØÛÝ[Y
+{ï"
+Ú[™ÙYšY[Ëš›Ú[™Y
+Ù\\˜]ÜŽˆ¸à HŠJ{ï"H‚ˆY˜][‚ˆ™]\›ˆº-)¹cíùcæ9¦í‚ˆBˆB‚ˆš]˜]H[˜È\ÝÜžPÚ[™ÙYšY[X™[Ê™Y›Ü™Nˆ\ÜÝÛÜ™XØÛÝ[Y\Žˆ\ÜÝÛÜ™XØÛÝ[
+HOˆÔÝš[™×HÂˆ˜\ˆX™[ÎˆÔÝš[™×HH×BˆYˆ™Y›Ü™KœÚ]\ÈOHY\‹œÚ]\ÈÈX™[Ë˜\[™
+¹êæyà®yb*ùd#HŠHBˆYˆ™Y›Ü™K\Ù\›˜[YHOHY\‹\Ù\›˜[YHÈX™[Ë˜\[™
+¹å*9¢-ùd#HŠHBˆYˆ™Y›Ü™Kœ\ÜÝÛÜ™OHY\‹œ\ÜÝÛÜ™ÈX™[Ë˜\[™
+¹ká¹è HŠHBˆYˆ™Y›Ü™KÝÙXÜ™]OHY\‹ÝÙXÜ™]ÈX™[Ë˜\[™
+•ÕŠHBˆYˆ™Y›Ü™Kœ™XÛÝ™\žPÛÙ\ÈOHY\‹œ™XÛÝ™\žPÛÙ\ÈÈX™[Ë˜\[™
+¹ h¹i#yè HŠHBˆYˆ™Y›Ü™K››ÝHOHY\‹››ÝHÈX™[Ë˜\[™
+¹i!ù¬êŠHBˆYˆ™Y›Ü™Kœ\ÜÚÙ^PÜ™Y[X[YÈOHY\‹œ\ÜÚÙ^PÜ™Y[X[YÈÈX™[Ë˜\[™
+º`&º(c9káºd©HŠHBˆYˆ™Y›Ü™Kœ™\ÛÛ™Y›Û\’YÈOHY\‹œ™\ÛÛ™Y›Û\’YÈÈX™[Ë˜\[™
+¹¥¡ù.í¹i.HŠHBˆYˆ™Y›Ü™Kš\Ñ[]YOHY\‹š\Ñ[]YÈX™[Ë˜\[™
+Y\‹š\Ñ[]YÈ¹éîùaiyfç¹¥-¹êæHˆˆ¹ h¹i#z-)¹cíÈŠHBˆ™]\›ˆX™[ÂˆB‚ˆš]˜]H[˜È\[™\ÝÜžQ[žJˆXÝ[Ûˆ˜]ÐXÝ[ÛŽˆÝš[™Ëˆ[Y\Ý[\\Îˆ[ÈHš[ˆØ]YÛÜžNˆ\ÝÜžQ[žPØ]YÛÜžHH›ØØ[ˆXØÛÝ[YˆÝš[™ÏÈHš[ˆšY[Ù^NˆÝš[™ÏÈHš[ˆÛ˜[YNˆÝš[™ÏÈHš[ˆ™]Õ˜[YNˆÝš[™ÏÈHš[ˆ
+HÂˆ]XÝ[ÛˆH˜]ÐXÝ[Û‹š[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆÝX\™XXÝ[Û‹š\Ñ[\H[ÙHÈ™]\›ˆBˆ][žHHÜ\˜][Û’\ÝÜžQ[žJˆYˆURQ
+
+Kˆ[Y\Ý[\\Îˆ[Y\Ý[\\ÈÏÈ›ÝÓ\Ê
+KˆØ]YÛÜžNˆØ]YÛÜžKˆXÝ[ÛŽˆXÝ[Û‹ˆXØÛÝ[YˆXØÛÝ[YˆšY[Ù^NˆšY[Ù^KˆÛ˜[YNˆÛ˜[YKˆ™]Õ˜[YNˆ™]Õ˜[YBˆ
+Bˆ\ÝÜžQ[šY\Ëš[œÙ\
+[žK]ˆ
+BˆYˆ\ÝÜžQ[šY\Ë˜ÛÝ[ˆÙ[‹›X^\ÝÜžQ[šY\ÈÂˆ\ÝÜžQ[šY\Ëœ™[[Ý™S\Ý
+\ÝÜžQ[šY\Ë˜ÛÝ[HÙ[‹›X^\ÝÜžQ[šY\ÊBˆBˆØ]™R\ÝÜžUÓØØ[\ÚÊ
+BˆB‚ˆš]˜]H[˜È\ÝÜžU˜[YTÛš\]
+È˜]ÎˆÝš[™ËX^[™Ýˆ[H
+HOˆÝš[™ÈÂˆ]›Ü›X[^™YH˜]Âˆœ™\XÚ[™ÓØØÝ\œ™[˜Ù\ÊÙŽˆ——ˆ‹Ú]ˆ—ˆŠBˆœ™\XÚ[™ÓØØÝ\œ™[˜Ù\ÊÙŽˆ—ˆ‹Ú]ˆ—ˆŠBˆš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆYˆ›Ü›X[^™Yš\Ñ[\HÂˆ™]\›ˆŠ9ênŠH‚ˆBˆYˆ›Ü›X[^™Y˜ÛÝ[HX^[™ÝÂˆ™]\›ˆ›Ü›X[^™YˆBˆ™]\›ˆÝš[™Ê›Ü›X[^™Yœ™Yš^
+X^[™Ý
+JH
+È‹‹‹ˆ‚ˆB‚ˆš]˜]H[˜ÈØYÛÛXÝ[Û‘]Qœ›ÛSØØ[]X˜\ÙJ›ÜˆÙ^NˆÝš[™ÊHOˆ]OÈÂˆÈÂˆ™]\›ˆžHØØ[ÔS]TÝÜ™Kœ™XY]J›ÜŽˆÙ^JBˆHØ]ÚÂˆØØ[]X˜\ÙT™XY˜Z[YHYBˆÝÜ˜YÙR[YÜš]TÝ]\ÈHº+îùcå¹§+9g,9b¨9ká¹¥l9£k¹i,z-){ï"
+Ù^J{ï"{ï&—
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆÝ]\ÓY\ÜØYÙHHÝÜ˜YÙR[YÜš]TÝ]\Âˆ™]\›ˆš[ˆBˆB‚ˆš]˜]H[˜ÈØ]™PÛÛXÝ[Û‘]UÓØØ[]X˜\ÙJÈ]Nˆ]K›ÜˆÙ^NˆÝš[™ÊH›ÝÜÈÂˆžHØØ[ÔS]TÝÜ™KÜš]Q]J]K›ÜŽˆÙ^K\]Y]\Îˆ›ÝÓ\Ê
+JBˆB‚ˆš]˜]H[˜ÈØYÞ[˜ÓÝ]›Þ
+
+HÂˆÈÂˆÝX\™]]HHžHØØ[ÔS]TÝÜ™Kœ™XY]J›ÜŽˆØØ[]X˜\ÙRÙ^\ËœÞ[˜ÓÝ]›Þ
+H[ÙHÂˆÞ[˜ÓÝ]›ÞÛÝ[HˆÞ[˜ÓÝ]›ÞÝ]\ÈHˆ‚ˆ™]\›‚ˆBˆ]][\ÈHžHXÛÙ\‹™XÛÙJÔÞ[˜ÓÝ]›Þ][WKœÙ[‹œ›ÛNˆ]JBˆÞ[˜ÓÝ]›ÞÛÝ[H][\Ë˜ÛÝ[ˆÞ[˜ÓÝ]›ÞÝ]\ÈHÞ[˜ÓÝ]›ÞÝ]\Õ^
+][\ÊBˆHØ]ÚÂˆÞ[˜ÓÝ]›ÞÛÝ[HˆÞ[˜ÓÝ]›ÞÝ]\ÈH¹d#9«iz(iy`oúf'ùb%ú+îùcå¹i,z-){ï&—
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆÝ]\ÓY\ÜØYÙHHÞ[˜ÓÝ]›ÞÝ]\ÂˆBˆB‚ˆš]˜]H[˜ÈØ]™TÞ[˜ÓÝ]›Þ
+È][\ÎˆÔÞ[˜ÓÝ]›Þ][WJHÂˆ]›Ü›X[^™YHXÝ[Û˜\žJ][\Ë›X\È
+	œÛÝ\˜ÙRÙ^K	
+HJHÈš\œÝÙXÛÛ™[‚ˆš\œÝ›™^™]žP]\ÈHÙXÛÛ™›™^™]žP]\ÈÈš\œÝˆÙXÛÛ™ˆK˜[Y\ËœÛÜYÈËšÈ[‚ˆYˆË›™^™]žP]\ÈOHšË›™^™]žP]\ÈÂˆ™]\›ˆË›™^™]žP]\ÈšË›™^™]žP]\ÂˆBˆ™]\›ˆËœÛÝ\˜ÙRÙ^HšËœÛÝ\˜ÙRÙ^BˆBˆÈÂˆ]]HHžH[˜ÛÙ\‹™[˜ÛÙJ›Ü›X[^™Y
+BˆžHØ]™PÛÛXÝ[Û‘]UÓØØ[]X˜\ÙJ]K›ÜŽˆØØ[]X˜\ÙRÙ^\ËœÞ[˜ÓÝ]›Þ
+BˆÞ[˜ÓÝ]›ÞÛÝ[H›Ü›X[^™Y˜ÛÝ[ˆÞ[˜ÓÝ]›ÞÝ]\ÈHÞ[˜ÓÝ]›ÞÝ]\Õ^
+›Ü›X[^™Y
+BˆHØ]ÚÂˆÞ[˜ÓÝ]›ÞÝ]\ÈH¹d#9«iz(iy`oúf'ùb%ù/çykf9i,z-){ï&—
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆÝ]\ÓY\ÜØYÙHHÞ[˜ÓÝ]›ÞÝ]\ÂˆBˆB‚ˆš]˜]H[˜ÈÞ[˜ÓÝ]›ÞÝ]\Õ^
+È][\ÎˆÔÞ[˜ÓÝ]›Þ][WJHOˆÝš[™ÈÂˆÝX\™Z][\Ëš\Ñ[\H[ÙHÈ™]\›ˆˆˆBˆ]ØZ][™ÈH][\Ë™š[\ˆÈ	œÝ]\ÈOHœ]\ÙYˆ	‰ˆ	›™^™]žP]\Èˆ›ÝÓ\Ê
+HK˜ÛÝ[ˆ]]\ÙYH][\Ë™š[\ˆÈ	œÝ]\ÈOHœ]\ÙYˆK˜ÛÝ[ˆ]]Z[ÈH][\Ë›X\È][H[‚ˆ]Ú[™H][KœÛÝ\˜ÙRÙ^KœÜ]
+Ù\\˜]ÜŽˆŸ‹X^Ü]ÎˆJK™š\œÝ›X\
+Ýš[™Ëš[š]
+HÏÈ¹d#9«iy®¤‚ˆ]X™[HÚ[™OHœÙ\™\ˆˆÈ¹§#yb¨yfjˆˆÚ[™OHÙX™]ˆˆÈ•ÙX‘UˆˆˆÚ[™OHšXÛÝYˆÈšPÛÝYˆˆÚ[™ˆ]™]žHH][KœÝ]\ÈOHœ]\ÙYˆÈ¹mì¹¦ ¹`g;ï#9à®yaîùêâùclúaãz+åy h¹i#Hˆˆ][K›™^™]žP]\Èˆ›ÝÓ\Ê
+HÈ¹."ù«(H
+\Ü^U[YJ][K›™^™]žP]\ÊJHˆˆ¹cëùêâùclúaãz+åH‚ˆ™]\›ˆ—
+X™[
+{ï&¹i,z-)H
+][K˜][\ÊH9«({ï#
+™]žJ{ï#
+][K›\Ý\œ›ÜŠH‚ˆBˆ™]\›ˆº(iy`où.îùb¨H
+][\Ë˜ÛÝ[
+H9.*»ï"9ëbyo¡H
+ØZ][™ÊH9.*—
+]\ÙYˆÈ»ï#9mì¹¦ ¹`g
+]\ÙY
+H9.*ˆˆˆˆŠ{ï"W—
+]Z[Ëš›Ú[™Y
+Ù\\˜]ÜŽˆ—ˆŠJH‚ˆB‚ˆ[˜È™]žTÞ[˜ÓÝ]›Þ›ÝÊ
+HÂˆÝX\™Þ[˜ÓÝ]›ÞÛÝ[ˆ[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹d#9«iz(iy`oúf'ùb%ù..¹ênˆ‚ˆ™]\›‚ˆBˆÞ[˜Ó›ÝÊ[ÙSÝ™\œšYNˆ›Y\™ÙJBˆB‚ˆ[˜ÈÛX\’[˜XÝ]™TÞ[˜ÓÝ]›Þ][\Ê
+HÂˆÝX\™]]HHžOÈØØ[ÔS]TÝÜ™Kœ™XY]J›ÜŽˆØØ[]X˜\ÙRÙ^\ËœÞ[˜ÓÝ]›Þ
+Kˆ]][\ÈHžOÈXÛÙ\‹™XÛÙJÔÞ[˜ÓÝ]›Þ][WKœÙ[‹œ›ÛNˆ]JBˆ[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹d#9«iz(iy`oúf'ùb%ù..¹ênˆ‚ˆ™]\›‚ˆBˆ˜\ˆXÝ]™RÙ^\ÈHÙ]Ýš[™ÏŠ
+BˆYˆÞ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\ˆÂˆXÝ]™RÙ^\Ëš[œÙ\
+Þ[˜ÓÝ]›ÞÛÝ\˜ÙRÙ^JÚ[™ˆœÙ\™\ˆ‹\›ˆZ[Ù[’ÜÝY^[ØYT“
+
+JJBˆBˆYˆÞ[˜Ñ[˜X›UÙX‘UˆÂˆXÝ]™RÙ^\Ëš[œÙ\
+Þ[˜ÓÝ]›ÞÛÝ\˜ÙRÙ^JÚ[™ˆÙX™]ˆ‹\›ˆZ[ÙX‘U”™\ÛÝ\˜ÙUT“
+
+JJBˆBˆYˆÞ[˜Ñ[˜X›RPÛÝYÂˆXÝ]™RÙ^\Ëš[œÙ\
+Þ[˜ÓÝ]›ÞÛÝ\˜ÙRÙ^JÚ[™ˆšXÛÝYŠJBˆBˆ]™^H][\Ë™š[\ˆÈXÝ]™RÙ^\Ë˜ÛÛZ[œÊ	œÛÝ\˜ÙRÙ^JHBˆ]™[[Ý™YH][\Ë˜ÛÝ[H™^˜ÛÝ[ˆYˆ™[[Ý™YˆÈØ]™TÞ[˜ÓÝ]›Þ
+™^
+HBˆÝ]\ÓY\ÜØYÙHH™[[Ý™YˆÈ¹mì¹®!yä!ˆ
+™[[Ý™Y
+H9.*¹i,y¥b9d#9«iyæë¹¨!ù.îùb¨Hˆˆ¹¬¨y§"yi,y¥b9d#9«iyæë¹¨!ù.îùb¨H‚ˆB‚ˆš]˜]H[˜ÈÞ[˜ÓÝ]›ÞÛÝ\˜ÙRÙ^JÚ[™ˆÝš[™Ë\›ˆT“ÈHš[
+HOˆÝš[™ÈÂˆ]˜[˜XÚÎˆÝš[™ÂˆÝÚ]ÚÚ[™ÂˆØ\ÙHœÙ\™\ˆŽ‚ˆ˜[˜XÚÈH›Ü›X[^™YÙ[’ÜÝYÙ\™\˜\ÙUT“
+Ù\™\˜\ÙUT“
+BˆØ\ÙHÙX™]ˆŽ‚ˆ˜[˜XÚÈH—
+ÙX™]˜\ÙUT“š[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊJK×
+ÙX™]”™[[ÝT]š[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊJH‚ˆY˜][‚ˆ˜[˜XÚÈHÚ[™ˆBˆ]\™Ù]H\›Ë˜XœÛÛ]TÝš[™ÈÏÈ˜[˜XÚÂˆ™]\›ˆ—
+Ú[™
+_
+\™Ù]
+H‚ˆB‚ˆš]˜]H[˜ÈÚÝ[][\Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÝš[™Ë›Ü˜ÙNˆ›ÛÛ
+HOˆ›ÛÛÂˆÈÂˆÝX\™]]HHžHØØ[ÔS]TÝÜ™Kœ™XY]J›ÜŽˆØØ[]X˜\ÙRÙ^\ËœÞ[˜ÓÝ]›Þ
+Kˆ]][\ÈHžOÈXÛÙ\‹™XÛÙJÔÞ[˜ÓÝ]›Þ][WKœÙ[‹œ›ÛNˆ]JKˆ]][HH][\Ë™š\œÝ
+Ú\™NˆÈ	œÛÝ\˜ÙRÙ^HOHÛÝ\˜ÙRÙ^HJBˆ[ÙHÈ™]\›ˆYHBˆYˆ›Ü˜ÙK][KœÝ]\ÈOHœ]\ÙYˆÂˆ]™\Ý[YYHÞ[˜ÓÝ]›Þ][JˆÛÝ\˜ÙRÙ^Nˆ][KœÛÝ\˜ÙRÙ^Kˆ^[ØYˆ][Kœ^[ØYˆÜ™X]Y]\Îˆ][K˜Ü™X]Y]\Ëˆ][\Îˆˆ™^™]žP]\Îˆˆ\Ý\œ›ÜŽˆ][K›\Ý\œ›Ü‹ˆ^[ØYÚLMŽˆ][Kœ^[ØYÚLM‹ˆ^XÝY]YÎˆ][K™^XÝY]YËˆ^XÝY™]š\Ú[ÛŽˆ][K™^XÝY™]š\Ú[Û‹ˆY[\Ý[˜ÞRÙ^Nˆ][KšY[\Ý[˜ÞRÙ^KˆÞ[˜ÔÙ\ÜÚ[Û’Yˆ][KœÞ[˜ÔÙ\ÜÚ[Û’YˆÜ\˜][Û’Yˆ][K›Ü\˜][Û’Yˆ\Ý\œ›ÜÛÙNˆ][K›\Ý\œ›ÜÛÙKˆÝ]\Îˆœ[™[™Ô™]žH‚ˆ
+BˆØ]™TÞ[˜ÓÝ]›Þ
+][\Ë™š[\ˆÈ	œÛÝ\˜ÙRÙ^HOHÛÝ\˜ÙRÙ^HH
+ÈÜ™\Ý[YYJBˆBˆYˆ›Ü˜ÙHÈ™]\›ˆYHBˆ™]\›ˆ][KœÝ]\ÈOHœ]\ÙYˆ	‰ˆ][K›™^™]žP]\ÈH›ÝÓ\Ê
+BˆHØ]ÚÂˆ™]\›ˆYBˆBˆB‚ˆš]˜]H[˜È™XÛÜ™Þ[˜ÓÝ]›Þ˜Z[\™JˆÛÝ\˜ÙRÙ^NˆÝš[™Ëˆ^[ØYˆÞ[˜Ð[™T^[ØYˆ\œ›ÜŽˆ\œ›Ü‚ˆ
+HÂˆ]›ÝÈH›ÝÓ\Ê
+Bˆ˜\ˆ][\ÎˆÔÞ[˜ÓÝ]›Þ][WHH×BˆYˆ]]HHžOÈØØ[ÔS]TÝÜ™Kœ™XY]J›ÜŽˆØØ[]X˜\ÙRÙ^\ËœÞ[˜ÓÝ]›Þ
+Kˆ]XÛÙYHžOÈXÛÙ\‹™XÛÙJÔÞ[˜ÓÝ]›Þ][WKœÙ[‹œ›ÛNˆ]JBˆÂˆ][\ÈHXÛÙYˆBˆ]^[ØY\ÚHÞ[˜ÓÝ]›Þ^[ØY\Ú
+^[ØY
+Bˆ]™]š[Ý\ÈH][\Ë™š\œÝ
+Ú\™NˆÈ	œÛÝ\˜ÙRÙ^HOHÛÝ\˜ÙRÙ^HJBˆ]Ø[YSÙÚXØ[Üš]HH™]š[Ý\ÏËœ^[ØYÚLMˆOH^[ØY\Ú	‰ˆ\^[ØY\Úš\Ñ[\Bˆ]™]š[Ý\Ð][\ÈHØ[YSÙÚXØ[Üš]HÈ
+™]š[Ý\ÏË˜][\ÈÏÈ
+Hˆˆ]][\ÈHZ[Š™]š[Ý\Ð][\È
+ÈK\ÜÔÞ[˜ÔÛXÞKœÞ[˜ÓÝ]›ÞX^][\ÊBˆ]Ý]\ÈH][\ÈH\ÜÔÞ[˜ÔÛXÞKœÞ[˜ÓÝ]›ÞX^][\ÈÈœ]\ÙYˆˆœ[™[™Ô™]žH‚ˆ][^TÙXÛÛ™ÈH\ÜÔÞ[˜ÔÛXÞKœÞ[˜ÓÝ]›Þ™]žQ[^TÙXÛÛ™Ê][\Îˆ][\ÊBˆ]][HHÞ[˜ÓÝ]›Þ][JˆÛÝ\˜ÙRÙ^NˆÛÝ\˜ÙRÙ^Kˆ^[ØYˆØ[›ÛšXØ[Þ[˜Ô^[ØY
+^[ØY
+KˆÜ™X]Y]\ÎˆØ[YSÙÚXØ[Üš]HÈ
+™]š[Ý\ÏË˜Ü™X]Y]\ÈÏÈ›ÝÊHˆ›ÝËˆ][\Îˆ][\Ëˆ™^™]žP]\Îˆ›ÝÈ
+È[
+[^TÙXÛÛ™È
+ˆL
+Kˆ\Ý\œ›ÜŽˆ\œ›Ü‹›ØØ[^™Y\ØÜš\[Û‹ˆ^[ØYÚLMŽˆ^[ØY\Úˆ^XÝY]YÎˆ
+\œ›Üˆ\È”Ñ\œ›ÜŠK\Ù\’[™›ÖÈ™^XÝY]YÈ—H\ÏÈÝš[™ÈÏÈ™]š[Ý\ÏË™^XÝY]YÈÏÈˆ‹ˆ^XÝY™]š\Ú[ÛŽˆ
+\œ›Üˆ\È”Ñ\œ›ÜŠK\Ù\’[™›ÖÈ™^XÝY™]š\Ú[Ûˆ—H\ÏÈ[ÏÈ™]š[Ý\ÏË™^XÝY™]š\Ú[ÛˆÏÈˆY[\Ý[˜ÞRÙ^Nˆ
+\œ›Üˆ\È”Ñ\œ›ÜŠK\Ù\’[™›ÖÈšY[\Ý[˜ÞRÙ^H—H\ÏÈÝš[™ÈÏÈ
+Ø[YSÙÚXØ[Üš]HÈ™]š[Ý\ÏËšY[\Ý[˜ÞRÙ^Hˆš[
+HÏÈœ\ÜËW
+Þ[˜Ñ]šXÙRY
+
+JKW
+URQ
+
+K]ZYÝš[™ÊH‹ˆÞ[˜ÔÙ\ÜÚ[Û’Yˆ
+\œ›Üˆ\È”Ñ\œ›ÜŠK\Ù\’[™›ÖÈœÞ[˜ÔÙ\ÜÚ[Û’Y—H\ÏÈÝš[™ÈÏÈ
+Ø[YSÙÚXØ[Üš]HÈ™]š[Ý\ÏËœÞ[˜ÔÙ\ÜÚ[Û’Yˆš[
+HÏÈœ\ÜË\Ù\ÜÚ[Û‹W
+URQ
+
+K]ZYÝš[™ÊH‹ˆÜ\˜][Û’Yˆ
+\œ›Üˆ\È”Ñ\œ›ÜŠK\Ù\’[™›ÖÈ›Ü\˜][Û’Y—H\ÏÈÝš[™ÈÏÈ
+Ø[YSÙÚXØ[Üš]HÈ™]š[Ý\ÏË›Ü\˜][Û’Yˆš[
+HÏÈœ\ÜË[ÜW
+URQ
+
+K]ZYÝš[™ÊH‹ˆ\Ý\œ›ÜÛÙNˆ—
+
+\œ›Üˆ\È”Ñ\œ›ÜŠK˜ÛÙJH‹ˆÝ]\ÎˆÝ]\Âˆ
+BˆØ]™TÞ[˜ÓÝ]›Þ
+][\Ë™š[\ˆÈ	œÛÝ\˜ÙRÙ^HOHÛÝ\˜ÙRÙ^HH
+ÈÚ][WJBˆB‚ˆš]˜]H[˜ÈÞ[˜ÓÝ]›Þ^[ØY\Ú
+È^[ØYˆÞ[˜Ð[™T^[ØY
+HOˆÝš[™ÈÂˆÝX\™]]HHžOÈ[˜ÛÙ\‹™[˜ÛÙJØ[›ÛšXØ[Þ[˜Ô^[ØY
+^[ØY
+JH[ÙHÈ™]\›ˆˆˆBˆ™]\›ˆÒLM‹š\Ú
+]Nˆ]JK›X\ÈÝš[™Ê›Ü›X]ˆ‰Lž‹	
+HKš›Ú[™Y
+
+BˆB‚ˆš]˜]H[˜ÈÛX\”Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÝš[™ÊHÂˆÝX\™]]HHžOÈØØ[ÔS]TÝÜ™Kœ™XY]J›ÜŽˆØØ[]X˜\ÙRÙ^\ËœÞ[˜ÓÝ]›Þ
+Kˆ]][\ÈHžOÈXÛÙ\‹™XÛÙJÔÞ[˜ÓÝ]›Þ][WKœÙ[‹œ›ÛNˆ]JKˆ][\Ë˜ÛÛZ[œÊÚ\™NˆÈ	œÛÝ\˜ÙRÙ^HOHÛÝ\˜ÙRÙ^HJBˆ[ÙHÈ™]\›ˆBˆØ]™TÞ[˜ÓÝ]›Þ
+][\Ë™š[\ˆÈ	œÛÝ\˜ÙRÙ^HOHÛÝ\˜ÙRÙ^HJBˆB‚ˆš]˜]H[˜È[™TÞ[˜ÔÛÝ\˜ÙTÙ[XÝ[ÛÚ[™ÙY
+
+HÂˆYˆÞ[˜Ñ[˜X›RPÛÝYÂˆYˆÛÝYØœÙ\™\ˆOHš[ÂˆÙ]\PÛÝYÞ[˜Ê
+BˆBˆH[ÙHÂˆX\™ÝÛ’PÛÝYÞ[˜ÓØœÙ\™\Š
+BˆBˆYˆÛÝYØœÙ\™\ˆOHš[Âˆ™Yœ™\ÚÞ[˜ÔÛÝ\˜ÙTÝ]\Ò[
+
+BˆBˆ\]P]]ÔÞ[˜Õ[Y\Š
+BˆB‚ˆš]˜]H[˜È™Yœ™\ÚÞ[˜ÔÛÝ\˜ÙTÝ]\Ò[
+
+HÂˆ]˜[Y\ÈHXÝ]™TÞ[˜ÔÛÝ\˜ÙS˜[Y\Ê
+BˆYˆ˜[Y\Ëš\Ñ[\HÂˆÛÝYÞ[˜ÔÝ]\ÈH¹§*¹d+ùå*9d#9«iy®¤‚ˆ™]\›‚ˆBˆÛÝYÞ[˜ÔÝ]\ÈH¹mì¹d+ùå*9d#9«iy®¤;ï&—
+˜[Y\Ëš›Ú[™Y
+Ù\\˜]ÜŽˆˆ
+ÈŠJH‚ˆB‚ˆš]˜]H[˜ÈX\™ÝÛ’PÛÝYÞ[˜ÓØœÙ\™\Š
+HÂˆYˆ]ØœÙ\™\ˆHÛÝYØœÙ\™\ˆÂˆ›ÝYšXØ][ÛÙ[\‹™Y˜][œ™[[Ý™SØœÙ\™\ŠØœÙ\™\ŠBˆÛÝYØœÙ\™\ˆHš[ˆBˆB‚ˆš]˜]H[˜ÈÙ]\PÛÝYÞ[˜Ê
+HÂˆX\™ÝÛ’PÛÝYÞ[˜ÓØœÙ\™\Š
+BˆÛÝYØœÙ\™\ˆH›ÝYšXØ][ÛÙ[\‹™Y˜][˜YØœÙ\™\Šˆ›Ü“˜[YNˆ”ÕXš\]Z]Ý\ÒÙ^U˜[YTÝÜ™K™YÚ[™ÙQ^\›˜[S›ÝYšXØ][Û‹ˆØš™XÝˆÛÝYÝÜ™Kˆ]Y]YNˆ›XZ[‚ˆ
+HÈÝÙXZÈÙ[—HÈ[‚ˆ\ÚÈÈXZ[XÝÜˆ[‚ˆÝX\™]Ù[ˆ[ÙHÈ™]\›ˆBˆYˆÙ[‹œÞ[˜Ñ[˜X›UÙX‘UˆÙ[‹œÞ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\ˆÂˆÙ[‹œÞ[˜Ó›ÝÊ[ÙSÝ™\œšYNˆ›Y\™ÙJBˆH[ÙHÂˆÈHÙ[‹œ[Þ[˜Ñ]Qœ›ÛRPÛÝY
+šYÙÙ\Žˆœ™[[ÝWØÚ[™ÙHŠBˆBˆBˆB‚ˆYˆÞ[˜Ñ[˜X›UÙX‘UˆÞ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\ˆÂˆÞ[˜Ó›ÝÊ[ÙSÝ™\œšYNˆ›Y\™ÙJBˆH[ÙHÂˆÈH[Þ[˜Ñ]Qœ›ÛRPÛÝY
+šYÙÙ\ŽˆœÝ\\ŠBˆ\ÚÞ[˜Ñ]UÒPÛÝY
+šYÙÙ\ŽˆœÝ\\ŠBˆBˆB‚ˆš]˜]H[˜È\]P]]ÔÞ[˜Õ[Y\Š
+HÂˆ]]ÔÞ[˜Õ[Y\Ëš[˜[Y]J
+Bˆ]]ÔÞ[˜Õ[Y\ˆHš[‚ˆ][\˜[H]]ÔÞ[˜Ò[\˜[
+˜]Õ˜[YNˆ]]ÔÞ[˜Ò[\˜[Z[]\ÊHÏÈ™\ØX›YˆÝX\™[\˜[OH™\ØX›Y[ÙHÈ™]\›ˆBˆÝX\™XXÝ]™TÞ[˜ÔÛÝ\˜ÙS˜[Y\Ê
+Kš\Ñ[\H[ÙHÈ™]\›ˆB‚ˆ]]ÔÞ[˜Õ[Y\ˆH[Y\‹œØÚY[Y[Y\ŠÚ][YR[\˜[ˆ[YR[\˜[
+[\˜[œ˜]Õ˜[YH
+ˆŒ
+K™\X]ÎˆYJHÈÝÙXZÈÙ[—HÈ[‚ˆ\ÚÈÈXZ[XÝÜˆ[‚ˆÙ[ËœÞ[˜Ó›ÝÊ[ÙSÝ™\œšYNˆ›Y\™ÙKÝ\™\ÜÐ\ÞSY\ÜØYÙNˆYJBˆBˆBˆ]]ÔÞ[˜Õ[Y\ËÛ\˜[˜ÙHHZ[ŠÌ[YR[\˜[
+[\˜[œ˜]Õ˜[YH
+ˆL
+JBˆB‚ˆ\ØØ\™X›T™\Ý[ˆš]˜]H[˜È[Þ[˜Ñ]Qœ›ÛRPÛÝY
+šYÙÙ\ŽˆÝš[™ÊHOˆ›ÛÛÂˆÝX\™Þ[˜Ñ[˜X›RPÛÝY[ÙHÈ™]\›ˆ˜[ÙHBˆ]™[[ÝT^[ØYˆÞ[˜Ð[™T^[ØYˆÈÂˆÝX\™]™]ÚYHžH™]Ú™[[ÝT^[ØYœ›ÛRPÛÝY
+
+H[ÙHÂˆYˆšYÙÙ\ˆOH›X[X[ˆÂˆÛÝYÞ[˜ÔÝ]\ÈHšPÛÝY9cëùå*;ï#9odùbcy¥è9.¤yêëù¥l9£kˆ‚ˆBˆ™]\›ˆ˜[ÙBˆBˆ™[[ÝT^[ØYH™]ÚYˆHØ]ÚÂˆÛÝYÞ[˜ÔÝ]\ÈH\œ›Ü‹›ØØ[^™Y\ØÜš\[Û‚ˆ™]\›ˆ˜[ÙBˆB‚ˆ]ØØ[^[ØYHZ[Ý\œ™[Þ[˜Ô^[ØY
+
+BˆÈÂˆžHØ]™SØØ[Þ[˜ÔØY™]TÛ˜\ÚÝ
+ØØ[^[ØY™X\ÛÛŽˆšPÛÝY9d#9«iybcz!ê¹bª9i!ù.ïHŠBˆHØ]ÚÂˆÛÝYÞ[˜ÔÝ]\ÈHšPÛÝY9d#9«iymì¹`g9«h»ï&¹¥è9¬åyb&ùnî¹§+9g,9k¢yaj9i!ù.ïH‚ˆ™]\›ˆ˜[ÙBˆBˆ]Y\™ÙY^[ØYHY\™ÙT^[ØYÊØØ[ˆØØ[^[ØY™[[ÝNˆ™[[ÝT^[ØY
+Bˆ]ØY™]T™X\ÛÛœÈHÞ[˜ÔØY™]T™X\ÛÛœÊˆØØ[ˆØØ[^[ØYˆ™[[ÝNˆ™[[ÝT^[ØYˆY\™ÙYˆY\™ÙY^[ØYˆ[ÙNˆ›Y\™ÙBˆ
+BˆYˆ\ØY™]T™X\ÛÛœËš\Ñ[\HÂˆÛÝYÞ[˜ÔÝ]\ÈHšPÛÝY9d#9«iymì¹`g9«h»ï&¹k¢yaj9¨à9§éy§*º`&º/áûï"
+ØY™]T™X\ÛÛœËš›Ú[™Y
+Ù\\˜]ÜŽˆ‹ŠJ{ï"H‚ˆ™]\›ˆ˜[ÙBˆBˆ]Ú[™ÙYH\SY\™ÙY^[ØYY“™YYY
+ˆY\™ÙY^[ØYˆ\ÝÜžU]NˆšPÛÝY:!ê¹bª9d"9nm¹nm¹¦í9¥¬9§+9g,‚ˆ
+Bˆ]^[ØYÝ[[X\žHHÞ[˜Ô^[ØYÝ[[X\žJ™Y›Ü™NˆØØ[^[ØYY\ŽˆY\™ÙY^[ØY
+BˆÝX\™Ú[™ÙY[ÙHÂˆYˆšYÙÙ\ˆOH›X[X[ˆÂˆÛÝYÞ[˜ÔÝ]\ÈHšPÛÝY9d"9nm¹d#¹¥è9keù«­ycæ9c%»ï#9mìº-ìú/áù§+9g,9a¦yaiW—
+^[ØYÝ[[X\žJH‚ˆH[ÙHÂˆÛÝYÞ[˜ÔÝ]\ÈHšPÛÝY9mìº/ç¹£©{ï"9¥è9keù«­ycæ9c%»ï#9mìº-ìú/áù§+9g,9a¦yai{ï"W—
+^[ØYÝ[[X\žJH‚ˆBˆ™]\›ˆ˜[ÙBˆB‚ˆÈÂˆÈHžH\Ú^[ØYÒPÛÝY
+Z[Ý\œ™[Þ[˜Ô^[ØY
+
+JBˆÛX\”Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÞ[˜ÓÝ]›ÞÛÝ\˜ÙRÙ^JÚ[™ˆšXÛÝYŠJBˆHØ]ÚÂˆ™XÛÜ™Þ[˜ÓÝ]›Þ˜Z[\™JˆÛÝ\˜ÙRÙ^NˆÞ[˜ÓÝ]›ÞÛÝ\˜ÙRÙ^JÚ[™ˆšXÛÝYŠKˆ^[ØYˆZ[Ý\œ™[Þ[˜Ô^[ØY
+
+Kˆ\œ›ÜŽˆ\œ›Ü‚ˆ
+BˆÛÝYÞ[˜ÔÝ]\ÈHšPÛÝY9d"9nm¹d#¹fç¹a¦yi,z-)Nˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆ™]\›ˆ˜[ÙBˆBˆÛÝYÞ[˜ÔÝ]\ÈHšPÛÝY9mì¹d"9nm¹d#9«iW—
+^[ØYÝ[[X\žJW¹¥íºeí;ï&—
+\Ü^U[YJ›ÝÓ\Ê
+JJH‚ˆ™]\›ˆYBˆB‚ˆš]˜]H[˜È\ÚÞ[˜Ñ]UÒPÛÝY
+šYÙÙ\ŽˆÝš[™ÊHÂˆÝX\™Þ[˜Ñ[˜X›RPÛÝY[ÙHÈ™]\›ˆBˆÈÂˆ]™\]Y\ÝYHžH\Ú^[ØYÒPÛÝY
+Z[Ý\œ™[Þ[˜Ô^[ØY
+
+JBˆÛX\”Þ[˜ÓÝ]›Þ
+ÛÝ\˜ÙRÙ^NˆÞ[˜ÓÝ]›ÞÛÝ\˜ÙRÙ^JÚ[™ˆšXÛÝYŠJBˆYˆšYÙÙ\ˆOH›X[X[ˆ	‰ˆ™\]Y\ÝYÂˆÛÝYÞ[˜ÔÝ]\ÈHšPÛÝY9d#9«iymì¹£ä9.©ˆ
+\Ü^U[YJ›ÝÓ\Ê
+JJH‚ˆH[ÙHYˆšYÙÙ\ˆOH›X[X[ˆÂˆÛÝYÞ[˜ÔÝ]\ÈHšPÛÝY9d#9«iz+íù¬`¹§*¹k£9¢$;ï#9ê#yd#º!ê¹bª:aãz+åH‚ˆBˆHØ]ÚÂˆ™XÛÜ™Þ[˜ÓÝ]›Þ˜Z[\™JˆÛÝ\˜ÙRÙ^NˆÞ[˜ÓÝ]›ÞÛÝ\˜ÙRÙ^JÚ[™ˆšXÛÝYŠKˆ^[ØYˆZ[Ý\œ™[Þ[˜Ô^[ØY
+
+Kˆ\œ›ÜŽˆ\œ›Ü‚ˆ
+BˆÛÝYÞ[˜ÔÝ]\ÈHšPÛÝY9d#9«iyi,z-)Nˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆBˆB‚ˆš]˜]H[˜È™]Ú™[[ÝT^[ØYœ›ÛRPÛÝY
+
+H›ÝÜÈOˆÞ[˜Ð[™T^[ØYÈÂˆØYÞ[˜ÔÙXÜ™]ÒY“™YYY
+
+BˆÝX\™PÛÝY]˜Z[X›J
+H[ÙHÂˆ›ÝÈ”Ñ\œ›ÜŠˆÛXZ[ŽˆXØÛÝ[ÝÜ™K’PÛÝYÞ[˜È‹ˆÛÙNˆKˆ\Ù\’[™›ÎˆÓ”ÓØØ[^™Y\ØÜš\[Û’Ù^NˆšPÛÝY9.#ycëùå*;ï#9mì¹/oùå*9§+9§.¹¥l9£kˆ—Bˆ
+BˆB‚ˆÈHÛÝYÝÜ™KœÞ[˜Ú›Ûš^™J
+BˆÝX\™][˜ÛÙYHÛÝYÝÜ™KœÝš[™Ê›Ü’Ù^NˆPÛÝYÙ^\ËœÞ[˜Ô^[ØY›ØŠKˆ]]HH]J˜\ÙM[˜ÛÙYˆ[˜ÛÙY
+Bˆ[ÙHÂˆ™]\›ˆš[ˆB‚ˆ]\œÙYHžHXÛÙTÞ[˜Ð[™J]JBˆ™]\›ˆÞ[˜Ð[™T^[ØY
+ˆXØÛÝ[Îˆ›Ü›X[^™QXÛÙYXØÛÝ[Ê\œÙYœ^[ØY˜XØÛÝ[ÊKˆ›Û\œÎˆ\œÙYœ^[ØY™›Û\œËˆ\ÜÚÙ^\Îˆ\œÙYœ^[ØYœ\ÜÚÙ^\Ëˆ[™YÝ[\XØÛÝ[YÎˆ\œÙYœ^[ØY˜[™YÝ[\XØÛÝ[YËˆ[™YÝ[\“Ü™\•\]Y]\Îˆ\œÙYœ^[ØY˜[™YÝ[\“Ü™\•\]Y]\Ëˆ[™YÝ[\“Ü™\•\]Y]šXÙS˜[YNˆ\œÙYœ^[ØY˜[™YÝ[\“Ü™\•\]Y]šXÙS˜[YKˆ›Û\“Ü™\’YÎˆ\œÙYœ^[ØY™›Û\“Ü™\’YËˆ›Û\“Ü™\•\]Y]\Îˆ\œÙYœ^[ØY™›Û\“Ü™\•\]Y]\Ëˆ›Û\“Ü™\•\]Y]šXÙS˜[YNˆ\œÙYœ^[ØY™›Û\“Ü™\•\]Y]šXÙS˜[YBˆ
+BˆB‚ˆš]˜]H[˜È\Ú^[ØYÒPÛÝY
+È^[ØYˆÞ[˜Ð[™T^[ØY
+H›ÝÜÈOˆ›ÛÛÂˆØYÞ[˜ÔÙXÜ™]ÒY“™YYY
+
+BˆÝX\™PÛÝY]˜Z[X›J
+H[ÙHÂˆ›ÝÈ”Ñ\œ›ÜŠˆÛXZ[ŽˆXØÛÝ[ÝÜ™K’PÛÝYÞ[˜È‹ˆÛÙNˆ‹ˆ\Ù\’[™›ÎˆÓ”ÓØØ[^™Y\ØÜš\[Û’Ù^NˆšPÛÝY9.#ycëùå*;ï#9mì¹/oùå*9§+9§.¹¥l9£kˆ—Bˆ
+BˆBˆ]]HHžH[˜ÛÙQ[˜Üž\YÞ[˜Ð[™J^[ØYˆ^[ØY
+BˆYˆ]K˜ÛÝ[ˆLÌÂˆ›ÝÈ”Ñ\œ›ÜŠˆÛXZ[ŽˆXØÛÝ[ÝÜ™K’PÛÝYÞ[˜È‹ˆÛÙNˆËˆ\Ù\’[™›ÎˆÓ”ÓØØ[^™Y\ØÜš\[Û’Ù^NˆšPÛÝY9¥l9£kº/áùi)ûï#9odùbcy.áy§+9§.¹/çykf—Bˆ
+BˆB‚ˆ][˜ÛÙYH]K˜˜\ÙM[˜ÛÙYÝš[™Ê
+BˆYˆÛÝYÝÜ™KœÝš[™Ê›Ü’Ù^NˆPÛÝYÙ^\ËœÞ[˜Ô^[ØY›ØŠHOH[˜ÛÙYÂˆ™]\›ˆYBˆB‚ˆÛÝYÝÜ™KœÙ]
+[˜ÛÙY›Ü’Ù^NˆPÛÝYÙ^\ËœÞ[˜Ô^[ØY›ØŠBˆÛÝYÝÜ™KœÙ]
+›ÝÓ\Ê
+K›Ü’Ù^NˆPÛÝYÙ^\ËœÞ[˜Ô^[ØY\]Y]\ÊBˆ™]\›ˆÛÝYÝÜ™KœÞ[˜Ú›Ûš^™J
+BˆB‚ˆš]˜]H[˜ÈPÛÝY]˜Z[X›J
+HOˆ›ÛÛÂˆš[SX[˜YÙ\‹™Y˜][Xš\]Z]RY[]UÚÙ[ˆOHš[ˆB‚ˆš]˜]H[˜ÈY\™ÙPXØÛÝ[ÛÛXÝ[ÛœÊˆØØ[ˆÔ\ÜÝÛÜ™XØÛÝ[Kˆ™[[ÝNˆÔ\ÜÝÛÜ™XØÛÝ[Bˆ
+HOˆÔ\ÜÝÛÜ™XØÛÝ[HÂˆ˜\ˆY\™ÙYˆÔ\ÜÝÛÜ™XØÛÝ[HH×Bˆ›ÜˆXØÛÝ[[ˆØØ[
+È™[[ÝHÂˆYˆ]^\Ý[™Ò[™^HY\™ÙY™š\œÝ[™^
+Ú\™NˆÂˆ	˜XØÛÝ[YOHXØÛÝ[˜XØÛÝ[Y	šYOHXØÛÝ[šYˆJHÂˆY\™ÙYÙ^\Ý[™Ò[™^HHY\™ÙTØ[YPXØÛÝ[
+Y\™ÙYÙ^\Ý[™Ò[™^KXØÛÝ[
+BˆH[ÙHÂˆY\™ÙY˜\[™
+XØÛÝ[
+BˆBˆBˆ™]\›ˆY\™ÙYˆB‚ˆš]˜]H[˜ÈY\™ÙT™[][Û”Ý]\ÊˆÈYˆÔÝš[™ÎˆXØÛÝ[›Û\“Y[X™\œÚ\Ý]WKÈšYÚˆÔÝš[™ÎˆXØÛÝ[›Û\“Y[X™\œÚ\Ý]WKˆY˜[Y\ÎˆÔÝš[™×KšYÚ˜[Y\ÎˆÔÝš[™×KY\]Y]ˆ[šYÚ\]Y]ˆ[ˆY]šXÙNˆÝš[™ËšYÚ]šXÙNˆÝš[™Ëˆ›Ü›X[^™RÙ^Nˆ
+Ýš[™ÊHOˆÝš[™Âˆ
+HOˆÔÝš[™ÎˆXØÛÝ[›Û\“Y[X™\œÚ\Ý]WHÂˆ[˜È™ZÙ^JˆÈÛÝ\˜ÙNˆÔÝš[™ÎˆXØÛÝ[›Û\“Y[X™\œÚ\Ý]WKˆ˜[Y\ÎˆÔÝš[™×Kˆ\]Y]ˆ[ˆ]šXÙNˆÝš[™Âˆ
+HOˆÔÝš[™ÎˆXØÛÝ[›Û\“Y[X™\œÚ\Ý]WHÂˆ˜\ˆ™\Ý[ˆÔÝš[™ÎˆXØÛÝ[›Û\“Y[X™\œÚ\Ý]WHHÎ—Bˆ›Üˆ
+˜]ÒÙ^KÝ]JH[ˆÛÝ\˜ÙHÂˆ]Ù^HH›Ü›X[^™RÙ^J˜]ÒÙ^JBˆÝX\™ZÙ^Kš\Ñ[\H[ÙHÈÛÛ[YHBˆYˆ]Ý\œ™[H™\Ý[ÚÙ^WHÂˆYˆÚÝ[™Y™\”™[][Û”Ý]JÝ]KÝ™\ŽˆÝ\œ™[
+HÂˆ™\Ý[ÚÙ^WHHÝ]BˆBˆH[ÙHÂˆ™\Ý[ÚÙ^WHHÝ]BˆBˆBˆ]XÝ]š]P]HX^
+\]Y]
+Bˆ›Üˆ˜]Õ˜[YH[ˆ˜[Y\ÈÂˆ]Ù^HH›Ü›X[^™RÙ^J˜]Õ˜[YJBˆÝX\™ZÙ^Kš\Ñ[\K™\Ý[ÚÙ^WHOHš[[ÙHÈÛÛ[YHBˆ™\Ý[ÚÙ^WHHXØÛÝ[›Û\“Y[X™\œÚ\Ý]Jˆ\Ñ[]Yˆ˜[ÙKˆ\]Y]\ÎˆXÝ]š]P]ˆ]šXÙS˜[YNˆ]šXÙBˆ
+BˆBˆ™]\›ˆ™\Ý[ˆB‚ˆ˜\ˆY\™ÙYH™ZÙ^JY˜[Y\ÎˆY˜[Y\Ë\]Y]ˆY\]Y]]šXÙNˆY]šXÙJBˆ][˜ÛÛZ[™ÈH™ZÙ^JšYÚ˜[Y\ÎˆšYÚ˜[Y\Ë\]Y]ˆšYÚ\]Y]]šXÙNˆšYÚ]šXÙJBˆ›Üˆ
+YÝ]JH[ˆ[˜ÛÛZ[™ÈÂˆÝX\™]Ý\œ™[HY\™ÙYÚYH[ÙHÂˆY\™ÙYÚYHHÝ]BˆÛÛ[YBˆBˆYˆÚÝ[™Y™\”™[][Û”Ý]JÝ]KÝ™\ŽˆÝ\œ™[
+HÂˆY\™ÙYÚYHHÝ]BˆBˆBˆ™]\›ˆY\™ÙYˆB‚ˆËËÈX]ÚÞ[˜×ÛY\™ÙWØÛÜ™KšœÈÝX›H]šXÙK[˜[YHYKXœ™XZÈ
+Ø\ÙKZ[œÙ[œÚ]]™JK‚ˆš]˜]H[˜ÈÚÝ[™Y™\”™[][Û”Ý]JˆÈ[˜ÛÛZ[™ÎˆXØÛÝ[›Û\“Y[X™\œÚ\Ý]KˆÝ™\ˆÝ\œ™[ˆXØÛÝ[›Û\“Y[X™\œÚ\Ý]Bˆ
+HOˆ›ÛÛÂˆYˆ[˜ÛÛZ[™Ë\]Y]\ÈˆÝ\œ™[\]Y]\ÈÈ™]\›ˆYHBˆYˆ[˜ÛÛZ[™Ë\]Y]\ÈÝ\œ™[\]Y]\ÈÈ™]\›ˆ˜[ÙHBˆYˆ[˜ÛÛZ[™Ëš\Ñ[]Y	‰ˆXÝ\œ™[š\Ñ[]YÈ™]\›ˆYHBˆYˆ[˜ÛÛZ[™Ëš\Ñ[]YOHÝ\œ™[š\Ñ[]YÂˆ]Y]šXÙHH[˜ÛÛZ[™Ë™]šXÙS˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊK›ÝÙ\˜Ø\ÙY
+
+Bˆ]šYÚ]šXÙHHÝ\œ™[™]šXÙS˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊK›ÝÙ\˜Ø\ÙY
+
+Bˆ™]\›ˆY]šXÙHˆšYÚ]šXÙBˆBˆ™]\›ˆ˜[ÙBˆB‚ˆËËÈ[YÛˆÚ]”Îˆ\ÜÚÙ^U\]Y]\È\]Y]\ÈÜ™X]Y]\Ø‚ˆš]˜]H[˜È™\ÛÛ™Y\ÜÚÙ^U\]Y]\ÊÈXØÛÝ[ˆ\ÜÝÛÜ™XØÛÝ[
+HOˆ[ÂˆYˆXØÛÝ[œ\ÜÚÙ^U\]Y]\ÈˆÂˆ™]\›ˆXØÛÝ[œ\ÜÚÙ^U\]Y]\ÂˆBˆ™]\›ˆX^
+XØÛÝ[\]Y]\ËXØÛÝ[˜Ü™X]Y]\ÊBˆB‚ˆËËÈ[YÛˆÚ]”ÈÞ[]XÈ™[][ÛˆÛØÚÜÎˆ\]Y]\ÈÜ™X]Y]\Ø‚ˆš]˜]H[˜È™\ÛÛ™YXØÛÝ[XÝ]š]P]\ÊÈXØÛÝ[ˆ\ÜÝÛÜ™XØÛÝ[
+HOˆ[ÂˆX^
+XØÛÝ[\]Y]\ËXØÛÝ[˜Ü™X]Y]\ÊBˆB‚ˆš]˜]H[˜Èš\œÝ›Û‘[\TÝš[™ÊÈØ[™Y]\ÎˆÝš[™Ë‹‹‹˜[˜XÚÎˆÝš[™ÈHˆŠHOˆÝš[™ÈÂˆ›ÜˆØ[™Y]H[ˆØ[™Y]\ÈÂˆ]š[[YYHØ[™Y]Kš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆYˆ]š[[YYš\Ñ[\HÂˆ™]\›ˆš[[YYˆBˆBˆ™]\›ˆ˜[˜XÚÂˆB‚ˆš]˜]H[˜Èš\œÝ›Û‘[\Q]šXÙS˜[YJÈØ[™Y]\ÎˆÝš[™Ë‹‹ŠHOˆÝš[™ÈÂˆ›ÜˆØ[™Y]H[ˆØ[™Y]\ÈÂˆ]š[[YYHØ[™Y]Kš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆYˆ]š[[YYš\Ñ[\HÂˆ™]\›ˆš[[YYˆBˆBˆ™]\›ˆ\ÜÔÞ[˜ÔÛXÞK™Y˜][]šXÙS˜[YBˆB‚ˆš]˜]H[˜ÈÝX›PXØÛÝ[ÛÝ\˜ÙUYRÙ^JÈXØÛÝ[ˆ\ÜÝÛÜ™XØÛÝ[
+HOˆÝš[™ÈÂˆÂˆXØÛÝ[˜Ü™X]Y]šXÙS˜[YKˆXØÛÝ[›\ÝÜ\˜]Y]šXÙS˜[YKˆXØÛÝ[˜XØÛÝ[YˆXØÛÝ[˜Ø[›ÛšXØ[Ú]KˆXØÛÝ[\Ù\›˜[YP]Ü™X]KˆXØÛÝ[šY]ZYÝš[™ÂˆBˆ›X\È	š[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊK›ÝÙ\˜Ø\ÙY
+
+HBˆš›Ú[™Y
+Ù\\˜]ÜŽˆ—^ÌHŠBˆB‚ˆš]˜]H[˜È™Y™\XØÛÝ[ÛÝ\˜ÙJÈÎˆ\ÜÝÛÜ™XØÛÝ[ÈšÎˆ\ÜÝÛÜ™XØÛÝ[
+HOˆ\ÜÝÛÜ™XØÛÝ[ÂˆÝX›PXØÛÝ[ÛÝ\˜ÙUYRÙ^JÊHHÝX›PXØÛÝ[ÛÝ\˜ÙUYRÙ^JšÊHÈÈˆšÂˆB‚ˆš]˜]H[˜ÈY\™ÙTØ[YPXØÛÝ[
+ÈÎˆ\ÜÝÛÜ™XØÛÝ[ÈšÎˆ\ÜÝÛÜ™XØÛÝ[
+HOˆ\ÜÝÛÜ™XØÛÝ[Âˆ]š[X\žNˆ\ÜÝÛÜ™XØÛÝ[ˆYˆË˜Ü™X]Y]\ÈšË˜Ü™X]Y]\ÈÂˆš[X\žHHÂˆH[ÙHYˆšË˜Ü™X]Y]\ÈË˜Ü™X]Y]\ÈÂˆš[X\žHHšÂˆH[ÙHÂˆš[X\žHH™Y™\XØÛÝ[ÛÝ\˜ÙJËšÊBˆBˆ]ÙXÛÛ™\žHHš[X\žKšYOHËšY	‰ˆÝX›PXØÛÝ[ÛÝ\˜ÙUYRÙ^Jš[X\žJHOHÝX›PXØÛÝ[ÛÝ\˜ÙUYRÙ^JÊBˆÈšÂˆˆÂˆ]YXÝ]š]P]H™\ÛÛ™YXØÛÝ[XÝ]š]P]\ÊÊBˆ]šYÚXÝ]š]P]H™\ÛÛ™YXØÛÝ[XÝ]š]P]\ÊšÊB‚ˆ]Ú]P[X\ÔÝ]\ÈHY\™ÙT™[][Û”Ý]\ÊˆËœÚ]P[X\ÔÝ]\ËˆšËœÚ]P[X\ÔÝ]\ËˆY˜[Y\ÎˆËœÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JKˆšYÚ˜[Y\ÎˆšËœÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JKˆY\]Y]ˆYXÝ]š]P]ˆšYÚ\]Y]ˆšYÚXÝ]š]P]ˆY]šXÙNˆË›\ÝÜ\˜]Y]šXÙS˜[YKˆšYÚ]šXÙNˆšË›\ÝÜ\˜]Y]šXÙS˜[YKˆ›Ü›X[^™RÙ^NˆÛXZ[•][Ë››Ü›X[^™Bˆ
+Bˆ]Y\™ÙYÚ]\ÈHÚ]P[X\ÔÝ]\Ë™š[\ˆÈI˜[YKš\Ñ[]YK›X\
+šÙ^JKœÛÜY
+
+Bˆ]Ø[›ÛšXØ[žTÚ]\ÈHÛXZ[•][Ë™]\ÓÛ™J›ÜŽˆY\™ÙYÚ]\Ë™š\œÝÏÈˆŠBˆ]Ø[›ÛšXØ[Ú]NˆÝš[™ÈHÂˆYˆXØ[›ÛšXØ[žTÚ]\Ëš\Ñ[\HÈ™]\›ˆØ[›ÛšXØ[žTÚ]\ÈBˆYˆ\š[X\žK˜Ø[›ÛšXØ[Ú]Kš\Ñ[\HÈ™]\›ˆš[X\žK˜Ø[›ÛšXØ[Ú]HBˆ™]\›ˆÙXÛÛ™\žK˜Ø[›ÛšXØ[Ú]BˆJ
+B‚ˆ˜\ˆ›Û\“Y[X™\œÚ\Ý]\ÎˆÔÝš[™ÎˆXØÛÝ[›Û\“Y[X™\œÚ\Ý]WHHÎ—Bˆ[˜È[™Ù\Ý›Û\”Ý]\Êˆœ›ÛHXØÛÝ[ˆ\ÜÝÛÜ™XØÛÝ[ˆXÝ]š]P]ˆ[ˆ
+HÂˆ˜\ˆ™ZÙ^YYˆÔÝš[™ÎˆXØÛÝ[›Û\“Y[X™\œÚ\Ý]WHHÎ—Bˆ›Üˆ
+˜]ÒYÝ]JH[ˆXØÛÝ[™›Û\“Y[X™\œÚ\Ý]\ÈÂˆ]YH˜]ÒYš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊK›ÝÙ\˜Ø\ÙY
+
+BˆÝX\™ZYš\Ñ[\H[ÙHÈÛÛ[YHBˆYˆ]Ý\œ™[H™ZÙ^YYÚYHÂˆYˆÚÝ[™Y™\”™[][Û”Ý]JÝ]KÝ™\ŽˆÝ\œ™[
+HÂˆ™ZÙ^YYÚYHHÝ]BˆBˆH[ÙHÂˆ™ZÙ^YYÚYHHÝ]BˆBˆBˆ›ÜˆY[ˆXØÛÝ[œ™\ÛÛ™Y›Û\’YË›X\
+È	]ZYÝš[™Ë›ÝÙ\˜Ø\ÙY
+
+HJHÚ\™H™ZÙ^YYÚYHOHš[Âˆ™ZÙ^YYÚYHHXØÛÝ[›Û\“Y[X™\œÚ\Ý]Jˆ\Ñ[]Yˆ˜[ÙKˆ\]Y]\ÎˆXÝ]š]P]ˆ]šXÙS˜[YNˆXØÛÝ[›\ÝÜ\˜]Y]šXÙS˜[YBˆ
+BˆBˆ›Üˆ
+Y[˜ÛÛZ[™ÊH[ˆ™ZÙ^YYÂˆÝX\™]Ý\œ™[H›Û\“Y[X™\œÚ\Ý]\ÖÚYH[ÙHÂˆ›Û\“Y[X™\œÚ\Ý]\ÖÚYHH[˜ÛÛZ[™ÂˆÛÛ[YBˆBˆYˆÚÝ[™Y™\”™[][Û”Ý]J[˜ÛÛZ[™ËÝ™\ŽˆÝ\œ™[
+HÂˆ›Û\“Y[X™\œÚ\Ý]\ÖÚYHH[˜ÛÛZ[™ÂˆBˆBˆBˆ[™Ù\Ý›Û\”Ý]\Êœ›ÛNˆËXÝ]š]P]ˆYXÝ]š]P]
+Bˆ[™Ù\Ý›Û\”Ý]\Êœ›ÛNˆšËXÝ]š]P]ˆšYÚXÝ]š]P]
+Bˆ]Y\™ÙY›Û\’YÈH›Û\“Y[X™\œÚ\Ý]\Âˆ™š[\ˆÈI˜[YKš\Ñ[]YBˆ˜ÛÛ\XÝX\ÈURQ
+]ZYÝš[™Îˆ	šÙ^JHBˆœÛÜYÈ	]ZYÝš[™È	K]ZYÝš[™ÈB‚ˆ]\Ù\›˜[YQšY[H™]Ù\‘šY[
+ˆË\Ù\›˜[YKˆË\Ù\›˜[YU\]Y]\ËˆË\Ù\›˜[YU\]Y]šXÙS˜[YKˆË\]Y]\ËˆšË\Ù\›˜[YKˆšË\Ù\›˜[YU\]Y]\ËˆšË\Ù\›˜[YU\]Y]šXÙS˜[YKˆšË\]Y]\Âˆ
+Bˆ]\ÜÝÛÜ™šY[H™]Ù\‘šY[
+ˆËœ\ÜÝÛÜ™ˆËœ\ÜÝÛÜ™\]Y]\ËˆËœ\ÜÝÛÜ™\]Y]šXÙS˜[YKˆË\]Y]\ËˆšËœ\ÜÝÛÜ™ˆšËœ\ÜÝÛÜ™\]Y]\ËˆšËœ\ÜÝÛÜ™\]Y]šXÙS˜[YKˆšË\]Y]\Âˆ
+Bˆ]ÝšY[H™]Ù\‘šY[
+ˆËÝÙXÜ™]ˆËÝ\]Y]\ËˆËÝ\]Y]šXÙS˜[YKˆË\]Y]\ËˆšËÝÙXÜ™]ˆšËÝ\]Y]\ËˆšËÝ\]Y]šXÙS˜[YKˆšË\]Y]\Âˆ
+Bˆ]™XÛÝ™\žQšY[H™]Ù\‘šY[
+ˆËœ™XÛÝ™\žPÛÙ\ËˆËœ™XÛÝ™\žPÛÙ\Õ\]Y]\ËˆËœ™XÛÝ™\žPÛÙ\Õ\]Y]šXÙS˜[YKˆË\]Y]\ËˆšËœ™XÛÝ™\žPÛÙ\ËˆšËœ™XÛÝ™\žPÛÙ\Õ\]Y]\ËˆšËœ™XÛÝ™\žPÛÙ\Õ\]Y]šXÙS˜[YKˆšË\]Y]\Âˆ
+Bˆ]›ÝQšY[H™]Ù\‘šY[
+ˆË››ÝKˆË››ÝU\]Y]\ËˆË››ÝU\]Y]šXÙS˜[YKˆË\]Y]\ËˆšË››ÝKˆšË››ÝU\]Y]\ËˆšË››ÝU\]Y]šXÙS˜[YKˆšË\]Y]\Âˆ
+Bˆ]\ÜÚÙ^S[šÔÝ]\ÈHY\™ÙT™[][Û”Ý]\ÊˆËœ\ÜÚÙ^S[šÔÝ]\ËˆšËœ\ÜÚÙ^S[šÔÝ]\ËˆY˜[Y\ÎˆËœ\ÜÚÙ^PÜ™Y[X[YËˆšYÚ˜[Y\ÎˆšËœ\ÜÚÙ^PÜ™Y[X[YËˆY\]Y]ˆYXÝ]š]P]ˆšYÚ\]Y]ˆšYÚXÝ]š]P]ˆY]šXÙNˆË›\ÝÜ\˜]Y]šXÙS˜[YKˆšYÚ]šXÙNˆšË›\ÝÜ\˜]Y]šXÙS˜[YKˆ›Ü›X[^™RÙ^NˆÈ	š[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊHBˆ
+Bˆ]Y\™ÙY\ÜÚÙ^PÜ™Y[X[YÈH\ÜÚÙ^S[šÔÝ]\Ë™š[\ˆÈI˜[YKš\Ñ[]YK›X\
+šÙ^JKœÛÜY
+
+BˆËÈ[YÛˆÚ]Þ[˜×ÛY\™ÙWØÛÜ™KšœÎˆ™X]Z\ÜÚ[™ËÞ™\›ÈšY[ÛØÚÜÈ\ÈXØÛÝ[XÝ]š]K‚ˆ]Y\ÜÚÙ^U\]Y]H™\ÛÛ™Y\ÜÚÙ^U\]Y]\ÊÊBˆ]šYÚ\ÜÚÙ^U\]Y]H™\ÛÛ™Y\ÜÚÙ^U\]Y]\ÊšÊBˆ]\ÜÚÙ^U\]Y]\ÈHX^
+Y\ÜÚÙ^U\]Y]šYÚ\ÜÚÙ^U\]Y]
+Bˆ]\ÜÚÙ^TÛÝ\˜ÙNˆ\ÜÝÛÜ™XØÛÝ[ˆYˆY\ÜÚÙ^U\]Y]ˆšYÚ\ÜÚÙ^U\]Y]Âˆ\ÜÚÙ^TÛÝ\˜ÙHHÂˆH[ÙHYˆšYÚ\ÜÚÙ^U\]Y]ˆY\ÜÚÙ^U\]Y]Âˆ\ÜÚÙ^TÛÝ\˜ÙHHšÂˆH[ÙHÂˆ\ÜÚÙ^TÛÝ\˜ÙHH™Y™\XØÛÝ[ÛÝ\˜ÙJËšÊBˆBˆ]\ÜÚÙ^U\]Y]šXÙS˜[YHHš\œÝ›Û‘[\Q]šXÙS˜[YJˆ\ÜÚÙ^TÛÝ\˜ÙKœ\ÜÚÙ^U\]Y]šXÙS˜[YKˆ\ÜÚÙ^TÛÝ\˜ÙK›\ÝÜ\˜]Y]šXÙS˜[YBˆ
+B‚ˆ]]\ÝÛÛ[\]Y]HX^
+ˆ\Ù\›˜[YQšY[\]Y]\Ëˆ\ÜÝÛÜ™šY[\]Y]\ËˆÝšY[\]Y]\Ëˆ™XÛÝ™\žQšY[\]Y]\Ëˆ›ÝQšY[\]Y]\Ëˆ\ÜÚÙ^U\]Y]\Âˆ
+B‚ˆ]Ñ[]Y]HËš\Ñ[]YÈ
+Ë™[]Y]\ÈÏÈ
+Hˆˆ]šÑ[]Y]HšËš\Ñ[]YÈ
+šË™[]Y]\ÈÏÈ
+Hˆˆ]]\Ý[]Y]HX^
+Ñ[]Y]šÑ[]Y]
+BˆËÈH™\ÝÜ™HÛX\œÈ[]Y]\È]\]\ÈHXØÛÝ[[Y\Ý[\ˆ[˜ÛYBˆËÈ]XÝ]š]H[Y\Ý[\ÛÈH]\ˆ™\ÝÜ™HØ[ˆ™X][ˆÛ\ˆÛXœÝÛ™K‚ˆ]]\ÝXÝ]š]P]HX^
+]\ÝÛÛ[\]Y]Ë\]Y]\ËšË\]Y]\ÊBˆ]ÙY\[]YH]\Ý[]Y]ˆ	‰ˆ]\Ý[]Y]H]\ÝXÝ]š]P]ˆ]ÙY\\›X[™[Q[]YHËš\Ô\›X[™[Q[]YšËš\Ô\›X[™[Q[]Y‚ˆ]]\Ý\]Y]HX^
+ˆË\]Y]\ËˆšË\]Y]\Ëˆ]\ÝÛÛ[\]Y]ˆ]\Ý[]Y]ˆš[X\žK˜Ü™X]Y]\Âˆ
+Bˆ]™]Ù\XØÛÝ[ˆ\ÜÝÛÜ™XØÛÝ[ˆYˆË\]Y]\ÈˆšË\]Y]\ÈÂˆ™]Ù\XØÛÝ[HÂˆH[ÙHYˆšË\]Y]\ÈˆË\]Y]\ÈÂˆ™]Ù\XØÛÝ[HšÂˆH[ÙHÂˆ™]Ù\XØÛÝ[H™Y™\XØÛÝ[ÛÝ\˜ÙJËšÊBˆBˆ]Û\XØÛÝ[H™]Ù\XØÛÝ[šYOHËšY	‰ˆÝX›PXØÛÝ[ÛÝ\˜ÙUYRÙ^J™]Ù\XØÛÝ[
+HOHÝX›PXØÛÝ[ÛÝ\˜ÙUYRÙ^JÊBˆÈšÂˆˆÂˆ]\Ù\›˜[YP]Ü™X]HHš\œÝ›Û‘[\TÝš[™Êˆš[X\žK\Ù\›˜[YP]Ü™X]KˆÙXÛÛ™\žK\Ù\›˜[YP]Ü™X]Kˆš[X\žK\Ù\›˜[YKˆÙXÛÛ™\žK\Ù\›˜[YBˆ
+Bˆ]Ü™X]Y]šXÙS˜[YHHš\œÝ›Û‘[\Q]šXÙS˜[YJˆš[X\žK˜Ü™X]Y]šXÙS˜[YKˆÙXÛÛ™\žK˜Ü™X]Y]šXÙS˜[YKˆš[X\žK›\ÝÜ\˜]Y]šXÙS˜[YKˆÙXÛÛ™\žK›\ÝÜ\˜]Y]šXÙS˜[YBˆ
+Bˆ]\ÝÜ\˜]Y]šXÙS˜[YHHš\œÝ›Û‘[\Q]šXÙS˜[YJˆ™]Ù\XØÛÝ[›\ÝÜ\˜]Y]šXÙS˜[YKˆÛ\XØÛÝ[›\ÝÜ\˜]Y]šXÙS˜[YBˆ
+Bˆ][]Y]šXÙS˜[YPØ[™Y]NˆÝš[™ÂˆYˆÑ[]Y]ˆšÑ[]Y]Âˆ[]Y]šXÙS˜[YPØ[™Y]HHË™[]Y]šXÙS˜[YBˆH[ÙHYˆšÑ[]Y]ˆÑ[]Y]Âˆ[]Y]šXÙS˜[YPØ[™Y]HHšË™[]Y]šXÙS˜[YBˆH[ÙHÂˆ]Y]šXÙHHË™[]Y]šXÙS˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊK›ÝÙ\˜Ø\ÙY
+
+Bˆ]šYÚ]šXÙHHšË™[]Y]šXÙS˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊK›ÝÙ\˜Ø\ÙY
+
+Bˆ[]Y]šXÙS˜[YPØ[™Y]HHY]šXÙHHšYÚ]šXÙBˆÈË™[]Y]šXÙS˜[YBˆˆšË™[]Y]šXÙS˜[YBˆBˆ][]Y]šXÙS˜[YHHÙY\\›X[™[Q[]YÙY\[]YˆÈš\œÝ›Û‘[\Q]šXÙS˜[YJ[]Y]šXÙS˜[YPØ[™Y]K\ÝÜ\˜]Y]šXÙS˜[YJBˆˆˆ‚‚ˆ™]\›ˆ\ÜÝÛÜ™XØÛÝ[
+ˆYˆš[X\žKšYˆXØÛÝ[Yˆš[X\žK˜XØÛÝ[YˆØ[›ÛšXØ[Ú]NˆØ[›ÛšXØ[Ú]Kˆ\Ù\›˜[YP]Ü™X]Nˆ\Ù\›˜[YP]Ü™X]Kˆ\Ô[›™Yˆ™]Ù\XØÛÝ[š\Ô[›™YÏÈ˜[ÙKˆ[›™YÛÜÜ™\Žˆ™]Ù\XØÛÝ[œ[›™YÛÜÜ™\‹ˆ™YÝ[\”ÛÜÜ™\Žˆ™]Ù\XØÛÝ[œ™YÝ[\”ÛÜÜ™\‹ˆ[›™YšY]ÜÎˆ™]Ù\XØÛÝ[œ[›™YšY]ÜÈÏÈÛ\XØÛÝ[œ[›™YšY]ÜËˆ›Û\’YˆY\™ÙY›Û\’YË™š\œÝÏÈ™]Ù\XØÛÝ[™›Û\’Yˆ›Û\’YÎˆY\™ÙY›Û\’YËˆ›Û\“Y[X™\œÚ\Ý]\Îˆ›Û\“Y[X™\œÚ\Ý]\ËˆËÈ[\H\È[[[Û˜[ˆ]™\žHÚ]HX^H™HÛXœÝÛ™Yˆ™]™\ˆ™]š]™Hš[X\žKœÚ]\Ë‚ˆÚ]\ÎˆY\™ÙYÚ]\ËˆÚ]P[X\ÔÝ]\ÎˆÚ]P[X\ÔÝ]\Ëˆ\Ù\›˜[YNˆ\Ù\›˜[YQšY[˜[YKˆ\ÜÝÛÜ™ˆ\ÜÝÛÜ™šY[˜[YKˆÝÙXÜ™]ˆÝšY[˜[YKˆ™XÛÝ™\žPÛÙ\Îˆ™XÛÝ™\žQšY[˜[YKˆ›ÝNˆ›ÝQšY[˜[YKˆ\ÜÚÙ^PÜ™Y[X[YÎˆY\™ÙY\ÜÚÙ^PÜ™Y[X[YËˆ\ÜÚÙ^S[šÔÝ]\Îˆ\ÜÚÙ^S[šÔÝ]\Ëˆ\Ù\›˜[YU\]Y]\Îˆ\Ù\›˜[YQšY[\]Y]\Ëˆ\Ù\›˜[YU\]Y]šXÙS˜[YNˆ\Ù\›˜[YQšY[™]šXÙS˜[YKˆ\ÜÝÛÜ™\]Y]\Îˆ\ÜÝÛÜ™šY[\]Y]\Ëˆ\ÜÝÛÜ™\]Y]šXÙS˜[YNˆ\ÜÝÛÜ™šY[™]šXÙS˜[YKˆÝ\]Y]\ÎˆÝšY[\]Y]\ËˆÝ\]Y]šXÙS˜[YNˆÝšY[™]šXÙS˜[YKˆ™XÛÝ™\žPÛÙ\Õ\]Y]\Îˆ™XÛÝ™\žQšY[\]Y]\Ëˆ™XÛÝ™\žPÛÙ\Õ\]Y]šXÙS˜[YNˆ™XÛÝ™\žQšY[™]šXÙS˜[YKˆ›ÝU\]Y]\Îˆ›ÝQšY[\]Y]\Ëˆ›ÝU\]Y]šXÙS˜[YNˆ›ÝQšY[™]šXÙS˜[YKˆ\ÜÚÙ^U\]Y]\Îˆ\ÜÚÙ^U\]Y]\Ëˆ\ÜÚÙ^U\]Y]šXÙS˜[YNˆ\ÜÚÙ^U\]Y]šXÙS˜[YKˆ\]Y]\Îˆ]\Ý\]Y]ˆ\Ñ[]YˆÙY\\›X[™[Q[]YÙY\[]Yˆ\Ô\›X[™[Q[]YˆÙY\\›X[™[Q[]Yˆ[]Y]\ÎˆÙY\\›X[™[Q[]YÙY\[]YˆÈ
+]\Ý[]Y]OHÈ]\Ý\]Y]ˆ]\Ý[]Y]
+Bˆˆš[ˆ[]Y]šXÙS˜[YNˆ[]Y]šXÙS˜[YKˆ\ÝÜ\˜]Y]šXÙS˜[YNˆ\ÝÜ\˜]Y]šXÙS˜[YKˆÜ™X]Y]šXÙS˜[YNˆÜ™X]Y]šXÙS˜[YKˆÜ™X]Y]\ÎˆZ[ŠË˜Ü™X]Y]\ËšË˜Ü™X]Y]\ÊBˆ
+BˆB‚ˆš]˜]H[˜ÈY\™ÙQ›Û\ÛÛXÝ[ÛœÊˆØØ[ˆÐXØÛÝ[›Û\—Kˆ™[[ÝNˆÐXØÛÝ[›Û\—Bˆ
+HOˆÐXØÛÝ[›Û\—HÂˆ˜\ˆY\™ÙYžRYˆÕURQˆXØÛÝ[›Û\—HHÎ—B‚ˆ›Üˆ›Û\ˆ[ˆØØ[ÂˆY\™ÙYžRYÙ›Û\‹šYHH›Û\‚ˆB‚ˆ›Üˆ›Û\ˆ[ˆ™[[ÝHÂˆYˆ]^\Ý[™ÈHY\™ÙYžRYÙ›Û\‹šYHÂˆY\™ÙYžRYÙ›Û\‹šYHHY\™ÙTØ[YQ›Û\Š^\Ý[™Ë›Û\ŠBˆH[ÙHÂˆY\™ÙYžRYÙ›Û\‹šYHH›Û\‚ˆBˆB‚ˆ]š^YYHÙ[‹™š^Y™]ÐXØÛÝ[›Û\’YˆYˆ]^\Ý[™ÈHY\™ÙYžRYÙš^YYHÂˆY\™ÙYžRYÙš^YYHHXØÛÝ[›Û\ŠˆYˆš^YYˆ˜[YNˆÙ[‹™š^Y™]ÐXØÛÝ[›Û\“˜[YKˆX]ÚYÚ]\Îˆ^\Ý[™Ë›X]ÚYÚ]\Ëˆ]]ÐYX]Ú[™ÔÚ]\Îˆ^\Ý[™Ë˜]]ÐYX]Ú[™ÔÚ]\ËˆÜ™X]Y]\Îˆ^\Ý[™Ë˜Ü™X]Y]\Ëˆ\]Y]\Îˆ^\Ý[™Ë\]Y]\Ëˆ™YÝ[\XØÛÝ[YÎˆ^\Ý[™Ëœ™YÝ[\XØÛÝ[YËˆ™YÝ[\“Ü™\•\]Y]\Îˆ^\Ý[™Ëœ™YÝ[\“Ü™\•\]Y]\Ëˆ™YÝ[\“Ü™\•\]Y]šXÙS˜[YNˆ^\Ý[™Ëœ™YÝ[\“Ü™\•\]Y]šXÙS˜[YBˆ
+BˆH[ÙHÂˆËÈ[YÛˆÚ]”ÎˆÞ[]XÈš^Y›Û\ˆ\Ù\È\ØÚ[Y\Ý[\Ë›ÝØ[ÛØÚË‚ˆY\™ÙYžRYÙš^YYHHXØÛÝ[›Û\ŠˆYˆš^YYˆ˜[YNˆÙ[‹™š^Y™]ÐXØÛÝ[›Û\“˜[YKˆX]ÚYÚ]\Îˆ×Kˆ]]ÐYX]Ú[™ÔÚ]\Îˆ˜[ÙKˆÜ™X]Y]\Îˆˆ\]Y]\Îˆˆ
+BˆB‚ˆ™]\›ˆÛÜ›Û\œÕÚ]š^Y™]ÐXØÛÝ[š\œÝ
+\œ˜^JY\™ÙYžRY˜[Y\ÊJBˆB‚ˆš]˜]H[˜ÈY\™ÙTØ[YQ›Û\ŠÈÎˆXØÛÝ[›Û\‹ÈšÎˆXØÛÝ[›Û\ŠHOˆXØÛÝ[›Û\ˆÂˆ]Y\]Y]HË\]Y]\Âˆ]šYÚ\]Y]HšË\]Y]\Âˆ]Y[]Y]HËš\Ñ[]YÈ
+Ë™[]Y]\ÈÏÈ
+Hˆˆ]šYÚ[]Y]HšËš\Ñ[]YÈ
+šË™[]Y]\ÈÏÈ
+Hˆˆ]\ÙTšYÚ™YÝ[\“Ü™\ˆHšËœ™YÝ[\“Ü™\•\]Y]\ÈˆËœ™YÝ[\“Ü™\•\]Y]\Âˆ
+šËœ™YÝ[\“Ü™\•\]Y]\ÈOHËœ™YÝ[\“Ü™\•\]Y]\Âˆ	‰ˆšËœ™YÝ[\“Ü™\•\]Y]šXÙS˜[YHˆËœ™YÝ[\“Ü™\•\]Y]šXÙS˜[YJBˆ]Y\™ÙY™YÝ[\’YÈH\ÙTšYÚ™YÝ[\“Ü™\ˆÈšËœ™YÝ[\XØÛÝ[YÈˆËœ™YÝ[\XØÛÝ[YÂˆ]Y\™ÙY™YÝ[\“Ü™\•\]Y]\ÈH\ÙTšYÚ™YÝ[\“Ü™\ˆÈšËœ™YÝ[\“Ü™\•\]Y]\ÈˆËœ™YÝ[\“Ü™\•\]Y]\Âˆ]Y\™ÙY™YÝ[\“Ü™\•\]Y]šXÙS˜[YHH\ÙTšYÚ™YÝ[\“Ü™\ˆÈšËœ™YÝ[\“Ü™\•\]Y]šXÙS˜[YHˆËœ™YÝ[\“Ü™\•\]Y]šXÙS˜[YBˆ]]\Ý[]Y]HX^
+Y[]Y]šYÚ[]Y]
+Bˆ]ÙY\\›X[™[Q[]YHËš\Ô\›X[™[Q[]YšËš\Ô\›X[™[Q[]Yˆ]ÙY\[]YHÙY\\›X[™[Q[]Y
+]\Ý[]Y]ˆ	‰ˆ]\Ý[]Y]HX^
+Y\]Y]šYÚ\]Y]
+JBˆ][]Y]šXÙS˜[YHHY[]Y]HšYÚ[]Y]ÈË™[]Y]šXÙS˜[YHˆšË™[]Y]šXÙS˜[YBˆYˆËšYOHÙ[‹™š^Y™]ÐXØÛÝ[›Û\’YÂˆ™]\›ˆXØÛÝ[›Û\ŠˆYˆËšYˆ˜[YNˆÙ[‹™š^Y™]ÐXØÛÝ[›Û\“˜[YKˆX]ÚYÚ]\ÎˆšYÚ\]Y]HY\]Y]ÈšË›X]ÚYÚ]\ÈˆË›X]ÚYÚ]\Ëˆ]]ÐYX]Ú[™ÔÚ]\ÎˆšYÚ\]Y]HY\]Y]ÈšË˜]]ÐYX]Ú[™ÔÚ]\ÈˆË˜]]ÐYX]Ú[™ÔÚ]\ËˆÜ™X]Y]\ÎˆZ[ŠË˜Ü™X]Y]\ËšË˜Ü™X]Y]\ÊKˆ\]Y]\ÎˆX^
+Y\]Y]šYÚ\]Y]
+Kˆ™YÝ[\XØÛÝ[YÎˆY\™ÙY™YÝ[\’YËˆ™YÝ[\“Ü™\•\]Y]\ÎˆY\™ÙY™YÝ[\“Ü™\•\]Y]\Ëˆ™YÝ[\“Ü™\•\]Y]šXÙS˜[YNˆY\™ÙY™YÝ[\“Ü™\•\]Y]šXÙS˜[YKˆ\Ñ[]Yˆ˜[ÙKˆ\Ô\›X[™[Q[]Yˆ˜[ÙKˆ[]Y]\Îˆš[ˆ[]Y]šXÙS˜[YNˆˆ‚ˆ
+BˆB‚ˆ]Y˜[YHHË›˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ]šYÚ˜[YHHšË›˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ]Y\™ÙY˜[YNˆÝš[™ÂˆYˆšYÚ\]Y]ˆY\]Y]ÂˆY\™ÙY˜[YHHšYÚ˜[YKš\Ñ[\HÈY˜[YHˆšYÚ˜[YBˆH[ÙHYˆY\]Y]ˆšYÚ\]Y]ÂˆY\™ÙY˜[YHHY˜[YKš\Ñ[\HÈšYÚ˜[YHˆY˜[YBˆH[ÙHÂˆY\™ÙY˜[YHHY˜[YKš\Ñ[\HÈšYÚ˜[YHˆY˜[YBˆB‚ˆ™]\›ˆXØÛÝ[›Û\ŠˆYˆËšYˆ˜[YNˆY\™ÙY˜[YKš\Ñ[\HÈË›˜[YHˆY\™ÙY˜[YKˆX]ÚYÚ]\ÎˆšYÚ\]Y]ˆY\]Y]ÈšË›X]ÚYÚ]\ÈˆË›X]ÚYÚ]\Ëˆ]]ÐYX]Ú[™ÔÚ]\ÎˆšYÚ\]Y]ˆY\]Y]ÈšË˜]]ÐYX]Ú[™ÔÚ]\ÈˆË˜]]ÐYX]Ú[™ÔÚ]\ËˆÜ™X]Y]\ÎˆZ[ŠË˜Ü™X]Y]\ËšË˜Ü™X]Y]\ÊKˆ\]Y]\ÎˆX^
+Y\]Y]šYÚ\]Y]
+Kˆ™YÝ[\XØÛÝ[YÎˆY\™ÙY™YÝ[\’YËˆ™YÝ[\“Ü™\•\]Y]\ÎˆY\™ÙY™YÝ[\“Ü™\•\]Y]\Ëˆ™YÝ[\“Ü™\•\]Y]šXÙS˜[YNˆY\™ÙY™YÝ[\“Ü™\•\]Y]šXÙS˜[YKˆ\Ñ[]YˆÙY\[]Yˆ\Ô\›X[™[Q[]YˆÙY\\›X[™[Q[]Yˆ[]Y]\ÎˆÙY\[]YÈ
+]\Ý[]Y]OHÈX^
+Y\]Y]šYÚ\]Y]
+Hˆ]\Ý[]Y]
+Hˆš[ˆ[]Y]šXÙS˜[YNˆÙY\[]YÈ
+[]Y]šXÙS˜[YKš\Ñ[\HÈÝ\œ™[]šXÙS˜[YJ
+Hˆ[]Y]šXÙS˜[YJHˆˆ‚ˆ
+BˆB‚ˆš]˜]H[˜È›Ü›X[^™T\ÜÚÙ^T™XÛÜ™
+ÈÛÝ\˜ÙNˆ\ÜÚÙ^T™XÛÜ™
+HOˆ\ÜÚÙ^T™XÛÜ™Âˆ]›Ü›X[^™YÜ™Y[X[YHÛÝ\˜ÙK˜Ü™Y[X[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ]›Ü›X[^™YœYHÛXZ[•][Ë››Ü›X[^™JÛÝ\˜ÙKœœY
+Bˆ]›Ü›X[^™Y\Ù\“˜[YHHÛÝ\˜ÙK\Ù\“˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ]›Ü›X[^™Y\Ü^S˜[YHHÛÝ\˜ÙK™\Ü^S˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ]›Ü›X[^™Y[ÙHHÛÝ\˜ÙK›[ÙKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ]›Ü›X[^™YÜ™X]PÛÛ\]Y]ÙH›Ü›X[^™T\ÜÚÙ^PÜ™X]PÛÛ\]Y]Ù
+ÛÝ\˜ÙK˜Ü™X]PÛÛ\]Y]Ù[ÎˆÛÝ\˜ÙK˜[ÊBˆ]Ü™X]Y]HX^
+ÛÝ\˜ÙK˜Ü™X]Y]\Ë
+Bˆ]\]Y]HX^
+ÛÝ\˜ÙK\]Y]\ËÜ™X]Y]
+Bˆ]\Ý\ÙY]HÛÝ\˜ÙK›\Ý\ÙY]\Ë›X\ÈX^
+	
+HB‚ˆ™]\›ˆ\ÜÚÙ^T™XÛÜ™
+ˆÜ™Y[X[YNˆ›Ü›X[^™YÜ™Y[X[YˆœYˆ›Ü›X[^™YœYˆ\Ù\“˜[YNˆ›Ü›X[^™Y\Ù\“˜[YKˆ\Ü^S˜[YNˆ›Ü›X[^™Y\Ü^S˜[YKˆ\Ù\’[™PNˆÛÝ\˜ÙK\Ù\’[™PKˆ[ÎˆÛÝ\˜ÙK˜[ËˆÚYÛÛÝ[ˆX^
+ÛÝ\˜ÙKœÚYÛÛÝ[
+Kˆš]˜]RÚÎˆÛÝ\˜ÙKœš]˜]RÚËˆX›XÒÚÎˆÛÝ\˜ÙKœX›XÒÚËˆÜ™X]Y]\ÎˆÜ™X]Y]ˆ\]Y]\Îˆ\]Y]ˆ\Ý\ÙY]\Îˆ\Ý\ÙY]ˆ[ÙNˆ›Ü›X[^™Y[ÙKš\Ñ[\HÈ›X[˜YÙYˆˆ›Ü›X[^™Y[ÙKˆÜ™X]PÛÛ\]Y]Ùˆ›Ü›X[^™YÜ™X]PÛÛ\]Y]Ùˆ\Ñ[]YˆÛÝ\˜ÙKš\Ñ[]YÏÈ˜[ÙKˆ\Ô\›X[™[Q[]YˆÛÝ\˜ÙKš\Ô\›X[™[Q[]YÏÈ˜[ÙKˆ[]Y]\ÎˆÛÝ\˜ÙK™[]Y]\Ëˆ[]Y]šXÙS˜[YNˆÛÝ\˜ÙK™[]Y]šXÙS˜[YBˆ
+BˆB‚ˆš]˜]H[˜È›Ü›X[^™T\ÜÚÙ^PÜ™X]PÛÛ\]Y]Ù
+È˜]ÎˆÝš[™ÏË[Îˆ[
+HOˆÝš[™ÈÂˆ]›Ü›X[^™YH
+˜]ÈÏÈˆŠKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊK›ÝÙ\˜Ø\ÙY
+
+BˆÝÚ]Ú›Ü›X[^™YÂˆØ\ÙHœÝ[™\™‹\Ù\—Û˜[YWÙ˜[˜XÚÈ‹œœÌMˆ‹\Ù\—Û˜[YWÙ˜[˜XÚÊÜœÌMˆ‹[šÛ›ÝÛ—Û[šÙYŽ‚ˆ™]\›ˆ›Ü›X[^™YˆY˜][‚ˆ™]\›ˆ[ÈOHLMÈÈœœÌMˆˆˆœÝ[™\™‚ˆBˆB‚ˆš]˜]H[˜ÈY\™ÙT\ÜÚÙ^PÛÛXÝ[ÛœÊˆØØ[ˆÔ\ÜÚÙ^T™XÛÜ™Kˆ™[[ÝNˆÔ\ÜÚÙ^T™XÛÜ™Bˆ
+HOˆÔ\ÜÚÙ^T™XÛÜ™HÂˆ˜\ˆY\™ÙYžRYˆÔÝš[™Îˆ\ÜÚÙ^T™XÛÜ™HHÎ—Bˆ˜\ˆÜ™\ŽˆÔÝš[™×HH×Bˆ›Üˆ][H[ˆ
+ØØ[
+È™[[ÝJHÂˆ]›Ü›X[^™YH›Ü›X[^™T\ÜÚÙ^T™XÛÜ™
+][JBˆ]YH›Ü›X[^™Y˜Ü™Y[X[YBˆÝX\™ZYš\Ñ[\H[ÙHÈÛÛ[YHBˆYˆ]^\Ý[™ÈHY\™ÙYžRYÚYHÂˆY\™ÙYžRYÚYHHY\™ÙTØ[YT\ÜÚÙ^J^\Ý[™Ë›Ü›X[^™Y
+BˆH[ÙHÂˆY\™ÙYžRYÚYHH›Ü›X[^™YˆÜ™\‹˜\[™
+Y
+BˆBˆBˆ™]\›ˆÜ™\‹˜ÛÛ\XÝX\ÈY\™ÙYžRYÉHKœÛÜYÈËšÈ[‚ˆYˆË\]Y]\ÈOHšË\]Y]\ÈÂˆ™]\›ˆË\]Y]\ÈˆšË\]Y]\ÂˆBˆ™]\›ˆË˜Ü™Y[X[YHšË˜Ü™Y[X[YBˆBˆB‚ˆš]˜]H[˜ÈY\™ÙTØ[YT\ÜÚÙ^JÈÎˆ\ÜÚÙ^T™XÛÜ™ÈšÎˆ\ÜÚÙ^T™XÛÜ™
+HOˆ\ÜÚÙ^T™XÛÜ™Âˆ]YH›Ü›X[^™T\ÜÚÙ^T™XÛÜ™
+ÊBˆ]šYÚH›Ü›X[^™T\ÜÚÙ^T™XÛÜ™
+šÊBˆ]™]Ù\ˆHY\]Y]\ÈHšYÚ\]Y]\ÈÈYˆšYÚˆ]Û\ˆHY\]Y]\ÈHšYÚ\]Y]\ÈÈšYÚˆYˆ]Y[]Y]HYš\Ñ[]YOHYHÈ
+Y™[]Y]\ÈÏÈ
+Hˆˆ]šYÚ[]Y]HšYÚš\Ñ[]YOHYHÈ
+šYÚ™[]Y]\ÈÏÈ
+Hˆˆ]]\Ý[]Y]HX^
+Y[]Y]šYÚ[]Y]
+Bˆ]ÙY\\›X[™[Q[]YHYš\Ô\›X[™[Q[]YOHYHšYÚš\Ô\›X[™[Q[]YOHYBˆ]ÙY\[]YHÙY\\›X[™[Q[]Y
+]\Ý[]Y]ˆ	‰ˆ]\Ý[]Y]HX^
+Y\]Y]\ËšYÚ\]Y]\ÊJBˆ][]Y]šXÙS˜[YHHY[]Y]HšYÚ[]Y]ÈY™[]Y]šXÙS˜[YHˆšYÚ™[]Y]šXÙS˜[YB‚ˆ™]\›ˆ\ÜÚÙ^T™XÛÜ™
+ˆÜ™Y[X[YNˆ™]Ù\‹˜Ü™Y[X[YKš\Ñ[\HÈÛ\‹˜Ü™Y[X[YHˆ™]Ù\‹˜Ü™Y[X[YKˆœYˆ™]Ù\‹œœYš\Ñ[\HÈÛ\‹œœYˆ™]Ù\‹œœYˆ\Ù\“˜[YNˆ™]Ù\‹\Ù\“˜[YKš\Ñ[\HÈÛ\‹\Ù\“˜[YHˆ™]Ù\‹\Ù\“˜[YKˆ\Ü^S˜[YNˆ™]Ù\‹™\Ü^S˜[YKš\Ñ[\HÈÛ\‹™\Ü^S˜[YHˆ™]Ù\‹™\Ü^S˜[YKˆ\Ù\’[™PNˆ™]Ù\‹\Ù\’[™PKš\Ñ[\HÈÛ\‹\Ù\’[™PHˆ™]Ù\‹\Ù\’[™PKˆ[Îˆ™]Ù\‹˜[ÈOHÈÛ\‹˜[Èˆ™]Ù\‹˜[ËˆÚYÛÛÝ[ˆX^
+YœÚYÛÛÝ[šYÚœÚYÛÛÝ[
+Kˆš]˜]RÚÎˆ™]Ù\‹œš]˜]RÚÈÏÈÛ\‹œš]˜]RÚËˆX›XÒÚÎˆ™]Ù\‹œX›XÒÚÈÏÈÛ\‹œX›XÒÚËˆÜ™X]Y]\ÎˆZ[ŠY˜Ü™X]Y]\ËšYÚ˜Ü™X]Y]\ÊKˆ\]Y]\ÎˆX^
+Y\]Y]\ËšYÚ\]Y]\ÊKˆ\Ý\ÙY]\ÎˆX^
+Y›\Ý\ÙY]\ÈÏÈšYÚ›\Ý\ÙY]\ÈÏÈ
+HˆˆÈX^
+Y›\Ý\ÙY]\ÈÏÈšYÚ›\Ý\ÙY]\ÈÏÈ
+Bˆˆš[ˆ[ÙNˆ™]Ù\‹›[ÙKš\Ñ[\HÈÛ\‹›[ÙHˆ™]Ù\‹›[ÙKˆÜ™X]PÛÛ\]Y]Ùˆ›Ü›X[^™T\ÜÚÙ^PÜ™X]PÛÛ\]Y]Ù
+ˆ™]Ù\‹˜Ü™X]PÛÛ\]Y]ÙÏÈÛ\‹˜Ü™X]PÛÛ\]Y]Ùˆ[Îˆ™]Ù\‹˜[ÈOHÈÛ\‹˜[Èˆ™]Ù\‹˜[Âˆ
+Kˆ\Ñ[]YˆÙY\[]Yˆ\Ô\›X[™[Q[]YˆÙY\\›X[™[Q[]Yˆ[]Y]\ÎˆÙY\[]YÈ
+]\Ý[]Y]OHÈX^
+Y\]Y]\ËšYÚ\]Y]\ÊHˆ]\Ý[]Y]
+Hˆš[ˆ[]Y]šXÙS˜[YNˆÙY\[]YÈ
+[]Y]šXÙS˜[YHÏÈÝ\œ™[]šXÙS˜[YJ
+JHˆš[ˆ
+BˆB‚ˆš]˜]H[˜È™XÛÛ˜Ú[PXØÛÝ[ÕÚ]˜[Y›Û\’YÊˆÈÛÝ\˜ÙNˆÔ\ÜÝÛÜ™XØÛÝ[Kˆ˜[Y›Û\’YÎˆÙ]URQ‚ˆ
+HOˆÔ\ÜÝÛÜ™XØÛÝ[HÂˆÛÝ\˜ÙK›X\ÈXØÛÝ[[‚ˆ˜\ˆ]]X›HHXØÛÝ[ˆ]š[\™YH›Ü›X[^™Q›Û\’YÊˆ]]X›Kœ™\ÛÛ™Y›Û\’YË™š[\ˆÈ˜[Y›Û\’YË˜ÛÛZ[œÊ	
+HBˆ
+Bˆ]]X›KœÙ]™\ÛÛ™Y›Û\’YÊš[\™Y
+Bˆ™]\›ˆ]]X›BˆBˆB‚ˆš]˜]H[˜ÈXÛÙTÞ[˜Ð[™JÈ]Nˆ]JH›ÝÜÈOˆ
+^[ØYˆÞ[˜Ð[™T^[ØYÚ[™ˆÝš[™ÊHÂˆ]Z[^ˆ]BˆÈÂˆZ[^HžH\ÜÔÞ[˜ÐÜž\Ë™XÜž\
+ˆ]KˆÙ^TÝš[™ÎˆÞ[˜Ñ[˜Üž\[Û’Ù^Kˆ˜[˜XÚÒÙ^TÝš[™ÜÎˆÜ™]š[Ý\ÔÞ[˜Ñ[˜Üž\[Û’Ù^WBˆ
+BˆHØ]ÚÂˆ›ÝÈ”Ñ\œ›ÜŠˆÛXZ[ŽˆXØÛÝ[ÝÜ™K”Þ[˜Ð[™H‹ˆÛÙNˆ‹ˆ\Ù\’[™›ÎˆÓ”ÓØØ[^™Y\ØÜš\[Û’Ù^Nˆ¹d#9«iyc!z)èùká¹i,z-){ï#:+íùèkº+©9¢`9§"z+¯¹i!ù/oùå*9d#9. 9d#9«iyb¨9ká¹káºd©H—Bˆ
+BˆB‚ˆYˆ][™HHžOÈXÛÙ\‹™XÛÙJÞ[˜Ð[™UŒ‹œÙ[‹œ›ÛNˆZ[^
+Kˆ[™KœØÚ[XHOHÙ[‹œÞ[˜Ð[™TØÚ[XUŒ‚ˆÂˆ™]\›ˆ
+[™Kœ^[ØYŒˆŠBˆB‚ˆ›ÝÈ”Ñ\œ›ÜŠˆÛXZ[ŽˆXØÛÝ[ÝÜ™K”Þ[˜Ð[™H‹ˆÛÙNˆKˆ\Ù\’[™›ÎˆÓ”ÓØØ[^™Y\ØÜš\[Û’Ù^Nˆ¹.#y¥+ù£ yæ¡9d#9«iyc!y¨/9o#ûï#9.áy¥+ù£ H\ÜËœÞ[˜Ë˜[™KŒˆ—Bˆ
+BˆB‚ˆš]˜]H[˜È[˜ÛÙQ[˜Üž\YÞ[˜Ð[™J^[ØYˆÞ[˜Ð[™T^[ØY
+H›ÝÜÈOˆ]HÂˆ][™HHZ[Þ[˜Ð[™QØÝ[Y[
+^[ØYˆ^[ØY
+Bˆ]Z[^HžH[˜ÛÙ\‹™[˜ÛÙJ[™JBˆ™]\›ˆžH\ÜÔÞ[˜ÐÜž\Ë™[˜Üž\
+ˆZ[^ˆÙ^TÝš[™ÎˆÞ[˜Ñ[˜Üž\[Û’Ù^Kˆ^ÜY]\Îˆ[™K™^ÜY]\Âˆ
+BˆB‚ˆ[˜ÈÙ[™\˜]TÞ[˜Ñ[˜Üž\[Û’Ù^J
+HÂˆÞ[˜Ñ[˜Üž\[Û’Ù^HH\ÜÔÞ[˜ÐÜž\Ë™Ù[™\˜]RÙ^TÝš[™Ê
+BˆÝ]\ÓY\ÜØYÙHH¹mì¹å'ù¢$9¥¬9æ¡9d#9«iyb¨9ká¹káºd©{ï&ùam¹.åº+¯¹i!ùoázhnùhjùa¦yd#9. 9káºd©H‚ˆB‚ˆ[˜ÈÛÜTÞ[˜Ñ[˜Üž\[Û’Ù^J
+HÂˆ]š[[YYH\ÜÔÞ[˜ÐÜž\Ë››Ü›X[^™YÙ^TÝš[™ÊÞ[˜Ñ[˜Üž\[Û’Ù^JBˆÝX\™]š[[YYš\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹d#9«iyb¨9ká¹káºd©y..¹ên»ï#9l!¹/oùå*9¦#¹¥¡ùd#9«i{ï&ú+íùèkº+©9d#9«iy§#yb¨yfj9a`z+®9¦#¹¥¡È‚ˆ™]\›‚ˆBˆÝX\™\ÜÔÞ[˜ÐÜž\Ëš\Õ˜[YÙ^TÝš[™ÊÞ[˜Ñ[˜Üž\[Û’Ù^JH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹d#9«iyb¨9ká¹káºd©y¥è9¥b‚ˆ™]\›‚ˆBˆ”Ô\ÝX›Ø\™™Ù[™\˜[˜ÛX\ÛÛ[Ê
+Bˆ”Ô\ÝX›Ø\™™Ù[™\˜[œÙ]Ýš[™ÊÞ[˜Ñ[˜Üž\[Û’Ù^K›Ü•\NˆœÝš[™ÊBˆÝ]\ÓY\ÜØYÙHH¹d#9«iyb¨9ká¹káºd©ymì¹i#yb-ˆ‚ˆB‚ˆš]˜]H[˜È™]Ù\‘šY[
+ˆÈÕ˜[YNˆÝš[™ËˆÈÕ\]Y]ˆ[ˆÈÑ]šXÙS˜[YNˆÝš[™ËˆÈÐXØÛÝ[\]Y]ˆ[ˆÈšÕ˜[YNˆÝš[™ËˆÈšÕ\]Y]ˆ[ˆÈšÑ]šXÙS˜[YNˆÝš[™ËˆÈšÐXØÛÝ[\]Y]ˆ[ˆ
+HOˆ
+˜[YNˆÝš[™Ë\]Y]\Îˆ[]šXÙS˜[YNˆÝš[™ÊHÂˆYˆÕ\]Y]ˆšÕ\]Y]Âˆ™]\›ˆ
+Õ˜[YKÕ\]Y]Ñ]šXÙS˜[YJBˆBˆYˆšÕ\]Y]ˆÕ\]Y]Âˆ™]\›ˆ
+šÕ˜[YKšÕ\]Y]šÑ]šXÙS˜[YJBˆBˆYˆÕ˜[YHOHšÕ˜[YHÂˆ]Ñ]šXÙHHÑ]šXÙS˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊK›ÝÙ\˜Ø\ÙY
+
+Bˆ]šÑ]šXÙHHšÑ]šXÙS˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊK›ÝÙ\˜Ø\ÙY
+
+Bˆ]Ø[™Y]HHÑ]šXÙHHšÑ]šXÙHÈÑ]šXÙS˜[YHˆšÑ]šXÙS˜[YBˆ]]šXÙHHØ[™Y]Kš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊKš\Ñ[\BˆÈ\ÜÔÞ[˜ÔÛXÞK™Y˜][]šXÙS˜[YBˆˆØ[™Y]Bˆ™]\›ˆ
+Õ˜[YKÕ\]Y]]šXÙJBˆBˆËÈšY[ÛØÚÜÈYYˆ™]™\ˆ][ˆ[\HÜ™Y[X[\˜\ÙHH›Û‹Y[\HÛ™BˆËÈ\Ý™XØ]\ÙH[ˆ[œ™[]YXØÛÝ[[]™[Y][\Y\]Y]\Ë‚ˆYˆÕ˜[YKš\Ñ[\K\šÕ˜[YKš\Ñ[\HÂˆ™]\›ˆ
+šÕ˜[YKšÕ\]Y]šÑ]šXÙS˜[YJBˆBˆYˆšÕ˜[YKš\Ñ[\K[Õ˜[YKš\Ñ[\HÂˆ™]\›ˆ
+Õ˜[YKÕ\]Y]Ñ]šXÙS˜[YJBˆBˆYˆÐXØÛÝ[\]Y]ˆšÐXØÛÝ[\]Y]Âˆ™]\›ˆ
+Õ˜[YKÕ\]Y]Ñ]šXÙS˜[YJBˆBˆYˆšÐXØÛÝ[\]Y]ˆÐXØÛÝ[\]Y]Âˆ™]\›ˆ
+šÕ˜[YKšÕ\]Y]šÑ]šXÙS˜[YJBˆBˆ]Ñ]šXÙHHÑ]šXÙS˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊK›ÝÙ\˜Ø\ÙY
+
+Bˆ]šÑ]šXÙHHšÑ]šXÙS˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊK›ÝÙ\˜Ø\ÙY
+
+BˆYˆÑ]šXÙHOHšÑ]šXÙHÂˆ™]\›ˆÑ]šXÙHˆšÑ]šXÙBˆÈ
+Õ˜[YKÕ\]Y]Ñ]šXÙS˜[YJBˆˆ
+šÕ˜[YKšÕ\]Y]šÑ]šXÙS˜[YJBˆBˆ™]\›ˆÕ˜[YHHšÕ˜[YBˆÈ
+Õ˜[YKÕ\]Y]Ñ]šXÙS˜[YJBˆˆ
+šÕ˜[YKšÕ\]Y]šÑ]šXÙS˜[YJBˆB‚ˆËÈ9kîy¢`9§"z-)¹cíù`fº/çº`&¹b!ºaãùnmºfá¹d#9«i{ï&‚ˆËÈ:"éz-)¹cíÈKÐˆ9æ¡Ú]\È9§"y.©:fá¸à yd#U
+ÌH9¢%¹lg¹.£¹¦#¹èk¹æ¡9dàyâc9b*ùd#yîá;ï#ˆËÈ9b&z)á¹..¹d#9. 9b*ùd#yîá;ï#9îá9a¡yêæyà®ycå¹nmºfá¹nm¹fç¹hjøà ‚ˆš]˜]H[˜ÈÞ[˜Ð[X\ÑÜ›Ý\Ê
+HÂˆÝX\™XØÛÝ[Ë˜ÛÝ[Hˆ[ÙHÈ™]\›ˆB‚ˆYˆT\ÜÐÛÜ™Q‘’K™›Ü˜ÙTÝÚYY\™ÙHÂˆÈÂˆžHÞ[˜Ð[X\ÑÜ›Ý\ÕšXT\Ý
+
+Bˆ™]\›‚ˆHØ]ÚÂˆ”ÓÙÊ–Ô\ÜÐÛÜ™WH\Ý[X\ÈÞ[˜È˜Z[Y˜[˜XÚÈÝÚYˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠHŠBˆBˆBˆÞ[˜Ð[X\ÑÜ›Ý\ÔÝÚY
+
+BˆB‚ˆš]˜]H[˜ÈÞ[˜Ð[X\ÑÜ›Ý\ÕšXT\Ý
+
+H›ÝÜÈÂˆ][˜ÛÙ\ˆH”ÓÓ‘[˜ÛÙ\Š
+Bˆ[˜ÛÙ\‹›Ý]]›Ü›X][™ÈHËœÛÜYÙ^\×Bˆ]]HHžH[˜ÛÙ\‹™[˜ÛÙJXØÛÝ[ÊBˆÝX\™]XØÛÝ[Ò”ÓÓˆHÝš[™Ê]Nˆ]K[˜ÛÙ[™Îˆ]Ž
+H[ÙHÂˆ›ÝÈ\ÜÐÛÜ™Q‘’K‘‘’Q\œ›Ü‹š[˜[YUŽˆBˆ]™\Ý[HžH\ÜÐÛÜ™Q‘’KœÞ[˜Ð[X\ÑÜ›Ý\Ò”ÓÓŠˆXØÛÝ[Ò”ÓÓŽˆXØÛÝ[Ò”ÓÓ‹ˆ]šXÙS˜[YNˆÝ\œ™[]šXÙS˜[YJ
+Kˆ›ÝÓ\Îˆ›ÝÓ\Ê
+Bˆ
+BˆÝX\™™\Ý[˜Ú[™ÙY[ÙHÈ™]\›ˆBˆ]XÛÙYHžHXÛÙ\‹™XÛÙJÔ\ÜÝÛÜ™XØÛÝ[KœÙ[‹œ›ÛNˆ]J™\Ý[˜XØÛÝ[Ò”ÓÓ‹]Ž
+JBˆXØÛÝ[ÈHXÛÙYˆB‚ˆËËÈYØXÞH[‹\›ØÙ\ÜÈ[X\È[š[Ûˆ
+›Û˜XÚÈÈ‘’H[˜]˜Z[X›JK‚ˆš]˜]H[˜ÈÛXZ[[X\ÑÜ›Ý\Ù^J›ÜˆÚ]NˆÝš[™ÊHOˆÝš[™ÏÈÂˆ]›Ü›X[^™YHÛXZ[•][Ë››Ü›X[^™JÚ]JBˆ]Ü›Ý\ÎˆÊÝš[™ËÔÝš[™×JWHHÂˆ
+˜\H‹È˜\K˜ÛÛH‹˜\K˜ÛÛK˜Ûˆ‹šXÛÝY˜ÛÛH‹šXÛÝY˜ÛÛK˜Ûˆ—JKˆ
+œ\H‹Èœ\K˜ÛÛH‹Þœ\K˜ÛÛH—JKˆ
+˜˜ZYH‹È˜˜ZYK˜ÛÛH‹œ\ÜÜÜ˜˜ZYK˜ÛÛH‹œ[‹˜˜ZYK˜ÛÛH—JKˆ
+œÚ[˜H‹ÈœÚ[˜K˜ÛÛH‹›XZ[œÚ[˜K˜ÛÛH‹ÙZX›Ë˜ÛÛH—JKˆ
+™Ú]Xˆ‹È™Ú]X‹˜ÛÛH‹™Ú\Ý™Ú]X‹˜ÛÛH—JKˆ
+™Ú]Xˆ‹È™Ú]X‹˜ÛÛH‹˜X›Ý]™Ú]X‹˜ÛÛH—JKˆ
+™ÛÛÙÛH‹È™ÛÛÙÛK˜ÛÛH‹˜XØÛÝ[Ë™ÛÛÙÛK˜ÛÛH—JKˆ
+ž[Ý]X™H‹Èž[Ý]X™K˜ÛÛH‹œÝY[Ëž[Ý]X™K˜ÛÛH—JKˆ
+ž‹Èž˜ÛÛH‹Ú]\‹˜ÛÛH—JKˆ
+™˜XÙX›ÛÚÈ‹È™˜XÙX›ÛÚË˜ÛÛH‹›Y\ÜÙ[™Ù\‹˜ÛÛH—JKˆ
+˜[X^›Ûˆ‹È˜[X^›Û‹˜ÛÛH‹œÛZ[K˜[X^›Û‹˜ÛÛH—JKˆ
+ˆ›ZXÜ›ÜÛÙ‹ˆÂˆ›ZXÜ›ÜÛÙ˜ÛÛH‹›ZXÜ›ÜÛÙÛ›[™K˜ÛÛH‹›ÙÚ[‹›ZXÜ›ÜÛÙÛ›[™K˜ÛÛH‹ˆ›ÙÚ[‹›ZXÜ›ÜÛÙ˜ÛÛH‹˜XØÛÝ[›ZXÜ›ÜÛÙ˜ÛÛH‹›]™K˜ÛÛH‹šÝXZ[˜ÛÛH‹ˆ›Ý]ÛÚË˜ÛÛH‹˜XØÛÝ[›]™K˜ÛÛH‹›Ù™šXÙK˜ÛÛH‹›Ý]ÛÚË›Ù™šXÙK˜ÛÛH‹ˆ›ZXÜ›ÜÛÙÍK˜ÛÛH‹›Ù™šXÙLÍK˜ÛÛH‹˜^\™K˜ÛÛH‹›\Û‹˜ÛÛH‚ˆBˆ
+Kˆ
+œ^\[‹Èœ^\[˜ÛÛH—JKˆ
+›™]›^‹È›™]›^˜ÛÛH‹š[›™]›^˜ÛÛH—JKˆ
+œÜÝYžH‹ÈœÜÝYžK˜ÛÛH‹›Ü[‹œÜÝYžK˜ÛÛH—JKˆ
+›[šÙY[ˆ‹È›[šÙY[‹˜ÛÛH—JKˆ
+™›Ü›Þ‹È™›Ü›Þ˜ÛÛH—JKˆBˆ™]\›ˆÜ›Ý\Ë™š\œÝÈË[X\Ù\È[‚ˆ[X\Ù\Ë˜ÛÛZ[œÈÈ[X\È[ˆ›Ü›X[^™YOH[X\È›Ü›X[^™Yš\ÔÝY™š^
+‹ˆˆ
+È[X\ÊHBˆOËŒˆB‚ˆš]˜]H[˜ÈÞ[˜Ð[X\ÑÜ›Ý\ÔÝÚY
+
+HÂˆ˜\ˆÛÛ\Û™[ÎˆÖÒ[WHH×Bˆ˜\ˆš\Ú]YHÙ][Š
+B‚ˆ›ÜˆH[ˆXØÛÝ[Ëš[™XÙ\ÈÂˆYˆš\Ú]Y˜ÛÛZ[œÊJHÈÛÛ[YHB‚ˆ˜\ˆ]Y]YHHÚWBˆ˜\ˆÛÛ\Û™[HÒ[J
+Bˆš\Ú]Yš[œÙ\
+JB‚ˆÚ[H]Ý\œ™[H]Y]YK™š\œÝÂˆ]Y]YKœ™[[Ý™Qš\œÝ
+
+BˆÛÛ\Û™[˜\[™
+Ý\œ™[
+B‚ˆ]Ý\œ™[Ú]\ÈHÙ]
+XØÛÝ[ÖØÝ\œ™[KœÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JJB‚ˆ›Üˆˆ[ˆXØÛÝ[Ëš[™XÙ\ÈÚ\™H]š\Ú]Y˜ÛÛZ[œÊŠHÂˆ]\™Ù]Ú]\ÈHÙ]
+XØÛÝ[ÖÚ—KœÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JJBˆ]\ÔÚ]SÝ™\›\HXÝ\œ™[Ú]\Ëš\Ñ\Ú›Ú[
+Ú]ˆ\™Ù]Ú]\ÊBˆ]Ø[YQ]HHÝ\œ™[Ú]\Ë˜ÛÛZ[œÈÈÝ\œ™[Ú]H[‚ˆ\™Ù]Ú]\Ë˜ÛÛZ[œÈÈ\™Ù]Ú]H[‚ˆÛXZ[•][Ë™]\ÓÛ™J›ÜŽˆÝ\œ™[Ú]JHOHÛXZ[•][Ë™]\ÓÛ™J›ÜŽˆ\™Ù]Ú]JBˆBˆBˆ]Ø[YP[X\ÑÜ›Ý\HÝ\œ™[Ú]\Ë˜ÛÛZ[œÈÈÝ\œ™[Ú]H[‚ˆÝX\™]Ü›Ý\HÛXZ[[X\ÑÜ›Ý\Ù^J›ÜŽˆÝ\œ™[Ú]JH[ÙHÈ™]\›ˆ˜[ÙHBˆ™]\›ˆ\™Ù]Ú]\Ë˜ÛÛZ[œÈÈÛXZ[[X\ÑÜ›Ý\Ù^J›ÜŽˆ	
+HOHÜ›Ý\BˆBˆYˆ\ÔÚ]SÝ™\›\Ø[YQ]HØ[YP[X\ÑÜ›Ý\Âˆš\Ú]Yš[œÙ\
+ŠBˆ]Y]YK˜\[™
+ŠBˆBˆBˆB‚ˆÛÛ\Û™[Ë˜\[™
+ÛÛ\Û™[
+BˆB‚ˆ›ÜˆÛÛ\Û™[[ˆÛÛ\Û™[ÈÚ\™HÛÛ\Û™[˜ÛÝ[ˆHÂˆ]Y\™ÙYÚ]\ÎˆÔÝš[™×HH\œ˜^JˆÙ]
+ÛÛ\Û™[™›]X\ÈXØÛÝ[ÖÉKœÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JHJBˆ
+KœÛÜY
+
+B‚ˆ›Üˆ[™^[ˆÛÛ\Û™[ÂˆYˆXØÛÝ[ÖÚ[™^KœÚ]\ÈOHY\™ÙYÚ]\ÈÂˆXØÛÝ[ÖÚ[™^KœÚ]\ÈHY\™ÙYÚ]\ÂˆXØÛÝ[ÖÚ[™^KÝXÚ\]Y]
+›ÝÓ\Ê
+K]šXÙS˜[YNˆÝ\œ™[]šXÙS˜[YJ
+JBˆBˆBˆBˆB‚ˆš]˜]H[˜È›Ü›X[^™QXÛÙYXØÛÝ[ÊÈÛÝ\˜ÙNˆÔ\ÜÝÛÜ™XØÛÝ[JHOˆÔ\ÜÝÛÜ™XØÛÝ[HÂˆÛÝ\˜ÙK›X\ÈXØÛÝ[[‚ˆ˜\ˆ]]X›HHXØÛÝ[ˆ]]X›KœÙ]™\ÛÛ™Y›Û\’YÊ]]X›Kœ™\ÛÛ™Y›Û\’YÊBˆ]]X›Kœ\ÜÚÙ^PÜ™Y[X[YÈH\œ˜^JˆÙ]
+]]X›Kœ\ÜÚÙ^PÜ™Y[X[YÂˆ›X\È	š[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊHBˆ™š[\ˆÈIš\Ñ[\HJBˆ
+KœÛÜY
+
+BˆYˆ]]X›Kœ\ÜÚÙ^U\]Y]\ÈHÂˆ]]X›Kœ\ÜÚÙ^U\]Y]\ÈH]]X›K˜Ü™X]Y]\ÂˆBˆ™]\›ˆ]]X›BˆBˆB‚ˆš]˜]H[˜È›Ü›X[^™Q›Û\œÑ[œÝ\š[™Ñš^Y™]ÐXØÛÝ[›Û\Š
+HOˆ
+ˆ›Û\œÐÚ[™ÙYˆ›ÛÛˆYØXÞS™]ÐXØÛÝ[›Û\’YÎˆÙ]URQ‚ˆ
+HÂˆ]š^Y˜[YHHÙ[‹™š^Y™]ÐXØÛÝ[›Û\“˜[YBˆ]š^YYHÙ[‹™š^Y™]ÐXØÛÝ[›Û\’Y‚ˆ]YØXÞS™]ÐXØÛÝ[›Û\’YÎˆÙ]URQˆHÙ]
+ˆ›Û\œË˜ÛÛ\XÝX\È›Û\ˆ[‚ˆÝX\™›Û\‹šYOHš^YY[ÙHÈ™]\›ˆš[Bˆ™]\›ˆ›Û\‹›˜[YK˜Ø\ÙR[œÙ[œÚ]]™PÛÛ\\™Jš^Y˜[YJHOH›Ü™\™YØ[YHÈ›Û\‹šYˆš[ˆBˆ
+B‚ˆ]š^YÜ™X]Y]H›Û\œË™š\œÝ
+Ú\™NˆÈ	šYOHš^YYJOË˜Ü™X]Y]\ÂˆÏÈ›Û\œË™š[\ˆÈYØXÞS™]ÐXØÛÝ[›Û\’YË˜ÛÛZ[œÊ	šY
+HK›X\
+˜Ü™X]Y]\ÊK›Z[Š
+BˆÏÈ›ÝÓ\Ê
+Bˆ]š^Y\]Y]H›Û\œË™š\œÝ
+Ú\™NˆÈ	šYOHš^YYJOË\]Y]\ÂˆÏÈ›Û\œË™š[\ˆÈYØXÞS™]ÐXØÛÝ[›Û\’YË˜ÛÛZ[œÊ	šY
+HK›X\
+\]Y]\ÊK›X^
+
+BˆÏÈš^YÜ™X]Y]‚ˆ]™]Z[™Y›Û\œÈH›Û\œË™š[\ˆÈ›Û\ˆ[‚ˆ›Û\‹šYOHš^YY	‰ˆ[YØXÞS™]ÐXØÛÝ[›Û\’YË˜ÛÛZ[œÊ›Û\‹šY
+BˆB‚ˆ]š^Y›Û\ˆHXØÛÝ[›Û\ŠˆYˆš^YYˆ˜[YNˆš^Y˜[YKˆX]ÚYÚ]\Îˆ›Û\œË™š\œÝ
+Ú\™NˆÈ	šYOHš^YYJOË›X]ÚYÚ]\ÈÏÈ×Kˆ]]ÐYX]Ú[™ÔÚ]\Îˆ›Û\œË™š\œÝ
+Ú\™NˆÈ	šYOHš^YYJOË˜]]ÐYX]Ú[™ÔÚ]\ÈÏÈ˜[ÙKˆÜ™X]Y]\Îˆš^YÜ™X]Y]ˆ\]Y]\Îˆš^Y\]Y]ˆ™YÝ[\XØÛÝ[YÎˆ›Û\œË™š\œÝ
+Ú\™NˆÈ	šYOHš^YYJOËœ™YÝ[\XØÛÝ[YÈÏÈ×Kˆ™YÝ[\“Ü™\•\]Y]\Îˆ›Û\œË™š\œÝ
+Ú\™NˆÈ	šYOHš^YYJOËœ™YÝ[\“Ü™\•\]Y]\ÈÏÈˆ™YÝ[\“Ü™\•\]Y]šXÙS˜[YNˆ›Û\œË™š\œÝ
+Ú\™NˆÈ	šYOHš^YYJOËœ™YÝ[\“Ü™\•\]Y]šXÙS˜[YHÏÈˆ‚ˆ
+B‚ˆ˜\ˆY\XØ]YˆÐXØÛÝ[›Û\—HHÙš^Y›Û\—Bˆ˜\ˆÙY[’YÎˆÙ]URQˆHÙš^YYBˆ›Üˆ›Û\ˆ[ˆ™]Z[™Y›Û\œÈÂˆYˆÙY[’YËš[œÙ\
+›Û\‹šY
+Kš[œÙ\YÂˆY\XØ]Y˜\[™
+›Û\ŠBˆBˆB‚ˆ]ÛÜYHÛÜ›Û\œÕÚ]š^Y™]ÐXØÛÝ[š\œÝ
+Y\XØ]Y
+Bˆ]Ú[™ÙYHÛÜYOH›Û\œÂˆ›Û\œÈHÛÜYˆ™]\›ˆ
+Ú[™ÙYYØXÞS™]ÐXØÛÝ[›Û\’YÊBˆB‚ˆš]˜]H[˜ÈÛÜ›Û\œÕÚ]š^Y™]ÐXØÛÝ[š\œÝ
+ÈÛÝ\˜ÙNˆÐXØÛÝ[›Û\—JHOˆÐXØÛÝ[›Û\—HÂˆÛÝ\˜ÙKœÛÜYÈËšÈ[‚ˆYˆËšYOHÙ[‹™š^Y™]ÐXØÛÝ[›Û\’YÂˆ™]\›ˆšËšYOHÙ[‹™š^Y™]ÐXØÛÝ[›Û\’YˆBˆYˆšËšYOHÙ[‹™š^Y™]ÐXØÛÝ[›Û\’YÂˆ™]\›ˆ˜[ÙBˆBˆYˆË˜Ü™X]Y]\ÈOHšË˜Ü™X]Y]\ÈÂˆ™]\›ˆË˜Ü™X]Y]\ÈšË˜Ü™X]Y]\ÂˆBˆ™]\›ˆË›˜[YK›ØØ[^™YÝ[™\™ÛÛ\\™JšË›˜[YJHOH›Ü™\™Y\ØÙ[™[™ÂˆBˆB‚ˆš]˜]H[˜ÈZYÜ˜]PXØÛÝ[›Û\’YÑœ›ÛSYØXÞS™]ÐXØÛÝ[›Û\ŠYØXÞQ›Û\’YÎˆÙ]URQŠHOˆ›ÛÛÂˆ]˜[Y›Û\’YÈHÙ]
+›Û\œË™š[\ˆÈIš\Ñ[]YK›X\
+šY
+JBˆ]ÚÝ[ZYÜ˜]SYØXÞRYÈH[YØXÞQ›Û\’YËš\Ñ[\Bˆ˜\ˆÚ[™ÙYH˜[ÙB‚ˆ›Üˆ[™^[ˆXØÛÝ[Ëš[™XÙ\ÈÂˆ]ÜšYÚ[˜[HXØÛÝ[ÖÚ[™^Kœ™\ÛÛ™Y›Û\’YÂˆ˜\ˆ™^HÜšYÚ[˜[‚ˆYˆÚÝ[ZYÜ˜]SYØXÞRYÈ	‰ˆTÙ]
+™^
+Kš\Ñ\Ú›Ú[
+Ú]ˆYØXÞQ›Û\’YÊHÂˆ™^œ™[[Ý™P[
+Ú\™NˆÈYØXÞQ›Û\’YË˜ÛÛZ[œÊ	
+HJBˆYˆ[™^˜ÛÛZ[œÊÙ[‹™š^Y™]ÐXØÛÝ[›Û\’Y
+HÂˆ™^˜\[™
+Ù[‹™š^Y™]ÐXØÛÝ[›Û\’Y
+BˆBˆB‚ˆ™^H›Ü›X[^™Q›Û\’YÊ™^™š[\ˆÈ˜[Y›Û\’YË˜ÛÛZ[œÊ	
+HJBˆYˆ™^OHÜšYÚ[˜[ÂˆXØÛÝ[ÖÚ[™^KœÙ]™\ÛÛ™Y›Û\’YÊ™^
+BˆÚ[™ÙYHYBˆBˆB‚ˆ™]\›ˆÚ[™ÙYˆB‚ˆš]˜]H[˜È›Ü›X[^™Q›Û\’YÊÈÛÝ\˜ÙNˆÕURQJHOˆÕURQHÂˆ\œ˜^JÙ]
+ÛÝ\˜ÙJJKœÛÜYÈ	]ZYÝš[™È	K]ZYÝš[™ÈBˆB‚ˆš]˜]H[˜ÈÜÝ‘\ØØ\Y
+È˜[YNˆÝš[™ÊHOˆÝš[™ÈÂˆ˜\ˆØ[š]^™YH˜[YBˆœ™\XÚ[™ÓØØÝ\œ™[˜Ù\ÊÙŽˆ—ˆ‹Ú]ˆˆŠBˆœ™\XÚ[™ÓØØÝ\œ™[˜Ù\ÊÙŽˆ—ˆ‹Ú]ˆˆŠBˆYˆ]š\œÝHØ[š]^™Y™š\œÝJËP‹˜ÛÛZ[œÊš\œÝ
+HÂˆØ[š]^™YH‰Èˆ
+ÈØ[š]^™YˆBˆ™]\›ˆ——
+Ø[š]^™Yœ™\XÚ[™ÓØØÝ\œ™[˜Ù\ÊÙŽˆ—ˆ‹Ú]ˆ——ˆŠJWˆ‚ˆB‚ˆš]˜]H[˜ÈX]ÚY[\ÜYXØÛÝ[[™^
+ˆ[ˆÛÝ\˜ÙNˆÔ\ÜÝÛÜ™XØÛÝ[Kˆ[žNˆœ›ÝÜÙ\”\ÜÝÛÜ™[\Ü[žBˆ
+HOˆ[ÈÂˆ][žTÚ]\ÈHÙ]
+[žKœÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JK™š[\ˆÈIš\Ñ[\HJBˆ][žPØ[›ÛšXØ[Ú]\ÈHÙ]
+[žTÚ]\Ë›X\
+ÛXZ[•][Ë™]\ÓÛ™JJBˆ]›Ü›X[^™Y\Ù\›˜[YHH[žK\Ù\›˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊB‚ˆ˜\ˆ™\ÝX]Úˆ
+[™^ˆ[ØÛÜ™Nˆ[
+OÂ‚ˆ›Üˆ
+[™^XØÛÝ[
+H[ˆÛÝ\˜ÙK™[[Y\˜]Y
+
+HÂˆËÈ\›X[™[Y[]HÛXœÝÛ™\È]\Ý›Ý™H™]š]™YžH™KZ[\Ü‚ˆYˆXØÛÝ[š\Ô\›X[™[Q[]YÂˆÛÛ[YBˆBˆ]XØÛÝ[Ú]\ÈHÙ]
+XØÛÝ[œÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JK™š[\ˆÈIš\Ñ[\HJBˆ]XØÛÝ[Ø[›ÛšXØ[Ú]\ÈHÙ]
+XØÛÝ[Ú]\Ë›X\
+ÛXZ[•][Ë™]\ÓÛ™JJK[š[ÛŠØXØÛÝ[˜Ø[›ÛšXØ[Ú]WJBˆ]\Ù\›˜[YSX]Ú\ÈH›Ü›X[^™Y\Ù\›˜[YKš\Ñ[\BˆÈXØÛÝ[\Ù\›˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊKš\Ñ[\Bˆˆ
+ˆXØÛÝ[\Ù\›˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊHOH›Ü›X[^™Y\Ù\›˜[YHˆXØÛÝ[\Ù\›˜[YP]Ü™X]Kš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊHOH›Ü›X[^™Y\Ù\›˜[YBˆ
+Bˆ]Ú]SÝ™\›\ÈHY[žTÚ]\Ëš\Ñ\Ú›Ú[
+Ú]ˆXØÛÝ[Ú]\ÊBˆ]Ø[›ÛšXØ[X]Ú\ÈHY[žPØ[›ÛšXØ[Ú]\Ëš\Ñ\Ú›Ú[
+Ú]ˆXØÛÝ[Ø[›ÛšXØ[Ú]\ÊB‚ˆ]ØÛÜ™Nˆ[ˆYˆ\Ù\›˜[YSX]Ú\È	‰ˆÚ]SÝ™\›\ÈÂˆØÛÜ™HHXØÛÝ[š\Ñ[]YÈÍHˆˆH[ÙHYˆ\Ù\›˜[YSX]Ú\È	‰ˆØ[›ÛšXØ[X]Ú\ÈÂˆØÛÜ™HHXØÛÝ[š\Ñ[]YÈHˆÌˆH[ÙHYˆ›Ü›X[^™Y\Ù\›˜[YKš\Ñ[\H	‰ˆÚ]SÝ™\›\ÈÂˆØÛÜ™HHXØÛÝ[š\Ñ[]YÈMHˆŒˆH[ÙHYˆ›Ü›X[^™Y\Ù\›˜[YKš\Ñ[\H	‰ˆØ[›ÛšXØ[X]Ú\ÈÂˆØÛÜ™HHXØÛÝ[š\Ñ[]YÈHˆLˆH[ÙHÂˆÛÛ[YBˆB‚ˆYˆ™\ÝX]ÚOHš[ØÛÜ™Hˆ™\ÝX]ÚKœØÛÜ™HÂˆ™\ÝX]ÚH
+[™^ØÛÜ™JBˆBˆB‚ˆ™]\›ˆ™\ÝX]ÚËš[™^ˆB‚ˆš]˜]H[˜È\R[\ÜYœ›ÝÜÙ\‘[žJˆÈ[žNˆœ›ÝÜÙ\”\ÜÝÛÜ™[\Ü[žKˆÈXØÛÝ[ˆ\ÜÝÛÜ™XØÛÝ[ˆ›ÝÓ\Îˆ[ˆ
+HOˆ\ÜÝÛÜ™XØÛÝ[ÂˆËÈY™[œÙH[ˆ\ˆ™]™\ˆÛX\ˆ\›X[™[Y[]HÛXœÝÛ™\ÈšXH[\Ü‚ˆYˆXØÛÝ[š\Ô\›X[™[Q[]YÂˆ™]\›ˆXØÛÝ[ˆBˆ˜\ˆ\]YHXØÛÝ[ˆ˜\ˆÚ[™ÙYH˜[ÙB‚ˆ]Y\™ÙYÚ]\ÈH\œ˜^JˆÙ]
+
+\]YœÚ]\È
+È[žKœÚ]\ÊK›X\
+ÛXZ[•][Ë››Ü›X[^™JK™š[\ˆÈIš\Ñ[\HJBˆ
+KœÛÜY
+
+BˆYˆY\™ÙYÚ]\ÈOH\]YœÚ]\ÈÂˆ\]YœÚ]\ÈHY\™ÙYÚ]\ÂˆÚ[™ÙYHYBˆB‚ˆYˆY[žK\Ù\›˜[YKš\Ñ[\K[žK\Ù\›˜[YHOH\]Y\Ù\›˜[YHÂˆ\]Y\Ù\›˜[YHH[žK\Ù\›˜[YBˆ\]Y\Ù\›˜[YU\]Y]\ÈH›ÝÓ\Âˆ\]Y\Ù\›˜[YU\]Y]šXÙS˜[YHHÝ\œ™[]šXÙS˜[YJ
+BˆÚ[™ÙYHYBˆB‚ˆYˆY[žKœ\ÜÝÛÜ™š\Ñ[\K[žKœ\ÜÝÛÜ™OH\]Yœ\ÜÝÛÜ™Âˆ\]Yœ\ÜÝÛÜ™H[žKœ\ÜÝÛÜ™ˆ\]Yœ\ÜÝÛÜ™\]Y]\ÈH›ÝÓ\Âˆ\]Yœ\ÜÝÛÜ™\]Y]šXÙS˜[YHHÝ\œ™[]šXÙS˜[YJ
+BˆÚ[™ÙYHYBˆB‚ˆ]Y\™ÙY›ÝHHY\™ÙY[\ÜYœ›ÝÜÙ\“›ÝJ^\Ý[™Îˆ\]Y››ÝK[˜ÛÛZ[™Îˆ[žK››ÝJBˆYˆY\™ÙY›ÝHOH\]Y››ÝHÂˆ\]Y››ÝHHY\™ÙY›ÝBˆ\]Y››ÝU\]Y]\ÈH›ÝÓ\Âˆ\]Y››ÝU\]Y]šXÙS˜[YHHÝ\œ™[]šXÙS˜[YJ
+BˆÚ[™ÙYHYBˆB‚ˆËÈÛÙY[]YXØÛÝ[ÈX^H™H™]š]™YÈ\›X[™[ÛXœÝÛ™\È\™H›ØÚÙYX›Ý™K‚ˆYˆ\]Yš\Ñ[]YÂˆ\]Yš\Ñ[]YH˜[ÙBˆ\]Y™[]Y]\ÈHš[ˆ\]Y™[]Y]šXÙS˜[YHHˆ‚ˆÚ[™ÙYHYBˆB‚ˆYˆÚ[™ÙYÂˆ\]YÝXÚ\]Y]
+›ÝÓ\Ë]šXÙS˜[YNˆÝ\œ™[]šXÙS˜[YJ
+JBˆB‚ˆ™]\›ˆ\]YˆB‚ˆš]˜]H[˜ÈY\™ÙY[\ÜYœ›ÝÜÙ\“›ÝJ^\Ý[™ÎˆÝš[™Ë[˜ÛÛZ[™ÎˆÝš[™ÊHOˆÝš[™ÈÂˆ]›Ü›X[^™Y[˜ÛÛZ[™ÈH[˜ÛÛZ[™Ëš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆÝX\™[›Ü›X[^™Y[˜ÛÛZ[™Ëš\Ñ[\H[ÙHÈ™]\›ˆ^\Ý[™ÈB‚ˆ]›Ü›X[^™Y^\Ý[™ÈH^\Ý[™Ëš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆÝX\™[›Ü›X[^™Y^\Ý[™Ëš\Ñ[\H[ÙHÈ™]\›ˆ›Ü›X[^™Y[˜ÛÛZ[™ÈBˆYˆ›Ü›X[^™Y^\Ý[™Ë˜ÛÛZ[œÊ›Ü›X[^™Y[˜ÛÛZ[™ÊHÂˆ™]\›ˆ›Ü›X[^™Y^\Ý[™ÂˆBˆ™]\›ˆ—
+›Ü›X[^™Y^\Ý[™ÊW—
+›Ü›X[^™Y[˜ÛÛZ[™ÊH‚ˆB‚ˆš]˜]H[[HÝ˜Y\™Ù]ÂˆØ\ÙHÜ™X]BˆØ\ÙHY]ˆB‚ˆš]˜]HÝXÝ\œÙYÝ]]^[ØYÂˆ]ÙXÜ™]ˆÝš[™Âˆ]Ú]P[X\ÎˆÝš[™ÏÂˆ]\Ù\›˜[YNˆÝš[™ÏÂˆB‚ˆš]˜]HÝXÝ\œÙYÛÛÙÛP]][XØ]Ü‘[žHÂˆ]ÙXÜ™]ˆÝš[™Âˆ]Ú]P[X\ÎˆÝš[™ÏÂˆ]\Ù\›˜[YNˆÝš[™ÏÂˆB‚ˆš]˜]HÝXÝ\œÙYÛÛÙÛP]][XØ]Ü“ZYÜ˜][ÛˆÂˆ][šY\ÎˆÔ\œÙYÛÛÙÛP]][XØ]Ü‘[žWBˆ]ÚÚ\YÛÝ[ˆ[ˆ]˜]ÚÚ^™Nˆ[ˆ]˜]Ú[™^ˆ[ˆB‚ˆš]˜]H[˜È\ÝT˜]ÕÝÙXÜ™]œ›ÛPÛ\›Ø\™
+È\™Ù]ˆÝ˜Y\™Ù]
+HÂˆÝX\™]˜]Õ^H”Ô\ÝX›Ø\™™Ù[™\˜[œÝš[™Ê›Ü•\NˆœÝš[™ÊH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹bjº--9§où¬¨y§"y¥¡ù§+9a¡yk®H‚ˆ™]\›‚ˆB‚ˆ]ÙXÜ™]H˜]Õ^š[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆÝX\™\ÙXÜ™]š\Ñ[\H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹bjº--9§où¥¡ù§+9..¹ênˆ‚ˆ™]\›‚ˆBˆÝX\™\Õ˜[YÝÙXÜ™]
+ÙXÜ™]
+H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹ì¦:--9i,z-){ï&¹c§ùiâùkáºd©y.#y¦+ù§"y¥bÕ‚ˆ™]\›‚ˆB‚ˆ\UÝ^[ØY
+ˆ\œÙYÝ]]^[ØY
+ÙXÜ™]ˆÙXÜ™]Ú]P[X\Îˆš[\Ù\›˜[YNˆš[
+KˆÎˆ\™Ù]ˆ[˜ÛYTÚ]P[™\Ù\›˜[YNˆ˜[ÙBˆ
+BˆÝ]\ÓY\ÜØYÙHH¹mì¹hjùaaHÕ9c§ùiâùkáºd©H‚ˆB‚ˆš]˜]H[˜È\ÝSÝ]]T’Qœ›ÛPÛ\›Ø\™
+È\™Ù]ˆÝ˜Y\™Ù]
+HÂˆÝX\™]˜]Õ^H”Ô\ÝX›Ø\™™Ù[™\˜[œÝš[™Ê›Ü•\NˆœÝš[™ÊH[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹bjº--9§où¬¨y§"y¥¡ù§+9a¡yk®H‚ˆ™]\›‚ˆBˆÝX\™]^[ØYH\œÙSÝ]]T’J˜]Õ^
+H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹ì¦:--9i,z-){ï&¹.#y¦+ù§"y¥b9æ¡Ý]]‹ËÝÝT’H‚ˆ™]\›‚ˆB‚ˆ\UÝ^[ØY
+^[ØYÎˆ\™Ù][˜ÛYTÚ]P[™\Ù\›˜[YNˆYJBˆÝ]\ÓY\ÜØYÙHH¹mìº)èù§¤Ý]]T’{ï#9nm¹hjùaaHÕùêæyà®yb*ùd#Kùå*9¢-ùd#H‚ˆB‚ˆš]˜]H[˜È\ÝTTÛÙQœ›ÛPÛ\›Ø\™
+È\™Ù]ˆÝ˜Y\™Ù]
+HÂˆÝX\™]\”^[ØYH\œÙTTÛÙT^[ØYœ›ÛT\ÝX›Ø\™
+
+H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹ì¦:--9i,z-){ï&¹bjº--9§où¬¨y§"ycëú+á¹b*ùæ¡9.£9îí9è yfï¹âaÈ‚ˆ™]\›‚ˆBˆÝX\™]^[ØYH\œÙSÝ]]T’J\”^[ØY
+H[ÙHÂˆÝ]\ÓY\ÜØYÙHH¹ì¦:--9i,z-){ï&¹.£9îí9è ya¡yk®y.#y¦+ù§"y¥b9æ¡Ý]]‹ËÝÝT’H‚ˆ™]\›‚ˆB‚ˆ\UÝ^[ØY
+^[ØYÎˆ\™Ù][˜ÛYTÚ]P[™\Ù\›˜[YNˆYJBˆÝ]\ÓY\ÜØYÙHH¹mìº)èù§¤9.£9îí9è {ï#9nm¹hjùaaHÕùêæyà®yb*ùd#Kùå*9¢-ùd#H‚ˆB‚ˆš]˜]H[˜È\UÝ^[ØY
+ˆÈ^[ØYˆ\œÙYÝ]]^[ØYˆÈ\™Ù]ˆÝ˜Y\™Ù]ˆ[˜ÛYTÚ]P[™\Ù\›˜[YNˆ›ÛÛˆ
+HÂˆÝÚ]Ú\™Ù]ÂˆØ\ÙH˜Ü™X]N‚ˆÜ™X]UÝÙXÜ™]H^[ØYœÙXÜ™]ˆYˆ[˜ÛYTÚ]P[™\Ù\›˜[YHÂˆYˆ]Ú]P[X\ÈH^[ØYœÚ]P[X\Ë\Ú]P[X\Ëš\Ñ[\HÂˆÜ™X]TÚ]\Õ^HÚ]P[X\ÂˆBˆYˆ]\Ù\›˜[YHH^[ØY\Ù\›˜[YK]\Ù\›˜[YKš\Ñ[\HÂˆÜ™X]U\Ù\›˜[YHH\Ù\›˜[YBˆBˆBˆØ\ÙH™Y]‚ˆY]ÝÙXÜ™]H^[ØYœÙXÜ™]ˆYˆ[˜ÛYTÚ]P[™\Ù\›˜[YHÂˆYˆ]Ú]P[X\ÈH^[ØYœÚ]P[X\Ë\Ú]P[X\Ëš\Ñ[\HÂˆY]Ú]\Õ^HÚ]P[X\ÂˆBˆYˆ]\Ù\›˜[YHH^[ØY\Ù\›˜[YK]\Ù\›˜[YKš\Ñ[\HÂˆY]\Ù\›˜[YHH\Ù\›˜[YBˆBˆBˆBˆB‚ˆš]˜]H[˜È\œÙSÝ]]T’JÈ˜]ÎˆÝš[™ÊHOˆ\œÙYÝ]]^[ØYÈÂˆ]š[[YYH˜]Ëš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆÝX\™]š[[YYš\Ñ[\H[ÙHÈ™]\›ˆš[BˆÝX\™]ÛÛ\Û™[ÈHT“ÛÛ\Û™[ÊÝš[™Îˆš[[YY
+H[ÙHÈ™]\›ˆš[BˆÝX\™ÛÛ\Û™[ËœØÚ[YOË›ÝÙ\˜Ø\ÙY
+
+HOH›Ý]]ˆ[ÙHÈ™]\›ˆš[BˆÝX\™ÛÛ\Û™[ËšÜÝË›ÝÙ\˜Ø\ÙY
+
+HOHÝˆ[ÙHÈ™]\›ˆš[B‚ˆ]]Y\žR][\ÈHÛÛ\Û™[Ëœ]Y\žR][\ÈÏÈ×Bˆ]ÙXÜ™]H]Y\žR][\Âˆ™š\œÝ
+Ú\™NˆÈ	›˜[YK˜Ø\ÙR[œÙ[œÚ]]™PÛÛ\\™JœÙXÜ™]ŠHOH›Ü™\™YØ[YHJOÂˆ˜[YOÂˆš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊHÏÈˆ‚ˆÝX\™\ÙXÜ™]š\Ñ[\K\Õ˜[YÝÙXÜ™]
+ÙXÜ™]
+H[ÙHÈ™]\›ˆš[B‚ˆ]\ÜÝY\‘œ›ÛT]Y\žHH]Y\žR][\Âˆ™š\œÝ
+Ú\™NˆÈ	›˜[YK˜Ø\ÙR[œÙ[œÚ]]™PÛÛ\\™Jš\ÜÝY\ˆŠHOH›Ü™\™YØ[YHJOÂˆ˜[YOÂˆš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊHÏÈˆ‚‚ˆ]XÛÙY]HÛÛ\Û™[Ëœ]œ™[[Ýš[™Ô\˜Ù[[˜ÛÙ[™ÈÏÈÛÛ\Û™[Ëœ]ˆ]X™[HXÛÙY]ˆš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ\˜XÝ\”Ù]
+Ú\˜XÝ\œÒ[Žˆ‹ÈŠJBˆš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊB‚ˆ˜\ˆX™[\ÜÝY\ˆHˆ‚ˆ˜\ˆX™[\Ù\›˜[YNˆÝš[™ÏÂˆYˆ]ÛÛÛˆHX™[™š\œÝ[™^
+ÙŽˆŽˆŠHÂˆX™[\ÜÝY\ˆHÝš[™ÊX™[Ë‹ÛÛÛ—JKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ]\Ù\›˜[YHHÝš[™ÊX™[ÛX™[š[™^
+Y\ŽˆÛÛÛŠK‹‹—JKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆX™[\Ù\›˜[YHH\Ù\›˜[YKš\Ñ[\HÈš[ˆ\Ù\›˜[YBˆH[ÙHÂˆX™[\Ù\›˜[YHHX™[š\Ñ[\HÈš[ˆX™[ˆB‚ˆ]\ÜÝY\ˆH\ÜÝY\‘œ›ÛT]Y\žKš\Ñ[\HÈX™[\ÜÝY\ˆˆ\ÜÝY\‘œ›ÛT]Y\žBˆ]Ú]P[X\ÈH™\ÛÛ™R[\ÜYÚ]P[X\Ê\ÜÝY\Žˆ\ÜÝY\‹\Ù\›˜[YNˆX™[\Ù\›˜[YJB‚ˆ™]\›ˆ\œÙYÝ]]^[ØY
+ˆÙXÜ™]ˆÙXÜ™]ˆÚ]P[X\ÎˆÚ]P[X\Ëˆ\Ù\›˜[YNˆX™[\Ù\›˜[YBˆ
+BˆB‚ˆš]˜]H[˜ÈÚ]P[X\Ñœ›ÛR\ÜÝY\ŠÈ\ÜÝY\ŽˆÝš[™ÊHOˆÝš[™ÏÈÂˆ]ÛÛ\XÝ\ÜÝY\ˆH\ÜÝY\‚ˆš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆœ™\XÚ[™ÓØØÝ\œ™[˜Ù\ÊÙŽˆˆ‹Ú]ˆˆŠBˆÝX\™XÛÛ\XÝ\ÜÝY\‹š\Ñ[\H[ÙHÈ™]\›ˆš[Bˆ]›Ü›X[^™YHÛXZ[•][Ë››Ü›X[^™JÛÛ\XÝ\ÜÝY\ŠBˆÝX\™[›Ü›X[^™Yš\Ñ[\H[ÙHÈ™]\›ˆš[BˆYˆ›Ü›X[^™Y˜ÛÛZ[œÊ‹ˆŠHÂˆ™]\›ˆ›Ü›X[^™YˆBˆ™]\›ˆ—
+›Ü›X[^™Y
+K˜ÛÛH‚ˆB‚ˆš]˜]H[˜È™\ÛÛ™R[\ÜYÚ]P[X\Ê\ÜÝY\ŽˆÝš[™Ë\Ù\›˜[YNˆÝš[™ÏÊHOˆÝš[™ÏÈÂˆYˆ]Ú]HHÚ]P[X\Ñœ›ÛR\ÜÝY\Š\ÜÝY\ŠK\Ú]Kš\Ñ[\HÂˆ™]\›ˆÚ]BˆBˆYˆ]Ú]HHÚ]P[X\Ñœ›ÛU\Ù\›˜[YJ\Ù\›˜[YJK\Ú]Kš\Ñ[\HÂˆ™]\›ˆÚ]BˆBˆ™]\›ˆš[ˆB‚ˆš]˜]H[˜ÈÚ]P[X\Ñœ›ÛU\Ù\›˜[YJÈ\Ù\›˜[YNˆÝš[™ÏÊHOˆÝš[™ÏÈÂˆ]˜]ÈH
+\Ù\›˜[YHÏÈˆŠKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆÝX\™\˜]Ëš\Ñ[\H[ÙHÈ™]\›ˆš[BˆYˆ]][™^H˜]Ë›\Ý[™^
+ÙŽˆŠK][™^˜]Ëš[™^
+™Y›Ü™Nˆ˜]Ë™[™[™^
+HÂˆ]ÛXZ[”\HÝš[™Ê˜]ÖÜ˜]Ëš[™^
+Y\Žˆ][™^
+K‹‹—JBˆ]›Ü›X[^™YHÛXZ[•][Ë››Ü›X[^™JÛXZ[”\
+Bˆ™]\›ˆ›Ü›X[^™Yš\Ñ[\HÈš[ˆ›Ü›X[^™YˆBˆ]›Ü›X[^™YHÛXZ[•][Ë››Ü›X[^™J˜]ÊBˆ™]\›ˆ›Ü›X[^™Yš\Ñ[\HÈš[ˆ›Ü›X[^™YˆB‚ˆš]˜]H[˜È\Õ˜[YÝÙXÜ™]
+ÈÙXÜ™]ˆÝš[™ÊHOˆ›ÛÛÂˆÝÙ[™\˜]Ü‹˜Ý\œ™[ÛÙJÙXÜ™]ˆÙXÜ™]]ˆ]J[YR[\˜[Ú[˜ÙLNMÌˆ
+JHOHš[ˆB‚ˆš]˜]H[˜È\œÙTTÛÙT^[ØYœ›ÛT\ÝX›Ø\™
+
+HOˆÝš[™ÏÈÂˆ]\ÝX›Ø\™H”Ô\ÝX›Ø\™™Ù[™\˜[ˆÝX\™][XYÙ\ÈH\ÝX›Ø\™œ™XYØš™XÝÊ›ÜÛ\ÜÙ\ÎˆÓ”Ò[XYÙKœÙ[—KÜ[ÛœÎˆš[
+H\ÏÈÓ”Ò[XYÙWH[ÙHÂˆ™]\›ˆš[ˆBˆ›Üˆ[XYÙH[ˆ[XYÙ\ÈÂˆÝX\™]ÙÒ[XYÙHHÙÒ[XYÙJœ›ÛNˆ[XYÙJH[ÙHÈÛÛ[YHBˆÝX\™]^[ØYH\œÙTTÛÙT^[ØY
+œ›ÛNˆÙÒ[XYÙJH[ÙHÈÛÛ[YHBˆ™]\›ˆ^[ØYˆBˆ™]\›ˆš[ˆB‚ˆš]˜]H[˜ÈÙÒ[XYÙJœ›ÛH[XYÙNˆ”Ò[XYÙJHOˆÑÒ[XYÙOÈÂˆ˜\ˆ™XÝHÑÔ™XÝ
+ÜšYÚ[Žˆž™\›ËÚ^™Nˆ[XYÙKœÚ^™JBˆYˆ]ÙÒ[XYÙHH[XYÙK˜ÙÒ[XYÙJ›Ü”›ÜÜÙY™XÝˆ	œ™XÝÛÛ^ˆš[[Îˆš[
+HÂˆ™]\›ˆÙÒ[XYÙBˆBˆÝX\™]Y™ˆH[XYÙKY™”™\™\Ù[][Û‹ˆ]™\H”Ðš]X\[XYÙT™\
+]NˆY™ŠBˆ[ÙHÂˆ™]\›ˆš[ˆBˆ™]\›ˆ™\˜ÙÒ[XYÙBˆB‚ˆš]˜]H[˜È\œÙTTÛÙT^[ØY
+œ›ÛHÙÒ[XYÙNˆÑÒ[XYÙJHOˆÝš[™ÏÈÂˆ]™\]Y\ÝH“‘]XÝ˜\˜ÛÙ\Ô™\]Y\Ý
+
+Bˆ™\]Y\ÝœÞ[X›ÛÙÚY\ÈHËœ\—Bˆ][™\ˆH“’[XYÙT™\]Y\Ý[™\ŠÙÒ[XYÙNˆÙÒ[XYÙKÜ[ÛœÎˆÎ—JBˆÝX\™
+žOÈ[™\‹œ\™›Ü›JÜ™\]Y\ÝJJHOHš[[ÙHÂˆ™]\›ˆš[ˆBˆ]ØœÙ\˜][ÛœÈH™\]Y\Ýœ™\Ý[ÈÏÈ×Bˆ›ÜˆØœÙ\˜][Ûˆ[ˆØœÙ\˜][ÛœÈÂˆ]^[ØYHØœÙ\˜][Û‹œ^[ØYÝš[™Õ˜[YOËš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊHÏÈˆ‚ˆYˆ\^[ØYš\Ñ[\HÂˆ™]\›ˆ^[ØYˆBˆBˆ™]\›ˆš[ˆB‚ˆš]˜]H[˜È\œÙQÛÛÙÛP]][XØ]Ü“ZYÜ˜][Û‘œ›ÛR[XYÙQš[JÈš[UT“ˆT“
+HOˆ\œÙYÛÛÙÛP]][XØ]Ü“ZYÜ˜][ÛÈÂˆÝX\™][XYÙHH”Ò[XYÙJÛÛ[ÓÙŽˆš[UT“
+Kˆ]ÙÒ[XYÙHHÙÒ[XYÙJœ›ÛNˆ[XYÙJKˆ]\”^[ØYH\œÙTTÛÙT^[ØY
+œ›ÛNˆÙÒ[XYÙJBˆ[ÙHÂˆ™]\›ˆš[ˆBˆ™]\›ˆ\œÙQÛÛÙÛP]][XØ]Ü“ZYÜ˜][Û•T’J\”^[ØY
+BˆB‚ˆš]˜]H[˜È™XYÛÛÙÛP]][XØ]Ü“ZYÜ˜][Û‘œ›ÛT\ÝX›Ø\™
+
+HOˆ\œÙYÛÛÙÛP]][XØ]Ü“ZYÜ˜][ÛÈÂˆYˆ]˜]Õ^H”Ô\ÝX›Ø\™™Ù[™\˜[œÝš[™Ê›Ü•\NˆœÝš[™ÊKˆ]^[ØYH\œÙQÛÛÙÛP]][XØ]Ü“ZYÜ˜][Û•T’J˜]Õ^
+BˆÂˆ™]\›ˆ^[ØYˆBˆÝX\™]\”^[ØYH\œÙTTÛÙT^[ØYœ›ÛT\ÝX›Ø\™
+
+H[ÙHÂˆ™]\›ˆš[ˆBˆ™]\›ˆ\œÙQÛÛÙÛP]][XØ]Ü“ZYÜ˜][Û•T’J\”^[ØY
+BˆB‚ˆš]˜]H[˜ÈY\™ÙYÛÛÙÛP]][XØ]Ü“ZYÜ˜][ÛœÊˆÈZYÜ˜][ÛœÎˆÔ\œÙYÛÛÙÛP]][XØ]Ü“ZYÜ˜][Û—Bˆ
+HOˆ\œÙYÛÛÙÛP]][XØ]Ü“ZYÜ˜][ÛˆÂˆ˜\ˆÙY[ŽˆÙ]Ýš[™ÏˆH×Bˆ˜\ˆ[šY\ÎˆÔ\œÙYÛÛÙÛP]][XØ]Ü‘[žWHH×Bˆ˜\ˆÚÚ\YÛÝ[Hˆ˜\ˆ˜]ÚÚ^™HH‚ˆ›ÜˆZYÜ˜][Ûˆ[ˆZYÜ˜][ÛœÈÂˆÚÚ\YÛÝ[
+ÏHZYÜ˜][Û‹œÚÚ\YÛÝ[ˆ˜]ÚÚ^™H
+ÏHX^
+ZYÜ˜][Û‹˜˜]ÚÚ^™KZYÜ˜][Û‹™[šY\Ëš\Ñ[\HÈˆJBˆ›Üˆ[žH[ˆZYÜ˜][Û‹™[šY\ÈÂˆ]Ù^HHÂˆ[žKœÚ]P[X\ÈÏÈˆ‹ˆ[žK\Ù\›˜[YHÏÈˆ‹ˆ[žKœÙXÜ™]ˆKš›Ú[™Y
+Ù\\˜]ÜŽˆŸŠBˆYˆÙY[‹š[œÙ\
+Ù^JKš[œÙ\YÂˆ[šY\Ë˜\[™
+[žJBˆBˆBˆB‚ˆ™]\›ˆ\œÙYÛÛÙÛP]][XØ]Ü“ZYÜ˜][ÛŠˆ[šY\Îˆ[šY\ËˆÚÚ\YÛÝ[ˆÚÚ\YÛÝ[ˆ˜]ÚÚ^™NˆX^
+˜]ÚÚ^™KZYÜ˜][ÛœË˜ÛÝ[
+Kˆ˜]Ú[™^ˆˆ
+BˆB‚ˆš]˜]H[˜È\œÙQÛÛÙÛP]][XØ]Ü“ZYÜ˜][Û•T’JÈ˜]ÎˆÝš[™ÊHOˆ\œÙYÛÛÙÛP]][XØ]Ü“ZYÜ˜][ÛÈÂˆ]š[[YYH˜]Ëš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆÝX\™]š[[YYš\Ñ[\K]ÛÛ\Û™[ÈHT“ÛÛ\Û™[ÊÝš[™Îˆš[[YY
+H[ÙHÂˆ™]\›ˆš[ˆBˆÝX\™ÛÛ\Û™[ËœØÚ[YOË›ÝÙ\˜Ø\ÙY
+
+HOH›Ý]][ZYÜ˜][Ûˆˆ[ÙHÈ™]\›ˆš[BˆÝX\™ÛÛ\Û™[ËšÜÝË›ÝÙ\˜Ø\ÙY
+
+HOH›Ù™›[™Hˆ[ÙHÈ™]\›ˆš[Bˆ]]PHÛÛ\Û™[Ëœ]Y\žR][\ÏÂˆ™š\œÝ
+Ú\™NˆÈ	›˜[YK˜Ø\ÙR[œÙ[œÚ]]™PÛÛ\\™J™]HŠHOH›Ü™\™YØ[YHJOÂˆ˜[YOÂˆš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊHÏÈˆ‚ˆÝX\™Y]Pš\Ñ[\H[ÙHÈ™]\›ˆš[BˆÝX\™]˜]Ñ]HH]J˜\ÙM[˜ÛÙYˆ›Ü›X[^™Y˜\ÙMÝš[™Ê]P
+JH[ÙHÂˆ™]\›ˆš[ˆBˆ™]\›ˆXÛÙQÛÛÙÛP]][XØ]Ü“ZYÜ˜][Û”^[ØY
+˜]Ñ]JBˆB‚ˆš]˜]H[˜È›Ü›X[^™Y˜\ÙMÝš[™ÊÈ˜]ÎˆÝš[™ÊHOˆÝš[™ÈÂˆ]›Ü›X[^™YH˜]Âˆœ™\XÚ[™ÓØØÝ\œ™[˜Ù\ÊÙŽˆ‹H‹Ú]ˆŠÈŠBˆœ™\XÚ[™ÓØØÝ\œ™[˜Ù\ÊÙŽˆ—È‹Ú]ˆ‹ÈŠBˆ]™[XZ[™\ˆH›Ü›X[^™Y˜ÛÝ[	HˆÝX\™™[XZ[™\ˆOH[ÙHÈ™]\›ˆ›Ü›X[^™YBˆ™]\›ˆ›Ü›X[^™Y
+ÈÝš[™Ê™\X][™ÎˆH‹ÛÝ[ˆH™[XZ[™\ŠBˆB‚ˆš]˜]H[˜ÈXÛÙQÛÛÙÛP]][XØ]Ü“ZYÜ˜][Û”^[ØY
+È]Nˆ]JHOˆ\œÙYÛÛÙÛP]][XØ]Ü“ZYÜ˜][ÛÈÂˆ˜\ˆ™XY\ˆH›ÝÔ™XY\Š]Nˆ]JBˆ˜\ˆ[šY\ÎˆÔ\œÙYÛÛÙÛP]][XØ]Ü‘[žWHH×Bˆ˜\ˆÚÚ\YÛÝ[Hˆ˜\ˆ˜]ÚÚ^™HHˆ˜\ˆ˜]Ú[™^H‚ˆÚ[H\™XY\‹š\Ð][™ÂˆÝX\™]YÈH™XY\‹œ™XY˜\š[
+
+H[ÙHÈœ™XZÈBˆ]šY[[X™\ˆH[
+YÈˆÊBˆ]Ú\™U\HH[
+YÈ	ˆÊB‚ˆÝÚ]Ú
+šY[[X™\‹Ú\™U\JHÂˆØ\ÙH
+KŠN‚ˆÝX\™]™\ÝYH™XY\‹œ™XY[™Ý[[Z]Y
+
+H[ÙHÈ™]\›ˆš[BˆYˆ][žHHXÛÙQÛÛÙÛP]][XØ]Ü“Ý\˜[Y]\œÊ™\ÝY
+HÂˆ[šY\Ë˜\[™
+[žJBˆH[ÙHÂˆÚÚ\YÛÝ[
+ÏHBˆBˆØ\ÙH
+Ë
+N‚ˆÝX\™]˜[YHH™XY\‹œ™XY˜\š[
+
+H[ÙHÈ™]\›ˆš[Bˆ˜]ÚÚ^™HH[
+˜[YJBˆØ\ÙH
+
+N‚ˆÝX\™]˜[YHH™XY\‹œ™XY˜\š[
+
+H[ÙHÈ™]\›ˆš[Bˆ˜]Ú[™^H[
+˜[YJBˆY˜][‚ˆÝX\™™XY\‹œÚÚ\šY[
+Ú\™U\NˆÚ\™U\JH[ÙHÈ™]\›ˆš[BˆBˆB‚ˆ™]\›ˆ\œÙYÛÛÙÛP]][XØ]Ü“ZYÜ˜][ÛŠˆ[šY\Îˆ[šY\ËˆÚÚ\YÛÝ[ˆÚÚ\YÛÝ[ˆ˜]ÚÚ^™Nˆ˜]ÚÚ^™Kˆ˜]Ú[™^ˆ˜]Ú[™^ˆ
+BˆB‚ˆš]˜]H[˜ÈXÛÙQÛÛÙÛP]][XØ]Ü“Ý\˜[Y]\œÊÈ]Nˆ]JHOˆ\œÙYÛÛÙÛP]][XØ]Ü‘[žOÈÂˆ˜\ˆ™XY\ˆH›ÝÔ™XY\Š]Nˆ]JBˆ˜\ˆÙXÜ™]]HH]J
+Bˆ˜\ˆ˜[YHHˆ‚ˆ˜\ˆ\ÜÝY\ˆHˆ‚ˆ˜\ˆ[ÛÜš]HHBˆ˜\ˆYÚ]ÈHBˆ˜\ˆ\HH‚‚ˆÚ[H\™XY\‹š\Ð][™ÂˆÝX\™]YÈH™XY\‹œ™XY˜\š[
+
+H[ÙHÈœ™XZÈBˆ]šY[[X™\ˆH[
+YÈˆÊBˆ]Ú\™U\HH[
+YÈ	ˆÊB‚ˆÝÚ]Ú
+šY[[X™\‹Ú\™U\JHÂˆØ\ÙH
+KŠN‚ˆÝX\™]˜[YHH™XY\‹œ™XY[™Ý[[Z]Y
+
+H[ÙHÈ™]\›ˆš[BˆÙXÜ™]]HH˜[YBˆØ\ÙH
+‹ŠN‚ˆÝX\™]˜[YHH™XY\‹œ™XY[™Ý[[Z]YÝš[™Ê
+H[ÙHÈ™]\›ˆš[Bˆ˜[YHH˜[YBˆØ\ÙH
+ËŠN‚ˆÝX\™]˜[YHH™XY\‹œ™XY[™Ý[[Z]YÝš[™Ê
+H[ÙHÈ™]\›ˆš[Bˆ\ÜÝY\ˆH˜[YBˆØ\ÙH
+
+N‚ˆÝX\™]˜[YHH™XY\‹œ™XY˜\š[
+
+H[ÙHÈ™]\›ˆš[Bˆ[ÛÜš]HH[
+˜[YJBˆØ\ÙH
+K
+N‚ˆÝX\™]˜[YHH™XY\‹œ™XY˜\š[
+
+H[ÙHÈ™]\›ˆš[BˆYÚ]ÈH[
+˜[YJBˆØ\ÙH
+‹
+N‚ˆÝX\™]˜[YHH™XY\‹œ™XY˜\š[
+
+H[ÙHÈ™]\›ˆš[Bˆ\HH[
+˜[YJBˆY˜][‚ˆÝX\™™XY\‹œÚÚ\šY[
+Ú\™U\NˆÚ\™U\JH[ÙHÈ™]\›ˆš[BˆBˆB‚ˆÝX\™\ÙXÜ™]]Kš\Ñ[\H[ÙHÈ™]\›ˆš[BˆÝX\™\HOH‹[ÛÜš]HOHKYÚ]ÈOHH[ÙHÈ™]\›ˆš[B‚ˆ]X™[H\œÙR[\ÜYÝX™[
+˜[YJBˆ]Y™™XÝ]™R\ÜÝY\ˆH\ÜÝY\‹š[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊKš\Ñ[\HÈX™[š\ÜÝY\ˆˆ\ÜÝY\‚ˆ]\Ù\›˜[YHH[X™[\Ù\›˜[YKš\Ñ[\HÈX™[\Ù\›˜[YHˆ˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ]Ú]P[X\ÈH™\ÛÛ™R[\ÜYÚ]P[X\Ê\ÜÝY\ŽˆY™™XÝ]™R\ÜÝY\‹\Ù\›˜[YNˆ\Ù\›˜[YJBˆ]ÙXÜ™]H˜\ÙLÌ‘[˜ÛÙYÝš[™ÊÙXÜ™]]JBˆÝX\™]Ú]P[X\Ë\ÙXÜ™]š\Ñ[\K\Õ˜[YÝÙXÜ™]
+ÙXÜ™]
+H[ÙHÂˆ™]\›ˆš[ˆB‚ˆ™]\›ˆ\œÙYÛÛÙÛP]][XØ]Ü‘[žJˆÙXÜ™]ˆÙXÜ™]ˆÚ]P[X\ÎˆÚ]P[X\Ëˆ\Ù\›˜[YNˆ\Ù\›˜[YKš\Ñ[\HÈš[ˆ\Ù\›˜[YBˆ
+BˆB‚ˆš]˜]H[˜È\œÙR[\ÜYÝX™[
+È˜]ÎˆÝš[™ÊHOˆ
+\ÜÝY\ŽˆÝš[™Ë\Ù\›˜[YNˆÝš[™ÊHÂˆ]^H˜]Ëš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆÝX\™]^š\Ñ[\H[ÙHÈ™]\›ˆ
+ˆ‹ˆŠHBˆÝX\™]ÛÛÛ’[™^H^™š\œÝ[™^
+ÙŽˆŽˆŠH[ÙHÂˆ™]\›ˆ
+ˆ‹^
+BˆBˆ]\ÜÝY\ˆHÝš[™Ê^Ë‹ÛÛÛ’[™^JKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ]\Ù\›˜[YHHÝš[™Ê^Ý^š[™^
+Y\ŽˆÛÛÛ’[™^
+K‹‹—JKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ™]\›ˆ
+\ÜÝY\‹\Ù\›˜[YJBˆB‚ˆš]˜]H[˜È˜\ÙLÌ‘[˜ÛÙYÝš[™ÊÈ]Nˆ]JHOˆÝš[™ÈÂˆ][X™]H\œ˜^JPÑQ‘ÒR’ÓS“ÔT”ÕU•ÖVŒŒÍMÈŠBˆ˜\ˆÝ]]Hˆ‚ˆ˜\ˆY™™\ŽˆR[MˆHˆ˜\ˆš]Ò[Y™™\ˆH‚ˆ›Üˆž]H[ˆ]HÂˆY™™\ˆH
+Y™™\ˆ
+HR[MŠž]JBˆš]Ò[Y™™\ˆ
+ÏH‚ˆÚ[Hš]Ò[Y™™\ˆHHÂˆ][™^H[
+
+Y™™\ˆˆR[MŠš]Ò[Y™™\ˆHJJH	ˆQŠBˆÝ]]˜\[™
+[X™]Ú[™^JBˆš]Ò[Y™™\ˆOHBˆYˆš]Ò[Y™™\ˆOHÂˆY™™\ˆHˆH[ÙHÂˆY™™\ˆ	H
+R[MŠJHR[MŠš]Ò[Y™™\ŠJHHBˆBˆBˆB‚ˆYˆš]Ò[Y™™\ˆˆÂˆ][™^H[
+
+Y™™\ˆR[MŠHHš]Ò[Y™™\ŠJH	ˆQŠBˆÝ]]˜\[™
+[X™]Ú[™^JBˆB‚ˆ™]\›ˆÝ]]ˆB‚ˆš]˜]HÝXÝ›ÝÔ™XY\ˆÂˆ]]Nˆ]Bˆ˜\ˆÙ™œÙ]ˆ[H‚ˆ˜\ˆ\Ð][™ˆ›ÛÛÂˆÙ™œÙ]H]K˜ÛÝ[ˆB‚ˆ]]][™È[˜È™XY˜\š[
+
+HOˆR[ÈÂˆ˜\ˆ™\Ý[ˆR[Hˆ˜\ˆÚYˆR[H‚ˆÚ[HÙ™œÙ]]K˜ÛÝ[	‰ˆÚYHŒÈÂˆ]ž]HH]VÛÙ™œÙ]BˆÙ™œÙ]
+ÏHBˆ™\Ý[HR[
+ž]H	ˆÑŠHÚYˆYˆ
+ž]H	ˆ
+HOHÂˆ™]\›ˆ™\Ý[ˆBˆÚY
+ÏHÂˆB‚ˆ™]\›ˆš[ˆB‚ˆ]]][™È[˜È™XY[™Ý[[Z]Y
+
+HOˆ]OÈÂˆÝX\™][™ÝH™XY˜\š[
+
+H[ÙHÈ™]\›ˆš[Bˆ]ÛÝ[H[
+[™Ý
+BˆÝX\™ÛÝ[HÙ™œÙ]
+ÈÛÝ[H]K˜ÛÝ[[ÙHÈ™]\›ˆš[Bˆ]ÛXÙHH]KœÝX™]J[ŽˆÙ™œÙ]‹Ù™œÙ]
+ÈÛÝ[
+BˆÙ™œÙ]
+ÏHÛÝ[ˆ™]\›ˆÛXÙBˆB‚ˆ]]][™È[˜È™XY[™Ý[[Z]YÝš[™Ê
+HOˆÝš[™ÏÈÂˆÝX\™]˜[YHH™XY[™Ý[[Z]Y
+
+H[ÙHÈ™]\›ˆš[Bˆ™]\›ˆÝš[™Ê]Nˆ˜[YK[˜ÛÙ[™Îˆ]Ž
+OÂˆš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆB‚ˆ]]][™È[˜ÈÚÚ\šY[
+Ú\™U\Nˆ[
+HOˆ›ÛÛÂˆÝÚ]ÚÚ\™U\HÂˆØ\ÙH‚ˆ™]\›ˆ™XY˜\š[
+
+HOHš[ˆØ\ÙHN‚ˆÝX\™Ù™œÙ]
+ÈH]K˜ÛÝ[[ÙHÈ™]\›ˆ˜[ÙHBˆÙ™œÙ]
+ÏHˆ™]\›ˆYBˆØ\ÙHŽ‚ˆ™]\›ˆ™XY[™Ý[[Z]Y
+
+HOHš[ˆØ\ÙHN‚ˆÝX\™Ù™œÙ]
+ÈH]K˜ÛÝ[[ÙHÈ™]\›ˆ˜[ÙHBˆÙ™œÙ]
+ÏHˆ™]\›ˆYBˆY˜][‚ˆ™]\›ˆ˜[ÙBˆBˆBˆB‚ˆš]˜]H[˜ÈX]ÚY[\ÜYÝXØÛÝ[[™^
+ˆ[ˆXØÛÝ[ÎˆÔ\ÜÝÛÜ™XØÛÝ[KˆÚ]P[X\ÎˆÝš[™Ëˆ\Ù\›˜[YNˆÝš[™ËˆÙXÜ™]ˆÝš[™Âˆ
+HOˆ[ÈÂˆ][žTÚ]HHÛXZ[•][Ë››Ü›X[^™JÚ]P[X\ÊBˆ][žPØ[›ÛšXØ[Ú]HHÛXZ[•][Ë™]\ÓÛ™J›ÜŽˆ[žTÚ]JBˆ]›Ü›X[^™Y\Ù\›˜[YHH\Ù\›˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ]›Ü›X[^™YÙXÜ™]HÙXÜ™]š[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊB‚ˆ˜\ˆ™\ÝX]Úˆ
+[™^ˆ[ØÛÜ™Nˆ[
+OÂ‚ˆ›Üˆ
+[™^XØÛÝ[
+H[ˆXØÛÝ[Ë™[[Y\˜]Y
+
+HÂˆËÈ\›X[™[Y[]HÛXœÝÛ™\È]\Ý›Ý™H™]š]™YžH™KZ[\Ü‚ˆYˆXØÛÝ[š\Ô\›X[™[Q[]YÂˆÛÛ[YBˆBˆ]XØÛÝ[ÙXÜ™]HXØÛÝ[ÝÙXÜ™]š[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆÝX\™[›Ü›X[^™YÙXÜ™]š\Ñ[\KXØÛÝ[ÙXÜ™]OH›Ü›X[^™YÙXÜ™][ÙHÂˆÛÛ[YBˆB‚ˆ]XØÛÝ[Ú]\ÈHÙ]
+XØÛÝ[œÚ]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JK™š[\ˆÈIš\Ñ[\HJBˆ]XØÛÝ[Ø[›ÛšXØ[Ú]\ÈHÙ]
+XØÛÝ[Ú]\Ë›X\
+ÛXZ[•][Ë™]\ÓÛ™JJK[š[ÛŠØXØÛÝ[˜Ø[›ÛšXØ[Ú]WJBˆ]\Ù\›˜[YSX]Ú\ÈH›Ü›X[^™Y\Ù\›˜[YKš\Ñ[\BˆÈXØÛÝ[\Ù\›˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊKš\Ñ[\Bˆˆ
+ˆXØÛÝ[\Ù\›˜[YKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊHOH›Ü›X[^™Y\Ù\›˜[YHˆXØÛÝ[\Ù\›˜[YP]Ü™X]Kš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊHOH›Ü›X[^™Y\Ù\›˜[YBˆ
+Bˆ]Ú]SÝ™\›\ÈHXØÛÝ[Ú]\Ë˜ÛÛZ[œÊ[žTÚ]JBˆ]Ø[›ÛšXØ[X]Ú\ÈHY[žPØ[›ÛšXØ[Ú]Kš\Ñ[\H	‰ˆXØÛÝ[Ø[›ÛšXØ[Ú]\Ë˜ÛÛZ[œÊ[žPØ[›ÛšXØ[Ú]JB‚ˆ]ØÛÜ™Nˆ[ˆYˆ\Ù\›˜[YSX]Ú\È	‰ˆÚ]SÝ™\›\ÈÂˆØÛÜ™HHXØÛÝ[š\Ñ[]YÈÍHˆˆH[ÙHYˆ\Ù\›˜[YSX]Ú\È	‰ˆØ[›ÛšXØ[X]Ú\ÈÂˆØÛÜ™HHXØÛÝ[š\Ñ[]YÈHˆÌˆH[ÙHÂˆÛÛ[YBˆB‚ˆYˆ™\ÝX]ÚOHš[ØÛÜ™Hˆ™\ÝX]ÚKœØÛÜ™HÂˆ™\ÝX]ÚH
+[™^ØÛÜ™JBˆBˆB‚ˆ™]\›ˆ™\ÝX]ÚËš[™^ˆB‚ˆš]˜]H[˜È\R[\ÜYÝ[žJˆÈ[žNˆ\œÙYÛÛÙÛP]][XØ]Ü‘[žKˆÚ]P[X\ÎˆÝš[™ËˆÈXØÛÝ[ˆ\ÜÝÛÜ™XØÛÝ[ˆ›ÝÓ\Îˆ[ˆ\™Ù]›Û\’YˆURQÂˆ
+HOˆ\ÜÝÛÜ™XØÛÝ[ÂˆËÈY™[œÙH[ˆ\ˆ™]™\ˆÛX\ˆ\›X[™[Y[]HÛXœÝÛ™\ÈšXH[\Ü‚ˆYˆXØÛÝ[š\Ô\›X[™[Q[]YÂˆ™]\›ˆXØÛÝ[ˆBˆ˜\ˆ\]YHXØÛÝ[ˆ˜\ˆÚ[™ÙYH˜[ÙB‚ˆ]Y\™ÙYÚ]\ÈH\œ˜^JˆÙ]
+
+\]YœÚ]\È
+ÈÜÚ]P[X\×JK›X\
+ÛXZ[•][Ë››Ü›X[^™JK™š[\ˆÈIš\Ñ[\HJBˆ
+KœÛÜY
+
+BˆYˆY\™ÙYÚ]\ÈOH\]YœÚ]\ÈÂˆ\]YœÚ]\ÈHY\™ÙYÚ]\ÂˆÚ[™ÙYHYBˆB‚ˆYˆ]\Ù\›˜[YHH[žK\Ù\›˜[YK]\Ù\›˜[YKš\Ñ[\K\Ù\›˜[YHOH\]Y\Ù\›˜[YHÂˆ\]Y\Ù\›˜[YHH\Ù\›˜[YBˆ\]Y\Ù\›˜[YU\]Y]\ÈH›ÝÓ\Âˆ\]Y\Ù\›˜[YU\]Y]šXÙS˜[YHHÝ\œ™[]šXÙS˜[YJ
+BˆÚ[™ÙYHYBˆB‚ˆYˆY[žKœÙXÜ™]š\Ñ[\K[žKœÙXÜ™]OH\]YÝÙXÜ™]Âˆ\]YÝÙXÜ™]H[žKœÙXÜ™]ˆ\]YÝ\]Y]\ÈH›ÝÓ\Âˆ\]YÝ\]Y]šXÙS˜[YHHÝ\œ™[]šXÙS˜[YJ
+BˆÚ[™ÙYHYBˆB‚ˆËÈÛÙY[]YXØÛÝ[ÈX^H™H™]š]™YÈ\›X[™[ÛXœÝÛ™\È\™H›ØÚÙYX›Ý™K‚ˆYˆ\]Yš\Ñ[]YÂˆ\]Yš\Ñ[]YH˜[ÙBˆ\]Y™[]Y]\ÈHš[ˆ\]Y™[]Y]šXÙS˜[YHHˆ‚ˆÚ[™ÙYHYBˆB‚ˆYˆ]\™Ù]›Û\’YÂˆ]™^›Û\’YÈH›Ü›X[^™Q›Û\’YÊ\]Yœ™\ÛÛ™Y›Û\’YÈ
+ÈÝ\™Ù]›Û\’YJBˆYˆ™^›Û\’YÈOH\]Yœ™\ÛÛ™Y›Û\’YÈÂˆ\]YœÙ]™\ÛÛ™Y›Û\’YÊ™^›Û\’YÊBˆÚ[™ÙYHYBˆBˆB‚ˆYˆÚ[™ÙYÂˆ\]YÝXÚ\]Y]
+›ÝÓ\Ë]šXÙS˜[YNˆÝ\œ™[]šXÙS˜[YJ
+JBˆB‚ˆ™]\›ˆ\]YˆB‚ˆš]˜]H[˜ÈÛÛÙÛP]][XØ]Ü’[\ÜÝY™š^
+ˆ[\ÜYÛÝ[ˆ[ˆÚÚ\YÛÝ[ˆ[ˆ[˜Ú[™ÙYÛÝ[ˆ[ˆ˜]ÚÚ^™Nˆ[ˆ˜]Ú[™^ˆ[ˆ
+HOˆÝš[™ÈÂˆ˜\ˆ\ÎˆÔÝš[™×HHÈº)èù§¤
+[\ÜYÛÝ[
+H9§hH—BˆYˆÚÚ\YÛÝ[ˆÂˆ\Ë˜\[™
+º-ìú/áÈ
+ÚÚ\YÛÝ[
+H9§hHŠBˆBˆYˆ[˜Ú[™ÙYÛÝ[ˆÂˆ\Ë˜\[™
+¹§*¹cæ9c%ˆ
+[˜Ú[™ÙYÛÝ[
+H9§hHŠBˆBˆYˆ˜]ÚÚ^™HˆHÂˆ\Ë˜\[™
+¹odùbcy¢ny«(H
+˜]Ú[™^
+ÈJK×
+˜]ÚÚ^™JHŠBˆBˆ™]\›ˆ»ï#ˆ
+È\Ëš›Ú[™Y
+Ù\\˜]ÜŽˆ»ï#ŠBˆB‚ˆš]˜]H[˜È\œÙTÚ]\ÊÈ˜]ÎˆÝš[™ÊHOˆÔÝš[™×HÂˆ]›Ü›X[^™Y˜]ÈH˜]Ëœ™\XÚ[™ÓØØÝ\œ™[˜Ù\ÊÙŽˆŽÈ‹Ú]ˆ—ˆŠBˆœ™\XÚ[™ÓØØÝ\œ™[˜Ù\ÊÙŽˆ‹‹Ú]ˆ—ˆŠBˆ]˜[Y\ÈH›Ü›X[^™Y˜]Âˆ˜ÛÛ\Û™[ÊÙ\\˜]YžNˆ›™]Û[™\ÊBˆ›X\È	š[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊHBˆ›X\
+ÛXZ[•][Ë››Ü›X[^™JBˆ™š[\ˆÈIš\Ñ[\HBˆ™]\›ˆ\œ˜^JÙ]
+˜[Y\ÊJKœÛÜY
+
+BˆB‚ˆš]˜]H[˜Èš\œÝÚ]P[X\Êœ›ÛH˜]ÎˆÝš[™ÊHOˆÝš[™ÈÂˆ]›Ü›X[^™Y˜]ÈH˜]Ëœ™\XÚ[™ÓØØÝ\œ™[˜Ù\ÊÙŽˆŽÈ‹Ú]ˆ—ˆŠBˆœ™\XÚ[™ÓØØÝ\œ™[˜Ù\ÊÙŽˆ‹‹Ú]ˆ—ˆŠBˆ][™\ÈH›Ü›X[^™Y˜]Ë˜ÛÛ\Û™[ÊÙ\\˜]YžNˆ›™]Û[™\ÊBˆ›Üˆ[™H[ˆ[™\ÈÂˆ]˜[YHHÛXZ[•][Ë››Ü›X[^™J[™JBˆYˆ]˜[YKš\Ñ[\HÂˆ™]\›ˆ˜[YBˆBˆBˆ™]\›ˆˆ‚ˆB‚ˆš]˜]H[˜È[[Ð[X\ÔÚ]\Ê›ÜˆÚ]NˆÝš[™ÊHOˆÔÝš[™×HÂˆ]›Ü›X[^™YHÛXZ[•][Ë››Ü›X[^™JÚ]JBˆ][X\Ù\ÎˆÔÝš[™×BˆÝÚ]Ú›Ü›X[^™YÂˆØ\ÙHšXÛÝY˜ÛÛH‹˜\K˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈ˜\K˜ÛÛH‹˜\K˜ÛÛK˜Ûˆ‹šXÛÝY˜ÛÛH‹šXÛÝY˜ÛÛK˜Ûˆ—BˆØ\ÙHœ\K˜ÛÛH‹Þœ\K˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈœ\K˜ÛÛH‹Þœ\K˜ÛÛH—BˆØ\ÙH˜˜ZYK˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈ˜˜ZYK˜ÛÛH‹œ\ÜÜÜ˜˜ZYK˜ÛÛH‹œ[‹˜˜ZYK˜ÛÛH—BˆØ\ÙHœÚ[˜K˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈœÚ[˜K˜ÛÛH‹›XZ[œÚ[˜K˜ÛÛH‹ÙZX›Ë˜ÛÛH—BˆØ\ÙH™Ú]X‹˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈ™Ú]X‹˜ÛÛH‹™Ú\Ý™Ú]X‹˜ÛÛH—BˆØ\ÙH™Ú]X‹˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈ™Ú]X‹˜ÛÛH‹˜X›Ý]™Ú]X‹˜ÛÛH—BˆØ\ÙH™ÛÛÙÛK˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈ™ÛÛÙÛK˜ÛÛH‹˜XØÛÝ[Ë™ÛÛÙÛK˜ÛÛH—BˆØ\ÙHž[Ý]X™K˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈž[Ý]X™K˜ÛÛH‹œÝY[Ëž[Ý]X™K˜ÛÛH—BˆØ\ÙHž˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈž˜ÛÛH‹Ú]\‹˜ÛÛH—BˆØ\ÙH™˜XÙX›ÛÚË˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈ™˜XÙX›ÛÚË˜ÛÛH‹›Y\ÜÙ[™Ù\‹˜ÛÛH—BˆØ\ÙH˜[X^›Û‹˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈ˜[X^›Û‹˜ÛÛH‹œÛZ[K˜[X^›Û‹˜ÛÛH—BˆØ\ÙHœ^\[˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈœ^\[˜ÛÛH‹ÝÝËœ^\[˜ÛÛH—BˆØ\ÙH›ZXÜ›ÜÛÙ˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈ›ZXÜ›ÜÛÙ˜ÛÛH‹›]™K˜ÛÛH‹›ÙÚ[‹›ZXÜ›ÜÛÙÛ›[™K˜ÛÛH—BˆØ\ÙH›Ù™šXÙK˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈ›Ù™šXÙK˜ÛÛH‹›Ý]ÛÚË›Ù™šXÙK˜ÛÛH—BˆØ\ÙH›™]›^˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈ›™]›^˜ÛÛH‹š[›™]›^˜ÛÛH—BˆØ\ÙHœÜÝYžK˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈœÜÝYžK˜ÛÛH‹›Ü[‹œÜÝYžK˜ÛÛH—BˆØ\ÙH›[šÙY[‹˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈ›[šÙY[‹˜ÛÛH‹ÝÝË›[šÙY[‹˜ÛÛH—BˆØ\ÙH™›Ü›Þ˜ÛÛHŽ‚ˆ[X\Ù\ÈHÈ™›Ü›Þ˜ÛÛH‹ÝÝË™›Ü›Þ˜ÛÛH—BˆY˜][‚ˆ[X\Ù\ÈHÛ›Ü›X[^™YBˆBˆ™]\›ˆ\œ˜^JÙ]
+[X\Ù\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JK™š[\ˆÈIš\Ñ[\HJJKœÛÜY
+
+BˆB‚ˆš]˜]H[˜È[[ÕÝÙXÜ™]
+›Üˆ[™^ˆ[
+HOˆÝš[™ÈÂˆ]ÙYYÈHÂˆ’”ÕÖLÑRÌÔ‹ˆ‘ÑV‘Ó•‘ÖLÕSÒ”QÑV‘Ó•‘ÖLÕSÒ”H‹ˆ’Ô•QÔÍS‘–”ÐVRH‹ˆ“Q”‘ÑÖ‘“V•ÔL“È‹ˆ“Ó”ÕÑÍ“ÔOOOOOOH‹ˆ“”ÕÖLÑPŒÕÍSTOOOOOOH‹ˆ’VÍŒÑ“ÒOOOOOOH‹ˆ’Ô”ÖÍQÓ‘–ÓÒQˆ‹ˆ“V–Í–U“ÒOOOOOOH‹ˆ“Œ•ÍQ“ÒVOOOOH‹ˆBˆ™]\›ˆÙYYÖÚ[™^	HÙYYË˜ÛÝ[BˆB‚ˆš]˜]H[˜È[[Ô™XÛÝ™\žPÛÙ\Ê›Üˆ[™^ˆ[
+HOˆÝš[™ÈÂˆ]™Yš^HÝš[™Ê›Ü›X]ˆ‰L™‹[™^
+Bˆ™]\›ˆˆˆ‚ˆ×
+™Yš^
+KPLPŒ‹PÌÑˆ×
+™Yš^
+KQMQ‹QÍÒˆ×
+™Yš^
+KRŽRÌSSL‚ˆ×
+™Yš^
+KSŒÔTMT‚ˆ×
+™Yš^
+KTÍÕUNUŒˆˆˆ‚ˆB‚ˆš]˜]H[˜È[Y\Ý[\›Ü‘š[J
+HOˆÝš[™ÈÂˆ]›Ü›X]\ˆH]Q›Ü›X]\Š
+Bˆ›Ü›X]\‹™]Q›Ü›X]Hž^^^SSYR[\ÜÈ‚ˆ™]\›ˆ›Ü›X]\‹œÝš[™Êœ›ÛNˆ]J
+JBˆB‚ˆš]˜]H[˜È]Q\™XÝÜžUT“
+
+HOˆT“Âˆ\ÜÔÚ\™Y]K™]Q\™XÝÜžUT“
+
+BˆB‚ˆš]˜]H[˜ÈØ]™SØØ[Þ[˜ÔØY™]TÛ˜\ÚÝ
+È^[ØYˆÞ[˜Ð[™T^[ØY™X\ÛÛŽˆÝš[™ÊH›ÝÜÈÂˆ]\™XÝÜžHH]Q\™XÝÜžUT“
+
+K˜\[™[™Ô]ÛÛ\Û™[
+œÞ[˜Ë\ØY™]K\Û˜\ÚÝÈ‹\Ñ\™XÝÜžNˆYJBˆžHš[SX[˜YÙ\‹™Y˜][˜Ü™X]Q\™XÝÜžJ]ˆ\™XÝÜžKÚ][\›YYX]Q\™XÝÜšY\ÎˆYJBˆ]ØY™T™X\ÛÛˆH™X\ÛÛ‚ˆœ™\XÚ[™ÓØØÝ\œ™[˜Ù\ÊÙŽˆ‹È‹Ú]ˆ‹HŠBˆœ™\XÚ[™ÓØØÝ\œ™[˜Ù\ÊÙŽˆ—‹Ú]ˆ‹HŠBˆš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ]š[S˜[YHHœ\ÜË\Þ[˜Ë\ØY™]KW
+[Y\Ý[\›Ü‘š[J
+JKW
+ØY™T™X\ÛÛ‹š\Ñ[\HÈ˜˜XÚÝ\ˆˆØY™T™X\ÛÛŠKW
+URQ
+
+K]ZYÝš[™ÊKšœÛÛˆ‚ˆ]š[UT“H\™XÝÜžK˜\[™[™Ô]ÛÛ\Û™[
+š[S˜[YK\Ñ\™XÝÜžNˆ˜[ÙJBˆ]]HHžH[˜ÛÙQ[˜Üž\YÞ[˜Ð[™J^[ØYˆ^[ØY
+BˆžH]KÜš]JÎˆš[UT“Ü[ÛœÎˆË˜]ÛZX×JB‚ˆ]š[\ÈHžHš[SX[˜YÙ\‹™Y˜][˜ÛÛ[ÓÙ‘\™XÝÜžJˆ]ˆ\™XÝÜžKˆ[˜ÛY[™Ô›Ü\Y\Ñ›Ü’Ù^\ÎˆË˜Ü™X][Û‘]RÙ^WKˆÜ[ÛœÎˆËœÚÚ\ÒY[‘š[\×Bˆ
+Bˆ]ÛÜYš[\ÈHš[\ËœÛÜYÈËšÈ[‚ˆ]Y]HH
+žOÈËœ™\ÛÝ\˜ÙU˜[Y\Ê›Ü’Ù^\ÎˆË˜Ü™X][Û‘]RÙ^WJK˜Ü™X][Û‘]JHÏÈ™\Ý[\Ýˆ]šYÚ]HH
+žOÈšËœ™\ÛÝ\˜ÙU˜[Y\Ê›Ü’Ù^\ÎˆË˜Ü™X][Û‘]RÙ^WJK˜Ü™X][Û‘]JHÏÈ™\Ý[\Ýˆ™]\›ˆY]HˆšYÚ]BˆBˆ›ÜˆÝ[UT“[ˆÛÜYš[\Ë™›Üš\œÝ
+JHÂˆžOÈš[SX[˜YÙ\‹™Y˜][œ™[[Ý™R][J]ˆÝ[UT“
+BˆBˆB‚ˆš]˜]H[˜È]Qš[UT“
+
+HOˆT“Âˆ]Q\™XÝÜžUT“
+
+K˜\[™[™Ô]ÛÛ\Û™[
+˜XØÛÝ[ËšœÛÛˆ‹\Ñ\™XÝÜžNˆ˜[ÙJBˆB‚ˆš]˜]H[˜È\ÜÚÙ^\Ñš[UT“
+
+HOˆT“Âˆ]Q\™XÝÜžUT“
+
+K˜\[™[™Ô]ÛÛ\Û™[
+œ\ÜÚÙ^\ËšœÛÛˆ‹\Ñ\™XÝÜžNˆ˜[ÙJBˆB‚ˆš]˜]H[˜È›ÝÓ\Ê
+HOˆ[Âˆ[
+]J
+K[YR[\˜[Ú[˜ÙLNMÌ
+ˆL
+BˆB‚ˆš]˜]H[˜È\œÚ\ÝYÜ™\ÛØÚÊÙ^NˆÝš[™Ë˜[˜XÚÎˆ[
+HOˆ[ÂˆYˆ]ÝÜ™YH\Ù\‘Y˜][ËœÝ[™\™›Øš™XÝ
+›Ü’Ù^NˆÙ^JH\ÏÈ”Ó[X™\‹ˆÝÜ™Yš[˜[YHˆˆÂˆ™]\›ˆÝÜ™Yš[˜[YBˆBˆ]™\ÛÛ™YHX^
+˜[˜XÚË
+Bˆ\Ù\‘Y˜][ËœÝ[™\™œÙ]
+™\ÛÛ™Y›Ü’Ù^NˆÙ^JBˆ™]\›ˆ™\ÛÛ™YˆB‚ˆš]˜]H[˜ÈX\šÐ[™YÝ[\“Ü™\Ú[™ÙY
+][Y\Ý[\ˆ[ÈHš[
+HÂˆ\Ù\‘Y˜][ËœÝ[™\™œÙ]
+[Y\Ý[\ÏÈ›ÝÓ\Ê
+K›Ü’Ù^NˆÙ^\Ë˜[™YÝ[\“Ü™\•\]Y]\ÊBˆB‚ˆš]˜]H[˜ÈX\šÑ›Û\“Ü™\Ú[™ÙY
+][Y\Ý[\ˆ[ÈHš[
+HÂˆ\Ù\‘Y˜][ËœÝ[™\™œÙ]
+[Y\Ý[\ÏÈ›ÝÓ\Ê
+K›Ü’Ù^NˆÙ^\Ë™›Û\“Ü™\•\]Y]\ÊBˆB‚ˆš]˜]H[˜ÈÝ\œ™[]šXÙS˜[YJ
+HOˆÝš[™ÈÂˆ\ÜÔÞ[˜ÔÛXÞK››Ü›X[^™Q]šXÙS˜[YJ]šXÙS˜[YJBˆB‚ˆš]˜]H[˜ÈÞ[˜Ñ]šXÙRY
+
+HOˆÝš[™ÈÂˆ]Y˜][ÈH\Ù\‘Y˜][ËœÝ[™\™ˆ]^\Ý[™ÈHY˜][ËœÝš[™Ê›Ü’Ù^NˆÙ^\ËœÞ[˜Ñ]šXÙRY
+OÂˆš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ›ÝÙ\˜Ø\ÙY
+
+HÏÈˆ‚ˆYˆY^\Ý[™Ëš\Ñ[\HÂˆ™]\›ˆ^\Ý[™ÂˆBˆ]Ù[™\˜]YHURQ
+
+K]ZYÝš[™Ë›ÝÙ\˜Ø\ÙY
+
+BˆY˜][ËœÙ]
+Ù[™\˜]Y›Ü’Ù^NˆÙ^\ËœÞ[˜Ñ]šXÙRY
+Bˆ™]\›ˆÙ[™\˜]YˆB‚ˆš]˜]H[˜ÈÚÝÕØ\Ý
+ÈY\ÜØYÙNˆÝš[™ËÝ[NˆØ\ÝÝ[HHœÝXØÙ\ÜÊHÂˆØ\Ý\ÛZ\ÜÕÛÜšÒ][OË˜Ø[˜Ù[
+
+BˆØ\ÝY\ÜØYÙHHY\ÜØYÙBˆØ\ÝÝ[HHÝ[Bˆ\ÕØ\Ýš\ÚX›HHYB‚ˆ]\ÛZ\ÜÕÛÜšÒ][HH\Ü]ÚÛÜšÒ][HÈÝÙXZÈÙ[—H[‚ˆÝX\™]Ù[ˆ[ÙHÈ™]\›ˆBˆ\ÚÈÈXZ[XÝÜˆ[‚ˆÙ[‹š\ÕØ\Ýš\ÚX›HH˜[ÙBˆBˆBˆØ\Ý\ÛZ\ÜÕÛÜšÒ][HH\ÛZ\ÜÕÛÜšÒ][Bˆ\Ü]Ú]Y]YK›XZ[‹˜\Þ[˜ÐY\ŠˆXY[™Nˆ››ÝÊ
+H
+ÈZUØ\Ý\˜][Û”ÙXÛÛ™Ëˆ^XÝ]Nˆ\ÛZ\ÜÕÛÜšÒ][Bˆ
+BˆB‚ˆš]˜]H[˜ÈÙ]Ý]\ÓY\ÜØYÙJÈY\ÜØYÙNˆÝš[™Ë[ÝÜÕ[™Ó[Ý™Nˆ›ÛÛH˜[ÙJHÂˆ™^Ý]\Ð[ÝÜÕ[™Ó[Ý™HH[ÝÜÕ[™Ó[Ý™BˆÝ]\ÓY\ÜØYÙHHY\ÜØYÙBˆB‚ˆÝ]XÈ[˜ÈÛ\ÜÚYžUØ\ÝÝ[JÈY\ÜØYÙNˆÝš[™ÊHOˆØ\ÝÝ[HÂˆ]^HY\ÜØYÙKš[[Z[™ÐÚ\˜XÝ\œÊ[ŽˆÚ]\ÜXÙ\Ð[™™]Û[™\ÊBˆ]ÝÙ\ˆH^›ÝÙ\˜Ø\ÙY
+
+Bˆ]\œ›Ü•ÚÙ[œÈHÂˆ¹i,z-)H‹ºe&z+ëÈ‹¹¥è9¬åH‹¹.#z ïH‹¹¢ä¹îçH‹¹¥è9¥b‹¹é y«hˆ‹¹.#yc.zacH‹¹mì¹`g9«hˆ‹ˆ¹ï.¹i,H‹¹.#ykf9g*‹º-¡y¥íˆ‹¹m*y® È‹¹o ¹n.‹¹§*¹¢o¹b,‹¹.#y«hùèkˆ‹™\œ›Üˆ‹™˜Z[Y‹™˜Z[‹ˆBˆYˆ\œ›Ü•ÚÙ[œË˜ÛÛZ[œÊÚ\™NˆÈÝÙ\‹˜ÛÛZ[œÊ	
+H^˜ÛÛZ[œÊ	
+HJHÂˆ™]\›ˆ™\œ›Ü‚ˆBˆ]Ø\›š[™ÕÚÙ[œÈHÂˆº+i¹dbˆ‹º+íùab‹º+íùèkº+©‹¹mì¹cå¹­¢‹¹cå¹­¢‹¹¦ ¹¥è‹¹§*¹d+ùå*‹¹§*ºacyïkˆ‹¹¬ê9¡#È‹ˆº-ìú/áÈ‹¹§*º`"y¢êH‹¹.#yk£9¥m‹Ø\›š[™È‹Ø\›ˆ‹˜Ø[˜Ù[‹ˆBˆYˆØ\›š[™ÕÚÙ[œË˜ÛÛZ[œÊÚ\™NˆÈÝÙ\‹˜ÛÛZ[œÊ	
+H^˜ÛÛZ[œÊ	
+HJHÂˆ™]\›ˆØ\›š[™ÂˆBˆ™]\›ˆœÝXØÙ\ÜÂˆB‚ˆš]˜]H[˜ÈÚÝÕ[™Ó[Ý™UØ\Ý
+Y\ÜØYÙNˆÝš[™ÊHÂˆ[™Ó[Ý™Q\ÛZ\ÜÕÛÜšÒ][OË˜Ø[˜Ù[
+
+Bˆ[™Ó[Ý™UØ\ÝY\ÜØYÙHHY\ÜØYÙBˆ\Õ[™Ó[Ý™UØ\Ýš\ÚX›HHYB‚ˆ]\ÛZ\ÜÕÛÜšÒ][HH\Ü]ÚÛÜšÒ][HÈÝÙXZÈÙ[—H[‚ˆÝX\™]Ù[ˆ[ÙHÈ™]\›ˆBˆ\ÚÈÈXZ[XÝÜˆ[‚ˆÙ[‹š\Õ[™Ó[Ý™UØ\Ýš\ÚX›HH˜[ÙBˆBˆBˆ[™Ó[Ý™Q\ÛZ\ÜÕÛÜšÒ][HH\ÛZ\ÜÕÛÜšÒ][Bˆ\Ü]Ú]Y]YK›XZ[‹˜\Þ[˜ÐY\ŠˆXY[™Nˆ››ÝÊ
+H
+ÈËŒˆ^XÝ]Nˆ\ÛZ\ÜÕÛÜšÒ][Bˆ
+BˆB‚ˆ\ØØ\™X›T™\Ý[ˆš]˜]H[˜ÈØ]™Q›Û\œÕÑY˜][Ê
+HOˆ›ÛÛÂˆÈÂˆžHÜš]PÛÛXÝ[ÛœÐ]ÛZXØ[Jˆ[˜ÛYPXØÛÝ[Îˆ˜[ÙKˆ[˜ÛYQ›Û\œÎˆYKˆ[˜ÛYT\ÜÚÙ^\Îˆ˜[ÙKˆ\ÚPÛÝYˆYBˆ
+Bˆ™]\›ˆYBˆHØ]ÚÂˆ]™\ÝÜ™YH™[ØYÛÛXÝ[ÛœÐY\”Ø]™Q˜Z[\™JˆXØÛÝ[Îˆ˜[ÙKˆ›Û\œÎˆYKˆ\ÜÚÙ^\Îˆ˜[ÙBˆ
+BˆÝ]\ÓY\ÜØYÙHH™\ÝÜ™YˆÈ¹/çykf9¥¡ù.í¹i.yb,ÔS]H9i,z-){ï#9mì¹ h¹i#yèàyææ9¥l9£kŽˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆˆ¹/çykf9¥¡ù.í¹i.yb,ÔS]H9i,z-)y.%9¥è9¬åzaãz/oyèàyææ9¥l9£kŽˆ
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‚ˆ™]\›ˆ˜[ÙBˆBˆB‚‚ˆ˜\ˆZQ›Û˜[Z[SÜ[ÛœÎˆÔÝš[™×HÂˆÔÙ[‹œÞ\Ý[QY˜][›Û˜[Z[WH
+È”Ñ›ÛX[˜YÙ\‹œÚ\™Y˜]˜Z[X›Q›Û˜[Z[Y\ËœÛÜY
+
+BˆB‚ˆ[˜È^›Û
+Ú^™NˆÑÑ›Ø]ÈHš[ÙZYÚˆ›Û•ÙZYÚHœ™YÝ[\ŠHOˆ›ÛÂˆ\›Û
+Ú^™NˆÚ^™HÏÈÑÑ›Ø]
+ZU^›ÛÚ^™JKÙZYÚˆÙZYÚ
+BˆB‚ˆ[˜È]Û‘›Û
+Ú^™NˆÑÑ›Ø]ÈHš[ÙZYÚˆ›Û•ÙZYÚHœÙ[ZX›Û
+HOˆ›ÛÂˆ\›Û
+Ú^™NˆÚ^™HÏÈÑÑ›Ø]
+ZP]Û‘›ÛÚ^™JKÙZYÚˆÙZYÚ
+BˆB‚ˆ[˜ÈØØ[Y^Ú^™JÈ˜\ÙNˆÑÑ›Ø]
+HOˆÑÑ›Ø]ÂˆX^
+˜\ÙH
+ÈÑÑ›Ø]
+ZU^›ÛÚ^™HHMÊJBˆB‚ˆš]˜]H[˜È\›Û
+Ú^™NˆÑÑ›Ø]ÙZYÚˆ›Û•ÙZYÚ
+HOˆ›ÛÂˆYˆZQ›Û˜[Z[HOHÙ[‹œÞ\Ý[QY˜][›Û˜[Z[HÂˆ™]\›ˆœÞ\Ý[JÚ^™NˆÚ^™KÙZYÚˆÙZYÚ
+BˆBˆ™]\›ˆ˜Ý\ÝÛJZQ›Û˜[Z[KÚ^™NˆÚ^™JKÙZYÚ
+ÙZYÚ
+BˆBŸB‚œš]˜]HÝXÝÞ[˜Ð[™UŒŽˆÛÙX›HÂˆ]ØÚ[XNˆÝš[™Âˆ]^ÜY]\Îˆ[ˆ]ÛÝ\˜ÙNˆÞ[˜Ð[™TÛÝ\˜ÙBˆ]^[ØYˆÞ[˜Ð[™T^[ØYŸB‚œš]˜]HÝXÝÞ[˜Ð[™TÛÝ\˜ÙNˆÛÙX›HÂˆ]\ˆÝš[™Âˆ]]›Ü›NˆÝš[™Âˆ]]šXÙS˜[YNˆÝš[™Âˆ]]šXÙRYˆÝš[™Âˆ]ÙÚXØ[ÛØÚÓ\Îˆ[ˆ]›Ü›X]™\œÚ[ÛŽˆ[‚ˆš]˜]H[[HÛÙ[™ÒÙ^\ÎˆÝš[™ËÛÙ[™ÒÙ^HÂˆØ\ÙH\ˆØ\ÙH]›Ü›BˆØ\ÙH]šXÙS˜[YBˆØ\ÙH]šXÙRYˆØ\ÙHÙÚXØ[ÛØÚÓ\ÂˆØ\ÙH›Ü›X]™\œÚ[Û‚ˆB‚ˆ[š]
+ˆ\ˆÝš[™Ëˆ]›Ü›NˆÝš[™Ëˆ]šXÙS˜[YNˆÝš[™Ëˆ]šXÙRYˆÝš[™ËˆÙÚXØ[ÛØÚÓ\Îˆ[ˆ›Ü›X]™\œÚ[ÛŽˆ[ˆ
+HÂˆÙ[‹˜\H\ˆÙ[‹œ]›Ü›HH]›Ü›BˆÙ[‹™]šXÙS˜[YHH]šXÙS˜[YBˆÙ[‹™]šXÙRYH]šXÙRYˆÙ[‹›ÙÚXØ[ÛØÚÓ\ÈHÙÚXØ[ÛØÚÓ\ÂˆÙ[‹™›Ü›X]™\œÚ[ÛˆH›Ü›X]™\œÚ[Û‚ˆB‚ˆ[š]
+œ›ÛHXÛÙ\ŽˆXÛÙ\ŠH›ÝÜÈÂˆ]ÛÛZ[™\ˆHžHXÛÙ\‹˜ÛÛZ[™\ŠÙ^YYžNˆÛÙ[™ÒÙ^\ËœÙ[ŠBˆ\HžHÛÛZ[™\‹™XÛÙJÝš[™ËœÙ[‹›Ü’Ù^Nˆ˜\
+Bˆ]›Ü›HHžHÛÛZ[™\‹™XÛÙJÝš[™ËœÙ[‹›Ü’Ù^Nˆœ]›Ü›JBˆ]šXÙS˜[YHHžHÛÛZ[™\‹™XÛÙJÝš[™ËœÙ[‹›Ü’Ù^Nˆ™]šXÙS˜[YJBˆ]šXÙRYHžHÛÛZ[™\‹™XÛÙRY”™\Ù[
+Ýš[™ËœÙ[‹›Ü’Ù^Nˆ™]šXÙRY
+HÏÈ›YØXÞKY]šXÙH‚ˆÙÚXØ[ÛØÚÓ\ÈHžHÛÛZ[™\‹™XÛÙRY”™\Ù[
+[œÙ[‹›Ü’Ù^Nˆ›ÙÚXØ[ÛØÚÓ\ÊHÏÈˆ›Ü›X]™\œÚ[ÛˆHžHÛÛZ[™\‹™XÛÙRY”™\Ù[
+[œÙ[‹›Ü’Ù^Nˆ™›Ü›X]™\œÚ[ÛŠHÏÈ‚ˆBŸB‚œš]˜]HÝXÝÞ[˜Ð[™T^[ØYˆÛÙX›HÂˆ˜\ˆXØÛÝ[ÎˆÔ\ÜÝÛÜ™XØÛÝ[Bˆ]›Û\œÎˆÐXØÛÝ[›Û\—Bˆ]\ÜÚÙ^\ÎˆÔ\ÜÚÙ^T™XÛÜ™Bˆ][™YÝ[\XØÛÝ[YÎˆÔÝš[™×Bˆ][™YÝ[\“Ü™\•\]Y]\Îˆ[ˆ][™YÝ[\“Ü™\•\]Y]šXÙS˜[YNˆÝš[™Âˆ]›Û\“Ü™\’YÎˆÔÝš[™×Bˆ]›Û\“Ü™\•\]Y]\Îˆ[ˆ]›Û\“Ü™\•\]Y]šXÙS˜[YNˆÝš[™Â‚ˆ[š]
+ˆXØÛÝ[ÎˆÔ\ÜÝÛÜ™XØÛÝ[Kˆ›Û\œÎˆÐXØÛÝ[›Û\—Kˆ\ÜÚÙ^\ÎˆÔ\ÜÚÙ^T™XÛÜ™Kˆ[™YÝ[\XØÛÝ[YÎˆÔÝš[™×HH×Kˆ[™YÝ[\“Ü™\•\]Y]\Îˆ[Hˆ[™YÝ[\“Ü™\•\]Y]šXÙS˜[YNˆÝš[™ÈHˆ‹ˆ›Û\“Ü™\’YÎˆÔÝš[™×HH×Kˆ›Û\“Ü™\•\]Y]\Îˆ[Hˆ›Û\“Ü™\•\]Y]šXÙS˜[YNˆÝš[™ÈHˆ‚ˆ
+HÂˆÙ[‹˜XØÛÝ[ÈHXØÛÝ[ÂˆÙ[‹™›Û\œÈH›Û\œÂˆÙ[‹œ\ÜÚÙ^\ÈH\ÜÚÙ^\ÂˆÙ[‹˜[™YÝ[\XØÛÝ[YÈH[™YÝ[\XØÛÝ[YÂˆÙ[‹˜[™YÝ[\“Ü™\•\]Y]\ÈH[™YÝ[\“Ü™\•\]Y]\ÂˆÙ[‹˜[™YÝ[\“Ü™\•\]Y]šXÙS˜[YHH[™YÝ[\“Ü™\•\]Y]šXÙS˜[YBˆÙ[‹™›Û\“Ü™\’YÈH›Û\“Ü™\’YÂˆÙ[‹™›Û\“Ü™\•\]Y]\ÈH›Û\“Ü™\•\]Y]\ÂˆÙ[‹™›Û\“Ü™\•\]Y]šXÙS˜[YHH›Û\“Ü™\•\]Y]šXÙS˜[YBˆB‚ˆš]˜]H[[HÛÙ[™ÒÙ^\ÎˆÝš[™ËÛÙ[™ÒÙ^HÂˆØ\ÙHXØÛÝ[Ë›Û\œË\ÜÚÙ^\ÂˆØ\ÙH[™YÝ[\XØÛÝ[YË[™YÝ[\“Ü™\•\]Y]\Ë[™YÝ[\“Ü™\•\]Y]šXÙS˜[YBˆØ\ÙH›Û\“Ü™\’YË›Û\“Ü™\•\]Y]\Ë›Û\“Ü™\•\]Y]šXÙS˜[YBˆB‚ˆ[š]
+œ›ÛHXÛÙ\ŽˆXÛÙ\ŠH›ÝÜÈÂˆ]ÛÛZ[™\ˆHžHXÛÙ\‹˜ÛÛZ[™\ŠÙ^YYžNˆÛÙ[™ÒÙ^\ËœÙ[ŠBˆXØÛÝ[ÈHžHÛÛZ[™\‹™XÛÙRY”™\Ù[
+Ô\ÜÝÛÜ™XØÛÝ[KœÙ[‹›Ü’Ù^Nˆ˜XØÛÝ[ÊHÏÈ×Bˆ›Û\œÈHžHÛÛZ[™\‹™XÛÙRY”™\Ù[
+ÐXØÛÝ[›Û\—KœÙ[‹›Ü’Ù^Nˆ™›Û\œÊHÏÈ×Bˆ\ÜÚÙ^\ÈHžHÛÛZ[™\‹™XÛÙRY”™\Ù[
+Ô\ÜÚÙ^T™XÛÜ™KœÙ[‹›Ü’Ù^Nˆœ\ÜÚÙ^\ÊHÏÈ×Bˆ[™YÝ[\XØÛÝ[YÈHžHÛÛZ[™\‹™XÛÙRY”™\Ù[
+ÔÝš[™×KœÙ[‹›Ü’Ù^Nˆ˜[™YÝ[\XØÛÝ[YÊHÏÈ×Bˆ[™YÝ[\“Ü™\•\]Y]\ÈHžHÛÛZ[™\‹™XÛÙRY”™\Ù[
+[œÙ[‹›Ü’Ù^Nˆ˜[™YÝ[\“Ü™\•\]Y]\ÊHÏÈˆ[™YÝ[\“Ü™\•\]Y]šXÙS˜[YHHžHÛÛZ[™\‹™XÛÙRY”™\Ù[
+Ýš[™ËœÙ[‹›Ü’Ù^Nˆ˜[™YÝ[\“Ü™\•\]Y]šXÙS˜[YJHÏÈˆ‚ˆ›Û\“Ü™\’YÈHžHÛÛZ[™\‹™XÛÙRY”™\Ù[
+ÔÝš[™×KœÙ[‹›Ü’Ù^Nˆ™›Û\“Ü™\’YÊHÏÈ×Bˆ›Û\“Ü™\•\]Y]\ÈHžHÛÛZ[™\‹™XÛÙRY”™\Ù[
+[œÙ[‹›Ü’Ù^Nˆ™›Û\“Ü™\•\]Y]\ÊHÏÈˆ›Û\“Ü™\•\]Y]šXÙS˜[YHHžHÛÛZ[™\‹™XÛÙRY”™\Ù[
+Ýš[™ËœÙ[‹›Ü’Ù^Nˆ™›Û\“Ü™\•\]Y]šXÙS˜[YJHÏÈˆ‚ˆB‚ˆ[˜È[˜ÛÙJÈ[˜ÛÙ\Žˆ[˜ÛÙ\ŠH›ÝÜÈÂˆ˜\ˆÛÛZ[™\ˆH[˜ÛÙ\‹˜ÛÛZ[™\ŠÙ^YYžNˆÛÙ[™ÒÙ^\ËœÙ[ŠBˆžHÛÛZ[™\‹™[˜ÛÙJXØÛÝ[Ë›Ü’Ù^Nˆ˜XØÛÝ[ÊBˆžHÛÛZ[™\‹™[˜ÛÙJ›Û\œË›Ü’Ù^Nˆ™›Û\œÊBˆžHÛÛZ[™\‹™[˜ÛÙJ\ÜÚÙ^\Ë›Ü’Ù^Nˆœ\ÜÚÙ^\ÊBˆžHÛÛZ[™\‹™[˜ÛÙJ[™YÝ[\XØÛÝ[YË›Ü’Ù^Nˆ˜[™YÝ[\XØÛÝ[YÊBˆžHÛÛZ[™\‹™[˜ÛÙJ[™YÝ[\“Ü™\•\]Y]\Ë›Ü’Ù^Nˆ˜[™YÝ[\“Ü™\•\]Y]\ÊBˆžHÛÛZ[™\‹™[˜ÛÙJ[™YÝ[\“Ü™\•\]Y]šXÙS˜[YK›Ü’Ù^Nˆ˜[™YÝ[\“Ü™\•\]Y]šXÙS˜[YJBˆžHÛÛZ[™\‹™[˜ÛÙJ›Û\“Ü™\’YË›Ü’Ù^Nˆ™›Û\“Ü™\’YÊBˆžHÛÛZ[™\‹™[˜ÛÙJ›Û\“Ü™\•\]Y]\Ë›Ü’Ù^Nˆ™›Û\“Ü™\•\]Y]\ÊBˆžHÛÛZ[™\‹™[˜ÛÙJ›Û\“Ü™\•\]Y]šXÙS˜[YK›Ü’Ù^Nˆ™›Û\“Ü™\•\]Y]šXÙS˜[YJBˆBŸB‚œš]˜]H[[HÙ^\ÈÂˆÝ]XÈ]]šXÙS˜[YHHœ\ÜË™]šXÙS˜[YH‚ˆÝ]XÈ]^Ü\™XÝÜžT]Hœ\ÜË™^Ü™\™XÝÜžT]‚ˆÝ]XÈ]^Ü\™XÝÜžP›ÛÚÛX\šÈHœ\ÜË™^Ü™\™XÝÜžP›ÛÚÛX\šÈ‚ˆÝ]XÈ]›Û\œÑ]HHœ\ÜË™›Û\œË™]H‚ˆÝ]XÈ]Þ[˜Ñ]šXÙRYHœ\ÜËœÞ[˜Ë™]šXÙRYŒH‚ˆÝ]XÈ]Þ[˜Ñ[˜X›RPÛÝYHœ\ÜËœÞ[˜Ë™[˜X›RPÛÝYŒÈ‚ˆÝ]XÈ]Þ[˜Ñ[˜X›UÙX‘UˆHœ\ÜËœÞ[˜Ë™[˜X›UÙX‘U‹ŒÈ‚ˆÝ]XÈ]Þ[˜Ñ[˜X›TÙ[’ÜÝYÙ\™\ˆHœ\ÜËœÞ[˜Ë™[˜X›TÙ[’ÜÝYÙ\™\‹ŒÈ‚ˆÝ]XÈ]Þ[˜Ôš[X\žTÛÝ\˜ÙHHœ\ÜËœÞ[˜Ëœš[X\žTÛÝ\˜ÙKŒH‚ˆÝ]XÈ]Þ[˜Ó[ÙHHœ\ÜËœÞ[˜Ë›[ÙKŒH‚ˆÝ]XÈ]]]ÔÞ[˜Ò[\˜[Z[]\ÈHœ\ÜËœÞ[˜Ë˜]]Ò[\˜[Z[]\ËŒH‚ˆÝ]XÈ]ÙX™]˜\ÙUT“Hœ\ÜËœÞ[˜ËÙX™]‹˜˜\ÙUT“Œˆ‚ˆÝ]XÈ]ÙX™]”™[[ÝT]Hœ\ÜËœÞ[˜ËÙX™]‹œ™[[ÝT]Œˆ‚ˆÝ]XÈ]ÙX™]•\Ù\›˜[YHHœ\ÜËœÞ[˜ËÙX™]‹\Ù\›˜[YKŒˆ‚ˆÝ]XÈ]Ù\™\˜\ÙUT“Hœ\ÜËœÞ[˜ËœÙ\™\‹˜˜\ÙUT“Œˆ‚ˆÝ]XÈ]ZQ›Û˜[Z[HHœ\ÜËZK™›Û™˜[Z[H‚ˆÝ]XÈ]ZU^›ÛÚ^™HHœ\ÜËZK™›Û^Ú^™H‚ˆÝ]XÈ]ZP]Û‘›ÛÚ^™HHœ\ÜËZK™›Û˜]Û”Ú^™H‚ˆÝ]XÈ]ZUØ\Ý\˜][Û”ÙXÛÛ™ÈHœ\ÜËZKØ\Ý™\˜][Ûˆ‚ˆÝ]XÈ]ÚÝÔ\ÜÝÛÜ™ÑÛØ˜[HHœ\ÜËZKœ\ÜÝÛÜ™ËœÚÝÑÛØ˜[KŒH‚ˆÝ]XÈ]Þ[˜ÑXYÛ›ÜÝXÜÈHœ\ÜËœÞ[˜Ë™XYÛ›ÜÝXÜËŒH‚ˆÝ]XÈ][™YÝ[\“Ü™\•\]Y]\ÈHœ\ÜËœÞ[˜Ë›Ü™\‹˜[\]Y]\ËŒH‚ˆÝ]XÈ]›Û\“Ü™\•\]Y]\ÈHœ\ÜËœÞ[˜Ë›Ü™\‹™›Û\œË\]Y]\ËŒH‚ŸB‚œš]˜]H[[HÙXÜ™]Ù^\ÈÂˆÝ]XÈ]Ù\šXÙHHœ\ÜËœÞ[˜Ë˜Ü™Y[X[ËŒˆ‚ˆÝ]XÈ]š[S˜[YHHœÞ[˜ËXÜ™Y[X[Ë]ŒKšœÛÛˆ‚ˆÝ]XÈ]YØXÞQš[S˜[YHHœÞ[˜Ë\ÙXÜ™]ËšœÛÛˆ‚ˆÝ]XÈ]ÙX™]”\ÜÝÛÜ™XØÛÝ[HœÞ[˜ËÙX™]‹œ\ÜÝÛÜ™‚ˆÝ]XÈ]Ù\™\•ÚÙ[XØÛÝ[HœÞ[˜ËœÙ\™\‹ÚÙ[ˆ‚ˆÝ]XÈ]Þ[˜Ñ[˜Üž\[Û’Ù^PXØÛÝ[HœÞ[˜Ë™[˜Üž\[Û‹šÙ^KŒH‚ˆÝ]XÈ]™]š[Ý\ÔÞ[˜Ñ[˜Üž\[Û’Ù^PXØÛÝ[HœÞ[˜Ë™[˜Üž\[Û‹šÙ^Kœ™]š[Ý\ËŒH‚ˆÝ]XÈ][XØÛÝ[ÈHÂˆÙX™]”\ÜÝÛÜ™XØÛÝ[ˆÙ\™\•ÚÙ[XØÛÝ[ˆÞ[˜Ñ[˜Üž\[Û’Ù^PXØÛÝ[ˆ™]š[Ý\ÔÞ[˜Ñ[˜Üž\[Û’Ù^PXØÛÝ[ˆBŸB‚œš]˜]HÝXÝÞ[˜ÔÙXÜ™]š[NˆÛÙX›HÂˆÝ]XÈ]Ý\œ™[™\œÚ[ÛˆHB‚ˆ]™\œÚ[ÛŽˆ[ˆ]˜[Y\ÎˆÔÝš[™ÎˆÝš[™×BŸB‚œš]˜]H[[HPÛÝYÙ^\ÈÂˆÝ]XÈ]Þ[˜Ô^[ØY›ØˆHœ\ÜËœÞ[˜Ëœ^[ØY˜›Ø‹Œˆ‚ˆÝ]XÈ]Þ[˜Ô^[ØY\]Y]\ÈHœ\ÜËœÞ[˜Ëœ^[ØY\]Y]\ËŒˆ‚ŸB‚œš]˜]HÝXÝYØXÞT\ÜÝÛÜ™XØÛÝ[ˆÛÙX›HÂˆ]YˆURQˆ]XØÛÝ[YˆÝš[™Âˆ]Ú]\ÎˆÔÝš[™×Bˆ]\Ù\›˜[YNˆÝš[™Âˆ]\ÜÝÛÜ™ˆÝš[™Âˆ]\]Y]\Îˆ[ˆ]\Ñ[]Yˆ›ÛÛŸB‚œš]˜]H^[œÚ[ÛˆYØXÞT\ÜÝÛÜ™XØÛÝ[Âˆ[˜ÈÐÝ\œ™[
+]šXÙS˜[YNˆÝš[™ÊHOˆ\ÜÝÛÜ™XØÛÝ[Âˆ]›Ü›X[^™YÚ]\ÈH\œ˜^JÙ]
+Ú]\Ë›X\
+ÛXZ[•][Ë››Ü›X[^™JJJKœÛÜY
+
+Bˆ]Ø[›ÛšXØ[HÛXZ[•][Ë™]\ÓÛ™J›ÜŽˆ›Ü›X[^™YÚ]\Ë™š\œÝÏÈˆŠBˆ™]\›ˆ\ÜÝÛÜ™XØÛÝ[
+ˆYˆYˆXØÛÝ[YˆXØÛÝ[YˆØ[›ÛšXØ[Ú]NˆØ[›ÛšXØ[ˆ\Ù\›˜[YP]Ü™X]Nˆ\Ù\›˜[YKˆ\Ô[›™Yˆ˜[ÙKˆ[›™YÛÜÜ™\Žˆš[ˆ™YÝ[\”ÛÜÜ™\Žˆš[ˆ[›™YšY]ÜÎˆš[ˆ›Û\’Yˆš[ˆ›Û\’YÎˆ×KˆÚ]\Îˆ›Ü›X[^™YÚ]\Ëˆ\Ù\›˜[YNˆ\Ù\›˜[YKˆ\ÜÝÛÜ™ˆ\ÜÝÛÜ™ˆÝÙXÜ™]ˆˆ‹ˆ™XÛÝ™\žPÛÙ\Îˆˆ‹ˆ›ÝNˆˆ‹ˆ\ÜÚÙ^PÜ™Y[X[YÎˆ×Kˆ\Ù\›˜[YU\]Y]\Îˆ\]Y]\Ëˆ\Ù\›˜[YU\]Y]šXÙS˜[YNˆ]šXÙS˜[YKˆ\ÜÝÛÜ™\]Y]\Îˆ\]Y]\Ëˆ\ÜÝÛÜ™\]Y]šXÙS˜[YNˆ]šXÙS˜[YKˆÝ\]Y]\Îˆ\]Y]\ËˆÝ\]Y]šXÙS˜[YNˆ]šXÙS˜[YKˆ™XÛÝ™\žPÛÙ\Õ\]Y]\Îˆ\]Y]\Ëˆ™XÛÝ™\žPÛÙ\Õ\]Y]šXÙS˜[YNˆ]šXÙS˜[YKˆ›ÝU\]Y]\Îˆ\]Y]\Ëˆ›ÝU\]Y]šXÙS˜[YNˆ]šXÙS˜[YKˆ\ÜÚÙ^U\]Y]\Îˆ\]Y]\Ëˆ\ÜÚÙ^U\]Y]šXÙS˜[YNˆ]šXÙS˜[YKˆ\]Y]\Îˆ\]Y]\Ëˆ\Ñ[]Yˆ\Ñ[]Yˆ\Ô\›X[™[Q[]Yˆ˜[ÙKˆ[]Y]\Îˆ\Ñ[]YÈ\]Y]\Èˆš[ˆ[]Y]šXÙS˜[YNˆ\Ñ[]YÈ]šXÙS˜[YHˆˆ‹ˆ\ÝÜ\˜]Y]šXÙS˜[YNˆ]šXÙS˜[YKˆÜ™X]Y]šXÙS˜[YNˆ]šXÙS˜[YKˆÜ™X]Y]\Îˆ\]Y]\Âˆ
+BˆBŸB

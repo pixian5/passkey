@@ -3508,6 +3508,33 @@ els.btnRunProvision?.addEventListener("click", async () => {
   };
 
   try {
+    showProvisionProgress("正在读取 SSH 主机指纹…");
+    const hostKey = await invoke("inspect_ssh_host_key_cmd", {
+      serverUrl,
+      port: credential.port,
+    });
+    if (!hostKey?.alreadyTrusted) {
+      hideProvisionProgress();
+      const fingerprints = (hostKey?.fingerprints || []).join("\n");
+      const trusted = await requestActionConfirmation({
+        title: "核对 SSH 主机指纹",
+        message:
+          `服务器：${hostKey?.host || serverUrl}:${hostKey?.port || credential.port}\n\n` +
+          `${fingerprints}\n\n` +
+          "请先在服务器控制台运行 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256，确认指纹一致后再继续。",
+        confirmText: "指纹一致，继续",
+      });
+      if (!trusted) {
+        setProvisionStatus("已取消：未信任 SSH 主机指纹");
+        toastWarn("已取消创建服务");
+        return;
+      }
+      await invoke("trust_ssh_host_key_cmd", {
+        serverUrl,
+        port: credential.port,
+        keyLines: hostKey?.keyLines || [],
+      });
+    }
     showProvisionProgress("正在检测服务器是否已有旧服务…");
     setProvisionStatus("正在检测服务器是否已有旧服务…");
     const report = await invoke("detect_existing_sync_service", {

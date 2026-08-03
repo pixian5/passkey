@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_PY="${SCRIPT_DIR}/pass_sync_server.py"
@@ -10,6 +11,7 @@ PORT="${PASS_SYNC_PORT:-53333}"
 HOST="${PASS_SYNC_HOST:-0.0.0.0}"
 
 mkdir -p "${DATA_DIR}"
+chmod 0700 "${DATA_DIR}"
 
 # 检查是否已在运行
 if [[ -f "${PID_FILE}" ]]; then

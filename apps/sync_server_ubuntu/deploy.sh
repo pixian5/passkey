@@ -24,7 +24,9 @@ if ! id -u pass >/dev/null 2>&1; then
   useradd --system --gid pass --home-dir /nonexistent --shell /usr/sbin/nologin pass
 fi
 
-install -d -m 0755 "${INSTALL_DIR}" "${CONFIG_DIR}" "${DATA_DIR}" "${DATA_DIR}/backups"
+install -d -m 0755 "${INSTALL_DIR}"
+install -d -m 0750 -o pass -g pass "${CONFIG_DIR}"
+install -d -m 0700 -o pass -g pass "${DATA_DIR}" "${DATA_DIR}/backups"
 install -d -m 0700 "${PRE_DEPLOY_DIR}" "${ROLLBACK_DIR}"
 
 managed_paths=(
@@ -173,6 +175,8 @@ install -m 0644 "${SCRIPT_DIR}/pass-sync-server.service" /etc/systemd/system/pas
 install -m 0644 "${SCRIPT_DIR}/pass-sync-server-backup.service" /etc/systemd/system/pass-sync-server-backup.service
 install -m 0644 "${SCRIPT_DIR}/pass-sync-server-backup.timer" /etc/systemd/system/pass-sync-server-backup.timer
 chown -R pass:pass "${DATA_DIR}"
+find "${DATA_DIR}" -type d -exec chmod 0700 {} +
+find "${DATA_DIR}" -type f -exec chmod 0600 {} +
 
 systemctl daemon-reload
 systemctl enable --now pass-sync-server

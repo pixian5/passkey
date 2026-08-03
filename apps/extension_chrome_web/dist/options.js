@@ -1,7181 +1,2151 @@
-(() => {
-  // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.2";
+Y™Áäx-ÆÈ‹j◊ù¢Îi∫⁄+äßj[hëÈ‹¢ÈÌ◊O|€ÑËµ©h∫⁄n∂XßzÕJ
 
-  // ../../core/pass_core/js/sync_policy.js
-  var DEFAULT_DEVICE_NAME = "PassDevice";
-  var FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
-  var FIXED_NEW_ACCOUNT_FOLDER_NAME = "\u65B0\u8D26\u53F7";
-  var ETLD2_SUFFIXES = [
-    "com.cn",
-    "net.cn",
-    "org.cn",
-    "gov.cn",
-    "edu.cn",
-    "co.uk",
-    "org.uk",
-    "ac.uk",
-    "gov.uk",
-    "com.au",
-    "net.au",
-    "org.au",
-    "com.br",
-    "com.mx",
-    "co.jp",
-    "or.jp",
-    "ne.jp",
-    "co.kr",
-    "co.in",
-    "com.hk",
-    "com.tw",
-    "com.sg",
-    "co.nz",
-    "org.nz",
-    "com.ar",
-    "com.tr",
-    "co.za",
-    "com.ua"
-  ];
-  var SYNC_OUTBOX_MAX_ATTEMPTS = 12;
-  var SYNC_OUTBOX_BASE_DELAY_MS = 5e3;
-  var SYNC_OUTBOX_MAX_DELAY_MS = 60 * 60 * 1e3;
-  var SYNC_PUSH_CONFLICT_MAX_ATTEMPTS = 5;
-  function syncOutboxRetryDelayMs(attempts) {
-    const exponent = Math.max(0, Math.min(Number(attempts || 1) - 1, 8));
-    return Math.min(SYNC_OUTBOX_MAX_DELAY_MS, SYNC_OUTBOX_BASE_DELAY_MS * 2 ** exponent);
-  }
-  function normalizeDeviceName(value, fallback = DEFAULT_DEVICE_NAME) {
-    const trimmed = String(value || "").trim();
-    return trimmed || fallback;
-  }
+HOà¬àÀ»^[ú⁄[€ó›ô\ú⁄[€ãöú¬àò\àT‘◊—VSî“S”ó’ëTî“S”àHåKçå»é¬ÇàÀ»ããÀããÿ€‹ôK‹\‹◊ÿ€‹ôK⁄úÀ‹ﬁ[ò◊‹€XﬁKöú¬àò\àQêUS—UíP—W”êSQHHî\‹—]öXŸHé¬àò\àíVQ”ëU◊–P–”’Sï—ì”Tó“QHôåMòLòÕKMLòKMŸKXMçÃLŸåMÕçŸLHé¬àò\àíVQ”ëU◊–P–”’Sï—ì”Tó”êSQHHóMçPåNçóML—ç»é¬àò\àUó‘’QëíVT»H¬àò€€Kò€àãàõô]ò€àãàõ‹ôÀò€àãàô€›ãò€àãàôYKò€àãàò€ÀùZ»ãàõ‹ôÀùZ»ãàòXÀùZ»ãàô€›ãùZ»ãàò€€Kò]Hãàõô]ò]Hãàõ‹ôÀò]Hãàò€€Kòúàãàò€€Kõ^ãàò€Àöúãàõ‹ãöúãàõôKöúãàò€Àö‹àãàò€Àö[àãàò€€Kö»ãàò€€Kù»ãàò€€KúŸ»ãàò€Àõûàãàõ‹ôÀõûàãàò€€Kò\àãàò€€Kùàãàò€ÀûòHãàò€€KùXHÇàN¬àò\à÷Sê◊”’Uì÷”PV–UST»HLé¬àò\à÷Sê◊”’Uì÷–êT—W—SVW”T»HYLŒ¬àò\à÷Sê◊”’Uì÷”PV—SVW”T»Hå
+àå
+àYLŒ¬àò\à÷Sê◊‘T“–””ëìP’”PV–UST»HN¬àù[ò›[€àﬁ[ò”›]õﬁô]ûQ[^S\ ][\ H¬à€€ú›^€ô[ùHX]õX^
+X]õZ[äù[Xô\ä][\»JHHK
+JN¬àô]\õàX]õZ[ä÷Sê◊”’Uì÷”PV—SVW”TÀ÷Sê◊”’Uì÷–êT—W—SVW”T»
+àà
+äà^€ô[ù
+N¬àBàù[ò›[€àõ‹õX[^ôQ]öXŸSò[YJò[YKò[òX⁄»HQêUS—UíP—W”êSQJH¬à€€ú›ö[[YYH›ö[ô ò[YHàäKùö[J
+N¬àô]\õàö[[YYò[òX⁄Œ¬àBÇàÀ»ããÀããÿ€‹ôK‹\‹◊ÿ€‹ôK⁄úÀ‹ﬁ[ò◊ÿ[X\◊ÿ€‹ôKöú¬àù[ò›[€àﬁ[ò–[X\—‹õ›\ Xÿ€›[ùÀ[\úÀ‹[€ú»HﬂJH¬àYà
+P\úò^Kö\–\úò^JXÿ€›[ù HXÿ€›[ùÀõ[ô›äH¬àô]\õà»Xÿ€›[ùÀ⁄[ôŸYàò[ŸHN¬àBà€€ú›õ‹õX[^ôHH[\úœÀõõ‹õX[^ôQ€XZ[à
 
-  // ../../core/pass_core/js/sync_alias_core.js
-  function syncAliasGroups(accounts, helpers, options = {}) {
-    if (!Array.isArray(accounts) || accounts.length < 2) {
-      return { accounts, changed: false };
-    }
-    const normalize = helpers?.normalizeDomain || ((s) => String(s || "").trim().toLowerCase());
-    const etldPlusOne2 = helpers?.etldPlusOne || ((s) => {
-      const n2 = normalize(s);
-      const parts = n2.split(".").filter(Boolean);
-      if (parts.length < 2) return n2;
-      return parts.slice(-2).join(".");
-    });
-    const domainAliasGroupKey2 = typeof helpers?.domainAliasGroupKey === "function" ? helpers.domainAliasGroupKey : () => "";
-    const nowMs = options.nowMs ?? Date.now();
-    const deviceName = options.deviceName || "Browser";
-    const n = accounts.length;
-    const siteSets = accounts.map((a) => {
-      const sites = Array.isArray(a?.sites) ? a.sites : [];
-      return new Set(sites.map(normalize).filter(Boolean));
-    });
-    const etldSets = siteSets.map((set) => {
-      const out = /* @__PURE__ */ new Set();
-      for (const s of set) {
-        const e = etldPlusOne2(s);
-        if (e) out.add(e);
-      }
-      return out;
-    });
-    const aliasGroupSets = siteSets.map((set) => {
-      const out = /* @__PURE__ */ new Set();
-      for (const site of set) {
-        const group = domainAliasGroupKey2(site);
-        if (group) out.add(group);
-      }
-      return out;
-    });
-    const parent = Array.from({ length: n }, (_, i) => i);
-    const find = (i) => {
-      let cur = i;
-      while (parent[cur] !== cur) cur = parent[cur];
-      let c2 = i;
-      while (parent[c2] !== c2) {
-        const next2 = parent[c2];
-        parent[c2] = cur;
-        c2 = next2;
-      }
-      return cur;
-    };
-    const union = (a, b) => {
-      const pa = find(a);
-      const pb = find(b);
-      if (pa !== pb) parent[pb] = pa;
-    };
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        let overlap = false;
-        for (const s of siteSets[i]) {
-          if (siteSets[j].has(s)) {
-            overlap = true;
-            break;
-          }
-        }
-        let sameEtld = false;
-        for (const e of etldSets[i]) {
-          if (etldSets[j].has(e)) {
-            sameEtld = true;
-            break;
-          }
-        }
-        const sameAliasGroup = [...aliasGroupSets[i]].some((group) => aliasGroupSets[j].has(group));
-        if (overlap || sameEtld || sameAliasGroup) union(i, j);
-      }
-    }
-    const components = Array.from({ length: n }, () => []);
-    for (let i = 0; i < n; i++) components[find(i)].push(i);
-    let changed = false;
-    const next = accounts.map((a) => ({ ...a }));
-    for (const component of components) {
-      if (component.length < 2) continue;
-      const merged = [];
-      const seen = /* @__PURE__ */ new Set();
-      for (const idx of component) {
-        for (const s of siteSets[idx]) {
-          if (!seen.has(s)) {
-            seen.add(s);
-            merged.push(s);
-          }
-        }
-      }
-      merged.sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
-      for (const idx of component) {
-        const prev = Array.isArray(next[idx].sites) ? [...new Set(next[idx].sites.map(normalize).filter(Boolean))].sort(
-          (a, b) => a < b ? -1 : a > b ? 1 : 0
-        ) : [];
-        const same = prev.length === merged.length && prev.every((v, i) => v === merged[i]);
-        if (!same) {
-          next[idx] = {
-            ...next[idx],
-            sites: merged.slice(),
-            updatedAtMs: nowMs,
-            lastOperatedDeviceName: deviceName
-          };
-          changed = true;
-        } else if (Array.isArray(next[idx].sites) && next[idx].sites.join("\0") !== merged.join("\0")) {
-          next[idx] = {
-            ...next[idx],
-            sites: merged.slice()
-          };
-          changed = true;
-        }
-      }
-    }
-    return { accounts: next, changed };
-  }
+ HOà›ö[ô »àäKùö[J
+Kù”›Ÿ\êÿ\ŸJ
+JN¬à€€ú›]\”€ôLàH[\úœÀô]\”€ôH
 
-  // account_core.js
-  var ETLD2_SUFFIXES2 = new Set(ETLD2_SUFFIXES);
-  var DOMAIN_ALIAS_GROUPS = Object.freeze([
-    Object.freeze({
-      id: "apple",
-      domains: Object.freeze(["apple.com", "apple.com.cn", "icloud.com", "icloud.com.cn"])
-    }),
-    Object.freeze({
-      id: "qq",
-      domains: Object.freeze(["qq.com", "wx.qq.com"])
-    }),
-    Object.freeze({
-      id: "baidu",
-      domains: Object.freeze(["baidu.com", "passport.baidu.com", "pan.baidu.com"])
-    }),
-    Object.freeze({
-      id: "sina",
-      domains: Object.freeze(["sina.com", "mail.sina.com", "weibo.com"])
-    }),
-    Object.freeze({
-      id: "github",
-      domains: Object.freeze(["github.com", "gist.github.com"])
-    }),
-    Object.freeze({
-      id: "gitlab",
-      domains: Object.freeze(["gitlab.com", "about.gitlab.com"])
-    }),
-    Object.freeze({
-      id: "google",
-      domains: Object.freeze(["google.com", "accounts.google.com"])
-    }),
-    Object.freeze({
-      id: "youtube",
-      domains: Object.freeze(["youtube.com", "studio.youtube.com"])
-    }),
-    Object.freeze({
-      id: "x",
-      domains: Object.freeze(["x.com", "twitter.com"])
-    }),
-    Object.freeze({
-      id: "facebook",
-      domains: Object.freeze(["facebook.com", "messenger.com"])
-    }),
-    Object.freeze({
-      id: "amazon",
-      domains: Object.freeze(["amazon.com", "smile.amazon.com"])
-    }),
-    Object.freeze({
-      id: "microsoft",
-      domains: Object.freeze([
-        "microsoft.com",
-        "microsoftonline.com",
-        // Keep the common shorthand used by older records linked to the same
-        // Microsoft sign-in provider as the fully qualified host names.
-        "microsoftonline",
-        "login.microsoftonline.com",
-        "login.microsoft.com",
-        "account.microsoft.com",
-        "live.com",
-        "hotmail.com",
-        "outlook.com",
-        "account.live.com",
-        "office.com",
-        "outlook.office.com",
-        "microsoft365.com",
-        "office365.com",
-        "azure.com",
-        "msn.com"
-      ])
-    }),
-    Object.freeze({
-      id: "paypal",
-      domains: Object.freeze(["paypal.com"])
-    }),
-    Object.freeze({
-      id: "netflix",
-      domains: Object.freeze(["netflix.com", "help.netflix.com"])
-    }),
-    Object.freeze({
-      id: "spotify",
-      domains: Object.freeze(["spotify.com", "open.spotify.com"])
-    }),
-    Object.freeze({
-      id: "linkedin",
-      domains: Object.freeze(["linkedin.com"])
-    }),
-    Object.freeze({
-      id: "dropbox",
-      domains: Object.freeze(["dropbox.com"])
-    })
-  ]);
-  function normalizeDomain(input) {
-    if (!input) return "";
-    let value = String(input).trim().toLowerCase();
-    try {
-      if (value.startsWith("http://") || value.startsWith("https://")) {
-        value = new URL(value).hostname;
-      }
-    } catch {
-      return "";
-    }
-    while (value.endsWith(".")) {
-      value = value.slice(0, -1);
-    }
-    return value;
-  }
-  function isIpHost(domain) {
-    const normalized = normalizeDomain(domain);
-    if (!normalized) return false;
-    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(normalized)) {
-      return normalized.split(".").every((part) => {
-        const value = Number(part);
-        return Number.isInteger(value) && value >= 0 && value <= 255;
-      });
-    }
-    if (normalized.includes(":")) {
-      return /^[0-9a-f:]+$/i.test(normalized);
-    }
-    return false;
-  }
-  function etldPlusOne(domain) {
-    const normalized = normalizeDomain(domain);
-    if (!normalized) return "";
-    if (isIpHost(normalized)) return normalized;
-    const labels = normalized.split(".");
-    if (labels.length < 2) return normalized;
-    const tail2 = labels.slice(-2).join(".");
-    if (ETLD2_SUFFIXES2.has(tail2) && labels.length >= 3) {
-      return labels.slice(-3).join(".");
-    }
-    return tail2;
-  }
-  function domainAliasGroupKey(domain) {
-    const normalized = normalizeDomain(domain);
-    if (!normalized) return "";
-    for (const group of DOMAIN_ALIAS_GROUPS) {
-      const matched = group.domains.some(
-        (alias) => normalized === alias || normalized.endsWith(`.${alias}`)
-      );
-      if (matched) return group.id;
-    }
-    return "";
-  }
-  function domainsMatch(left, right) {
-    const normalizedLeft = normalizeDomain(left);
-    const normalizedRight = normalizeDomain(right);
-    if (!normalizedLeft || !normalizedRight) return false;
-    if (normalizedLeft === normalizedRight) return true;
-    if (etldPlusOne(normalizedLeft) === etldPlusOne(normalizedRight)) return true;
-    const leftGroup = domainAliasGroupKey(normalizedLeft);
-    return Boolean(leftGroup && leftGroup === domainAliasGroupKey(normalizedRight));
-  }
-  function normalizeSites(sites) {
-    const values = Array.isArray(sites) ? sites : [];
-    return [...new Set(values.map(normalizeDomain).filter(Boolean))].sort();
-  }
-  function normalizeUsername(value) {
-    return String(value || "").trim();
-  }
-  function formatYYMMDDHHmmss(ms) {
-    const date = new Date(ms);
-    const yy = String(date.getUTCFullYear() % 100).padStart(2, "0");
-    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-    const day = String(date.getUTCDate()).padStart(2, "0");
-    const hour = String(date.getUTCHours()).padStart(2, "0");
-    const minute = String(date.getUTCMinutes()).padStart(2, "0");
-    const second = String(date.getUTCSeconds()).padStart(2, "0");
-    return `${yy}${month}${day}${hour}${minute}${second}`;
-  }
-  function buildAccountId(canonicalSite, username, createdAtMs) {
-    return `${canonicalSite}-${formatYYMMDDHHmmss(createdAtMs)}-${username}`;
-  }
-  function syncAliasGroups2(inputAccounts, options = {}) {
-    const helpers = {
-      domainAliasGroupKey,
-      normalizeDomain,
-      etldPlusOne
-    };
-    const result = syncAliasGroups(inputAccounts, helpers, {
-      nowMs: options.nowMs,
-      deviceName: options.deviceName || "Browser"
-    });
-    return result.accounts;
-  }
+ HOà¬à€€ú›åàHõ‹õX[^ôJ N¬à€€ú›\ù»Håãú‹]
+ãàäKôö[\äõ€€X[äN¬àYà
+\ùÀõ[ô›äHô]\õàåé¬àô]\õà\ùÀú€XŸJLäKöõ⁄[äãàäN¬àJN¬à€€ú›€XZ[ê[X\—‹õ›\Ÿ^LàH\[Ÿà[\úœÀô€XZ[ê[X\—‹õ›\Ÿ^HOOHôù[ò›[€àà»[\úÀô€XZ[ê[X\—‹õ›\Ÿ^Hà
 
-  // ../../core/pass_core/js/sync_merge_core.js
-  function asNumber(value) {
-    const parsed = Number(value || 0);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  function asString(value) {
-    return String(value || "");
-  }
-  function stableTieValue(value) {
-    return asString(value).trim().toLowerCase();
-  }
-  function accountSourceTieKey(account) {
-    return [
-      stableTieValue(account?.createdDeviceName),
-      stableTieValue(account?.lastOperatedDeviceName),
-      stableTieValue(account?.accountId),
-      stableTieValue(account?.canonicalSite),
-      stableTieValue(account?.usernameAtCreate),
-      stableTieValue(account?.recordId || account?.id)
-    ].join("\0");
-  }
-  function preferAccountSource(left, right) {
-    return accountSourceTieKey(left) >= accountSourceTieKey(right) ? left : right;
-  }
-  function requireFunction(helpers, name) {
-    const candidate = helpers?.[name];
-    if (typeof candidate !== "function") {
-      throw new Error(`sync_merge_core missing helper: ${name}`);
-    }
-    return candidate;
-  }
-  function resolveHelpers(helpers) {
-    return {
-      normalizeAccountShape: requireFunction(helpers, "normalizeAccountShape"),
-      normalizeFolderIdList: requireFunction(helpers, "normalizeFolderIdList"),
-      normalizeFolderId: requireFunction(helpers, "normalizeFolderId"),
-      extractAccountFolderIds: requireFunction(helpers, "extractAccountFolderIds"),
-      normalizeSites: requireFunction(helpers, "normalizeSites"),
-      etldPlusOne: requireFunction(helpers, "etldPlusOne"),
-      normalizePasskeyCredentialIds: requireFunction(helpers, "normalizePasskeyCredentialIds"),
-      stableUuidFromText: requireFunction(helpers, "stableUuidFromText"),
-      normalizePasskeyShape: requireFunction(helpers, "normalizePasskeyShape"),
-      normalizePasskeyCreateCompatMethod: requireFunction(helpers, "normalizePasskeyCreateCompatMethod"),
-      normalizeFolderShape: requireFunction(helpers, "normalizeFolderShape"),
-      sortFoldersForDisplay: requireFunction(helpers, "sortFoldersForDisplay"),
-      fixedNewAccountFolderId: asString(helpers?.fixedNewAccountFolderId).trim().toLowerCase(),
-      fixedNewAccountFolderName: asString(helpers?.fixedNewAccountFolderName).trim() || "\u65B0\u8D26\u53F7"
-    };
-  }
-  function newerField(lhsValue, lhsUpdatedAt, lhsDeviceName, lhsAccountUpdatedAt, rhsValue, rhsUpdatedAt, rhsDeviceName, rhsAccountUpdatedAt) {
-    const leftUpdated = asNumber(lhsUpdatedAt);
-    const rightUpdated = asNumber(rhsUpdatedAt);
-    if (leftUpdated > rightUpdated) return { value: asString(lhsValue), updatedAtMs: leftUpdated, deviceName: asString(lhsDeviceName) };
-    if (rightUpdated > leftUpdated) return { value: asString(rhsValue), updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
-    const leftValue = asString(lhsValue);
-    const rightValue = asString(rhsValue);
-    if (leftValue === rightValue) {
-      const leftDevice2 = stableTieValue(lhsDeviceName);
-      const rightDevice2 = stableTieValue(rhsDeviceName);
-      const deviceName = leftDevice2 >= rightDevice2 ? asString(lhsDeviceName).trim() : asString(rhsDeviceName).trim();
-      return {
-        value: leftValue,
-        updatedAtMs: leftUpdated,
-        deviceName: deviceName || DEFAULT_DEVICE_NAME
-      };
-    }
-    if (!leftValue && rightValue) {
-      return { value: rightValue, updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
-    }
-    if (leftValue && !rightValue) {
-      return { value: leftValue, updatedAtMs: leftUpdated, deviceName: asString(lhsDeviceName) };
-    }
-    const leftAccountUpdated = asNumber(lhsAccountUpdatedAt);
-    const rightAccountUpdated = asNumber(rhsAccountUpdatedAt);
-    if (leftAccountUpdated > rightAccountUpdated) {
-      return { value: leftValue, updatedAtMs: leftUpdated, deviceName: asString(lhsDeviceName) };
-    }
-    if (rightAccountUpdated > leftAccountUpdated) {
-      return { value: rightValue, updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
-    }
-    const leftDevice = stableTieValue(lhsDeviceName);
-    const rightDevice = stableTieValue(rhsDeviceName);
-    if (leftDevice !== rightDevice) {
-      return leftDevice > rightDevice ? { value: leftValue, updatedAtMs: leftUpdated, deviceName: asString(lhsDeviceName) } : { value: rightValue, updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
-    }
-    return leftValue >= rightValue ? { value: leftValue, updatedAtMs: leftUpdated, deviceName: asString(lhsDeviceName) } : { value: rightValue, updatedAtMs: rightUpdated, deviceName: asString(rhsDeviceName) };
-  }
-  function mergeFolderMembershipStates(left, right) {
-    const collect = (account) => {
-      const states = account?.folderMembershipStates && typeof account.folderMembershipStates === "object" ? account.folderMembershipStates : {};
-      const result = /* @__PURE__ */ new Map();
-      for (const [rawId, rawState] of Object.entries(states)) {
-        const id = asString(rawId).trim().toLowerCase();
-        if (!id) continue;
-        result.set(id, {
-          isDeleted: Boolean(rawState?.isDeleted),
-          updatedAtMs: asNumber(rawState?.updatedAtMs || account?.updatedAtMs || account?.createdAtMs),
-          deviceName: asString(rawState?.deviceName || account?.lastOperatedDeviceName).trim()
-        });
-      }
-      for (const rawId of account?.folderIds || []) {
-        const id = asString(rawId).trim().toLowerCase();
-        if (id && !result.has(id)) result.set(id, { isDeleted: false, updatedAtMs: asNumber(account?.updatedAtMs || account?.createdAtMs), deviceName: asString(account?.lastOperatedDeviceName).trim() });
-      }
-      return result;
-    };
-    const merged = collect(left);
-    for (const [id, incoming] of collect(right)) {
-      const current = merged.get(id);
-      if (!current || shouldPreferRelationState(incoming, current)) {
-        merged.set(id, incoming);
-      }
-    }
-    return Object.fromEntries([...merged.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
-  }
-  function shouldPreferRelationState(incoming, current) {
-    if (incoming.updatedAtMs > current.updatedAtMs) return true;
-    if (incoming.updatedAtMs < current.updatedAtMs) return false;
-    if (incoming.isDeleted && !current.isDeleted) return true;
-    if (incoming.isDeleted === current.isDeleted) {
-      return stableTieValue(incoming.deviceName) > stableTieValue(current.deviceName);
-    }
-    return false;
-  }
-  function mergeRelationStates(left, right, stateKey, leftValues, rightValues, normalizeId) {
-    const collect = (account, values) => {
-      const states = account?.[stateKey] && typeof account[stateKey] === "object" ? account[stateKey] : {};
-      const result = /* @__PURE__ */ new Map();
-      for (const [rawId, rawState] of Object.entries(states)) {
-        const id = normalizeId(rawId);
-        if (!id) continue;
-        result.set(id, {
-          isDeleted: Boolean(rawState?.isDeleted),
-          updatedAtMs: asNumber(rawState?.updatedAtMs || account?.updatedAtMs || account?.createdAtMs),
-          deviceName: asString(rawState?.deviceName || account?.lastOperatedDeviceName).trim()
-        });
-      }
-      for (const rawId of values || []) {
-        const id = normalizeId(rawId);
-        if (id && !result.has(id)) result.set(id, { isDeleted: false, updatedAtMs: asNumber(account?.updatedAtMs || account?.createdAtMs), deviceName: asString(account?.lastOperatedDeviceName).trim() });
-      }
-      return result;
-    };
-    const merged = collect(left, leftValues);
-    for (const [id, incoming] of collect(right, rightValues)) {
-      const current = merged.get(id);
-      if (!current || shouldPreferRelationState(incoming, current)) merged.set(id, incoming);
-    }
-    return Object.fromEntries([...merged.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
-  }
-  function mergeSameAccount(lhs, rhs, h) {
-    const left = h.normalizeAccountShape(lhs);
-    const right = h.normalizeAccountShape(rhs);
-    const primary = asNumber(left.createdAtMs) < asNumber(right.createdAtMs) ? left : asNumber(right.createdAtMs) < asNumber(left.createdAtMs) ? right : preferAccountSource(left, right);
-    const secondary = primary === left ? right : left;
-    const siteAliasStates = mergeRelationStates(left, right, "siteAliasStates", left.sites, right.sites, (id) => asString(id).trim().toLowerCase());
-    const mergedSites = h.normalizeSites(Object.entries(siteAliasStates).filter(([, state]) => !state.isDeleted).map(([id]) => id));
-    const canonicalBySites = h.etldPlusOne(mergedSites[0] || "");
-    const canonicalSite = canonicalBySites || primary.canonicalSite || secondary.canonicalSite || "";
-    const folderMembershipStates = mergeFolderMembershipStates(left, right);
-    const mergedFolderIds = h.normalizeFolderIdList(Object.entries(folderMembershipStates).filter(([, state]) => !state.isDeleted).map(([id]) => id));
-    const usernameField = newerField(
-      left.username,
-      left.usernameUpdatedAtMs,
-      left.usernameUpdatedDeviceName,
-      left.updatedAtMs,
-      right.username,
-      right.usernameUpdatedAtMs,
-      right.usernameUpdatedDeviceName,
-      right.updatedAtMs
-    );
-    const passwordField = newerField(
-      left.password,
-      left.passwordUpdatedAtMs,
-      left.passwordUpdatedDeviceName,
-      left.updatedAtMs,
-      right.password,
-      right.passwordUpdatedAtMs,
-      right.passwordUpdatedDeviceName,
-      right.updatedAtMs
-    );
-    const totpField = newerField(
-      left.totpSecret,
-      left.totpUpdatedAtMs,
-      left.totpUpdatedDeviceName,
-      left.updatedAtMs,
-      right.totpSecret,
-      right.totpUpdatedAtMs,
-      right.totpUpdatedDeviceName,
-      right.updatedAtMs
-    );
-    const recoveryField = newerField(
-      left.recoveryCodes,
-      left.recoveryCodesUpdatedAtMs,
-      left.recoveryCodesUpdatedDeviceName,
-      left.updatedAtMs,
-      right.recoveryCodes,
-      right.recoveryCodesUpdatedAtMs,
-      right.recoveryCodesUpdatedDeviceName,
-      right.updatedAtMs
-    );
-    const noteField = newerField(
-      left.note,
-      left.noteUpdatedAtMs,
-      left.noteUpdatedDeviceName,
-      left.updatedAtMs,
-      right.note,
-      right.noteUpdatedAtMs,
-      right.noteUpdatedDeviceName,
-      right.updatedAtMs
-    );
-    const passkeyLinkStates = mergeRelationStates(left, right, "passkeyLinkStates", left.passkeyCredentialIds, right.passkeyCredentialIds, (id) => asString(id).trim());
-    const mergedPasskeyIds = h.normalizePasskeyCredentialIds(Object.entries(passkeyLinkStates).filter(([, state]) => !state.isDeleted).map(([id]) => id));
-    const passkeyUpdatedAtMs = Math.max(
-      asNumber(left.passkeyUpdatedAtMs || left.updatedAtMs || left.createdAtMs),
-      asNumber(right.passkeyUpdatedAtMs || right.updatedAtMs || right.createdAtMs)
-    );
-    const leftPasskeyActivity = asNumber(left.passkeyUpdatedAtMs || left.updatedAtMs || left.createdAtMs);
-    const rightPasskeyActivity = asNumber(right.passkeyUpdatedAtMs || right.updatedAtMs || right.createdAtMs);
-    const passkeySource = leftPasskeyActivity > rightPasskeyActivity ? left : rightPasskeyActivity > leftPasskeyActivity ? right : preferAccountSource(left, right);
-    const passkeyUpdatedDeviceName = asString(passkeySource.passkeyUpdatedDeviceName).trim() || asString(passkeySource.lastOperatedDeviceName).trim() || DEFAULT_DEVICE_NAME;
-    const latestContentUpdatedAt = Math.max(
-      usernameField.updatedAtMs,
-      passwordField.updatedAtMs,
-      totpField.updatedAtMs,
-      recoveryField.updatedAtMs,
-      noteField.updatedAtMs,
-      passkeyUpdatedAtMs
-    );
-    const leftDeletedAt = left.isDeleted ? asNumber(left.deletedAtMs) : 0;
-    const rightDeletedAt = right.isDeleted ? asNumber(right.deletedAtMs) : 0;
-    const latestDeletedAt = Math.max(leftDeletedAt, rightDeletedAt);
-    const latestActivityAt = Math.max(latestContentUpdatedAt, left.updatedAtMs, right.updatedAtMs);
-    const keepDeleted = latestDeletedAt > 0 && latestDeletedAt >= latestActivityAt;
-    const keepPermanentlyDeleted = Boolean(left.isPermanentlyDeleted || right.isPermanentlyDeleted);
-    const deletedDeviceName = leftDeletedAt > rightDeletedAt ? asString(left.deletedDeviceName).trim() : rightDeletedAt > leftDeletedAt ? asString(right.deletedDeviceName).trim() : stableTieValue(left.deletedDeviceName) >= stableTieValue(right.deletedDeviceName) ? asString(left.deletedDeviceName).trim() : asString(right.deletedDeviceName).trim();
-    const leftUpdatedAt = asNumber(left.updatedAtMs);
-    const rightUpdatedAt = asNumber(right.updatedAtMs);
-    const newerAccount = leftUpdatedAt > rightUpdatedAt ? left : rightUpdatedAt > leftUpdatedAt ? right : preferAccountSource(left, right);
-    const olderAccount = newerAccount === left ? right : left;
-    const createdAtMs = Math.min(asNumber(left.createdAtMs), asNumber(right.createdAtMs));
-    const updatedAtMs = Math.max(
-      leftUpdatedAt,
-      rightUpdatedAt,
-      latestContentUpdatedAt,
-      latestDeletedAt,
-      createdAtMs
-    );
-    const usernameAtCreate = asString(primary.usernameAtCreate).trim() || asString(secondary.usernameAtCreate).trim() || asString(primary.username).trim() || asString(secondary.username).trim();
-    const createdDeviceName = asString(primary.createdDeviceName).trim() || asString(secondary.createdDeviceName).trim() || asString(primary.lastOperatedDeviceName).trim() || asString(secondary.lastOperatedDeviceName).trim() || DEFAULT_DEVICE_NAME;
-    const lastOperatedDeviceName = asString(newerAccount.lastOperatedDeviceName).trim() || asString(olderAccount.lastOperatedDeviceName).trim() || DEFAULT_DEVICE_NAME;
-    return {
-      recordId: primary.recordId || left.recordId || right.recordId || h.stableUuidFromText(`${primary.accountId}|${createdAtMs}`),
-      accountId: primary.accountId,
-      canonicalSite,
-      usernameAtCreate,
-      isPinned: Boolean(newerAccount.isPinned),
-      pinnedSortOrder: newerAccount.pinnedSortOrder == null ? null : asNumber(newerAccount.pinnedSortOrder),
-      regularSortOrder: newerAccount.regularSortOrder == null ? null : asNumber(newerAccount.regularSortOrder),
-      // Pinned state is synchronized per view scope. Keep views that only exist
-      // on one side, while the newer account wins when both sides edited the
-      // same scope.
-      pinnedViews: mergePinnedViews(
-        left.pinnedViews,
-        right.pinnedViews,
-        newerAccount === right
-      ),
-      folderId: mergedFolderIds[0] || (newerAccount.folderId == null ? null : h.normalizeFolderId(newerAccount.folderId)),
-      folderIds: mergedFolderIds,
-      folderMembershipStates,
-      // Empty is intentional: every site may be tombstoned. Never revive primary.sites.
-      sites: mergedSites,
-      siteAliasStates,
-      username: usernameField.value,
-      password: passwordField.value,
-      totpSecret: totpField.value,
-      recoveryCodes: recoveryField.value,
-      note: noteField.value,
-      passkeyCredentialIds: mergedPasskeyIds,
-      passkeyLinkStates,
-      usernameUpdatedAtMs: usernameField.updatedAtMs,
-      usernameUpdatedDeviceName: usernameField.deviceName,
-      passwordUpdatedAtMs: passwordField.updatedAtMs,
-      passwordUpdatedDeviceName: passwordField.deviceName,
-      totpUpdatedAtMs: totpField.updatedAtMs,
-      totpUpdatedDeviceName: totpField.deviceName,
-      recoveryCodesUpdatedAtMs: recoveryField.updatedAtMs,
-      recoveryCodesUpdatedDeviceName: recoveryField.deviceName,
-      noteUpdatedAtMs: noteField.updatedAtMs,
-      noteUpdatedDeviceName: noteField.deviceName,
-      passkeyUpdatedAtMs,
-      passkeyUpdatedDeviceName,
-      isDeleted: keepPermanentlyDeleted || keepDeleted,
-      isPermanentlyDeleted: keepPermanentlyDeleted,
-      deletedAtMs: keepPermanentlyDeleted || keepDeleted ? latestDeletedAt || updatedAtMs : null,
-      deletedDeviceName: keepPermanentlyDeleted || keepDeleted ? deletedDeviceName || lastOperatedDeviceName : "",
-      createdAtMs,
-      updatedAtMs,
-      lastOperatedDeviceName,
-      createdDeviceName
-    };
-  }
-  function mergeSamePasskey(lhs, rhs, h) {
-    const left = h.normalizePasskeyShape(lhs);
-    const right = h.normalizePasskeyShape(rhs);
-    const leftUpdated = asNumber(left.updatedAtMs || left.createdAtMs);
-    const rightUpdated = asNumber(right.updatedAtMs || right.createdAtMs);
-    const leftDeletedAt = left.isDeleted ? asNumber(left.deletedAtMs) : 0;
-    const rightDeletedAt = right.isDeleted ? asNumber(right.deletedAtMs) : 0;
-    const latestDeletedAt = Math.max(leftDeletedAt, rightDeletedAt);
-    const keepPermanentlyDeleted = Boolean(left.isPermanentlyDeleted || right.isPermanentlyDeleted);
-    const keepDeleted = keepPermanentlyDeleted || latestDeletedAt > 0 && latestDeletedAt >= Math.max(leftUpdated, rightUpdated);
-    const deletedDeviceName = leftDeletedAt >= rightDeletedAt ? asString(left.deletedDeviceName).trim() : asString(right.deletedDeviceName).trim();
-    const newer = leftUpdated >= rightUpdated ? left : right;
-    const older = newer === left ? right : left;
-    const resolvedAlg = asNumber(newer.alg || older.alg || -7);
-    return {
-      credentialIdB64u: newer.credentialIdB64u || older.credentialIdB64u,
-      rpId: newer.rpId || older.rpId,
-      userName: newer.userName || older.userName,
-      displayName: newer.displayName || older.displayName,
-      userHandleB64u: newer.userHandleB64u || older.userHandleB64u,
-      alg: asNumber(newer.alg || older.alg || -7),
-      signCount: Math.max(asNumber(left.signCount), asNumber(right.signCount)),
-      privateJwk: newer.privateJwk || older.privateJwk || null,
-      publicJwk: newer.publicJwk || older.publicJwk || null,
-      createdAtMs: Math.min(asNumber(left.createdAtMs), asNumber(right.createdAtMs)),
-      updatedAtMs: Math.max(leftUpdated, rightUpdated),
-      lastUsedAtMs: Math.max(asNumber(left.lastUsedAtMs), asNumber(right.lastUsedAtMs)) || null,
-      mode: newer.mode || older.mode || "managed",
-      createCompatMethod: h.normalizePasskeyCreateCompatMethod(
-        newer.createCompatMethod || older.createCompatMethod,
-        resolvedAlg
-      ),
-      isDeleted: keepDeleted,
-      isPermanentlyDeleted: keepPermanentlyDeleted,
-      deletedAtMs: keepDeleted ? latestDeletedAt || Math.max(leftUpdated, rightUpdated) : null,
-      deletedDeviceName: keepDeleted ? deletedDeviceName || DEFAULT_DEVICE_NAME : ""
-    };
-  }
-  function mergeSameFolder(lhs, rhs, h) {
-    const left = h.normalizeFolderShape(lhs);
-    const right = h.normalizeFolderShape(rhs);
-    const id = h.normalizeFolderId(left.id || right.id);
-    const leftUpdatedAt = asNumber(left.updatedAtMs || left.createdAtMs);
-    const rightUpdatedAt = asNumber(right.updatedAtMs || right.createdAtMs);
-    const leftDeletedAt = left.isDeleted ? asNumber(left.deletedAtMs) : 0;
-    const rightDeletedAt = right.isDeleted ? asNumber(right.deletedAtMs) : 0;
-    const latestDeletedAt = Math.max(leftDeletedAt, rightDeletedAt);
-    const keepPermanentlyDeleted = Boolean(left.isPermanentlyDeleted || right.isPermanentlyDeleted);
-    const keepDeleted = keepPermanentlyDeleted || latestDeletedAt > 0 && latestDeletedAt >= Math.max(leftUpdatedAt, rightUpdatedAt);
-    const deletedDeviceName = leftDeletedAt >= rightDeletedAt ? asString(left.deletedDeviceName).trim() : asString(right.deletedDeviceName).trim();
-    const orderFromRight = preferRemoteOrder(
-      left.regularOrderUpdatedAtMs,
-      left.regularOrderUpdatedDeviceName,
-      right.regularOrderUpdatedAtMs,
-      right.regularOrderUpdatedDeviceName
-    );
-    const orderSource = orderFromRight ? right : left;
-    const regularOrderFields = {
-      regularAccountIds: Array.isArray(orderSource.regularAccountIds) ? [...orderSource.regularAccountIds] : [],
-      regularOrderUpdatedAtMs: asNumber(orderSource.regularOrderUpdatedAtMs),
-      regularOrderUpdatedDeviceName: asString(orderSource.regularOrderUpdatedDeviceName).trim()
-    };
-    if (id === h.fixedNewAccountFolderId) {
-      return {
-        id,
-        name: h.fixedNewAccountFolderName,
-        ...regularOrderFields,
-        matchedSites: rightUpdatedAt >= leftUpdatedAt ? right.matchedSites || [] : left.matchedSites || [],
-        autoAddMatchingSites: rightUpdatedAt >= leftUpdatedAt ? Boolean(right.autoAddMatchingSites) : Boolean(left.autoAddMatchingSites),
-        isDeleted: false,
-        isPermanentlyDeleted: false,
-        deletedAtMs: null,
-        deletedDeviceName: "",
-        createdAtMs: Math.min(asNumber(left.createdAtMs), asNumber(right.createdAtMs)),
-        updatedAtMs: Math.max(leftUpdatedAt, rightUpdatedAt)
-      };
-    }
-    const leftName = asString(left.name).trim();
-    const rightName = asString(right.name).trim();
-    let name = leftName || rightName || `\u672A\u547D\u540D\u6587\u4EF6\u5939 ${id.slice(0, 8)}`;
-    if (rightUpdatedAt > leftUpdatedAt && rightName) {
-      name = rightName;
-    } else if (leftUpdatedAt > rightUpdatedAt && leftName) {
-      name = leftName;
-    }
-    return {
-      id,
-      name,
-      ...regularOrderFields,
-      matchedSites: rightUpdatedAt > leftUpdatedAt ? right.matchedSites || [] : left.matchedSites || [],
-      autoAddMatchingSites: rightUpdatedAt > leftUpdatedAt ? Boolean(right.autoAddMatchingSites) : Boolean(left.autoAddMatchingSites),
-      isDeleted: keepDeleted,
-      isPermanentlyDeleted: keepPermanentlyDeleted,
-      deletedAtMs: keepDeleted ? latestDeletedAt || Math.max(leftUpdatedAt, rightUpdatedAt) : null,
-      deletedDeviceName: keepDeleted ? deletedDeviceName || DEFAULT_DEVICE_NAME : "",
-      createdAtMs: Math.min(asNumber(left.createdAtMs), asNumber(right.createdAtMs)),
-      updatedAtMs: Math.max(leftUpdatedAt, rightUpdatedAt)
-    };
-  }
-  function mergeAccountCollections(local, remote, helpers) {
-    const h = resolveHelpers(helpers);
-    const merged = [];
-    for (const account of [...Array.isArray(local) ? local : [], ...Array.isArray(remote) ? remote : []]) {
-      const normalized = h.normalizeAccountShape(account);
-      const accountId = asString(normalized.accountId).trim();
-      const recordId = asString(normalized.recordId || normalized.id).trim().toLowerCase();
-      if (!accountId && !recordId) continue;
-      const existingIndex = merged.findIndex((candidate) => {
-        const candidateAccountId = asString(candidate.accountId).trim();
-        const candidateRecordId = asString(candidate.recordId || candidate.id).trim().toLowerCase();
-        if (recordId) return candidateRecordId === recordId;
-        return !candidateRecordId && accountId && candidateAccountId === accountId;
-      });
-      if (existingIndex >= 0) {
-        merged[existingIndex] = mergeSameAccount(merged[existingIndex], normalized, h);
-      } else {
-        merged.push(normalized);
-      }
-    }
-    return merged.filter(Boolean).sort((left, right) => {
-      const leftRecordId = asString(left?.recordId || left?.id).trim().toLowerCase();
-      const rightRecordId = asString(right?.recordId || right?.id).trim().toLowerCase();
-      if (leftRecordId < rightRecordId) return -1;
-      if (leftRecordId > rightRecordId) return 1;
-      const leftAccountId = asString(left?.accountId).trim().toLowerCase();
-      const rightAccountId = asString(right?.accountId).trim().toLowerCase();
-      if (leftAccountId < rightAccountId) return -1;
-      if (leftAccountId > rightAccountId) return 1;
-      return 0;
-    });
-  }
-  function mergePasskeyCollections(local, remote, helpers) {
-    const h = resolveHelpers(helpers);
-    const mergedById = /* @__PURE__ */ new Map();
-    const source = [...Array.isArray(local) ? local : [], ...Array.isArray(remote) ? remote : []];
-    for (const passkey of source) {
-      const normalized = h.normalizePasskeyShape(passkey);
-      const id = asString(normalized.credentialIdB64u).trim();
-      if (!id) continue;
-      if (mergedById.has(id)) {
-        mergedById.set(id, mergeSamePasskey(mergedById.get(id), normalized, h));
-      } else {
-        mergedById.set(id, normalized);
-      }
-    }
-    return Array.from(mergedById.values()).sort((a, b) => {
-      const left = asNumber(a?.updatedAtMs || a?.createdAtMs);
-      const right = asNumber(b?.updatedAtMs || b?.createdAtMs);
-      if (left !== right) return right - left;
-      const leftId = asString(a?.credentialIdB64u);
-      const rightId = asString(b?.credentialIdB64u);
-      if (leftId < rightId) return -1;
-      if (leftId > rightId) return 1;
-      return 0;
-    });
-  }
-  function mergeFolderCollections(local, remote, helpers) {
-    const h = resolveHelpers(helpers);
-    const merged = /* @__PURE__ */ new Map();
-    const source = [...Array.isArray(local) ? local : [], ...Array.isArray(remote) ? remote : []];
-    for (const folder of source) {
-      const normalized = h.normalizeFolderShape(folder);
-      const id = h.normalizeFolderId(normalized.id);
-      if (!id) continue;
-      if (merged.has(id)) {
-        merged.set(id, mergeSameFolder(merged.get(id), normalized, h));
-      } else {
-        merged.set(id, normalized);
-      }
-    }
-    const existingFixed = merged.get(h.fixedNewAccountFolderId);
-    if (!existingFixed) {
-      merged.set(
-        h.fixedNewAccountFolderId,
-        h.normalizeFolderShape({
-          id: h.fixedNewAccountFolderId,
-          name: h.fixedNewAccountFolderName,
-          createdAtMs: 0
-        })
-      );
-    } else {
-      merged.set(
-        h.fixedNewAccountFolderId,
-        {
-          ...existingFixed,
-          id: h.fixedNewAccountFolderId,
-          name: h.fixedNewAccountFolderName
-        }
-      );
-    }
-    return h.sortFoldersForDisplay(Array.from(merged.values()));
-  }
-  function preferRemoteOrder(localUpdatedAtMs, localDeviceName, remoteUpdatedAtMs, remoteDeviceName) {
-    return asNumber(remoteUpdatedAtMs) > asNumber(localUpdatedAtMs) || asNumber(remoteUpdatedAtMs) === asNumber(localUpdatedAtMs) && stableTieValue(remoteDeviceName) > stableTieValue(localDeviceName);
-  }
-  function mergeOrderIds(local, remote, localUpdatedAtMs, localDeviceName, remoteUpdatedAtMs, remoteDeviceName) {
-    const remoteWins = preferRemoteOrder(
-      localUpdatedAtMs,
-      localDeviceName,
-      remoteUpdatedAtMs,
-      remoteDeviceName
-    );
-    const winner = remoteWins ? remote : local;
-    const loser = remoteWins ? local : remote;
-    const seen = /* @__PURE__ */ new Set();
-    return [...Array.isArray(winner) ? winner : [], ...Array.isArray(loser) ? loser : []].map((id) => asString(id).trim().toLowerCase()).filter((id) => id && !seen.has(id) && seen.add(id));
-  }
-  function normalizeRegularOrder(savedIds, accounts, folderId, helpers) {
-    const normalizedFolderId = folderId == null ? null : helpers.normalizeFolderId(folderId);
-    const eligible = (account) => {
-      if (account?.isDeleted || account?.isPermanentlyDeleted) return false;
-      if (normalizedFolderId == null) return true;
-      return helpers.extractAccountFolderIds(account).some((id) => helpers.normalizeFolderId(id) === normalizedFolderId);
-    };
-    const valid = /* @__PURE__ */ new Map();
-    for (const account of accounts) {
-      const id = asString(account?.recordId || account?.id).trim().toLowerCase();
-      if (id && eligible(account)) valid.set(id, account);
-    }
-    const result = [];
-    const seen = /* @__PURE__ */ new Set();
-    for (const rawId of Array.isArray(savedIds) ? savedIds : []) {
-      const id = asString(rawId).trim().toLowerCase();
-      if (id && valid.has(id) && !seen.has(id)) {
-        seen.add(id);
-        result.push(id);
-      }
-    }
-    const missing = [...valid.entries()].filter(([id]) => !seen.has(id)).sort(([, left], [, right]) => asNumber(left?.regularSortOrder) - asNumber(right?.regularSortOrder) || asNumber(right?.updatedAtMs) - asNumber(left?.updatedAtMs) || asString(left?.recordId || left?.id).localeCompare(asString(right?.recordId || right?.id)));
-    result.push(...missing.map(([id]) => id));
-    return result;
-  }
-  function normalizeFolderRegularOrders(folders, accounts, helpers) {
-    const h = resolveHelpers(helpers);
-    return (Array.isArray(folders) ? folders : []).map((folder) => {
-      const next = { ...folder };
-      next.regularAccountIds = next.isDeleted || next.isPermanentlyDeleted ? [] : normalizeRegularOrder(next.regularAccountIds, accounts, next.id, h);
-      return next;
-    });
-  }
-  function applyFolderOrder(folders, savedIds, helpers) {
-    const h = resolveHelpers(helpers);
-    const byId = new Map((Array.isArray(folders) ? folders : []).map((folder) => [h.normalizeFolderId(folder?.id), folder]).filter(([id]) => id));
-    const order = [];
-    const seen = /* @__PURE__ */ new Set();
-    const fixedId = h.fixedNewAccountFolderId;
-    if (byId.get(fixedId) && !byId.get(fixedId).isDeleted && !byId.get(fixedId).isPermanentlyDeleted) {
-      order.push(fixedId);
-      seen.add(fixedId);
-    }
-    for (const rawId of Array.isArray(savedIds) ? savedIds : []) {
-      const id = h.normalizeFolderId(rawId);
-      const folder = byId.get(id);
-      if (folder && !folder.isDeleted && !folder.isPermanentlyDeleted && !seen.has(id)) {
-        order.push(id);
-        seen.add(id);
-      }
-    }
-    for (const [id, folder] of byId) {
-      if (!folder.isDeleted && !folder.isPermanentlyDeleted && !seen.has(id)) {
-        order.push(id);
-        seen.add(id);
-      }
-    }
-    const ordered = [];
-    for (const id of order) {
-      if (byId.has(id)) ordered.push(byId.get(id));
-    }
-    for (const [id, folder] of byId) {
-      if (!seen.has(id)) ordered.push(folder);
-    }
-    return { folders: ordered, folderOrderIds: order };
-  }
-  function mergeSyncPayloads(localInput, remoteInput, helpers) {
-    const h = resolveHelpers(helpers);
-    const local = localInput && typeof localInput === "object" ? localInput : {};
-    const remote = remoteInput && typeof remoteInput === "object" ? remoteInput : {};
-    let accounts = mergeAccountCollections(local.accounts, remote.accounts, h);
-    let folders = mergeFolderCollections(local.folders, remote.folders, h);
-    const passkeys = mergePasskeyCollections(local.passkeys, remote.passkeys, h);
-    accounts = reconcileAccountFolders(accounts, folders, h);
-    const allOrderFromRemote = preferRemoteOrder(
-      local.allRegularOrderUpdatedAtMs,
-      local.allRegularOrderUpdatedDeviceName,
-      remote.allRegularOrderUpdatedAtMs,
-      remote.allRegularOrderUpdatedDeviceName
-    );
-    const folderOrderFromRemote = preferRemoteOrder(
-      local.folderOrderUpdatedAtMs,
-      local.folderOrderUpdatedDeviceName,
-      remote.folderOrderUpdatedAtMs,
-      remote.folderOrderUpdatedDeviceName
-    );
-    const allRegularAccountIds = normalizeRegularOrder(
-      mergeOrderIds(
-        local.allRegularAccountIds,
-        remote.allRegularAccountIds,
-        local.allRegularOrderUpdatedAtMs,
-        local.allRegularOrderUpdatedDeviceName,
-        remote.allRegularOrderUpdatedAtMs,
-        remote.allRegularOrderUpdatedDeviceName
-      ),
-      accounts,
-      null,
-      h
-    );
-    folders = normalizeFolderRegularOrders(folders, accounts, h);
-    const folderOrderIds = mergeOrderIds(
-      local.folderOrderIds,
-      remote.folderOrderIds,
-      local.folderOrderUpdatedAtMs,
-      local.folderOrderUpdatedDeviceName,
-      remote.folderOrderUpdatedAtMs,
-      remote.folderOrderUpdatedDeviceName
-    );
-    const folderResult = applyFolderOrder(folders, folderOrderIds, h);
-    return {
-      accounts,
-      folders: folderResult.folders,
-      passkeys,
-      allRegularAccountIds,
-      allRegularOrderUpdatedAtMs: allOrderFromRemote ? asNumber(remote.allRegularOrderUpdatedAtMs) : asNumber(local.allRegularOrderUpdatedAtMs),
-      allRegularOrderUpdatedDeviceName: allOrderFromRemote ? asString(remote.allRegularOrderUpdatedDeviceName) : asString(local.allRegularOrderUpdatedDeviceName),
-      folderOrderIds: folderResult.folderOrderIds,
-      folderOrderUpdatedAtMs: folderOrderFromRemote ? asNumber(remote.folderOrderUpdatedAtMs) : asNumber(local.folderOrderUpdatedAtMs),
-      folderOrderUpdatedDeviceName: folderOrderFromRemote ? asString(remote.folderOrderUpdatedDeviceName) : asString(local.folderOrderUpdatedDeviceName)
-    };
-  }
-  function reconcileAccountFolders(accounts, folders, helpers) {
-    const h = resolveHelpers(helpers);
-    const validIds = new Set((Array.isArray(folders) ? folders : []).filter((folder) => !folder?.isDeleted).map((folder) => h.normalizeFolderId(folder?.id)));
-    const values = Array.isArray(accounts) ? accounts : [];
-    return values.map((account) => {
-      const normalized = h.normalizeAccountShape(account);
-      const previousIds = h.normalizeFolderIdList(h.extractAccountFolderIds(normalized));
-      const resolved = h.normalizeFolderIdList(
-        previousIds.filter((id) => validIds.has(h.normalizeFolderId(id)))
-      );
-      const previousSet = new Set(previousIds.map((id) => h.normalizeFolderId(id)));
-      const resolvedSet = new Set(resolved.map((id) => h.normalizeFolderId(id)));
-      const folderMembershipStates = {
-        ...normalized.folderMembershipStates && typeof normalized.folderMembershipStates === "object" ? normalized.folderMembershipStates : {}
-      };
-      const tombstoneAt = Math.max(
-        asNumber(normalized.updatedAtMs),
-        asNumber(normalized.createdAtMs)
-      );
-      const deviceName = asString(normalized.lastOperatedDeviceName).trim() || DEFAULT_DEVICE_NAME;
-      for (const id of previousSet) {
-        if (!id || resolvedSet.has(id)) continue;
-        const existing = folderMembershipStates[id] || {};
-        folderMembershipStates[id] = {
-          isDeleted: true,
-          updatedAtMs: Math.max(asNumber(existing.updatedAtMs), tombstoneAt),
-          deviceName: asString(existing.deviceName).trim() || deviceName
-        };
-      }
-      for (const id of resolvedSet) {
-        if (!id) continue;
-        const existing = folderMembershipStates[id];
-        if (!existing || existing.isDeleted) {
-          folderMembershipStates[id] = {
-            isDeleted: false,
-            updatedAtMs: Math.max(asNumber(existing?.updatedAtMs), tombstoneAt),
-            deviceName: asString(existing?.deviceName).trim() || deviceName
-          };
-        }
-      }
-      return {
-        ...normalized,
-        folderId: resolved[0] || null,
-        folderIds: resolved,
-        folderMembershipStates
-      };
-    });
-  }
-  function identitySet(values, identityFn) {
-    const result = /* @__PURE__ */ new Set();
-    for (const value of Array.isArray(values) ? values : []) {
-      const identity = identityFn(value);
-      if (identity) result.add(identity);
-    }
-    return result;
-  }
-  function mergePinnedViews(leftValue, rightValue, preferRight) {
-    const left = leftValue && typeof leftValue === "object" && !Array.isArray(leftValue) ? leftValue : {};
-    const right = rightValue && typeof rightValue === "object" && !Array.isArray(rightValue) ? rightValue : {};
-    const merged = {};
-    for (const key of /* @__PURE__ */ new Set([...Object.keys(left), ...Object.keys(right)])) {
-      if (Object.prototype.hasOwnProperty.call(left, key) && Object.prototype.hasOwnProperty.call(right, key)) {
-        merged[key] = preferRight ? right[key] : left[key];
-      } else if (Object.prototype.hasOwnProperty.call(left, key)) {
-        merged[key] = left[key];
-      } else {
-        merged[key] = right[key];
-      }
-    }
-    return Object.keys(merged).length > 0 ? merged : null;
-  }
-  function missingIdentities(source, target, identityFn) {
-    const sourceIds = identitySet(source, identityFn);
-    const targetIds = identitySet(target, identityFn);
-    return Array.from(sourceIds).filter((identity) => !targetIds.has(identity));
-  }
-  function summarizeSyncPayload(payload, helpers) {
-    const h = resolveHelpers(helpers);
-    const accounts = Array.isArray(payload?.accounts) ? payload.accounts.map(h.normalizeAccountShape) : [];
-    const folders = Array.isArray(payload?.folders) ? payload.folders.map(h.normalizeFolderShape) : [];
-    const passkeys = Array.isArray(payload?.passkeys) ? payload.passkeys.map(h.normalizePasskeyShape) : [];
-    return {
-      accounts: accounts.filter((item) => !item?.isPermanentlyDeleted).length,
-      activeAccounts: accounts.filter((item) => !item?.isDeleted && !item?.isPermanentlyDeleted).length,
-      deletedAccounts: accounts.filter((item) => Boolean(item?.isDeleted) && !item?.isPermanentlyDeleted).length,
-      folders: folders.filter((item) => !item?.isPermanentlyDeleted).length,
-      passkeys: passkeys.filter((item) => !item?.isPermanentlyDeleted).length,
-      accountIds: identitySet(accounts, (item) => asString(item?.recordId || item?.id || item?.accountId).trim().toLowerCase()),
-      folderIds: identitySet(folders, (item) => h.normalizeFolderId(item?.id)),
-      passkeyIds: identitySet(passkeys, (item) => asString(item?.credentialIdB64u || item?.id).trim())
-    };
-  }
-  function evaluateSyncSafety({ local, remote, merged, mode = "merge" }, helpers) {
-    const localSummary = summarizeSyncPayload(local, helpers);
-    const remoteSummary = remote == null ? null : summarizeSyncPayload(remote, helpers);
-    const mergedSummary = summarizeSyncPayload(merged, helpers);
-    const reasons = [];
-    const localNonEmpty = localSummary.accounts + localSummary.folders + localSummary.passkeys > 0;
-    const remoteNonEmpty = Boolean(remoteSummary) && remoteSummary.accounts + remoteSummary.folders + remoteSummary.passkeys > 0;
-    if (mode === "merge") {
-      if (localNonEmpty && remoteSummary && !remoteNonEmpty) {
-        reasons.push("REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL");
-      }
-      const missingAccounts = missingIdentities(
-        local?.accounts,
-        merged?.accounts,
-        (item) => asString(item?.recordId || item?.id || item?.accountId).trim().toLowerCase()
-      );
-      const missingFolders = missingIdentities(
-        local?.folders,
-        merged?.folders,
-        (item) => asString(item?.id).trim().toLowerCase()
-      );
-      const missingPasskeys = missingIdentities(
-        local?.passkeys,
-        merged?.passkeys,
-        (item) => asString(item?.credentialIdB64u || item?.id).trim()
-      );
-      if (missingAccounts.length > 0) reasons.push("LOCAL_ACCOUNTS_DROPPED");
-      if (missingFolders.length > 0) reasons.push("LOCAL_FOLDERS_DROPPED");
-      if (missingPasskeys.length > 0) reasons.push("LOCAL_PASSKEYS_DROPPED");
-      const missingRemoteAccounts = missingIdentities(
-        remote?.accounts,
-        merged?.accounts,
-        (item) => asString(item?.recordId || item?.id || item?.accountId).trim().toLowerCase()
-      );
-      const missingRemoteFolders = missingIdentities(
-        remote?.folders,
-        merged?.folders,
-        (item) => asString(item?.id).trim().toLowerCase()
-      );
-      const missingRemotePasskeys = missingIdentities(
-        remote?.passkeys,
-        merged?.passkeys,
-        (item) => asString(item?.credentialIdB64u || item?.id).trim()
-      );
-      if (missingRemoteAccounts.length > 0) reasons.push("REMOTE_ACCOUNTS_DROPPED");
-      if (missingRemoteFolders.length > 0) reasons.push("REMOTE_FOLDERS_DROPPED");
-      if (missingRemotePasskeys.length > 0) reasons.push("REMOTE_PASSKEYS_DROPPED");
-      return {
-        safe: reasons.length === 0,
-        reasons,
-        local: { ...localSummary, accountIds: void 0, folderIds: void 0, passkeyIds: void 0 },
-        remote: remoteSummary ? { ...remoteSummary, accountIds: void 0, folderIds: void 0, passkeyIds: void 0 } : null,
-        merged: { ...mergedSummary, accountIds: void 0, folderIds: void 0, passkeyIds: void 0 }
-      };
-    }
-    if (mode === "remoteOverwriteLocal") {
-      if (!remoteNonEmpty && localNonEmpty) reasons.push("REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL");
-      return {
-        safe: reasons.length === 0,
-        reasons,
-        local: { ...localSummary, accountIds: void 0, folderIds: void 0, passkeyIds: void 0 },
-        remote: remoteSummary ? { ...remoteSummary, accountIds: void 0, folderIds: void 0, passkeyIds: void 0 } : null,
-        merged: { ...mergedSummary, accountIds: void 0, folderIds: void 0, passkeyIds: void 0 }
-      };
-    }
-    return {
-      safe: true,
-      reasons,
-      local: { ...localSummary, accountIds: void 0, folderIds: void 0, passkeyIds: void 0 },
-      remote: remoteSummary ? { ...remoteSummary, accountIds: void 0, folderIds: void 0, passkeyIds: void 0 } : null,
-      merged: { ...mergedSummary, accountIds: void 0, folderIds: void 0, passkeyIds: void 0 }
-    };
-  }
+HOààé¬à€€ú›õ›”\»H‹[€úÀõõ›”\»œ»]Kõõ› 
+N¬à€€ú›]öXŸSò[YHH‹[€úÀô]öXŸSò[YHêúõ›‹Ÿ\àé¬à€€ú›àHXÿ€›[ùÀõ[ô›¬à€€ú›⁄]TŸ]»HXÿ€›[ùÀõX\
 
-  // lock_crypto.js
-  var LOCK_CREDENTIAL_VERSION = 2;
-  var LOCK_PBKDF2_ITERATIONS = 31e4;
-  function bytesToBase64(bytes) {
-    let binary = "";
-    for (const value of bytes) binary += String.fromCharCode(value);
-    return btoa(binary);
-  }
-  function base64ToBytes(base64) {
-    try {
-      const binary = atob(String(base64 || ""));
-      const output = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i += 1) output[i] = binary.charCodeAt(i);
-      return output;
-    } catch {
-      return new Uint8Array();
-    }
-  }
-  function normalizeLockMasterCredential(value) {
-    if (!value || typeof value !== "object") return null;
-    const version = Number(value.version || 1);
-    const saltBase64 = String(value.saltBase64 || "");
-    const digestBase64 = String(value.digestBase64 || "");
-    if (![1, LOCK_CREDENTIAL_VERSION].includes(version) || !saltBase64 || !digestBase64) return null;
-    const saltBytes = base64ToBytes(saltBase64);
-    if (saltBytes.length < 16) return null;
-    const iterations = version === LOCK_CREDENTIAL_VERSION ? Number(value.iterations || LOCK_PBKDF2_ITERATIONS) : 1;
-    if (!Number.isInteger(iterations) || iterations < 1) return null;
-    return { version, saltBase64, digestBase64, iterations };
-  }
-  async function legacyDigest(password, saltBytes) {
-    const passwordBytes = new TextEncoder().encode(String(password || ""));
-    const merged = new Uint8Array(saltBytes.length + passwordBytes.length);
-    merged.set(saltBytes, 0);
-    merged.set(passwordBytes, saltBytes.length);
-    return new Uint8Array(await crypto.subtle.digest("SHA-256", merged));
-  }
-  async function pbkdf2Digest(password, saltBytes, iterations) {
-    const keyMaterial = await crypto.subtle.importKey(
-      "raw",
-      new TextEncoder().encode(String(password || "")),
-      "PBKDF2",
-      false,
-      ["deriveBits"]
-    );
-    const bits = await crypto.subtle.deriveBits(
-      { name: "PBKDF2", hash: "SHA-256", salt: saltBytes, iterations },
-      keyMaterial,
-      256
-    );
-    return new Uint8Array(bits);
-  }
-  async function createLockMasterCredential(password) {
-    const normalizedPassword = String(password || "");
-    if (!normalizedPassword) return null;
-    const saltBytes = crypto.getRandomValues(new Uint8Array(16));
-    const digest = await pbkdf2Digest(normalizedPassword, saltBytes, LOCK_PBKDF2_ITERATIONS);
-    return {
-      version: LOCK_CREDENTIAL_VERSION,
-      saltBase64: bytesToBase64(saltBytes),
-      digestBase64: bytesToBase64(digest),
-      iterations: LOCK_PBKDF2_ITERATIONS
-    };
-  }
-  async function verifyLockMasterPassword(credential, password) {
-    const normalized = normalizeLockMasterCredential(credential);
-    if (!normalized) return false;
-    const saltBytes = base64ToBytes(normalized.saltBase64);
-    const digest = normalized.version === 1 ? await legacyDigest(String(password || ""), saltBytes) : await pbkdf2Digest(String(password || ""), saltBytes, normalized.iterations);
-    return timingSafeEqual(digest, base64ToBytes(normalized.digestBase64));
-  }
-  function timingSafeEqual(lhs, rhs) {
-    if (lhs.length !== rhs.length) return false;
-    let difference = 0;
-    for (let i = 0; i < lhs.length; i += 1) difference |= lhs[i] ^ rhs[i];
-    return difference === 0;
-  }
+JHOà¬à€€ú›⁄]\»H\úò^Kö\–\úò^JOÀú⁄]\ H»Kú⁄]\»à◊N¬àô]\õàô]»Ÿ]
+⁄]\ÀõX\
+õ‹õX[^ôJKôö[\äõ€€X[äJN¬àJN¬à€€ú›]Ÿ]»H⁄]TŸ]ÀõX\
 
-  // sync_outbox.js
-  function syncTargetKey(target) {
-    return `${String(target?.kind || "").trim()}|${String(target?.url || "").trim()}`;
-  }
-  function canonicalJson(value) {
-    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-    if (value && typeof value === "object") {
-      return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
-    }
-    return JSON.stringify(value ?? null);
-  }
-  async function syncPayloadSha256(payload, cryptoApi = globalThis.crypto) {
-    if (!cryptoApi?.subtle?.digest) throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u540C\u6B65 payload \u6458\u8981\u8BA1\u7B97");
-    const bytes = new TextEncoder().encode(canonicalJson(payload));
-    const digest = new Uint8Array(await cryptoApi.subtle.digest("SHA-256", bytes));
-    return Array.from(digest, (value) => value.toString(16).padStart(2, "0")).join("");
-  }
-  function normalizeSyncOutboxItem(item, nowMs = Date.now()) {
-    const targetKey = String(item?.targetKey || "").trim();
-    const payload = item?.payload;
-    if (!targetKey || !payload || typeof payload !== "object") return null;
-    const nonNegativeNumber = (raw, fallback) => {
-      const parsed = Number(raw);
-      return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-    };
-    return {
-      targetKey,
-      payload,
-      payloadSha256: String(item?.payloadSha256 || "").trim().toLowerCase(),
-      expectedEtag: String(item?.expectedEtag || "").trim(),
-      expectedRevision: Math.floor(nonNegativeNumber(item?.expectedRevision, 0)),
-      idempotencyKey: String(item?.idempotencyKey || "").trim(),
-      syncSessionId: String(item?.syncSessionId || "").trim(),
-      operationId: String(item?.operationId || "").trim(),
-      sourceType: String(item?.sourceType || targetKey.split("|", 1)[0] || "").trim(),
-      scope: String(item?.scope || "").trim(),
-      status: String(item?.status || "pendingRetry").trim() || "pendingRetry",
-      createdAtMs: nonNegativeNumber(item?.createdAtMs, nowMs),
-      attempts: Math.min(SYNC_OUTBOX_MAX_ATTEMPTS, Math.floor(nonNegativeNumber(item?.attempts, 0))),
-      lastAttemptAtMs: nonNegativeNumber(item?.lastAttemptAtMs, 0),
-      nextRetryAtMs: nonNegativeNumber(item?.nextRetryAtMs, 0),
-      lastErrorCode: String(item?.lastErrorCode || "").trim(),
-      lastError: String(item?.lastError || "")
-    };
-  }
-  function normalizeSyncOutbox(value, nowMs = Date.now()) {
-    const byTarget = /* @__PURE__ */ new Map();
-    for (const item of Array.isArray(value) ? value : []) {
-      const normalized = normalizeSyncOutboxItem(item, nowMs);
-      if (!normalized) continue;
-      byTarget.set(normalized.targetKey, normalized);
-    }
-    return [...byTarget.values()].sort((left, right) => left.createdAtMs - right.createdAtMs);
-  }
-  function upsertSyncOutbox(value, {
-    targetKey,
-    payload,
-    error,
-    payloadSha256 = "",
-    expectedEtag = "",
-    expectedRevision = 0,
-    idempotencyKey = "",
-    syncSessionId = "",
-    operationId = "",
-    sourceType = "",
-    scope = "",
-    forceResume = false,
-    nowMs = Date.now()
-  }) {
-    const current = normalizeSyncOutbox(value, nowMs);
-    const previous = current.find((item) => item.targetKey === targetKey);
-    const normalizedHash = String(payloadSha256 || "").trim().toLowerCase();
-    const sameLogicalWrite = Boolean(previous && normalizedHash && previous.payloadSha256 === normalizedHash);
-    const wasPaused = previous?.status === "paused";
-    const attempts = Math.min(
-      SYNC_OUTBOX_MAX_ATTEMPTS,
-      (sameLogicalWrite ? forceResume && wasPaused ? 0 : Number(previous?.attempts || 0) : 0) + 1
-    );
-    const next = normalizeSyncOutboxItem({
-      targetKey,
-      payload,
-      payloadSha256: normalizedHash,
-      expectedEtag,
-      expectedRevision,
-      idempotencyKey: idempotencyKey || (sameLogicalWrite ? previous.idempotencyKey : ""),
-      syncSessionId: syncSessionId || (sameLogicalWrite ? previous.syncSessionId : ""),
-      operationId: operationId || (sameLogicalWrite ? previous.operationId : ""),
-      sourceType,
-      scope,
-      status: attempts >= SYNC_OUTBOX_MAX_ATTEMPTS ? "paused" : "pendingRetry",
-      createdAtMs: sameLogicalWrite ? previous.createdAtMs : nowMs,
-      attempts,
-      lastAttemptAtMs: nowMs,
-      nextRetryAtMs: nowMs + syncOutboxRetryDelayMs(attempts),
-      lastErrorCode: String(error?.code || ""),
-      lastError: String(error?.message || error || "")
-    }, nowMs);
-    return normalizeSyncOutbox(current.filter((item) => item.targetKey !== targetKey).concat(next), nowMs);
-  }
-  function removeOrphanedSyncOutbox(value, activeTargetKeys) {
-    const active = new Set(Array.from(activeTargetKeys || [], (item) => String(item || "").trim()).filter(Boolean));
-    return normalizeSyncOutbox(value).filter((item) => active.has(item.targetKey));
-  }
+Ÿ]
+HOà¬à€€ú››]H à◊‘TëW◊»
+ã»ô]»Ÿ]
 
-  // data_store.js
-  var DB_NAME = "pass.local.db.v1";
-  var DB_VERSION = 1;
-  var STORE_COLLECTIONS = "collections";
-  var COLLECTION_ACCOUNTS = "accounts";
-  var COLLECTION_PASSKEYS = "passkeys";
-  var COLLECTION_FOLDERS = "folders";
-  var COLLECTION_LAYOUT = "layout";
-  var COLLECTION_HISTORY = "history";
-  var COLLECTION_SYNC_SECRETS = "syncSecrets";
-  var COLLECTION_SYNC_SAFETY_SNAPSHOTS = "syncSafetySnapshots";
-  var COLLECTION_SYNC_OUTBOX = "syncOutbox";
-  var HISTORY_MAX_ENTRIES = 500;
-  var SAFETY_SNAPSHOT_MAX_ENTRIES = 5;
-  var LEGACY_STORAGE_KEY_ACCOUNTS = "pass.accounts";
-  var LEGACY_STORAGE_KEY_PASSKEYS = "pass.passkeys";
-  var LEGACY_STORAGE_KEY_FOLDERS = "pass.folders";
-  var STORAGE_KEY_MIGRATION_DONE = "pass.data.migratedToIndexedDb.v1";
-  var STORAGE_KEY_ENCRYPTION_KEY = "pass.data.encryptionKey.v1";
-  var STORAGE_KEY_WRAPPED_ENCRYPTION_KEY = "pass.data.wrappedEncryptionKey.v2";
-  var STORAGE_KEY_SESSION_ENCRYPTION_KEY = "pass.data.sessionEncryptionKey.v2";
-  var LEGACY_STORAGE_KEY_SYNC_WEBDAV_PASSWORD = "pass.sync.webdav.password.v2";
-  var LEGACY_STORAGE_KEY_SYNC_SERVER_TOKEN = "pass.sync.server.token.v2";
-  var LEGACY_STORAGE_KEY_SYNC_ENCRYPTION_KEY = "pass.sync.encryptionKey.v1";
-  var LEGACY_STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS = "pass.localSafetySnapshots.v1";
-  var STORAGE_KEY_DATA_BUMP = "pass.data.bump.v1";
-  var dbPromise = null;
-  var readyPromise = null;
-  var unlockedEncryptionKey = null;
-  var encryptionKeyPromise = null;
-  function sanitizeHistoryAction(value) {
-    const action = String(value || "").trim();
-    if (!action) return "";
-    const normalized = action.replace(/:/g, "\uFF1A");
-    if (/(ÂàõÂª∫Ë¥¶Âè∑|created account)\s*[Ôºà(][\s\S]*?(ÂØÜÁ†ÅÊîπ‰∏∫|password\s*(?:changed|to)|password was set to)[\s\S]*?[Ôºâ)]/i.test(normalized)) {
-      return "\u65B0\u5EFA\u8D26\u53F7";
-    }
-    const separator = normalized.indexOf("\uFF1A");
-    const prefix = separator >= 0 ? `${normalized.slice(0, separator)}\uFF1A` : "";
-    if (/(ÂØÜÁ†ÅÊîπ‰∏∫|password\s*(?:changed|to)|password was set to)/i.test(normalized)) {
-      return `${prefix}\u5BC6\u7801\u5DF2\u4FEE\u6539`;
-    }
-    if (/(TOTP\s*Êîπ‰∏∫|totp\s*(?:changed|to)|otp\s*(?:changed|to))/i.test(normalized)) {
-      return `${prefix}TOTP \u5DF2\u4FEE\u6539`;
-    }
-    if (/(ÊÅ¢Â§çÁ†ÅÊîπ‰∏∫|recovery(?:\s*codes?)?\s*(?:changed|to))/i.test(normalized)) {
-      return `${prefix}\u6062\u590D\u7801\u5DF2\u4FEE\u6539`;
-    }
-    if (/(Â§áÊ≥®Êîπ‰∏∫|note\s*(?:changed|to)|notes?\s*(?:changed|to))/i.test(normalized)) {
-      return `${prefix}\u5907\u6CE8\u5DF2\u4FEE\u6539`;
-    }
-    return action;
-  }
-  function requestAsPromise(request) {
-    return new Promise((resolve, reject) => {
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error || new Error("IndexedDB request failed"));
-    });
-  }
-  function openDatabase() {
-    if (dbPromise) return dbPromise;
-    dbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(STORE_COLLECTIONS)) {
-          db.createObjectStore(STORE_COLLECTIONS, { keyPath: "key" });
-        }
-      };
-      request.onsuccess = () => {
-        const db = request.result;
-        db.onversionchange = () => {
-          db.close();
-          dbPromise = null;
-        };
-        resolve(db);
-      };
-      request.onerror = () => {
-        dbPromise = null;
-        reject(request.error || new Error("Failed to open IndexedDB"));
-      };
-      request.onblocked = () => {
-        dbPromise = null;
-        reject(new Error("Failed to open IndexedDB: blocked"));
-      };
-    }).catch((error) => {
-      dbPromise = null;
-      throw error;
-    });
-    return dbPromise;
-  }
-  async function readCollection(key) {
-    const db = await openDatabase();
-    const tx = db.transaction(STORE_COLLECTIONS, "readonly");
-    const store = tx.objectStore(STORE_COLLECTIONS);
-    const row = await requestAsPromise(store.get(key));
-    if (!row) return [];
-    if (Array.isArray(row.value)) {
-      await writeCollection(key, row.value);
-      return row.value;
-    }
-    if (Number(row.version) !== 1 || !row.nonceBase64 || !row.ciphertextBase64) {
-      throw new Error(`IndexedDB \u96C6\u5408\u683C\u5F0F\u65E0\u6548: ${key}`);
-    }
-    const cryptoKey = await loadOrCreateEncryptionKey();
-    let plaintext;
-    try {
-      plaintext = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv: base64ToBytes(row.nonceBase64), additionalData: new TextEncoder().encode(key) },
-        cryptoKey,
-        base64ToBytes(row.ciphertextBase64)
-      );
-    } catch (error) {
-      if (key === COLLECTION_HISTORY && String(error?.name || "") === "OperationError") return [];
-      throw error;
-    }
-    const decoded = JSON.parse(new TextDecoder().decode(plaintext));
-    return Array.isArray(decoded) ? decoded : [];
-  }
-  async function writeCollection(key, value) {
-    await writeCollectionRows([{ key, value }]);
-  }
-  async function encryptCollectionRow(key, value) {
-    const cryptoKey = await loadOrCreateEncryptionKey();
-    const nonce = crypto.getRandomValues(new Uint8Array(12));
-    const plaintext = new TextEncoder().encode(JSON.stringify(Array.isArray(value) ? value : []));
-    const ciphertext = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv: nonce, additionalData: new TextEncoder().encode(key) },
-      cryptoKey,
-      plaintext
-    );
-    return {
-      key,
-      version: 1,
-      nonceBase64: bytesToBase64(nonce),
-      ciphertextBase64: bytesToBase64(new Uint8Array(ciphertext))
-    };
-  }
-  async function writeCollectionRows(entries) {
-    const rows = await Promise.all(entries.map((entry) => encryptCollectionRow(entry.key, entry.value)));
-    const db = await openDatabase();
-    const tx = db.transaction(STORE_COLLECTIONS, "readwrite");
-    const store = tx.objectStore(STORE_COLLECTIONS);
-    for (const row of rows) store.put(row);
-    await new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error || new Error("IndexedDB transaction failed"));
-      tx.onabort = () => reject(tx.error || new Error("IndexedDB transaction aborted"));
-    });
-  }
-  async function loadOrCreateEncryptionKey() {
-    if (unlockedEncryptionKey) return unlockedEncryptionKey;
-    if (encryptionKeyPromise) return encryptionKeyPromise;
-    encryptionKeyPromise = (async () => {
-      if (unlockedEncryptionKey) return unlockedEncryptionKey;
-      const session = await chrome.storage.session.get([STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
-      const sessionKey = base64ToBytes(session[STORAGE_KEY_SESSION_ENCRYPTION_KEY]);
-      if (sessionKey.length === 32) {
-        unlockedEncryptionKey = await crypto.subtle.importKey("raw", sessionKey, "AES-GCM", false, ["encrypt", "decrypt"]);
-        return unlockedEncryptionKey;
-      }
-      const stored = await chrome.storage.local.get([
-        STORAGE_KEY_ENCRYPTION_KEY,
-        STORAGE_KEY_WRAPPED_ENCRYPTION_KEY
-      ]);
-      if (stored[STORAGE_KEY_WRAPPED_ENCRYPTION_KEY]) {
-        throw new Error("\u6269\u5C55\u5DF2\u9501\u5B9A\uFF0C\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u6570\u636E");
-      }
-      let rawKey = base64ToBytes(stored[STORAGE_KEY_ENCRYPTION_KEY]);
-      if (rawKey.length !== 32) {
-        if (await hasEncryptedCollections()) {
-          throw new Error("\u672C\u5730\u6570\u636E\u5BC6\u94A5\u7F3A\u5931\uFF0C\u8BF7\u6062\u590D\u5BC6\u94A5\u6216\u4ECE\u5907\u4EFD\u5BFC\u5165");
-        }
-        rawKey = crypto.getRandomValues(new Uint8Array(32));
-        await chrome.storage.local.set({ [STORAGE_KEY_ENCRYPTION_KEY]: bytesToBase64(rawKey) });
-      }
-      unlockedEncryptionKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt", "decrypt"]);
-      return unlockedEncryptionKey;
-    })().catch((error) => {
-      encryptionKeyPromise = null;
-      throw error;
-    });
-    return encryptionKeyPromise;
-  }
-  async function hasEncryptedCollections() {
-    return await new Promise((resolve) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(STORE_COLLECTIONS)) {
-          db.createObjectStore(STORE_COLLECTIONS, { keyPath: "key" });
-        }
-      };
-      request.onerror = () => resolve(false);
-      request.onsuccess = () => {
-        const db = request.result;
-        try {
-          const tx = db.transaction(STORE_COLLECTIONS, "readonly");
-          const store = tx.objectStore(STORE_COLLECTIONS);
-          const getAll = store.getAll();
-          getAll.onsuccess = () => {
-            const rows = Array.isArray(getAll.result) ? getAll.result : [];
-            db.close();
-            resolve(rows.some((row) => {
-              return row && Number(row.version) === 1 && row.nonceBase64 && row.ciphertextBase64;
-            }));
-          };
-          getAll.onerror = () => {
-            db.close();
-            resolve(false);
-          };
-        } catch {
-          try {
-            db.close();
-          } catch {
-          }
-          resolve(false);
-        }
-      };
-    });
-  }
-  async function lockDataEncryption() {
-    unlockedEncryptionKey = null;
-    encryptionKeyPromise = null;
-    await chrome.storage.session.remove(STORAGE_KEY_SESSION_ENCRYPTION_KEY);
-  }
-  async function touchDataBump(reason) {
-    try {
-      await chrome.storage.local.set({
-        [STORAGE_KEY_DATA_BUMP]: Date.now(),
-        "pass.data.bumpReason.v1": String(reason || "")
-      });
-    } catch {
-    }
-  }
-  function legacyCollectionValue(legacy, key) {
-    const value = legacy[key];
-    return Array.isArray(value) ? value : [];
-  }
-  function collectionRecordIdentity(value, collectionKey, index) {
-    if (!value || typeof value !== "object") return `index:${index}`;
-    const candidates = collectionKey === COLLECTION_ACCOUNTS ? [value.accountId, value.recordId, value.id] : collectionKey === COLLECTION_PASSKEYS ? [value.credentialIdB64u, value.credentialId, value.id] : [value.id, value.folderId];
-    const identity = candidates.find((candidate) => String(candidate || "").trim());
-    if (!identity) return `index:${index}`;
-    const normalized = String(identity).trim();
-    return collectionKey === COLLECTION_FOLDERS ? normalized.toLowerCase() : normalized;
-  }
-  function collectionRecordUpdatedAt(value) {
-    const timestamp = Number(value?.updatedAtMs ?? value?.createdAtMs ?? 0);
-    return Number.isFinite(timestamp) ? timestamp : 0;
-  }
-  function mergeLegacyCollection(current, legacy, collectionKey) {
-    const merged = /* @__PURE__ */ new Map();
-    const order = [];
-    const add = (value, index, preferOnEqual) => {
-      const identity = collectionRecordIdentity(value, collectionKey, index);
-      const existing = merged.get(identity);
-      if (!existing) {
-        merged.set(identity, { value, updatedAtMs: collectionRecordUpdatedAt(value) });
-        order.push(identity);
-        return;
-      }
-      const updatedAtMs = collectionRecordUpdatedAt(value);
-      if (updatedAtMs > existing.updatedAtMs || preferOnEqual && updatedAtMs === existing.updatedAtMs) {
-        merged.set(identity, { value, updatedAtMs });
-      }
-    };
-    legacy.forEach((value, index) => add(value, index, false));
-    current.forEach((value, index) => add(value, index, true));
-    return order.map((identity) => merged.get(identity).value);
-  }
-  async function migrateLegacyCollections(currentCollections, legacy) {
-    const collectionPairs = [
-      [COLLECTION_ACCOUNTS, currentCollections.accounts, legacyCollectionValue(legacy, LEGACY_STORAGE_KEY_ACCOUNTS)],
-      [COLLECTION_PASSKEYS, currentCollections.passkeys, legacyCollectionValue(legacy, LEGACY_STORAGE_KEY_PASSKEYS)],
-      [COLLECTION_FOLDERS, currentCollections.folders, legacyCollectionValue(legacy, LEGACY_STORAGE_KEY_FOLDERS)]
-    ];
-    let changed = false;
-    for (const [collectionKey, current, legacyValue] of collectionPairs) {
-      if (legacyValue.length === 0) continue;
-      const merged = mergeLegacyCollection(current, legacyValue, collectionKey);
-      if (JSON.stringify(merged) === JSON.stringify(current)) continue;
-      await writeCollection(collectionKey, merged);
-      changed = true;
-    }
-    if (changed) await touchDataBump("legacy-migration");
-    return changed;
-  }
-  async function readCollectionForMigration(key, legacyValue) {
-    try {
-      return await readCollection(key);
-    } catch (error) {
-      if (legacyValue.length > 0 && String(error?.name || "") === "OperationError") return [];
-      throw error;
-    }
-  }
-  async function migrateLegacyStorageIfNeeded() {
-    const legacy = await chrome.storage.local.get([
-      LEGACY_STORAGE_KEY_ACCOUNTS,
-      LEGACY_STORAGE_KEY_PASSKEYS,
-      LEGACY_STORAGE_KEY_FOLDERS
-    ]);
-    try {
-      const legacyAccounts = legacyCollectionValue(legacy, LEGACY_STORAGE_KEY_ACCOUNTS);
-      const legacyPasskeys = legacyCollectionValue(legacy, LEGACY_STORAGE_KEY_PASSKEYS);
-      const legacyFolders = legacyCollectionValue(legacy, LEGACY_STORAGE_KEY_FOLDERS);
-      const [accounts, passkeys, folders] = await Promise.all([
-        readCollectionForMigration(COLLECTION_ACCOUNTS, legacyAccounts),
-        readCollectionForMigration(COLLECTION_PASSKEYS, legacyPasskeys),
-        readCollectionForMigration(COLLECTION_FOLDERS, legacyFolders)
-      ]);
-      await migrateLegacyCollections({ accounts, passkeys, folders }, legacy);
-    } catch (error) {
-      if (String(error?.message || "") === "\u6269\u5C55\u5DF2\u9501\u5B9A\uFF0C\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u6570\u636E") return;
-      throw error;
-    }
-    await chrome.storage.local.set({ [STORAGE_KEY_MIGRATION_DONE]: true });
-  }
-  async function ensureDataStorageReady() {
-    if (!readyPromise) {
-      readyPromise = (async () => {
-        await openDatabase();
-        await migrateLegacyStorageIfNeeded();
-      })().catch((error) => {
-        readyPromise = null;
-        throw error;
-      });
-    }
-    return readyPromise;
-  }
-  async function setAccounts(accounts) {
-    await ensureDataStorageReady();
-    await writeCollection(COLLECTION_ACCOUNTS, accounts);
-    await touchDataBump(COLLECTION_ACCOUNTS);
-  }
-  async function setFolders(folders) {
-    await ensureDataStorageReady();
-    await writeCollection(COLLECTION_FOLDERS, folders);
-    await touchDataBump(COLLECTION_FOLDERS);
-  }
-  async function getAllData() {
-    await ensureDataStorageReady();
-    const [accounts, passkeys, folders, layoutRows] = await Promise.all([
-      readCollection(COLLECTION_ACCOUNTS),
-      readCollection(COLLECTION_PASSKEYS),
-      readCollection(COLLECTION_FOLDERS),
-      readCollection(COLLECTION_LAYOUT)
-    ]);
-    const layout = layoutRows[0] && typeof layoutRows[0] === "object" ? layoutRows[0] : {};
-    return {
-      accounts,
-      passkeys,
-      folders,
-      allRegularAccountIds: Array.isArray(layout.allRegularAccountIds) ? layout.allRegularAccountIds : [],
-      allRegularOrderUpdatedAtMs: Number(layout.allRegularOrderUpdatedAtMs) || 0,
-      allRegularOrderUpdatedDeviceName: String(layout.allRegularOrderUpdatedDeviceName || ""),
-      folderOrderIds: Array.isArray(layout.folderOrderIds) ? layout.folderOrderIds : [],
-      folderOrderUpdatedAtMs: Number(layout.folderOrderUpdatedAtMs) || 0,
-      folderOrderUpdatedDeviceName: String(layout.folderOrderUpdatedDeviceName || ""),
-      deviceName: String(layout.deviceName || "")
-    };
-  }
-  async function setAllData({
-    accounts,
-    passkeys,
-    folders,
-    allRegularAccountIds = [],
-    allRegularOrderUpdatedAtMs = 0,
-    allRegularOrderUpdatedDeviceName = "",
-    folderOrderIds = [],
-    folderOrderUpdatedAtMs = 0,
-    folderOrderUpdatedDeviceName = "",
-    deviceName = ""
-  }) {
-    try {
-      await ensureDataStorageReady();
-    } catch (error) {
-      if (String(error?.name || "") !== "OperationError") throw error;
-    }
-    await writeCollectionRows([
-      { key: COLLECTION_ACCOUNTS, value: accounts },
-      { key: COLLECTION_PASSKEYS, value: passkeys },
-      { key: COLLECTION_FOLDERS, value: folders },
-      {
-        key: COLLECTION_LAYOUT,
-        value: [{
-          allRegularAccountIds: Array.isArray(allRegularAccountIds) ? allRegularAccountIds : [],
-          allRegularOrderUpdatedAtMs: Number(allRegularOrderUpdatedAtMs) || 0,
-          allRegularOrderUpdatedDeviceName: String(allRegularOrderUpdatedDeviceName || ""),
-          folderOrderIds: Array.isArray(folderOrderIds) ? folderOrderIds : [],
-          folderOrderUpdatedAtMs: Number(folderOrderUpdatedAtMs) || 0,
-          folderOrderUpdatedDeviceName: String(folderOrderUpdatedDeviceName || ""),
-          deviceName: String(deviceName || "")
-        }]
-      }
-    ]);
-    await touchDataBump("all");
-  }
-  function normalizeSyncSecrets(value) {
-    const source = value && typeof value === "object" ? value : {};
-    return {
-      webdavPassword: String(source.webdavPassword || ""),
-      serverToken: String(source.serverToken || "").trim(),
-      encryptionKey: String(source.encryptionKey || "").trim(),
-      previousEncryptionKey: String(source.previousEncryptionKey || "").trim()
-    };
-  }
-  async function getSyncSecrets() {
-    await ensureDataStorageReady();
-    const entries = await readCollection(COLLECTION_SYNC_SECRETS);
-    return normalizeSyncSecrets(Array.isArray(entries) ? entries[0] : null);
-  }
-  async function setSyncSecrets(value) {
-    await ensureDataStorageReady();
-    const normalized = normalizeSyncSecrets(value);
-    await writeCollection(COLLECTION_SYNC_SECRETS, [normalized]);
-    return normalized;
-  }
-  function normalizeSafetySnapshots(value) {
-    const normalized = (Array.isArray(value) ? value : []).filter((item) => item && typeof item === "object" && item.payload && typeof item.payload === "object").map((item) => ({
-      id: String(item.id || `sync-snapshot-${Number(item.createdAtMs || 0)}`),
-      createdAtMs: Number(item.createdAtMs || 0),
-      reason: String(item.reason || "\u540C\u6B65\u524D\u5907\u4EFD"),
-      payload: item.payload
-    })).filter((item) => Number.isFinite(item.createdAtMs) && item.createdAtMs > 0);
-    const unique = /* @__PURE__ */ new Map();
-    for (const snapshot of normalized) {
-      if (!unique.has(snapshot.id)) unique.set(snapshot.id, snapshot);
-    }
-    return [...unique.values()].sort((lhs, rhs) => rhs.createdAtMs - lhs.createdAtMs).slice(0, SAFETY_SNAPSHOT_MAX_ENTRIES);
-  }
-  async function getSafetySnapshots() {
-    await ensureDataStorageReady();
-    const legacyResult = await chrome.storage.local.get([LEGACY_STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]);
-    const legacy = normalizeSafetySnapshots(legacyResult[LEGACY_STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS]);
-    let encrypted;
-    try {
-      encrypted = normalizeSafetySnapshots(await readCollection(COLLECTION_SYNC_SAFETY_SNAPSHOTS));
-    } catch (error) {
-      if (String(error?.name || "") !== "OperationError" || legacy.length === 0) throw error;
-      encrypted = [];
-    }
-    const merged = normalizeSafetySnapshots([...encrypted, ...legacy]);
-    if (legacy.length > 0 || JSON.stringify(merged) !== JSON.stringify(encrypted)) {
-      await writeCollection(COLLECTION_SYNC_SAFETY_SNAPSHOTS, merged);
-    }
-    if (legacyResult[LEGACY_STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS] !== void 0) {
-      await chrome.storage.local.remove(LEGACY_STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS);
-    }
-    return merged;
-  }
-  async function setSafetySnapshots(value) {
-    await ensureDataStorageReady();
-    const normalized = normalizeSafetySnapshots(value);
-    await writeCollection(COLLECTION_SYNC_SAFETY_SNAPSHOTS, normalized);
-    await chrome.storage.local.remove(LEGACY_STORAGE_KEY_LOCAL_SAFETY_SNAPSHOTS);
-    return normalized;
-  }
-  async function getSyncOutbox() {
-    await ensureDataStorageReady();
-    return normalizeSyncOutbox(await readCollection(COLLECTION_SYNC_OUTBOX));
-  }
-  async function setSyncOutbox(value) {
-    await ensureDataStorageReady();
-    const normalized = normalizeSyncOutbox(value);
-    await writeCollection(COLLECTION_SYNC_OUTBOX, normalized);
-    return normalized;
-  }
-  async function migrateLegacySyncSecrets() {
-    let existing = normalizeSyncSecrets(null);
-    let existingCollectionUnreadable = false;
-    try {
-      existing = await getSyncSecrets();
-    } catch (error) {
-      if (String(error?.name || "") !== "OperationError") throw error;
-      existingCollectionUnreadable = true;
-    }
-    const legacy = await chrome.storage.local.get([
-      LEGACY_STORAGE_KEY_SYNC_WEBDAV_PASSWORD,
-      LEGACY_STORAGE_KEY_SYNC_SERVER_TOKEN,
-      LEGACY_STORAGE_KEY_SYNC_ENCRYPTION_KEY
-    ]);
-    const migrated = normalizeSyncSecrets({
-      webdavPassword: existing.webdavPassword || legacy[LEGACY_STORAGE_KEY_SYNC_WEBDAV_PASSWORD],
-      serverToken: existing.serverToken || legacy[LEGACY_STORAGE_KEY_SYNC_SERVER_TOKEN],
-      encryptionKey: existing.encryptionKey || legacy[LEGACY_STORAGE_KEY_SYNC_ENCRYPTION_KEY],
-      previousEncryptionKey: existing.previousEncryptionKey
-    });
-    const hasLegacyRecoverySecrets = Boolean(
-      migrated.webdavPassword || migrated.serverToken || migrated.encryptionKey
-    );
-    if (existingCollectionUnreadable && !hasLegacyRecoverySecrets) {
-      const error = new Error("\u540C\u6B65\u51ED\u636E\u96C6\u5408\u65E0\u6CD5\u89E3\u5BC6\uFF0C\u4E14\u6CA1\u6709\u53EF\u7528\u65E7\u51ED\u636E\uFF1B\u539F\u6570\u636E\u672A\u8986\u76D6");
-      error.code = "SYNC_SECRETS_UNREADABLE";
-      throw error;
-    }
-    if (existingCollectionUnreadable || hasLegacyRecoverySecrets) {
-      await setSyncSecrets(migrated);
-    }
-    await chrome.storage.local.remove([
-      LEGACY_STORAGE_KEY_SYNC_WEBDAV_PASSWORD,
-      LEGACY_STORAGE_KEY_SYNC_SERVER_TOKEN,
-      LEGACY_STORAGE_KEY_SYNC_ENCRYPTION_KEY
-    ]);
-    return migrated;
-  }
-  async function getHistory() {
-    await ensureDataStorageReady();
-    const rawEntries = await readCollection(COLLECTION_HISTORY);
-    const entries = Array.isArray(rawEntries) ? rawEntries : [];
-    const normalized = entries.filter((item) => item && typeof item === "object").map((item) => ({
-      id: String(item.id || ""),
-      timestampMs: Number(item.timestampMs || 0),
-      action: sanitizeHistoryAction(item.action)
-    })).filter((item) => item.timestampMs > 0 && item.action.trim().length > 0).sort((lhs, rhs) => {
-      if (lhs.timestampMs !== rhs.timestampMs) return rhs.timestampMs - lhs.timestampMs;
-      return lhs.id.localeCompare(rhs.id);
-    });
-    const needsMigration = entries.length !== normalized.length || entries.some(
-      (item, index) => String(item?.action || "").trim() !== normalized[index]?.action
-    );
-    if (needsMigration) {
-      await writeCollection(COLLECTION_HISTORY, normalized);
-      await touchDataBump(COLLECTION_HISTORY);
-    }
-    return normalized;
-  }
-  async function setHistory(entries) {
-    await ensureDataStorageReady();
-    const normalized = (Array.isArray(entries) ? entries : []).filter((item) => item && typeof item === "object").map((item) => ({
-      id: String(item.id || ""),
-      timestampMs: Number(item.timestampMs || 0),
-      action: sanitizeHistoryAction(item.action)
-    })).filter((item) => item.timestampMs > 0 && item.action.length > 0).sort((lhs, rhs) => {
-      if (lhs.timestampMs !== rhs.timestampMs) return rhs.timestampMs - lhs.timestampMs;
-      return lhs.id.localeCompare(rhs.id);
-    }).slice(0, HISTORY_MAX_ENTRIES);
-    await writeCollection(COLLECTION_HISTORY, normalized);
-    await touchDataBump(COLLECTION_HISTORY);
-  }
-  async function appendHistoryEntry({ timestampMs, action }) {
-    const normalizedAction = sanitizeHistoryAction(action);
-    if (!normalizedAction) return;
-    const ts = Number(timestampMs || Date.now());
-    const entry = {
-      id: (() => {
-        try {
-          if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
-          const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
-          return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
-        } catch {
-          throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5B89\u5168\u968F\u673A\u6570");
-        }
-      })(),
-      timestampMs: Number.isFinite(ts) && ts > 0 ? ts : Date.now(),
-      action: normalizedAction
-    };
-    const current = await getHistory();
-    await setHistory([entry, ...current]);
-  }
+N¬àõ‹à
+€€ú›»ŸàŸ]
+H¬à€€ú›HH]\”€ôLä N¬àYà
+JH›]òY
+JN¬àBàô]\õà›]¬àJN¬à€€ú›[X\—‹õ›\Ÿ]»H⁄]TŸ]ÀõX\
 
-  // lock_state.js
-  var STORAGE_KEY_LOCK_ENABLED = "pass.lock.enabled";
-  var STORAGE_KEY_LOCK_POLICY = "pass.lock.policy";
-  var STORAGE_KEY_LOCK_IDLE_MINUTES = "pass.lock.idleMinutes";
-  var STORAGE_KEY_LOCK_MASTER_CREDENTIAL = "pass.lock.masterCredential.v1";
-  var LOCK_POLICY_ONCE_UNTIL_QUIT = "onceUntilQuit";
-  var LOCK_POLICY_IDLE_TIMEOUT = "idleTimeout";
-  var LOCK_POLICY_ON_BACKGROUND = "onBackground";
-  var LOCK_IDLE_MINUTES_DEFAULT = 5;
-  var LOCK_IDLE_MINUTES_MIN = 1;
-  var LOCK_IDLE_MINUTES_MAX = 60;
-  var LOCK_STATE_CHANGED_MESSAGE = "PASS_LOCK_STATE_CHANGED";
-  function normalizeLockPolicy(value) {
-    const policy = String(value || "").trim();
-    if (policy === LOCK_POLICY_IDLE_TIMEOUT) return LOCK_POLICY_IDLE_TIMEOUT;
-    if (policy === LOCK_POLICY_ON_BACKGROUND) return LOCK_POLICY_ON_BACKGROUND;
-    return LOCK_POLICY_ONCE_UNTIL_QUIT;
-  }
-  function clampLockIdleMinutes(value) {
-    const parsed = Math.round(Number(value));
-    if (!Number.isFinite(parsed)) return LOCK_IDLE_MINUTES_DEFAULT;
-    return Math.min(Math.max(parsed, LOCK_IDLE_MINUTES_MIN), LOCK_IDLE_MINUTES_MAX);
-  }
-  async function applyLockStateChangedMessage(message, { lock, clear, unlock } = {}) {
-    if (message?.type !== LOCK_STATE_CHANGED_MESSAGE) return false;
-    if (message?.payload?.locked) {
-      try {
-        await lock?.();
-      } finally {
-        await clear?.();
-      }
-      return "locked";
-    }
-    await unlock?.();
-    return "unlocked";
-  }
-  function createLockStateTransitionQueue() {
-    let pending = Promise.resolve();
-    return (message, callbacks) => {
-      pending = pending.catch(() => {
-      }).then(() => applyLockStateChangedMessage(message, callbacks));
-      return pending;
-    };
-  }
+Ÿ]
+HOà¬à€€ú››]H à◊‘TëW◊»
+ã»ô]»Ÿ]
 
-  // sync_crypto.js
-  var SYNC_ENCRYPTED_SCHEMA_V1 = "pass.sync.encrypted.v1";
-  var SYNC_PLAINTEXT_SCHEMA = "pass.sync.bundle.v2";
-  function generateSyncEncryptionKey() {
-    return bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
-  }
-  function normalizeSyncEncryptionKey(value) {
-    const normalized = String(value || "").trim();
-    if (!normalized) return "";
-    return base64UrlToBytes(normalized).length === 32 ? normalized : "";
-  }
-  function isSyncEncryptionEnabled(rawKey) {
-    return Boolean(normalizeSyncEncryptionKey(rawKey));
-  }
-  async function syncEncryptionKeyId(rawKey) {
-    const key = normalizeSyncEncryptionKey(rawKey);
-    if (!key) return "";
-    const digest = await crypto.subtle.digest("SHA-256", base64UrlToBytes(key));
-    return `k1-${Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("").slice(0, 16)}`;
-  }
-  async function encryptSyncBundleDocument(document2, rawKey) {
-    const key = normalizeSyncEncryptionKey(rawKey);
-    if (!key) {
-      return document2;
-    }
-    const imported = await importSyncKey(key, ["encrypt"]);
-    const nonce = crypto.getRandomValues(new Uint8Array(12));
-    const plaintext = new TextEncoder().encode(JSON.stringify(document2));
-    const ciphertext = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv: nonce, additionalData: new TextEncoder().encode(SYNC_ENCRYPTED_SCHEMA_V1) },
-      imported,
-      plaintext
-    );
-    return {
-      schema: SYNC_ENCRYPTED_SCHEMA_V1,
-      exportedAtMs: Number(document2?.exportedAtMs || Date.now()),
-      keyId: await syncEncryptionKeyId(key),
-      cipher: "AES-256-GCM",
-      nonceBase64: bytesToBase642(new Uint8Array(nonce)),
-      ciphertextBase64: bytesToBase642(new Uint8Array(ciphertext))
-    };
-  }
-  async function decryptSyncBundleDocument(envelope, rawKey, fallbackKeys = []) {
-    const schema = String(envelope?.schema || "");
-    if (schema === SYNC_PLAINTEXT_SCHEMA) {
-      if (isSyncEncryptionEnabled(rawKey)) {
-        throw new Error("\u540C\u6B65\u5BC6\u94A5\u5DF2\u914D\u7F6E\uFF0C\u62D2\u7EDD\u672A\u52A0\u5BC6\u540C\u6B65\u5305");
-      }
-      return envelope;
-    }
-    if (schema !== SYNC_ENCRYPTED_SCHEMA_V1) {
-      throw new Error("\u4E0D\u652F\u6301\u7684\u540C\u6B65\u5305\u683C\u5F0F");
-    }
-    const candidates = [...new Set([rawKey, ...Array.isArray(fallbackKeys) ? fallbackKeys : []].map(normalizeSyncEncryptionKey).filter(Boolean))];
-    if (candidates.length === 0) {
-      throw new Error("\u8BE5\u540C\u6B65\u5305\u4E3A\u52A0\u5BC6\u4FE1\u5C01\uFF0C\u4F46\u5F53\u524D\u672A\u914D\u7F6E\u540C\u6B65\u52A0\u5BC6\u5BC6\u94A5");
-    }
-    if (envelope?.cipher !== "AES-256-GCM") throw new Error("\u4E0D\u652F\u6301\u7684\u540C\u6B65\u52A0\u5BC6\u7B97\u6CD5");
-    const declaredKeyId = String(envelope?.keyId || "").trim();
-    const matchingCandidates = declaredKeyId ? (await Promise.all(candidates.map(async (key) => ({ key, keyId: await syncEncryptionKeyId(key) })))).filter((candidate) => candidate.keyId === declaredKeyId).map((candidate) => candidate.key) : candidates;
-    if (matchingCandidates.length === 0) {
-      throw new Error("\u540C\u6B65\u5BC6\u94A5 ID \u4E0D\u5339\u914D\uFF0C\u8BF7\u9009\u62E9\u4E0E\u8FDC\u7AEF\u6570\u636E\u76F8\u540C\u7684\u540C\u6B65\u5BC6\u94A5\u6216\u5B8C\u6210\u5BC6\u94A5\u8F6E\u6362");
-    }
-    for (const key of matchingCandidates) {
-      try {
-        const imported = await importSyncKey(key, ["decrypt"]);
-        const plaintext = await crypto.subtle.decrypt(
-          {
-            name: "AES-GCM",
-            iv: base64ToBytes2(envelope.nonceBase64),
-            additionalData: new TextEncoder().encode(SYNC_ENCRYPTED_SCHEMA_V1)
-          },
-          imported,
-          base64ToBytes2(envelope.ciphertextBase64)
-        );
-        return JSON.parse(new TextDecoder().decode(plaintext));
-      } catch {
-      }
-    }
-    throw new Error("\u540C\u6B65\u5305\u89E3\u5BC6\u5931\u8D25\uFF0C\u8BF7\u786E\u8BA4\u6240\u6709\u8BBE\u5907\u4F7F\u7528\u540C\u4E00\u540C\u6B65\u5BC6\u94A5");
-  }
-  async function importSyncKey(rawKey, usages) {
-    const normalized = normalizeSyncEncryptionKey(rawKey);
-    if (!normalized) throw new Error("\u540C\u6B65\u52A0\u5BC6\u5BC6\u94A5\u65E0\u6548\uFF0C\u5FC5\u987B\u662F 256 \u4F4D\u5BC6\u94A5");
-    return crypto.subtle.importKey("raw", base64UrlToBytes(normalized), "AES-GCM", false, usages);
-  }
-  function bytesToBase642(bytes) {
-    let binary = "";
-    for (const value of bytes) binary += String.fromCharCode(value);
-    return btoa(binary);
-  }
-  function bytesToBase64Url(bytes) {
-    return bytesToBase642(bytes).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/g, "");
-  }
-  function base64ToBytes2(base64) {
-    try {
-      const binary = atob(String(base64 || ""));
-      const output = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i += 1) output[i] = binary.charCodeAt(i);
-      return output;
-    } catch {
-      return new Uint8Array();
-    }
-  }
-  function base64UrlToBytes(value) {
-    const base64 = String(value || "").replaceAll("-", "+").replaceAll("_", "/");
-    return base64ToBytes2(base64 + "=".repeat((4 - base64.length % 4) % 4));
-  }
+N¬àõ‹à
+€€ú›⁄]HŸàŸ]
+H¬à€€ú›‹õ›\H€XZ[ê[X\—‹õ›\Ÿ^Lä⁄]JN¬àYà
+‹õ›\
+H›]òY
+‹õ›\
+N¬àBàô]\õà›]¬àJN¬à€€ú›\ô[ùH\úò^Kôúõ€J»[ô›ààK
+ÀJHOàJN¬à€€ú›ö[ôH
+JHOà¬à]›\àHN¬à⁄[H
+\ô[ùÿ›\óHOOH›\äH›\àH\ô[ùÿ›\óN¬à]ÃàHN¬à⁄[H
+\ô[ùÿÃóHOOHÃäH¬à€€ú›ô^àH\ô[ùÿÃóN¬à\ô[ùÿÃóHH›\é¬àÃàHô^é¬àBàô]\õà›\é¬àN¬à€€ú›[ö[€àH
+KäHOà¬à€€ú›HHö[ô
+JN¬à€€ú›àHö[ô
+äN¬àYà
+HOOHäH\ô[ù‹óHHN¬àN¬àõ‹à
+]HH»Hé»J  H¬àõ‹à
+]àHH
+»N»àé»ä  H¬à]›ô\õ\Hò[ŸN¬àõ‹à
+€€ú›»Ÿà⁄]TŸ]÷⁄WJH¬àYà
+⁄]TŸ]÷⁄óKö\  JH¬à›ô\õ\HùYN¬àúôXZŒ¬àBàBà]ÿ[YQ]Hò[ŸN¬àõ‹à
+€€ú›HŸà]Ÿ]÷⁄WJH¬àYà
+]Ÿ]÷⁄óKö\ JJH¬àÿ[YQ]HùYN¬àúôXZŒ¬àBàBà€€ú›ÿ[YP[X\—‹õ›\HÀããò[X\—‹õ›\Ÿ]÷⁄WWKú€€YJ
+‹õ›\
+HOà[X\—‹õ›\Ÿ]÷⁄óKö\ ‹õ›\
+JN¬àYà
+›ô\õ\ÿ[YQ]ÿ[YP[X\—‹õ›\
+H[ö[€äKäN¬àBàBà€€ú›€€\€ô[ù»H\úò^Kôúõ€J»[ô›ààK
 
-  // secure_random.js
-  function secureRandomUuid(cryptoApi = globalThis.crypto) {
-    if (typeof cryptoApi?.randomUUID === "function") return cryptoApi.randomUUID();
-    if (typeof cryptoApi?.getRandomValues !== "function") {
-      throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5B89\u5168\u968F\u673A\u6570\uFF0C\u5DF2\u505C\u6B62\u540C\u6B65\u64CD\u4F5C");
-    }
-    const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
-    bytes[6] = bytes[6] & 15 | 64;
-    bytes[8] = bytes[8] & 63 | 128;
-    const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0"));
-    return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
-  }
-  function createSyncIdempotencyKey(now = Date.now(), cryptoApi = globalThis.crypto) {
-    return `pass-${Number(now)}-${secureRandomUuid(cryptoApi)}`;
-  }
+HOà◊JN¬àõ‹à
+]HH»Hé»J  H€€\€ô[ù÷Ÿö[ô
+JWKú\⁄
+JN¬à]⁄[ôŸYHò[ŸN¬à€€ú›ô^HXÿ€›[ùÀõX\
 
-  // download_file.js
-  function downloadTextFile(fileName, content, mimeType, {
-    documentRef = globalThis.document,
-    urlRef = globalThis.URL,
-    BlobCtor = globalThis.Blob,
-    revokeDelayMs = 1e3
-  } = {}) {
-    return new Promise((resolve, reject) => {
-      let url = "";
-      let anchor = null;
-      try {
-        if (!documentRef?.body) throw new Error("\u5BFC\u51FA\u9875\u9762\u5C1A\u672A\u5B8C\u6210\u52A0\u8F7D");
-        if (typeof BlobCtor !== "function") throw new Error("\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u6587\u4EF6\u5BFC\u51FA");
-        if (typeof urlRef?.createObjectURL !== "function") throw new Error("\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u6587\u4EF6\u5BFC\u51FA");
-        const blob = new BlobCtor([content], { type: mimeType });
-        url = urlRef.createObjectURL(blob);
-        anchor = documentRef.createElement("a");
-        anchor.href = url;
-        anchor.download = fileName;
-        anchor.style.display = "none";
-        documentRef.body.appendChild(anchor);
-        anchor.click();
-        setTimeout(() => {
-          if (url) urlRef.revokeObjectURL(url);
-          anchor?.remove();
-          resolve();
-        }, revokeDelayMs);
-      } catch (error) {
-        if (url) urlRef.revokeObjectURL(url);
-        anchor?.remove();
-        reject(error);
-      }
-    });
-  }
+JHOà
+»ããòHJJN¬àõ‹à
+€€ú›€€\€ô[ùŸà€€\€ô[ù H¬àYà
+€€\€ô[ùõ[ô›äH€€ù[ùYN¬à€€ú›Y\ôŸYH◊N¬à€€ú›ŸY[àH à◊‘TëW◊»
+ã»ô]»Ÿ]
 
-  // options.js
-  var STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
-  var STORAGE_KEY_SYNC_ENABLE_WEBDAV = "pass.sync.enableWebDAV.v3";
-  var STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER = "pass.sync.enableSelfHostedServer.v3";
-  var STORAGE_KEY_SYNC_WEBDAV_BASE_URL = "pass.sync.webdav.baseUrl.v2";
-  var STORAGE_KEY_SYNC_WEBDAV_PATH = "pass.sync.webdav.path.v2";
-  var STORAGE_KEY_SYNC_WEBDAV_USERNAME = "pass.sync.webdav.username.v2";
-  var STORAGE_KEY_SYNC_SERVER_BASE_URL = "pass.sync.server.baseUrl.v2";
-  var STORAGE_KEY_SYNC_PRIMARY_SOURCE = "pass.sync.primarySource.v1";
-  var STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
-  var STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
-  var STORAGE_KEY_SYNC_OPERATION_LOCK = "pass.sync.operationLock.v1";
-  var SYNC_OPERATION_LOCK_TTL_MS = 10 * 60 * 1e3;
-  var DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "https://uk.sbbz.tech:5443";
-  var SYNC_MODE_MERGE = "merge";
-  var SYNC_MODE_REMOTE_OVERWRITE_LOCAL = "remoteOverwriteLocal";
-  var SYNC_MODE_LOCAL_OVERWRITE_REMOTE = "localOverwriteRemote";
-  var SYNC_PRIMARY_SERVER = "server";
-  var SYNC_PRIMARY_WEBDAV = "webdav";
-  var SYNC_BUNDLE_SCHEMA_V2 = "pass.sync.bundle.v2";
-  var TOTP_PERIOD_SECONDS = 30;
-  var TOTP_DIGITS = 6;
-  var TOTP_REFRESH_INTERVAL_MS = 1e3;
-  var OPTIONS_TOAST_DURATION_MS = 3e3;
-  var SYNC_HTTP_TIMEOUT_MS = 3e4;
-  async function fetchWithSyncTimeout(url, options = {}, stage = "\u540C\u6B65\u8BF7\u6C42") {
-    const controller = typeof AbortController === "function" ? new AbortController() : null;
-    const timeoutId = controller ? setTimeout(() => controller.abort(), SYNC_HTTP_TIMEOUT_MS) : null;
-    try {
-      return await fetch(url, controller ? { ...options, signal: controller.signal } : options);
-    } catch (error) {
-      if (controller?.signal.aborted) {
-        throw new Error(`${stage}\u8D85\u65F6\uFF08${SYNC_HTTP_TIMEOUT_MS / 1e3} \u79D2\uFF09`);
-      }
-      throw error;
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-    }
-  }
-  function normalizeWebdavRemotePath(value) {
-    const raw = String(value || "").trim();
-    if (!raw || /^[a-z][a-z\d+.-]*:/i.test(raw) || raw.includes("?") || raw.includes("#")) {
-      throw new Error("WebDAV \u8FDC\u7AEF\u8DEF\u5F84\u5FC5\u987B\u662F\u76F8\u5BF9\u8DEF\u5F84\uFF0C\u4E14\u4E0D\u80FD\u5305\u542B\u67E5\u8BE2\u4E32\u6216\u951A\u70B9");
-    }
-    const path = raw.replace(/^\/+/, "");
-    const parts = path.split("/");
-    if (parts.some((part) => !part || part === "." || part === "..")) {
-      throw new Error("WebDAV \u8FDC\u7AEF\u8DEF\u5F84\u5305\u542B\u975E\u6CD5\u8DEF\u5F84\u6BB5");
-    }
-    return parts.join("/");
-  }
-  function normalizeLegacySelfHostedServerBaseUrl(value) {
-    const trimmed = String(value || "").trim();
-    if (!trimmed) return DEFAULT_SELF_HOSTED_SERVER_BASE_URL;
-    try {
-      const parsed = new URL(trimmed);
-      if (!isSecureSyncEndpoint(parsed)) return "";
-      const host = String(parsed.hostname || "").toLowerCase();
-      const port = parsed.port ? Number(parsed.port) : parsed.protocol === "https:" ? 443 : 80;
-      if ((host === "127.0.0.1" || host === "localhost") && port === 53333) {
-        return DEFAULT_SELF_HOSTED_SERVER_BASE_URL;
-      }
-      if (host === "or.sbbz.tech" && port === 5443) {
-        return DEFAULT_SELF_HOSTED_SERVER_BASE_URL;
-      }
-    } catch {
-      return trimmed;
-    }
-    return trimmed;
-  }
-  function isSecureSyncEndpoint(url) {
-    if (url.protocol === "https:") return true;
-    const host = String(url.hostname || "").toLowerCase();
-    return url.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(host);
-  }
-  function isSecureSyncEndpointValue(value) {
-    try {
-      return isSecureSyncEndpoint(new URL(String(value || "").trim()));
-    } catch {
-      return false;
-    }
-  }
-  var dom = {
-    deviceName: document.getElementById("deviceName"),
-    syncEnableWebdav: document.getElementById("syncEnableWebdav"),
-    syncEnableServer: document.getElementById("syncEnableServer"),
-    syncPrimarySource: document.getElementById("syncPrimarySource"),
-    syncMergeBtn: document.getElementById("syncMergeBtn"),
-    syncPreviewBtn: document.getElementById("syncPreviewBtn"),
-    syncPreviewStatus: document.getElementById("syncPreviewStatus"),
-    syncRemoteOverwriteLocalBtn: document.getElementById("syncRemoteOverwriteLocalBtn"),
-    syncLocalOverwriteRemoteBtn: document.getElementById("syncLocalOverwriteRemoteBtn"),
-    syncLoadVersionsBtn: document.getElementById("syncLoadVersionsBtn"),
-    syncVersionsStatus: document.getElementById("syncVersionsStatus"),
-    syncVersionsList: document.getElementById("syncVersionsList"),
-    syncWebdavFields: document.getElementById("syncWebdavFields"),
-    syncServerFields: document.getElementById("syncServerFields"),
-    syncWebdavBaseUrl: document.getElementById("syncWebdavBaseUrl"),
-    syncWebdavPath: document.getElementById("syncWebdavPath"),
-    syncWebdavUsername: document.getElementById("syncWebdavUsername"),
-    syncWebdavPassword: document.getElementById("syncWebdavPassword"),
-    syncServerBaseUrl: document.getElementById("syncServerBaseUrl"),
-    syncServerToken: document.getElementById("syncServerToken"),
-    syncEncryptionKey: document.getElementById("syncEncryptionKey"),
-    syncEncryptionKeyIdStatus: document.getElementById("syncEncryptionKeyIdStatus"),
-    syncPreviousEncryptionKey: document.getElementById("syncPreviousEncryptionKey"),
-    generateSyncEncryptionKeyBtn: document.getElementById("generateSyncEncryptionKeyBtn"),
-    syncAutoInterval: document.getElementById("syncAutoInterval"),
-    syncAutoStatus: document.getElementById("syncAutoStatus"),
-    syncOutboxStatus: document.getElementById("syncOutboxStatus"),
-    syncRetryOutboxBtn: document.getElementById("syncRetryOutboxBtn"),
-    syncClearOrphanedOutboxBtn: document.getElementById("syncClearOrphanedOutboxBtn"),
-    storageSelfCheckBtn: document.getElementById("storageSelfCheckBtn"),
-    exportDiagnosticsBtn: document.getElementById("exportDiagnosticsBtn"),
-    restoreLatestSnapshotBtn: document.getElementById("restoreLatestSnapshotBtn"),
-    storageDiagnosticsStatus: document.getElementById("storageDiagnosticsStatus"),
-    deviceStatus: document.getElementById("deviceStatus"),
-    lockEnabled: document.getElementById("lockEnabled"),
-    lockAdvancedFields: document.getElementById("lockAdvancedFields"),
-    lockPolicyOnceRadio: document.getElementById("lockPolicyOnce"),
-    lockPolicyIdleRadio: document.getElementById("lockPolicyIdle"),
-    lockPolicyBackgroundRadio: document.getElementById("lockPolicyBackground"),
-    lockIdleMinutesRow: document.getElementById("lockIdleMinutesRow"),
-    lockIdleMinutes: document.getElementById("lockIdleMinutes"),
-    lockMasterPassword: document.getElementById("lockMasterPassword"),
-    lockMasterPasswordConfirm: document.getElementById("lockMasterPasswordConfirm"),
-    lockCredentialHint: document.getElementById("lockCredentialHint"),
-    allAccountsCount: document.getElementById("allAccountsCount"),
-    passkeyAccountsCount: document.getElementById("passkeyAccountsCount"),
-    totpAccountsCount: document.getElementById("totpAccountsCount"),
-    allAccountsList: document.getElementById("allAccountsList"),
-    recycleAccountsCount: document.getElementById("recycleAccountsCount"),
-    accountsTabAll: document.getElementById("accountsTabAll"),
-    accountsTabPasskey: document.getElementById("accountsTabPasskey"),
-    accountsTabTotp: document.getElementById("accountsTabTotp"),
-    accountsTabRecycle: document.getElementById("accountsTabRecycle"),
-    accountsFolderList: document.getElementById("accountsFolderList"),
-    createFolderBtn: document.getElementById("createFolderBtn"),
-    allAccountsSearchWrap: document.getElementById("allAccountsSearchWrap"),
-    allAccountsSearchFieldsBtn: document.getElementById("allAccountsSearchFieldsBtn"),
-    allAccountsSearchFieldsPanel: document.getElementById("allAccountsSearchFieldsPanel"),
-    allAccountsSearchFieldAll: document.getElementById("allAccountsSearchFieldAll"),
-    allAccountsSearchFieldUsername: document.getElementById("allAccountsSearchFieldUsername"),
-    allAccountsSearchFieldSites: document.getElementById("allAccountsSearchFieldSites"),
-    allAccountsSearchFieldNote: document.getElementById("allAccountsSearchFieldNote"),
-    allAccountsSearchFieldPassword: document.getElementById("allAccountsSearchFieldPassword"),
-    allAccountsSearch: document.getElementById("allAccountsSearch"),
-    openSortModalBtn: document.getElementById("openSortModal"),
-    openHistoryModalBtn: document.getElementById("openHistoryModal"),
-    clearActiveAccountsBtn: document.getElementById("clearActiveAccounts"),
-    clearRecycleBinBtn: document.getElementById("clearRecycleBin"),
-    sortModal: document.getElementById("sortModal"),
-    sortModalList: document.getElementById("sortModalList"),
-    closeSortModalBtn: document.getElementById("closeSortModal"),
-    historyModal: document.getElementById("historyModal"),
-    historyModalList: document.getElementById("historyModalList"),
-    closeHistoryModalBtn: document.getElementById("closeHistoryModal"),
-    addSitesToFolderModal: document.getElementById("addSitesToFolderModal"),
-    addSitesToFolderInput: document.getElementById("addSitesToFolderInput"),
-    addSitesToFolderAutoAdd: document.getElementById("addSitesToFolderAutoAdd"),
-    cancelAddSitesToFolderBtn: document.getElementById("cancelAddSitesToFolder"),
-    confirmAddSitesToFolderBtn: document.getElementById("confirmAddSitesToFolder"),
-    refreshBtn: document.getElementById("refreshBtn"),
-    exportSyncBundleBtn: document.getElementById("exportSyncBundleBtn"),
-    exportChromeCsvBtn: document.getElementById("exportChromeCsvBtn"),
-    exportFirefoxCsvBtn: document.getElementById("exportFirefoxCsvBtn"),
-    exportSafariCsvBtn: document.getElementById("exportSafariCsvBtn"),
-    importSyncBundleBtn: document.getElementById("importSyncBundleBtn"),
-    importBrowserCsvBtn: document.getElementById("importBrowserCsvBtn"),
-    importGoogleAuthQrBtn: document.getElementById("importGoogleAuthQrBtn"),
-    importGoogleAuthQrFilesBtn: document.getElementById("importGoogleAuthQrFilesBtn"),
-    importGoogleAuthFolderSelect: document.getElementById("importGoogleAuthFolderSelect"),
-    importGoogleAuthNewFolderName: document.getElementById("importGoogleAuthNewFolderName"),
-    clearBtn: document.getElementById("clearBtn"),
-    status: document.getElementById("status")
-  };
-  var accountsRaw = [];
-  var passkeysRaw = [];
-  var foldersRaw = [];
-  var editingAccountId = null;
-  var totpRefreshTimer = null;
-  var accountSearchUseAll = true;
-  var accountSearchFields = /* @__PURE__ */ new Set();
-  var activeAccountView = "all";
-  var contextMenuElement = null;
-  var contextMenuOutsideHandler = null;
-  var contextMenuEscapeHandler = null;
-  var lockCredentialExists = false;
-  var sortModalOrderIds = [];
-  var sortModalDraggingAccountId = "";
-  var historyEntries = [];
-  var optionsToastTimer = null;
-  var addSitesTargetFolderId = null;
-  var deviceNameSaveTimer = null;
-  var syncSettingsSaveTimer = null;
-  var lockSettingsSaveTimer = null;
-  var syncInFlight = false;
-  var optionsLocked = false;
-  var enqueueLockStateTransition = createLockStateTransitionQueue();
-  async function acquireSyncOperationLock(owner) {
-    const storage = chrome.storage?.session;
-    if (!storage) return owner;
-    const now = Date.now();
-    const current = await storage.get([STORAGE_KEY_SYNC_OPERATION_LOCK]);
-    const lock = current[STORAGE_KEY_SYNC_OPERATION_LOCK];
-    if (lock && Number(lock.expiresAtMs) > now && lock.owner !== owner) return null;
-    await storage.set({
-      [STORAGE_KEY_SYNC_OPERATION_LOCK]: { owner, expiresAtMs: now + SYNC_OPERATION_LOCK_TTL_MS }
-    });
-    const verified = await storage.get([STORAGE_KEY_SYNC_OPERATION_LOCK]);
-    return verified[STORAGE_KEY_SYNC_OPERATION_LOCK]?.owner === owner ? owner : null;
-  }
-  async function releaseSyncOperationLock(owner) {
-    const storage = chrome.storage?.session;
-    if (!storage) return;
-    const current = await storage.get([STORAGE_KEY_SYNC_OPERATION_LOCK]);
-    if (current[STORAGE_KEY_SYNC_OPERATION_LOCK]?.owner === owner) {
-      await storage.remove(STORAGE_KEY_SYNC_OPERATION_LOCK);
-    }
-  }
-  var AUTO_SYNC_INTERVAL_OPTIONS = /* @__PURE__ */ new Set(["0", "1", "3", "5", "10", "15", "30", "60"]);
-  init().catch((error) => {
-    console.error("[Pass options] \u521D\u59CB\u5316\u5931\u8D25", error);
-    const detail = [error?.name, error?.code, error?.message, String(error)].map((value) => String(value || "").trim()).filter((value, index, values) => value && values.indexOf(value) === index).join(" | ");
-    setStatus(`\u521D\u59CB\u5316\u5931\u8D25: ${detail || "\u672A\u77E5\u9519\u8BEF\uFF0C\u8BF7\u67E5\u770B\u6269\u5C55 Service Worker \u63A7\u5236\u53F0"}\uFF1B\u6570\u636E\u672A\u88AB\u4FEE\u6539`);
-  });
-  async function init() {
-    chrome.runtime.onMessage.addListener(handleRuntimeMessage);
-    await loadDeviceName();
-    await loadLockSettings();
-    await ensureOptionsUnlocked();
-    await ensureDataStorageReady();
-    await loadSyncSettings();
-    await refreshSyncOutboxStatus();
-    await refresh();
-    startTotpRefreshTicker();
-    dom.syncMergeBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE));
-    dom.syncRetryOutboxBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE, true));
-    dom.syncClearOrphanedOutboxBtn.addEventListener("click", () => void clearOrphanedSyncOutbox());
-    dom.storageSelfCheckBtn.addEventListener("click", () => void runStorageSelfCheck());
-    dom.exportDiagnosticsBtn.addEventListener("click", () => void exportStorageDiagnostics());
-    dom.restoreLatestSnapshotBtn.addEventListener("click", () => void restoreLatestSafetySnapshot());
-    dom.syncPreviewBtn.addEventListener("click", () => void previewSyncWithRemote());
-    dom.syncRemoteOverwriteLocalBtn.addEventListener("click", async () => {
-      const shouldContinue = await confirmRemoteOverwriteLocalIfNeeded();
-      if (!shouldContinue) return;
-      await syncNowWithRemote(SYNC_MODE_REMOTE_OVERWRITE_LOCAL);
-    });
-    dom.syncLocalOverwriteRemoteBtn.addEventListener("click", async () => {
-      const shouldContinue = await confirmLocalOverwriteRemoteIfNeeded();
-      if (!shouldContinue) return;
-      await syncNowWithRemote(SYNC_MODE_LOCAL_OVERWRITE_REMOTE);
-    });
-    dom.syncLoadVersionsBtn.addEventListener("click", () => void loadServerSyncVersions());
-    dom.deviceName.addEventListener("input", () => {
-      scheduleDeviceNameSave();
-    });
-    dom.deviceName.addEventListener("change", () => {
-      void saveDeviceName({ showStatus: false });
-    });
-    dom.syncEnableWebdav.addEventListener("change", () => {
-      renderSyncBackendFields();
-      void persistSyncSettings({ showStatus: false });
-    });
-    dom.syncEnableServer.addEventListener("change", () => {
-      renderSyncBackendFields();
-      void persistSyncSettings({ showStatus: false });
-    });
-    dom.syncPrimarySource.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
-    dom.syncAutoInterval.addEventListener("change", () => {
-      renderAutoSyncStatus();
-      void persistSyncSettings({ showStatus: false });
-    });
-    dom.syncWebdavBaseUrl.addEventListener("input", scheduleSyncSettingsSave);
-    dom.syncWebdavPath.addEventListener("input", scheduleSyncSettingsSave);
-    dom.syncWebdavUsername.addEventListener("input", scheduleSyncSettingsSave);
-    dom.syncWebdavPassword.addEventListener("input", scheduleSyncSettingsSave);
-    dom.syncServerBaseUrl.addEventListener("input", scheduleSyncSettingsSave);
-    dom.syncServerToken.addEventListener("input", scheduleSyncSettingsSave);
-    dom.syncEncryptionKey.addEventListener("input", scheduleSyncSettingsSave);
-    dom.syncEncryptionKey.addEventListener("input", () => void refreshSyncEncryptionKeyIdStatus());
-    dom.syncWebdavBaseUrl.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
-    dom.syncWebdavPath.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
-    dom.syncWebdavUsername.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
-    dom.syncWebdavPassword.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
-    dom.syncServerBaseUrl.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
-    dom.syncServerToken.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
-    dom.syncEncryptionKey.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
-    dom.syncPreviousEncryptionKey.addEventListener("input", scheduleSyncSettingsSave);
-    dom.syncPreviousEncryptionKey.addEventListener("change", () => void persistSyncSettings({ showStatus: false }));
-    dom.generateSyncEncryptionKeyBtn.addEventListener("click", () => {
-      dom.syncEncryptionKey.value = generateSyncEncryptionKey();
-      void persistSyncSettings({ showStatus: true });
-    });
-    dom.lockEnabled.addEventListener("change", () => {
-      renderLockSettingsFields();
-      void saveLockSettings({ showStatus: false });
-    });
-    dom.lockPolicyOnceRadio.addEventListener("change", () => {
-      renderLockSettingsFields();
-      void saveLockSettings({ showStatus: false });
-    });
-    dom.lockPolicyIdleRadio.addEventListener("change", () => {
-      renderLockSettingsFields();
-      void saveLockSettings({ showStatus: false });
-    });
-    dom.lockPolicyBackgroundRadio.addEventListener("change", () => {
-      renderLockSettingsFields();
-      void saveLockSettings({ showStatus: false });
-    });
-    dom.lockIdleMinutes.addEventListener("input", scheduleLockSettingsSave);
-    dom.lockIdleMinutes.addEventListener("change", () => void saveLockSettings({ showStatus: false }));
-    dom.lockMasterPassword.addEventListener("input", scheduleLockSettingsSave);
-    dom.lockMasterPasswordConfirm.addEventListener("input", scheduleLockSettingsSave);
-    dom.lockMasterPassword.addEventListener("change", () => void saveLockSettings({ showStatus: false }));
-    dom.lockMasterPasswordConfirm.addEventListener("change", () => void saveLockSettings({ showStatus: false }));
-    dom.createFolderBtn.addEventListener("click", createFolderFromPrompt);
-    dom.accountsFolderList.addEventListener("contextmenu", (event) => {
-      if (event.target.closest(".account-view-tab")) return;
-      event.preventDefault();
-      closeContextMenu();
-    });
-    dom.allAccountsList.addEventListener("contextmenu", (event) => {
-      if (event.target.closest(".account")) return;
-      event.preventDefault();
-      closeContextMenu();
-    });
-    dom.accountsTabAll.addEventListener("click", () => setAccountView("all"));
-    dom.accountsTabPasskey.addEventListener("click", () => setAccountView("passkeys"));
-    dom.accountsTabTotp.addEventListener("click", () => setAccountView("totp"));
-    dom.accountsTabRecycle.addEventListener("click", () => setAccountView("recycle"));
-    dom.allAccountsSearch.addEventListener("input", () => renderCurrentView(accountsRaw));
-    dom.openSortModalBtn.addEventListener("click", openSortModal);
-    dom.openHistoryModalBtn.addEventListener("click", openHistoryModal);
-    dom.closeSortModalBtn.addEventListener("click", closeSortModal);
-    dom.closeHistoryModalBtn.addEventListener("click", closeHistoryModal);
-    dom.cancelAddSitesToFolderBtn.addEventListener("click", closeAddSitesToFolderModal);
-    dom.confirmAddSitesToFolderBtn.addEventListener("click", addAccountsMatchingSitesToFolderFromModal);
-    dom.sortModal.addEventListener("click", (event) => {
-      if (event.target === dom.sortModal) {
-        closeSortModal();
-      }
-    });
-    dom.historyModal.addEventListener("click", (event) => {
-      if (event.target === dom.historyModal) {
-        closeHistoryModal();
-      }
-    });
-    dom.addSitesToFolderModal.addEventListener("click", (event) => {
-      if (event.target === dom.addSitesToFolderModal) {
-        closeAddSitesToFolderModal();
-      }
-    });
-    dom.allAccountsSearchFieldsBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      dom.allAccountsSearchFieldsPanel.classList.toggle("hidden");
-      syncAllAccountSearchFieldCheckboxes();
-    });
-    dom.allAccountsSearchFieldAll.addEventListener("change", onAllAccountSearchFieldAllChanged);
-    dom.allAccountsSearchFieldUsername.addEventListener("change", onAllAccountSearchFieldChanged);
-    dom.allAccountsSearchFieldSites.addEventListener("change", onAllAccountSearchFieldChanged);
-    dom.allAccountsSearchFieldNote.addEventListener("change", onAllAccountSearchFieldChanged);
-    dom.allAccountsSearchFieldPassword.addEventListener("change", onAllAccountSearchFieldChanged);
-    dom.allAccountsSearchFieldsPanel.addEventListener("click", (event) => {
-      event.stopPropagation();
-    });
-    document.addEventListener("click", (event) => {
-      closeContextMenuIfNeeded(event);
-      if (dom.allAccountsSearchFieldsPanel.classList.contains("hidden")) return;
-      const wrap = dom.allAccountsSearchFieldsPanel.closest(".search-filter-wrap");
-      if (wrap && wrap.contains(event.target)) return;
-      closeAllAccountsSearchFieldsPanel();
-    });
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        closeContextMenu();
-      }
-      if (event.key === "Escape" && !dom.sortModal.classList.contains("hidden")) {
-        closeSortModal();
-        return;
-      }
-      if (event.key === "Escape" && !dom.historyModal.classList.contains("hidden")) {
-        closeHistoryModal();
-        return;
-      }
-      if (event.key === "Escape" && !dom.addSitesToFolderModal.classList.contains("hidden")) {
-        closeAddSitesToFolderModal();
-        return;
-      }
-      if (event.key === "Escape" && !dom.allAccountsSearchFieldsPanel.classList.contains("hidden")) {
-        closeAllAccountsSearchFieldsPanel();
-      }
-      if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !event.isComposing) {
-        if (isMultilineInputTarget(event.target)) return;
-        const actionButton = findDefaultActionButtonForOptions(event.target);
-        if (actionButton && !actionButton.disabled) {
-          event.preventDefault();
-          actionButton.click();
-        }
-      }
-    });
-    document.addEventListener("scroll", () => {
-      closeContextMenu();
-    }, true);
-    dom.clearActiveAccountsBtn.addEventListener("click", clearActiveAccounts);
-    dom.clearRecycleBinBtn.addEventListener("click", clearRecycleBin);
-    dom.refreshBtn.addEventListener("click", () => refresh());
-    dom.exportSyncBundleBtn.addEventListener("click", exportSyncBundle);
-    dom.exportChromeCsvBtn.addEventListener("click", () => exportBrowserPasswordCsv("chrome"));
-    dom.exportFirefoxCsvBtn.addEventListener("click", () => exportBrowserPasswordCsv("firefox"));
-    dom.exportSafariCsvBtn.addEventListener("click", () => exportBrowserPasswordCsv("safari"));
-    dom.importSyncBundleBtn.addEventListener("click", importSyncBundleAndMerge);
-    dom.importBrowserCsvBtn.addEventListener("click", importBrowserPasswordCsv);
-    dom.importGoogleAuthQrBtn.addEventListener("click", importGoogleAuthenticatorExportQrFromClipboard);
-    dom.importGoogleAuthQrFilesBtn.addEventListener("click", importGoogleAuthenticatorExportQrFromFiles);
-    dom.clearBtn.addEventListener("click", clearAll);
-  }
-  function handleRuntimeMessage(message) {
-    if (message?.type !== LOCK_STATE_CHANGED_MESSAGE) return;
-    void enqueueLockStateTransition(message, {
-      lock: async () => {
-        optionsLocked = true;
-        await lockDataEncryption();
-      },
-      clear: () => {
-        clearOptionsSensitiveState();
-        setStatus("\u6269\u5C55\u5DF2\u9501\u5B9A\uFF0C\u8BF7\u8F93\u5165\u4E3B\u5BC6\u7801\u540E\u91CD\u65B0\u52A0\u8F7D\u8BBE\u7F6E\u3002");
-      },
-      unlock: async () => {
-        optionsLocked = false;
-        await resumeOptionsAfterExternalUnlock();
-      }
-    }).catch((error) => {
-      console.warn("[Pass options] \u9501\u72B6\u6001\u5207\u6362\u5931\u8D25", error);
-    });
-  }
-  function clearOptionsSensitiveState() {
-    accountsRaw = [];
-    passkeysRaw = [];
-    foldersRaw = [];
-    historyEntries = [];
-    editingAccountId = null;
-    closeContextMenu();
-    closeSortModal();
-    closeHistoryModal();
-    closeAddSitesToFolderModal();
-    closeAllAccountsSearchFieldsPanel();
-    dom.syncWebdavPassword.value = "";
-    dom.syncServerToken.value = "";
-    dom.syncEncryptionKey.value = "";
-    dom.syncPreviousEncryptionKey.value = "";
-    dom.lockMasterPassword.value = "";
-    dom.lockMasterPasswordConfirm.value = "";
-    renderSidebar(accountsRaw);
-    renderCurrentView(accountsRaw);
-  }
-  async function resumeOptionsAfterExternalUnlock() {
-    try {
-      await ensureOptionsUnlocked();
-      if (optionsLocked) return;
-      await Promise.all([loadSyncSettings(), refreshSyncOutboxStatus(), refresh({ silent: true })]);
-      setStatus("\u6269\u5C55\u5DF2\u89E3\u9501\uFF0C\u5DF2\u91CD\u65B0\u52A0\u8F7D\u6570\u636E\u3002");
-    } catch {
-    }
-  }
-  async function ensureOptionsUnlocked() {
-    const status = await chrome.runtime.sendMessage({ type: "PASS_LOCK_STATUS" });
-    optionsLocked = Boolean(status?.enabled && status?.locked);
-    if (!optionsLocked) return;
-    const password = String(window.prompt("\u8BF7\u8F93\u5165\u4E3B\u5BC6\u7801\u4EE5\u6253\u5F00 Pass \u8BBE\u7F6E", "") || "");
-    if (!password) throw new Error("\u6269\u5C55\u5DF2\u9501\u5B9A\uFF0C\u672A\u52A0\u8F7D\u8D26\u53F7\u6570\u636E");
-    const result = await chrome.runtime.sendMessage({
-      type: "PASS_LOCK_UNLOCK",
-      payload: { password }
-    });
-    if (!result?.ok || result?.locked) throw new Error("\u4E3B\u5BC6\u7801\u9519\u8BEF\uFF0C\u672A\u52A0\u8F7D\u8D26\u53F7\u6570\u636E");
-    optionsLocked = false;
-  }
-  async function loadDeviceName() {
-    const result = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
-    dom.deviceName.value = String(result[STORAGE_KEY_DEVICE_NAME] || DEFAULT_DEVICE_NAME);
-  }
-  function scheduleDeviceNameSave() {
-    window.clearTimeout(deviceNameSaveTimer);
-    deviceNameSaveTimer = window.setTimeout(() => {
-      void saveDeviceName({ showStatus: false });
-    }, 250);
-  }
-  function scheduleSyncSettingsSave() {
-    window.clearTimeout(syncSettingsSaveTimer);
-    syncSettingsSaveTimer = window.setTimeout(() => {
-      void persistSyncSettings({ showStatus: false });
-    }, 250);
-  }
-  function scheduleLockSettingsSave() {
-    window.clearTimeout(lockSettingsSaveTimer);
-    lockSettingsSaveTimer = window.setTimeout(() => {
-      void saveLockSettings({ showStatus: false });
-    }, 350);
-  }
-  async function saveDeviceName({ showStatus = true } = {}) {
-    const next = String(dom.deviceName.value || "").trim();
-    if (!next) {
-      if (showStatus) {
-        setDeviceStatus("\u8BBE\u5907\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A");
-      }
-      return;
-    }
-    await chrome.storage.local.set({ [STORAGE_KEY_DEVICE_NAME]: next });
-    if (showStatus) {
-      setDeviceStatus(`\u8BBE\u5907\u540D\u79F0\u5DF2\u4FDD\u5B58\u4E3A ${next}`);
-    }
-  }
-  async function readBusinessDataFromStore() {
-    const stored = await getAllData();
-    return {
-      accounts: Array.isArray(stored?.accounts) ? stored.accounts : [],
-      passkeys: Array.isArray(stored?.passkeys) ? stored.passkeys : [],
-      folders: Array.isArray(stored?.folders) ? stored.folders : [],
-      allRegularAccountIds: Array.isArray(stored?.allRegularAccountIds) ? stored.allRegularAccountIds : [],
-      allRegularOrderUpdatedAtMs: Number(stored?.allRegularOrderUpdatedAtMs) || 0,
-      allRegularOrderUpdatedDeviceName: String(stored?.allRegularOrderUpdatedDeviceName || ""),
-      folderOrderIds: Array.isArray(stored?.folderOrderIds) ? stored.folderOrderIds : [],
-      folderOrderUpdatedAtMs: Number(stored?.folderOrderUpdatedAtMs) || 0,
-      folderOrderUpdatedDeviceName: String(stored?.folderOrderUpdatedDeviceName || ""),
-      deviceName: String(stored?.deviceName || "")
-    };
-  }
-  function normalizeSyncPayloadShape(payload) {
-    const accounts = Array.isArray(payload?.accounts) ? payload.accounts.map(normalizeAccountShape) : [];
-    const rawPasskeys = Array.isArray(payload?.passkeys) ? payload.passkeys.map(normalizePasskeyShape) : [];
-    const folders = Array.isArray(payload?.folders) ? payload.folders.map(normalizeFolderShape) : [];
-    return {
-      accounts,
-      passkeys: buildUnifiedPasskeys(accounts, rawPasskeys),
-      folders,
-      allRegularAccountIds: Array.isArray(payload?.allRegularAccountIds) ? payload.allRegularAccountIds.map(String).filter(Boolean) : [],
-      allRegularOrderUpdatedAtMs: Number(payload?.allRegularOrderUpdatedAtMs) || 0,
-      allRegularOrderUpdatedDeviceName: String(payload?.allRegularOrderUpdatedDeviceName || ""),
-      folderOrderIds: Array.isArray(payload?.folderOrderIds) ? payload.folderOrderIds.map(String).filter(Boolean) : [],
-      folderOrderUpdatedAtMs: Number(payload?.folderOrderUpdatedAtMs) || 0,
-      folderOrderUpdatedDeviceName: String(payload?.folderOrderUpdatedDeviceName || ""),
-      deviceName: String(payload?.deviceName || "")
-    };
-  }
-  function visibleSyncCount(values) {
-    return (Array.isArray(values) ? values : []).filter((item) => item?.isPermanentlyDeleted !== true).length;
-  }
-  function syncPayloadEquals(lhs, rhs) {
-    return JSON.stringify(sortSyncPayloadCollections(normalizeSyncPayloadShape(lhs))) === JSON.stringify(sortSyncPayloadCollections(normalizeSyncPayloadShape(rhs)));
-  }
-  function sortSyncPayloadCollections(payload) {
-    const compare = (lhs, rhs, keys) => {
-      for (const key of keys) {
-        const left = String(lhs?.[key] || "").trim().toLowerCase();
-        const right = String(rhs?.[key] || "").trim().toLowerCase();
-        if (left < right) return -1;
-        if (left > right) return 1;
-      }
-      return 0;
-    };
-    return {
-      ...payload,
-      accounts: [...payload?.accounts || []].sort((lhs, rhs) => compare(lhs, rhs, ["recordId", "accountId"])),
-      passkeys: [...payload?.passkeys || []].sort((lhs, rhs) => compare(lhs, rhs, ["credentialIdB64u"])),
-      folders: [...payload?.folders || []].sort((lhs, rhs) => compare(lhs, rhs, ["id"]))
-    };
-  }
-  function countSyncAccountConflicts(localAccounts, remoteAccounts) {
-    const localByKey = /* @__PURE__ */ new Map();
-    for (const account of localAccounts || []) {
-      const key = String(account?.recordId || account?.id || account?.accountId || "").trim().toLowerCase();
-      if (key) localByKey.set(key, account);
-    }
-    const fields = ["username", "password", "totpSecret", "recoveryCodes", "note", "isDeleted"];
-    let count = 0;
-    for (const remote of remoteAccounts || []) {
-      const key = String(remote?.recordId || remote?.id || remote?.accountId || "").trim().toLowerCase();
-      const local = localByKey.get(key);
-      if (!local) continue;
-      count += fields.filter((field) => String(local[field] ?? "") !== String(remote[field] ?? "")).length;
-    }
-    return count;
-  }
-  async function writeBusinessDataToStore(payload = {}) {
-    const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
-    const nextPayload = normalizeSyncPayloadShape({ ...currentPayload, ...payload || {} });
-    if (syncPayloadEquals(currentPayload, nextPayload)) {
-      return false;
-    }
-    await setAllData(nextPayload);
-    return true;
-  }
-  async function loadHistory() {
-    const raw = await getHistory();
-    historyEntries = (Array.isArray(raw) ? raw : []).map((item) => ({
-      id: String(item?.id || ""),
-      timestampMs: Number(item?.timestampMs || 0),
-      action: String(item?.action || "").trim()
-    })).filter((item) => item.timestampMs > 0 && item.action.length > 0).sort((lhs, rhs) => {
-      if (lhs.timestampMs !== rhs.timestampMs) return rhs.timestampMs - lhs.timestampMs;
-      return lhs.id.localeCompare(rhs.id);
-    });
-  }
-  async function appendHistory(action, timestampMs = Date.now()) {
-    const normalizedAction = String(action || "").trim();
-    if (!normalizedAction) return;
-    await appendHistoryEntry({ action: normalizedAction, timestampMs });
-    if (!dom.historyModal.classList.contains("hidden")) {
-      await loadHistory();
-      renderHistoryModalList();
-    }
-  }
-  function historyValueSnippet(input, maxLength = 80) {
-    const normalized = String(input || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
-    if (!normalized) return "(\u7A7A)";
-    if (normalized.length <= maxLength) return normalized;
-    return `${normalized.slice(0, maxLength)}...`;
-  }
-  async function loadSyncSettings() {
-    const result = await chrome.storage.local.get([
-      STORAGE_KEY_SYNC_ENABLE_WEBDAV,
-      STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER,
-      STORAGE_KEY_SYNC_WEBDAV_BASE_URL,
-      STORAGE_KEY_SYNC_WEBDAV_PATH,
-      STORAGE_KEY_SYNC_WEBDAV_USERNAME,
-      STORAGE_KEY_SYNC_SERVER_BASE_URL,
-      STORAGE_KEY_SYNC_PRIMARY_SOURCE,
-      STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES
-    ]);
-    let secrets;
-    try {
-      secrets = await migrateLegacySyncSecrets();
-    } catch (error) {
-      if (error?.code !== "SYNC_SECRETS_UNREADABLE") throw error;
-      secrets = { webdavPassword: "", serverToken: "", encryptionKey: "" };
-      dom.storageDiagnosticsStatus.textContent = "\u540C\u6B65\u51ED\u636E\u96C6\u5408\u65E0\u6CD5\u89E3\u5BC6\uFF0C\u539F\u6570\u636E\u672A\u8986\u76D6\uFF1B\u8BF7\u5148\u5BFC\u51FA\u8BCA\u65AD\u6216\u91CD\u65B0\u914D\u7F6E\u540C\u6B65\u51ED\u636E";
-    }
-    const hasEnableWebdav = typeof result[STORAGE_KEY_SYNC_ENABLE_WEBDAV] === "boolean";
-    const hasEnableServer = typeof result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER] === "boolean";
-    const enableWebdav = hasEnableWebdav ? Boolean(result[STORAGE_KEY_SYNC_ENABLE_WEBDAV]) : false;
-    const enableServer = hasEnableServer ? Boolean(result[STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]) : false;
-    dom.syncEnableWebdav.checked = enableWebdav;
-    dom.syncEnableServer.checked = enableServer;
-    dom.syncPrimarySource.value = normalizeSyncPrimarySource(result[STORAGE_KEY_SYNC_PRIMARY_SOURCE]);
-    dom.syncWebdavBaseUrl.value = String(result[STORAGE_KEY_SYNC_WEBDAV_BASE_URL] || "");
-    dom.syncWebdavPath.value = String(result[STORAGE_KEY_SYNC_WEBDAV_PATH] || "pass-sync-bundle-v2.json");
-    dom.syncWebdavUsername.value = String(result[STORAGE_KEY_SYNC_WEBDAV_USERNAME] || "");
-    dom.syncWebdavPassword.value = secrets.webdavPassword;
-    const normalizedServerBaseUrl = normalizeLegacySelfHostedServerBaseUrl(
-      result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL
-    );
-    dom.syncServerBaseUrl.value = normalizedServerBaseUrl;
-    if (normalizedServerBaseUrl !== String(result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || "").trim()) {
-      await chrome.storage.local.set({ [STORAGE_KEY_SYNC_SERVER_BASE_URL]: normalizedServerBaseUrl });
-    }
-    dom.syncServerToken.value = secrets.serverToken;
-    const syncEncryptionKey = normalizeSyncEncryptionKey(secrets.encryptionKey);
-    dom.syncEncryptionKey.value = syncEncryptionKey;
-    dom.syncPreviousEncryptionKey.value = normalizeSyncEncryptionKey(secrets.previousEncryptionKey);
-    await refreshSyncEncryptionKeyIdStatus();
-    if (syncEncryptionKey !== secrets.encryptionKey) {
-      await setSyncSecrets({ ...secrets, encryptionKey: syncEncryptionKey });
-    }
-    dom.syncAutoInterval.value = normalizeAutoSyncIntervalMinutes(result[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]);
-    if (normalizedServerBaseUrl !== String(result[STORAGE_KEY_SYNC_SERVER_BASE_URL] || "")) {
-      await chrome.storage.local.set({ [STORAGE_KEY_SYNC_SERVER_BASE_URL]: normalizedServerBaseUrl });
-    }
-    renderSyncBackendFields();
-  }
-  function renderSyncBackendFields() {
-    dom.syncWebdavFields.classList.toggle("hidden", !dom.syncEnableWebdav.checked);
-    dom.syncServerFields.classList.toggle("hidden", !dom.syncEnableServer.checked);
-    renderAutoSyncStatus();
-  }
-  function normalizeAutoSyncIntervalMinutes(value) {
-    const normalized = String(value ?? "0").trim();
-    return AUTO_SYNC_INTERVAL_OPTIONS.has(normalized) ? normalized : "0";
-  }
-  function normalizeSyncPrimarySource(value) {
-    return String(value || "").trim() === SYNC_PRIMARY_WEBDAV ? SYNC_PRIMARY_WEBDAV : SYNC_PRIMARY_SERVER;
-  }
-  function confirmPlaintextSync(encryptionKey) {
-    if (String(encryptionKey || "").trim()) return true;
-    return window.confirm(
-      "\u5F53\u524D\u672A\u914D\u7F6E\u540C\u6B65\u52A0\u5BC6\u5BC6\u94A5\uFF0C\u5C06\u4F7F\u7528\u660E\u6587\u540C\u6B65\u5305\uFF08\u53EF\u80FD\u5305\u542B\u5BC6\u7801\u3001TOTP\u3001\u5907\u6CE8\uFF09\u3002\n\n\u4EC5\u5EFA\u8BAE\u5728\u53EF\u4FE1\u7F51\u7EDC/\u81EA\u5EFA\u73AF\u5883\u4E34\u65F6\u4F7F\u7528\u3002\u786E\u5B9A\u7EE7\u7EED\uFF1F"
-    );
-  }
-  function confirmOverwriteSync(mode) {
-    if (mode === "merge" || mode === SYNC_MODE_MERGE) return true;
-    const label = mode === SYNC_MODE_REMOTE_OVERWRITE_LOCAL || mode === "remoteOverwriteLocal" ? "\u4E91\u7AEF\u8986\u76D6\u672C\u5730" : "\u672C\u5730\u8986\u76D6\u4E91\u7AEF";
-    return window.confirm(
-      `${label}\u4F1A\u4E22\u5F03\u4E00\u4FA7\u7684\u72EC\u6709\u4FEE\u6539\uFF0C\u4E14\u4E0D\u53EF\u901A\u8FC7\u201C\u5408\u5E76\u201D\u81EA\u52A8\u6062\u590D\u3002
+N¬àõ‹à
+€€ú›YŸà€€\€ô[ù
+H¬àõ‹à
+€€ú›»Ÿà⁄]TŸ]÷⁄YJH¬àYà
+\ŸY[ãö\  JH¬àŸY[ãòY
+ N¬àY\ôŸYú\⁄
+ N¬àBàBàBàY\ôŸYú€‹ù
 
-\u8BF7\u5148\u9884\u89C8\u5DEE\u5F02\u3002\u786E\u5B9A\u7EE7\u7EED\u6267\u884C${label}\uFF1F`
-    );
-  }
-  function primarySourceLabel(value) {
-    return normalizeSyncPrimarySource(value) === SYNC_PRIMARY_WEBDAV ? "WebDAV" : "\u670D\u52A1\u5668";
-  }
-  function renderAutoSyncStatus() {
-    const interval = normalizeAutoSyncIntervalMinutes(dom.syncAutoInterval.value);
-    const enabledLabels = [];
-    if (dom.syncEnableWebdav.checked) enabledLabels.push("WebDAV");
-    if (dom.syncEnableServer.checked) enabledLabels.push("\u670D\u52A1\u5668");
-    if (interval === "0") {
-      dom.syncAutoStatus.textContent = "\u81EA\u52A8\u540C\u6B65\u5DF2\u5173\u95ED";
-      return;
-    }
-    if (enabledLabels.length === 0) {
-      dom.syncAutoStatus.textContent = "\u81EA\u52A8\u540C\u6B65\u5DF2\u5F00\u542F\uFF0C\u4F46\u5F53\u524D\u6CA1\u6709\u53EF\u7528\u8FDC\u7AEF\u540C\u6B65\u6E90";
-      return;
-    }
-    dom.syncAutoStatus.textContent = `\u81EA\u52A8\u6309\u201C\u5408\u5E76\u201D\u6A21\u5F0F\u6267\u884C\uFF0C\u6BCF ${interval} \u5206\u949F\u540C\u6B65\u4E00\u6B21\uFF08${enabledLabels.join(" + ")}\uFF09`;
-  }
-  async function refreshSyncEncryptionKeyIdStatus() {
-    const key = normalizeSyncEncryptionKey(dom.syncEncryptionKey.value);
-    dom.syncEncryptionKeyIdStatus.textContent = key ? `\u5F53\u524D\u540C\u6B65\u5BC6\u94A5 ID\uFF1A${await syncEncryptionKeyId(key)}\u3002\u914D\u5BF9\u3001\u8F6E\u6362\u6216\u6392\u67E5\u5BC6\u94A5\u4E0D\u5339\u914D\u65F6\u8BF7\u6838\u5BF9\u6B64\u6807\u8BC6\u3002` : "\u5F53\u524D\u672A\u914D\u7F6E\u540C\u6B65\u5BC6\u94A5\uFF0C\u5C06\u4F7F\u7528\u660E\u6587\u540C\u6B65\u5305\uFF1B\u8BF7\u786E\u8BA4\u540C\u6B65\u670D\u52A1\u5668\u5141\u8BB8\u660E\u6587\u3002";
-  }
-  async function refreshSyncOutboxStatus() {
-    if (!dom.syncOutboxStatus) return;
-    try {
-      const items = await getSyncOutbox();
-      dom.syncRetryOutboxBtn.disabled = items.length === 0;
-      if (!items.length) {
-        dom.syncOutboxStatus.textContent = "\u540C\u6B65\u8865\u507F\u961F\u5217\u4E3A\u7A7A";
-        return;
-      }
-      const now = Date.now();
-      const waiting = items.filter((item) => item.status !== "paused" && Number(item.nextRetryAtMs || 0) > now).length;
-      const paused = items.filter((item) => item.status === "paused").length;
-      const details = items.map((item) => {
-        const [kind, ...targetParts] = String(item.targetKey || "").split("|");
-        const target = targetParts.join("|");
-        let host = target;
-        try {
-          host = new URL(target).host || target;
-        } catch {
-        }
-        const label = kind === "server" ? "\u670D\u52A1\u5668" : kind === "webdav" ? "WebDAV" : kind;
-        const retryAt = Number(item.nextRetryAtMs || 0);
-        const retry = item.status === "paused" ? "\u5DF2\u6682\u505C\uFF0C\u70B9\u51FB\u7ACB\u5373\u91CD\u8BD5\u8865\u507F\u4EFB\u52A1\u6062\u590D" : retryAt > now ? `\u4E0B\u6B21 ${new Date(retryAt).toLocaleTimeString()}` : "\u53EF\u7ACB\u5373\u91CD\u8BD5";
-        const error = String(item.lastError || "").trim();
-        return `${label} ${host}\uFF1A\u5931\u8D25 ${Number(item.attempts || 0)} \u6B21\uFF0C${retry}${error ? `\uFF0C${error}` : ""}`;
-      });
-      dom.syncOutboxStatus.textContent = `\u8865\u507F\u4EFB\u52A1 ${items.length} \u4E2A\uFF08\u7B49\u5F85 ${waiting} \u4E2A${paused > 0 ? `\uFF0C\u5DF2\u6682\u505C ${paused} \u4E2A` : ""}\uFF09\uFF1A${details.join("\uFF1B")}`;
-      dom.syncOutboxStatus.title = details.join("\n");
-    } catch (error) {
-      dom.syncOutboxStatus.textContent = `\u540C\u6B65\u8865\u507F\u961F\u5217\u8BFB\u53D6\u5931\u8D25\uFF1A${error.message}`;
-    }
-  }
-  async function clearOrphanedSyncOutbox() {
-    try {
-      const items = await getSyncOutbox();
-      const targets = buildRemoteSyncTargetsFromDom() || [];
-      const activeKeys = new Set(targets.map(syncTargetKey));
-      const next = removeOrphanedSyncOutbox(items, activeKeys);
-      const removed = items.length - next.length;
-      if (removed > 0) await setSyncOutbox(next);
-      await refreshSyncOutboxStatus();
-      setStatus(removed > 0 ? `\u5DF2\u6E05\u7406 ${removed} \u4E2A\u5931\u6548\u540C\u6B65\u76EE\u6807\u4EFB\u52A1` : "\u6CA1\u6709\u5931\u6548\u540C\u6B65\u76EE\u6807\u4EFB\u52A1");
-    } catch (error) {
-      setStatus(`\u6E05\u7406\u540C\u6B65\u8865\u507F\u4EFB\u52A1\u5931\u8D25\uFF1A${error.message}`);
-    }
-  }
-  async function recordSyncOutboxFailure(target, payload, error, forceResume = false) {
-    const targetKey = syncTargetKey(target);
-    const items = await getSyncOutbox();
-    const payloadSha256 = await syncPayloadSha256(payload);
-    await setSyncOutbox(upsertSyncOutbox(items, {
-      targetKey,
-      payload: normalizeSyncPayloadShape(payload),
-      error,
-      payloadSha256,
-      expectedEtag: error?.expectedEtag || target.remoteEtag || "",
-      expectedRevision: error?.expectedRevision || target.remoteRevision || 0,
-      idempotencyKey: error?.idempotencyKey || "",
-      syncSessionId: error?.syncSessionId || "",
-      operationId: error?.operationId || "",
-      sourceType: target.kind,
-      scope: error?.scope || "",
-      forceResume
-    }));
-  }
-  async function clearSyncOutbox(target) {
-    const targetKey = syncTargetKey(target);
-    const items = await getSyncOutbox();
-    if (!items.some((item) => item.targetKey === targetKey)) return;
-    await setSyncOutbox(items.filter((item) => item.targetKey !== targetKey));
-  }
-  async function loadLockSettings() {
-    const result = await chrome.storage.local.get([
-      STORAGE_KEY_LOCK_ENABLED,
-      STORAGE_KEY_LOCK_POLICY,
-      STORAGE_KEY_LOCK_IDLE_MINUTES,
-      STORAGE_KEY_LOCK_MASTER_CREDENTIAL
-    ]);
-    const credential = normalizeLockMasterCredential(result[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
-    lockCredentialExists = Boolean(credential);
-    const enabled = Boolean(result[STORAGE_KEY_LOCK_ENABLED]) && lockCredentialExists;
-    const policy = normalizeLockPolicy(result[STORAGE_KEY_LOCK_POLICY]);
-    const idleMinutes = clampLockIdleMinutes(result[STORAGE_KEY_LOCK_IDLE_MINUTES]);
-    dom.lockEnabled.checked = enabled;
-    setLockPolicySelection(policy);
-    dom.lockIdleMinutes.value = String(idleMinutes);
-    dom.lockMasterPassword.value = "";
-    dom.lockMasterPasswordConfirm.value = "";
-    dom.lockCredentialHint.textContent = lockCredentialExists ? "\u5DF2\u8BBE\u7F6E\u4E3B\u5BC6\u7801" : "";
-    renderLockSettingsFields();
-    if (Boolean(result[STORAGE_KEY_LOCK_ENABLED]) && !lockCredentialExists) {
-      await chrome.storage.local.set({ [STORAGE_KEY_LOCK_ENABLED]: false });
-    }
-  }
-  function renderLockSettingsFields() {
-    const lockEnabled = Boolean(dom.lockEnabled.checked);
-    dom.lockAdvancedFields.classList.toggle("hidden", !lockEnabled);
-    const idleTimeout = getSelectedLockPolicy() === LOCK_POLICY_IDLE_TIMEOUT;
-    dom.lockIdleMinutesRow.classList.toggle("hidden", !lockEnabled || !idleTimeout);
-  }
-  function getSelectedLockPolicy() {
-    if (dom.lockPolicyIdleRadio.checked) return LOCK_POLICY_IDLE_TIMEOUT;
-    if (dom.lockPolicyBackgroundRadio.checked) return LOCK_POLICY_ON_BACKGROUND;
-    return LOCK_POLICY_ONCE_UNTIL_QUIT;
-  }
-  function setLockPolicySelection(policy) {
-    const normalized = normalizeLockPolicy(policy);
-    dom.lockPolicyOnceRadio.checked = normalized === LOCK_POLICY_ONCE_UNTIL_QUIT;
-    dom.lockPolicyIdleRadio.checked = normalized === LOCK_POLICY_IDLE_TIMEOUT;
-    dom.lockPolicyBackgroundRadio.checked = normalized === LOCK_POLICY_ON_BACKGROUND;
-  }
-  async function saveLockSettings({ showStatus = true } = {}) {
-    const lockEnabled = Boolean(dom.lockEnabled.checked);
-    const policy = getSelectedLockPolicy();
-    const idleMinutes = clampLockIdleMinutes(dom.lockIdleMinutes.value);
-    const password = String(dom.lockMasterPassword.value || "");
-    const confirm = String(dom.lockMasterPasswordConfirm.value || "");
-    const result = await chrome.storage.local.get([
-      STORAGE_KEY_LOCK_ENABLED,
-      STORAGE_KEY_LOCK_MASTER_CREDENTIAL
-    ]);
-    const existingCredential = normalizeLockMasterCredential(result[STORAGE_KEY_LOCK_MASTER_CREDENTIAL]);
-    const wasLockEnabled = Boolean(result[STORAGE_KEY_LOCK_ENABLED]) && Boolean(existingCredential);
-    let nextCredential = existingCredential;
-    let currentPasswordForRewrap = "";
-    if (lockEnabled) {
-      const shouldSetOrUpdatePassword = !existingCredential || password || confirm;
-      if (shouldSetOrUpdatePassword) {
-        if (!password) {
-          if (showStatus) {
-            setDeviceStatus("\u4E3B\u5BC6\u7801\u4E0D\u80FD\u4E3A\u7A7A");
-          }
-          return;
-        }
-        if (password !== confirm) {
-          if (showStatus) {
-            setDeviceStatus("\u4E24\u6B21\u8F93\u5165\u7684\u4E3B\u5BC6\u7801\u4E0D\u4E00\u81F4");
-          }
-          return;
-        }
-        if (existingCredential) {
-          const promptResult = window.prompt("\u8BF7\u8F93\u5165\u5F53\u524D\u4E3B\u5BC6\u7801\u4EE5\u66F4\u65B0\u4E3B\u5BC6\u7801", "");
-          currentPasswordForRewrap = String(promptResult || "");
-          if (!currentPasswordForRewrap) {
-            if (showStatus) setDeviceStatus("\u672A\u8F93\u5165\u5F53\u524D\u4E3B\u5BC6\u7801\uFF0C\u5DF2\u53D6\u6D88\u66F4\u65B0");
-            return;
-          }
-        }
-        nextCredential = await createLockMasterCredential(password);
-      }
-      if (!nextCredential) {
-        if (showStatus) {
-          setDeviceStatus("\u7F3A\u5C11\u4E3B\u5BC6\u7801\uFF0C\u65E0\u6CD5\u542F\u7528\u89E3\u9501");
-        }
-        return;
-      }
-    } else if (existingCredential) {
-      let disablePassword = password;
-      if (!disablePassword) {
-        const promptResult = window.prompt("\u8BF7\u8F93\u5165\u5F53\u524D\u4E3B\u5BC6\u7801\u4EE5\u5173\u95ED\u4E3B\u5BC6\u7801\u9501", "");
-        disablePassword = String(promptResult || "");
-      }
-      if (!disablePassword) {
-        dom.lockEnabled.checked = true;
-        renderLockSettingsFields();
-        if (showStatus) {
-          setDeviceStatus("\u672A\u8F93\u5165\u5F53\u524D\u4E3B\u5BC6\u7801\uFF0C\u5DF2\u53D6\u6D88\u5173\u95ED");
-        }
-        return;
-      }
-      const verified = await verifyLockMasterPassword(existingCredential, disablePassword);
-      if (!verified) {
-        dom.lockEnabled.checked = true;
-        renderLockSettingsFields();
-        if (showStatus) {
-          setDeviceStatus("\u5F53\u524D\u4E3B\u5BC6\u7801\u9519\u8BEF\uFF0C\u65E0\u6CD5\u5173\u95ED\u89E3\u9501");
-        }
-        return;
-      }
-      const disableResult = await chrome.runtime.sendMessage({
-        type: "PASS_LOCK_DISABLE_DATA",
-        payload: { password: disablePassword }
-      });
-      if (!disableResult?.ok) {
-        dom.lockEnabled.checked = true;
-        renderLockSettingsFields();
-        if (showStatus) setDeviceStatus(disableResult?.error || "\u65E0\u6CD5\u5173\u95ED\u672C\u5730\u6570\u636E\u4FDD\u62A4");
-        return;
-      }
-    }
-    if (lockEnabled && !existingCredential) {
-      await chrome.storage.local.set({ [STORAGE_KEY_LOCK_MASTER_CREDENTIAL]: nextCredential });
-      const configureResult = await chrome.runtime.sendMessage({
-        type: "PASS_LOCK_CONFIGURE_DATA",
-        payload: { password }
-      });
-      if (!configureResult?.ok) {
-        await chrome.storage.local.remove(STORAGE_KEY_LOCK_MASTER_CREDENTIAL);
-        if (showStatus) setDeviceStatus(configureResult?.error || "\u65E0\u6CD5\u4FDD\u62A4\u672C\u5730\u6570\u636E");
-        return;
-      }
-      nextCredential = normalizeLockMasterCredential(configureResult.credential) || nextCredential;
-    }
-    if (lockEnabled && existingCredential && !wasLockEnabled && !(password || confirm)) {
-      const promptResult = window.prompt("\u8BF7\u8F93\u5165\u5F53\u524D\u4E3B\u5BC6\u7801\u4EE5\u542F\u7528\u672C\u5730\u6570\u636E\u4FDD\u62A4", "");
-      const currentPassword = String(promptResult || "");
-      if (!currentPassword) {
-        dom.lockEnabled.checked = false;
-        renderLockSettingsFields();
-        if (showStatus) setDeviceStatus("\u672A\u8F93\u5165\u5F53\u524D\u4E3B\u5BC6\u7801\uFF0C\u5DF2\u53D6\u6D88\u542F\u7528");
-        return;
-      }
-      const configureResult = await chrome.runtime.sendMessage({
-        type: "PASS_LOCK_CONFIGURE_DATA",
-        payload: { password: currentPassword }
-      });
-      if (!configureResult?.ok) {
-        dom.lockEnabled.checked = false;
-        renderLockSettingsFields();
-        if (showStatus) setDeviceStatus(configureResult?.error || "\u65E0\u6CD5\u4FDD\u62A4\u672C\u5730\u6570\u636E");
-        return;
-      }
-      nextCredential = normalizeLockMasterCredential(configureResult.credential) || nextCredential;
-    }
-    if (lockEnabled && existingCredential && (password || confirm)) {
-      const rewrapResult = await chrome.runtime.sendMessage({
-        type: "PASS_LOCK_REWRAP_DATA",
-        payload: {
-          currentPassword: currentPasswordForRewrap,
-          nextPassword: password,
-          nextCredential
-        }
-      });
-      if (!rewrapResult?.ok) {
-        if (showStatus) setDeviceStatus(rewrapResult?.error || "\u65E0\u6CD5\u66F4\u65B0\u672C\u5730\u6570\u636E\u4FDD\u62A4");
-        return;
-      }
-    }
-    const updates = {
-      [STORAGE_KEY_LOCK_ENABLED]: lockEnabled && Boolean(nextCredential),
-      [STORAGE_KEY_LOCK_POLICY]: policy,
-      [STORAGE_KEY_LOCK_IDLE_MINUTES]: idleMinutes,
-      [STORAGE_KEY_LOCK_MASTER_CREDENTIAL]: nextCredential
-    };
-    await chrome.storage.local.set(updates);
-    await chrome.runtime.sendMessage({ type: "PASS_LOCK_NOW" });
-    lockCredentialExists = Boolean(nextCredential);
-    dom.lockMasterPassword.value = "";
-    dom.lockMasterPasswordConfirm.value = "";
-    dom.lockCredentialHint.textContent = lockCredentialExists ? "\u5DF2\u8BBE\u7F6E\u4E3B\u5BC6\u7801" : "";
-    renderLockSettingsFields();
-    if (!showStatus) {
-      return;
-    }
-    if (!lockEnabled) {
-      setDeviceStatus("\u4E3B\u5BC6\u7801\u9501\u5DF2\u5173\u95ED");
-      return;
-    }
-    if (!existingCredential) {
-      setDeviceStatus("\u4E3B\u5BC6\u7801\u9501\u5DF2\u542F\u7528");
-      return;
-    }
-    if (password || confirm) {
-      setDeviceStatus("\u4E3B\u5BC6\u7801\u5DF2\u66F4\u65B0\uFF0C\u89E3\u9501\u7B56\u7565\u5DF2\u4FDD\u5B58");
-      return;
-    }
-    setDeviceStatus("\u89E3\u9501\u7B56\u7565\u5DF2\u4FDD\u5B58");
-  }
-  async function persistSyncSettings({ showStatus = true } = {}) {
-    const enableWebdav = Boolean(dom.syncEnableWebdav.checked);
-    const enableServer = Boolean(dom.syncEnableServer.checked);
-    const primarySource = normalizeSyncPrimarySource(dom.syncPrimarySource.value);
-    const autoSyncIntervalMinutes = normalizeAutoSyncIntervalMinutes(dom.syncAutoInterval.value);
-    if (enableWebdav && !isSecureSyncEndpointValue(dom.syncWebdavBaseUrl.value)) {
-      if (showStatus) setStatus("WebDAV \u5730\u5740\u5FC5\u987B\u4F7F\u7528 HTTPS\uFF08\u672C\u673A\u56DE\u73AF\u5730\u5740\u53EF\u4F7F\u7528 HTTP\uFF09");
-      return false;
-    }
-    if (enableServer && !normalizeLegacySelfHostedServerBaseUrl(dom.syncServerBaseUrl.value || "")) {
-      if (showStatus) setStatus("\u670D\u52A1\u5668\u5730\u5740\u5FC5\u987B\u4F7F\u7528 HTTPS\uFF08\u672C\u673A\u56DE\u73AF\u5730\u5740\u53EF\u4F7F\u7528 HTTP\uFF09");
-      return false;
-    }
-    const nextSettings = {
-      [STORAGE_KEY_SYNC_ENABLE_WEBDAV]: enableWebdav,
-      [STORAGE_KEY_SYNC_ENABLE_SELF_HOSTED_SERVER]: enableServer,
-      [STORAGE_KEY_SYNC_PRIMARY_SOURCE]: primarySource,
-      [STORAGE_KEY_SYNC_WEBDAV_BASE_URL]: String(dom.syncWebdavBaseUrl.value || "").trim(),
-      [STORAGE_KEY_SYNC_WEBDAV_PATH]: String(dom.syncWebdavPath.value || "").trim() || "pass-sync-bundle-v2.json",
-      [STORAGE_KEY_SYNC_WEBDAV_USERNAME]: String(dom.syncWebdavUsername.value || "").trim(),
-      [STORAGE_KEY_SYNC_SERVER_BASE_URL]: normalizeLegacySelfHostedServerBaseUrl(dom.syncServerBaseUrl.value || ""),
-      [STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]: Number(autoSyncIntervalMinutes)
-    };
-    const nextSecrets = {
-      webdavPassword: String(dom.syncWebdavPassword.value || ""),
-      serverToken: String(dom.syncServerToken.value || "").trim(),
-      encryptionKey: normalizeSyncEncryptionKey(dom.syncEncryptionKey.value),
-      previousEncryptionKey: normalizeSyncEncryptionKey(dom.syncPreviousEncryptionKey.value)
-    };
-    if (dom.syncEncryptionKey.value.trim() && !nextSecrets.encryptionKey) {
-      if (showStatus) setStatus("\u540C\u6B65\u52A0\u5BC6\u5BC6\u94A5\u65E0\u6548\uFF0C\u5FC5\u987B\u662F 256 \u4F4D\u5BC6\u94A5\uFF1B\u7559\u7A7A\u8868\u793A\u4F7F\u7528\u660E\u6587\u540C\u6B65\u5305");
-      return false;
-    }
-    if (dom.syncPreviousEncryptionKey.value.trim() && !nextSecrets.previousEncryptionKey) {
-      if (showStatus) setStatus("\u8F6E\u6362\u524D\u540C\u6B65\u5BC6\u94A5\u65E0\u6548\uFF0C\u5FC5\u987B\u662F 256 \u4F4D\u5BC6\u94A5");
-      return false;
-    }
-    if (nextSecrets.previousEncryptionKey && nextSecrets.previousEncryptionKey === nextSecrets.encryptionKey) {
-      nextSecrets.previousEncryptionKey = "";
-    }
-    await chrome.storage.local.set(nextSettings);
-    await setSyncSecrets(nextSecrets);
-    await refreshSyncEncryptionKeyIdStatus();
-    const persisted = await chrome.storage.local.get([
-      STORAGE_KEY_SYNC_SERVER_BASE_URL,
-      STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES
-    ]);
-    dom.syncServerBaseUrl.value = String(
-      persisted[STORAGE_KEY_SYNC_SERVER_BASE_URL] || nextSettings[STORAGE_KEY_SYNC_SERVER_BASE_URL] || DEFAULT_SELF_HOSTED_SERVER_BASE_URL
-    );
-    dom.syncServerToken.value = nextSecrets.serverToken;
-    dom.syncPrimarySource.value = primarySource;
-    dom.syncAutoInterval.value = normalizeAutoSyncIntervalMinutes(
-      persisted[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES] ?? nextSettings[STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES]
-    );
-    renderSyncBackendFields();
-    if (!showStatus) return;
-    const enabledLabels = [];
-    if (enableWebdav) enabledLabels.push("WebDAV");
-    if (enableServer) enabledLabels.push("\u670D\u52A1\u5668");
-    const autoSyncLabel = autoSyncIntervalMinutes === "0" ? "\u81EA\u52A8\u540C\u6B65\u5173\u95ED" : `\u81EA\u52A8\u540C\u6B65\u6BCF ${autoSyncIntervalMinutes} \u5206\u949F`;
-    setDeviceStatus(
-      enabledLabels.length > 0 ? `\u540C\u6B65\u6E90\u914D\u7F6E\u5DF2\u4FDD\u5B58\uFF08\u4E3B\u6E90\uFF1A${primarySourceLabel(primarySource)}\uFF1B\u5DF2\u542F\u7528\uFF1A${enabledLabels.join(" + ")}\uFF1B${autoSyncLabel}\uFF09` : `\u540C\u6B65\u6E90\u914D\u7F6E\u5DF2\u4FDD\u5B58\uFF08\u5F53\u524D\u672A\u542F\u7528\u4EFB\u4F55\u8FDC\u7AEF\u6E90\uFF1B${autoSyncLabel}\uFF09`
-    );
-    return true;
-  }
-  async function saveSyncSettings() {
-    return persistSyncSettings({ showStatus: true });
-  }
-  async function refresh({ silent = false } = {}) {
-    const { accounts, passkeys, folders } = await readBusinessDataFromStore();
-    await loadHistory();
-    accountsRaw = cloneAccounts(accounts);
-    passkeysRaw = passkeys.map(normalizePasskeyShape);
-    foldersRaw = sortFoldersForDisplay(withFixedFolder(
-      folders.filter((folder) => !folder?.isDeleted).map(normalizeFolderShape)
-    ));
-    closeContextMenu();
-    renderGoogleAuthenticatorImportFolderOptions();
-    renderSidebar(accountsRaw);
-    renderCurrentView(accountsRaw);
-    setAccountView(activeAccountView);
-    if (!dom.historyModal.classList.contains("hidden")) {
-      renderHistoryModalList();
-    }
-    if (!silent) {
-      setStatus(`\u5DF2\u52A0\u8F7D ${accountsRaw.length} \u6761\u8D26\u53F7\uFF0C${passkeysRaw.length} \u6761\u901A\u884C\u5BC6\u94A5\uFF0C${foldersRaw.length} \u4E2A\u6587\u4EF6\u5939`);
-    }
-  }
-  async function clearAll() {
-    await writeBusinessDataToStore({ accounts: [], passkeys: [], folders: [] });
-    await appendHistory("\u6E05\u7A7A\u5168\u90E8\u6570\u636E\uFF1A\u8D26\u53F7\u3001\u901A\u884C\u5BC6\u94A5\u3001\u6587\u4EF6\u5939");
-    editingAccountId = null;
-    await refresh({ silent: true });
-    await refreshSyncOutboxStatus();
-    setStatus("\u8D26\u53F7\u3001\u901A\u884C\u5BC6\u94A5\u4E0E\u6587\u4EF6\u5939\u5DF2\u6E05\u7A7A");
-  }
-  async function exportSyncBundle() {
-    try {
-      const encryptionKey = normalizeSyncEncryptionKey(dom.syncEncryptionKey.value);
-      const bundle = await buildSyncBundle();
-      const encrypted = await encryptSyncBundleDocument(bundle, encryptionKey);
-      const fileName = `pass-sync-bundle-${formatFileTimestamp(bundle.exportedAtMs)}.json`;
-      const text = JSON.stringify(encrypted, null, 2);
-      await downloadTextFile(fileName, text, "application/json");
-      setStatus(
-        `\u540C\u6B65\u5305\u5DF2\u5BFC\u51FA${encryptionKey ? "\uFF08\u5DF2\u52A0\u5BC6\uFF09" : "\uFF08\u672A\u52A0\u5BC6\uFF0C\u8BF7\u59A5\u5584\u4FDD\u7BA1\uFF09"}\uFF1A${visibleSyncCount(bundle.payload.accounts)} \u6761\u8D26\u53F7\uFF0C${visibleSyncCount(bundle.payload.passkeys)} \u6761\u901A\u884C\u5BC6\u94A5\uFF0C${visibleSyncCount(bundle.payload.folders)} \u4E2A\u6587\u4EF6\u5939`
-      );
-    } catch (error) {
-      setStatus(`\u540C\u6B65\u5305\u5BFC\u51FA\u5931\u8D25\uFF1A${error.message}`);
-    }
-  }
-  async function exportBrowserPasswordCsv(format) {
-    try {
-      const browser = normalizeBrowserExportFormat(format);
-      const localStored = await readBusinessDataFromStore();
-      const localAccounts = Array.isArray(localStored.accounts) ? localStored.accounts.map(normalizeAccountShape) : [];
-      const activeAccounts = localAccounts.filter((account) => !account.isDeleted && !account.isPermanentlyDeleted);
-      const csv = buildBrowserPasswordCsv(activeAccounts, browser);
-      const fileName = `pass-${browser}-passwords-${formatFileTimestamp(Date.now())}.csv`;
-      await downloadTextFile(fileName, csv, "text/csv;charset=utf-8");
-      setStatus(`\u5DF2\u5BFC\u51FA ${browserExportLabel(browser)} \u5BC6\u7801 CSV\uFF0C\u5171 ${countBrowserPasswordRows(activeAccounts)} \u884C`);
-    } catch (error) {
-      setStatus(`\u5BC6\u7801 CSV \u5BFC\u51FA\u5931\u8D25\uFF1A${error.message}`);
-    }
-  }
-  async function importSyncBundleAndMerge() {
-    const file = await pickJsonFile();
-    if (!file) {
-      setStatus("\u5DF2\u53D6\u6D88\u5BFC\u5165\u540C\u6B65\u5305");
-      return;
-    }
-    let parsed;
-    try {
-      parsed = await decryptSyncBundleDocument(
-        JSON.parse(await file.text()),
-        dom.syncEncryptionKey.value,
-        [dom.syncPreviousEncryptionKey.value]
-      );
-    } catch (error) {
-      setStatus(`\u540C\u6B65\u5305\u8BFB\u53D6\u5931\u8D25: ${error.message}`);
-      return;
-    }
-    const incomingPayload = parseSyncBundlePayload(parsed, { requireBundleSchema: true });
-    if (!incomingPayload) {
-      setStatus("\u540C\u6B65\u5305\u683C\u5F0F\u9519\u8BEF\uFF0C\u4EC5\u652F\u6301 pass.sync.bundle.v2");
-      return;
-    }
-    const localStored = await readBusinessDataFromStore();
-    const localPayload = normalizeSyncPayloadShape(localStored);
-    const localAccounts = localPayload.accounts;
-    const localPasskeys = localPayload.passkeys;
-    const localFolders = localPayload.folders;
-    const remotePayload = normalizeSyncPayloadShape(incomingPayload);
-    let mergedPayload = mergeSyncPayloads(localPayload, remotePayload, syncMergeHelpers());
-    mergedPayload.accounts = syncAliasGroups2(mergedPayload.accounts);
-    mergedPayload.passkeys = buildUnifiedPasskeys(mergedPayload.accounts, mergedPayload.passkeys);
-    const safety = validateSyncSafety(localPayload, remotePayload, mergedPayload, SYNC_MODE_MERGE);
-    if (!safety.safe) {
-      setStatus(`\u540C\u6B65\u5305\u5BFC\u5165\u505C\u6B62\uFF0C\u5B89\u5168\u68C0\u67E5\u672A\u901A\u8FC7\uFF1A${safety.reasons.join("\u3001")}`);
-      return;
-    }
-    const confirmed = window.confirm(
-      `\u540C\u6B65\u5305\u5408\u5E76\u9884\u89C8\uFF1A\u8D26\u53F7 ${visibleSyncCount(localAccounts)} \u2192 ${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPasskeys)} \u2192 ${visibleSyncCount(mergedPayload.passkeys)}\uFF0C\u6587\u4EF6\u5939 ${visibleSyncCount(localFolders)} \u2192 ${visibleSyncCount(mergedPayload.folders)}
+KäHOàHà»LHàHàà»Hà
+N¬àõ‹à
+€€ú›YŸà€€\€ô[ù
+H¬à€€ú›ô]àH\úò^Kö\–\úò^Jô^⁄YKú⁄]\ H»Àããõô]»Ÿ]
+ô^⁄YKú⁄]\ÀõX\
+õ‹õX[^ôJKôö[\äõ€€X[äJWKú€‹ù
+à
+KäHOàHà»LHàHàà»Hàà
+Hà◊N¬à€€ú›ÿ[YHHô]ãõ[ô›OOHY\ôŸYõ[ô›	âàô]ãô]ô\ûJ
+ãJHOààOOHY\ôŸY⁄WJN¬àYà
+\ÿ[YJH¬àô^⁄YHH¬àããõô^⁄YKà⁄]\ŒàY\ôŸYú€XŸJ
+Kà\]Y]\Œàõ›”\Àà\›‹\ò]Y]öXŸSò[YNà]öXŸSò[YBàN¬à⁄[ôŸYHùYN¬àH[ŸHYà
+\úò^Kö\–\úò^Jô^⁄YKú⁄]\ H	âàô^⁄YKú⁄]\Àöõ⁄[äóäHOOHY\ôŸYöõ⁄[äóäJH¬àô^⁄YHH¬àããõô^⁄YKà⁄]\ŒàY\ôŸYú€XŸJ
+BàN¬à⁄[ôŸYHùYN¬àBàBàBàô]\õà»Xÿ€›[ùŒàô^⁄[ôŸYN¬àBÇàÀ»Xÿ€›[ùÿ€‹ôKöú¬àò\àUó‘’QëíVTÃàHô]»Ÿ]
+Uó‘’QëíVT N¬àò\à”PRSó–SPT◊—‘ì’T»HÿöôX›ôúôY^ôJ¬àÿöôX›ôúôY^ôJ¬àYàò\Hãà€XZ[úŒàÿöôX›ôúôY^ôJ»ò\Kò€€Hãò\Kò€€Kò€àãöX€›Yò€€HãöX€›Yò€€Kò€àóJBàJKàÿöôX›ôúôY^ôJ¬àYàú\Hãà€XZ[úŒàÿöôX›ôúôY^ôJ»ú\Kò€€Hãùﬁú\Kò€€HóJBàJKàÿöôX›ôúôY^ôJ¬àYàòòZYHãà€XZ[úŒàÿöôX›ôúôY^ôJ»òòZYKò€€Hãú\‹‹‹ùòòZYKò€€Hãú[ãòòZYKò€€HóJBàJKàÿöôX›ôúôY^ôJ¬àYàú⁄[òHãà€XZ[úŒàÿöôX›ôúôY^ôJ»ú⁄[òKò€€HãõXZ[ú⁄[òKò€€HãùŸZXõÀò€€HóJBàJKàÿöôX›ôúôY^ôJ¬àYàô⁄]Xàãà€XZ[úŒàÿöôX›ôúôY^ôJ»ô⁄]Xãò€€Hãô⁄\›ô⁄]Xãò€€HóJBàJKàÿöôX›ôúôY^ôJ¬àYàô⁄]Xàãà€XZ[úŒàÿöôX›ôúôY^ôJ»ô⁄]Xãò€€HãòXõ›]ô⁄]Xãò€€HóJBàJKàÿöôX›ôúôY^ôJ¬àYàô€€Ÿ€Hãà€XZ[úŒàÿöôX›ôúôY^ôJ»ô€€Ÿ€Kò€€HãòXÿ€›[ùÀô€€Ÿ€Kò€€HóJBàJKàÿöôX›ôúôY^ôJ¬àYàû[›]XôHãà€XZ[úŒàÿöôX›ôúôY^ôJ»û[›]XôKò€€Hãú›Y[Àû[›]XôKò€€HóJBàJKàÿöôX›ôúôY^ôJ¬àYàûãà€XZ[úŒàÿöôX›ôúôY^ôJ»ûò€€Hãù⁄]\ãò€€HóJBàJKàÿöôX›ôúôY^ôJ¬àYàôòXŸXõ€⁄»ãà€XZ[úŒàÿöôX›ôúôY^ôJ»ôòXŸXõ€⁄Àò€€HãõY\‹Ÿ[ôŸ\ãò€€HóJBàJKàÿöôX›ôúôY^ôJ¬àYàò[X^õ€àãà€XZ[úŒàÿöôX›ôúôY^ôJ»ò[X^õ€ãò€€Hãú€Z[Kò[X^õ€ãò€€HóJBàJKàÿöôX›ôúôY^ôJ¬àYàõZX‹õ‹€Ÿùãà€XZ[úŒàÿöôX›ôúôY^ôJ¬àõZX‹õ‹€Ÿùò€€HãàõZX‹õ‹€Ÿù€õ[ôKò€€HãàÀ»ŸY\H€€[[€à⁄‹ù[ô\ŸYûH€\àôX€‹ô»[öŸY»Hÿ[YBàÀ»ZX‹õ‹€Ÿù⁄Y€ãZ[àõ›öY\à\»Hù[H]X[YöYY‹›ò[Y\ÀÇàõZX‹õ‹€Ÿù€õ[ôHãàõŸ⁄[ãõZX‹õ‹€Ÿù€õ[ôKò€€HãàõŸ⁄[ãõZX‹õ‹€Ÿùò€€HãàòXÿ€›[ùõZX‹õ‹€Ÿùò€€Hãàõ]ôKò€€Hãàö›XZ[ò€€Hãàõ›]€⁄Àò€€HãàòXÿ€›[ùõ]ôKò€€HãàõŸôöXŸKò€€Hãàõ›]€⁄ÀõŸôöXŸKò€€HãàõZX‹õ‹€ŸùÕçKò€€HãàõŸôöXŸLÕçKò€€Hãàò^ù\ôKò€€Hãàõ\€ãò€€HÇàJBàJKàÿöôX›ôúôY^ôJ¬àYàú^\[ãà€XZ[úŒàÿöôX›ôúôY^ôJ»ú^\[ò€€HóJBàJKàÿöôX›ôúôY^ôJ¬àYàõô]õ^ãà€XZ[úŒàÿöôX›ôúôY^ôJ»õô]õ^ò€€Hãö[õô]õ^ò€€HóJBàJKàÿöôX›ôúôY^ôJ¬àYàú‹›YûHãà€XZ[úŒàÿöôX›ôúôY^ôJ»ú‹›YûKò€€Hãõ‹[ãú‹›YûKò€€HóJBàJKàÿöôX›ôúôY^ôJ¬àYàõ[öŸY[àãà€XZ[úŒàÿöôX›ôúôY^ôJ»õ[öŸY[ãò€€HóJBàJKàÿöôX›ôúôY^ôJ¬àYàôõ‹õﬁãà€XZ[úŒàÿöôX›ôúôY^ôJ»ôõ‹õﬁò€€HóJBàJBàJN¬àù[ò›[€àõ‹õX[^ôQ€XZ[ä[ú]
+H¬àYà
+Z[ú]
+Hô]\õààé¬à]ò[YHH›ö[ô [ú]
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬àûH¬àYà
+ò[YKú›\ù’⁄]
+öãÀ»äHò[YKú›\ù’⁄]
+öŒãÀ»äJH¬àò[YHHô]»Tì
+ò[YJKö‹›ò[YN¬àBàHÿ]⁄¬àô]\õààé¬àBà⁄[H
+ò[YKô[ô’⁄]
+ãàäJH¬àò[YHHò[YKú€XŸJLJN¬àBàô]\õàò[YN¬àBàù[ò›[€à\“\‹›
+€XZ[äH¬à€€ú›õ‹õX[^ôYHõ‹õX[^ôQ€XZ[ä€XZ[äN¬àYà
+[õ‹õX[^ôY
+Hô]\õàò[ŸN¬àYà
+◊óÃKﬂJŒóóÃKﬂJ^ÃﬂIÀù\›
+õ‹õX[^ôY
+JH¬àô]\õàõ‹õX[^ôYú‹]
+ãàäKô]ô\ûJ
+\ù
+HOà¬à€€ú›ò[YHHù[Xô\ä\ù
+N¬àô]\õàù[Xô\ãö\“[ùYŸ\äò[YJH	âàò[YHèH	âàò[YHHçMN¬àJN¬àBàYà
+õ‹õX[^ôYö[ò€Y\ éàäJH¬àô]\õà◊ñÃNXKYéóJ…⁄Kù\›
+õ‹õX[^ôY
+N¬àBàô]\õàò[ŸN¬àBàù[ò›[€à]\”€ôJ€XZ[äH¬à€€ú›õ‹õX[^ôYHõ‹õX[^ôQ€XZ[ä€XZ[äN¬àYà
+[õ‹õX[^ôY
+Hô]\õààé¬àYà
+\“\‹›
+õ‹õX[^ôY
+JHô]\õàõ‹õX[^ôY¬à€€ú›Xô[»Hõ‹õX[^ôYú‹]
+ãàäN¬àYà
+Xô[Àõ[ô›äHô]\õàõ‹õX[^ôY¬à€€ú›Z[àHXô[Àú€XŸJLäKöõ⁄[äãàäN¬àYà
+Uó‘’QëíVTÃãö\ Z[äH	âàXô[Àõ[ô›èH H¬àô]\õàXô[Àú€XŸJL Köõ⁄[äãàäN¬àBàô]\õàZ[é¬àBàù[ò›[€à€XZ[ê[X\—‹õ›\Ÿ^J€XZ[äH¬à€€ú›õ‹õX[^ôYHõ‹õX[^ôQ€XZ[ä€XZ[äN¬àYà
+[õ‹õX[^ôY
+Hô]\õààé¬àõ‹à
+€€ú›‹õ›\Ÿà”PRSó–SPT◊—‘ì’T H¬à€€ú›X]⁄YH‹õ›\ô€XZ[úÀú€€YJà
+[X\ HOàõ‹õX[^ôYOOH[X\»õ‹õX[^ôYô[ô’⁄]
+âÿ[X\ﬂX
+Bà
+N¬àYà
+X]⁄Y
+Hô]\õà‹õ›\öY¬àBàô]\õààé¬àBàù[ò›[€à€XZ[ú”X]⁄
+YùöY⁄
+H¬à€€ú›õ‹õX[^ôYYùHõ‹õX[^ôQ€XZ[äYù
+N¬à€€ú›õ‹õX[^ôYöY⁄Hõ‹õX[^ôQ€XZ[äöY⁄
+N¬àYà
+[õ‹õX[^ôYYù[õ‹õX[^ôYöY⁄
+Hô]\õàò[ŸN¬àYà
+õ‹õX[^ôYYùOOHõ‹õX[^ôYöY⁄
+Hô]\õàùYN¬àYà
+]\”€ôJõ‹õX[^ôYYù
+HOOH]\”€ôJõ‹õX[^ôYöY⁄
+JHô]\õàùYN¬à€€ú›Yù‹õ›\H€XZ[ê[X\—‹õ›\Ÿ^Jõ‹õX[^ôYYù
+N¬àô]\õàõ€€X[äYù‹õ›\	âàYù‹õ›\OOH€XZ[ê[X\—‹õ›\Ÿ^Jõ‹õX[^ôYöY⁄
+JN¬àBàù[ò›[€àõ‹õX[^ôT⁄]\ ⁄]\ H¬à€€ú›ò[Y\»H\úò^Kö\–\úò^J⁄]\ H»⁄]\»à◊N¬àô]\õàÀããõô]»Ÿ]
+ò[Y\ÀõX\
+õ‹õX[^ôQ€XZ[äKôö[\äõ€€X[äJWKú€‹ù
 
-\u786E\u8BA4\u5199\u5165\u672C\u5730\u5417\uFF1F`
-    );
-    if (!confirmed) {
-      setStatus("\u5DF2\u53D6\u6D88\u5BFC\u5165\u540C\u6B65\u5305");
-      return;
-    }
-    await saveLocalSafetySnapshot("\u5BFC\u5165\u540C\u6B65\u5305\u524D\u81EA\u52A8\u5907\u4EFD");
-    await writeBusinessDataToStore(mergedPayload);
-    await appendHistory(
-      `\u5BFC\u5165\u540C\u6B65\u5305\u5E76\u5408\u5E76\uFF1A\u8D26\u53F7 ${visibleSyncCount(localAccounts)}->${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPasskeys)}->${visibleSyncCount(mergedPayload.passkeys)}`
-    );
-    editingAccountId = null;
-    await refresh({ silent: true });
-    setStatus(
-      `\u540C\u6B65\u5305\u5408\u5E76\u5B8C\u6210\uFF1A\u8D26\u53F7 ${visibleSyncCount(localAccounts)}+${visibleSyncCount(remotePayload.accounts)}->${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPasskeys)}+${visibleSyncCount(remotePayload.passkeys)}->${visibleSyncCount(mergedPayload.passkeys)}\uFF0C\u6587\u4EF6\u5939 ${visibleSyncCount(localFolders)}+${visibleSyncCount(remotePayload.folders)}->${visibleSyncCount(mergedPayload.folders)}`
-    );
-  }
-  async function importBrowserPasswordCsv() {
-    const file = await pickCsvFile();
-    if (!file) {
-      setStatus("\u5DF2\u53D6\u6D88\u6D4F\u89C8\u5668\u5BC6\u7801 CSV \u5BFC\u5165");
-      return;
-    }
-    let parsed;
-    try {
-      parsed = parseBrowserPasswordCsv(await file.text());
-    } catch (error) {
-      setStatus(`\u6D4F\u89C8\u5668\u5BC6\u7801 CSV \u5BFC\u5165\u5931\u8D25: ${error.message}`);
-      return;
-    }
-    const localStored = await readBusinessDataFromStore();
-    let mergedAccounts = Array.isArray(localStored.accounts) ? localStored.accounts.map(normalizeAccountShape) : [];
-    const localStoredPasskeys = Array.isArray(localStored.passkeys) ? localStored.passkeys.map(normalizePasskeyShape) : [];
-    const localPasskeys = buildUnifiedPasskeys(mergedAccounts, localStoredPasskeys);
-    const localFolders = Array.isArray(localStored.folders) ? localStored.folders.map(normalizeFolderShape) : [];
-    const startedAtMs = Date.now();
-    let createdCount = 0;
-    let updatedCount = 0;
-    let unchangedCount = 0;
-    parsed.entries.forEach((entry, index) => {
-      const nowMs = startedAtMs + index;
-      const matchIndex = findImportedBrowserAccountIndex(mergedAccounts, entry);
-      if (matchIndex >= 0) {
-        const updated = applyImportedBrowserEntryToAccount(mergedAccounts[matchIndex], entry, nowMs);
-        if (JSON.stringify(updated) === JSON.stringify(mergedAccounts[matchIndex])) {
-          unchangedCount += 1;
-        } else {
-          mergedAccounts[matchIndex] = updated;
-          updatedCount += 1;
-        }
-        return;
-      }
-      const createdAtMs = startedAtMs + index * 1e3;
-      const canonicalSite = etldPlusOne(entry.sites[0] || "");
-      mergedAccounts.push(normalizeAccountShape({
-        accountId: buildAccountId(canonicalSite, entry.username, createdAtMs),
-        canonicalSite,
-        usernameAtCreate: entry.username,
-        sites: entry.sites,
-        username: entry.username,
-        password: entry.password,
-        note: entry.note,
-        createdAtMs,
-        updatedAtMs: createdAtMs,
-        usernameUpdatedAtMs: createdAtMs,
-        usernameUpdatedDeviceName: currentImportDeviceName(),
-        passwordUpdatedAtMs: createdAtMs,
-        passwordUpdatedDeviceName: currentImportDeviceName(),
-        noteUpdatedAtMs: entry.note ? createdAtMs : 0,
-        noteUpdatedDeviceName: currentImportDeviceName(),
-        deletedDeviceName: "",
-        lastOperatedDeviceName: currentImportDeviceName(),
-        createdDeviceName: currentImportDeviceName(),
-        isDeleted: false,
-        deletedAtMs: null,
-        folderIds: [],
-        passkeyCredentialIds: []
-      }));
-      createdCount += 1;
-    });
-    if (createdCount === 0 && updatedCount === 0) {
-      setStatus(
-        `\u6D4F\u89C8\u5668\u5BC6\u7801 CSV \u5BFC\u5165\u5B8C\u6210\uFF08${parsed.formatLabel}\uFF09\uFF0C\u6CA1\u6709\u65B0\u589E\u6216\u66F4\u65B0\u8D26\u53F7` + (parsed.skippedRowCount > 0 ? `\uFF0C\u8DF3\u8FC7 ${parsed.skippedRowCount} \u884C` : "") + (unchangedCount > 0 ? `\uFF0C\u672A\u53D8\u5316 ${unchangedCount} \u884C` : "")
-      );
-      return;
-    }
-    mergedAccounts = syncAliasGroups2(mergedAccounts);
-    mergedAccounts = reconcileAccountFolders2(mergedAccounts, localFolders);
-    const mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, localPasskeys);
-    await writeBusinessDataToStore({
-      accounts: mergedAccounts,
-      passkeys: mergedPasskeys,
-      folders: localFolders
-    });
-    await appendHistory(
-      `\u5BFC\u5165 ${parsed.formatLabel} \u5BC6\u7801 CSV\uFF1A\u65B0\u589E ${createdCount} \u6761\uFF0C\u66F4\u65B0 ${updatedCount} \u6761` + (parsed.skippedRowCount > 0 ? `\uFF0C\u8DF3\u8FC7 ${parsed.skippedRowCount} \u884C` : "") + (unchangedCount > 0 ? `\uFF0C\u672A\u53D8\u5316 ${unchangedCount} \u884C` : "")
-    );
-    editingAccountId = null;
-    await refresh({ silent: true });
-    setStatus(
-      `\u6D4F\u89C8\u5668\u5BC6\u7801 CSV \u5BFC\u5165\u5B8C\u6210\uFF08${parsed.formatLabel}\uFF09\uFF1A\u65B0\u589E ${createdCount} \u6761\uFF0C\u66F4\u65B0 ${updatedCount} \u6761` + (parsed.skippedRowCount > 0 ? `\uFF0C\u8DF3\u8FC7 ${parsed.skippedRowCount} \u884C` : "") + (unchangedCount > 0 ? `\uFF0C\u672A\u53D8\u5316 ${unchangedCount} \u884C` : "")
-    );
-  }
-  async function importGoogleAuthenticatorExportQrFromClipboard() {
-    let migration;
-    try {
-      migration = await readGoogleAuthenticatorMigrationFromClipboard();
-    } catch (error) {
-      setStatus(`\u8C37\u6B4C\u9A8C\u8BC1\u5668\u5BFC\u5165\u5931\u8D25: ${error.message}`);
-      return;
-    }
-    if (!migration) {
-      setStatus("\u526A\u8D34\u677F\u91CC\u6CA1\u6709\u53EF\u8BC6\u522B\u7684\u8C37\u6B4C\u9A8C\u8BC1\u5668\u5BFC\u51FA\u4E8C\u7EF4\u7801");
-      return;
-    }
-    await importGoogleAuthenticatorMigration(migration, buildGoogleAuthenticatorImportFolderPlan());
-  }
-  async function importGoogleAuthenticatorExportQrFromFiles() {
-    const files = await pickImageFiles();
-    if (!files || files.length === 0) {
-      setStatus("\u5DF2\u53D6\u6D88\u8C37\u6B4C\u9A8C\u8BC1\u5668\u4E8C\u7EF4\u7801\u5BFC\u5165");
-      return;
-    }
-    let migration;
-    try {
-      migration = await readGoogleAuthenticatorMigrationFromFiles(files);
-    } catch (error) {
-      setStatus(`\u8C37\u6B4C\u9A8C\u8BC1\u5668\u5BFC\u5165\u5931\u8D25: ${error.message}`);
-      return;
-    }
-    if (!migration) {
-      setStatus("\u672A\u4ECE\u6240\u9009\u56FE\u7247\u4E2D\u8BC6\u522B\u5230\u8C37\u6B4C\u9A8C\u8BC1\u5668\u5BFC\u51FA\u4E8C\u7EF4\u7801");
-      return;
-    }
-    await importGoogleAuthenticatorMigration(migration, buildGoogleAuthenticatorImportFolderPlan());
-  }
-  async function importGoogleAuthenticatorMigration(migration, folderPlan = null) {
-    const localStored = await readBusinessDataFromStore();
-    let mergedAccounts = Array.isArray(localStored.accounts) ? localStored.accounts.map(normalizeAccountShape) : [];
-    const localStoredPasskeys = Array.isArray(localStored.passkeys) ? localStored.passkeys.map(normalizePasskeyShape) : [];
-    const localPasskeys = buildUnifiedPasskeys(mergedAccounts, localStoredPasskeys);
-    let localFolders = Array.isArray(localStored.folders) ? localStored.folders.map(normalizeFolderShape) : [];
-    const resolvedImportFolder = resolveGoogleAuthenticatorImportFolder(folderPlan, localFolders);
-    if ((String(folderPlan?.newFolderName || "").trim() || String(folderPlan?.selectedFolderId || "").trim()) && !resolvedImportFolder.folderId) {
-      return;
-    }
-    localFolders = resolvedImportFolder.folders;
-    const startedAtMs = Date.now();
-    let createdCount = 0;
-    let updatedCount = 0;
-    let unchangedCount = 0;
-    let skippedCount = Number(migration.skippedCount || 0);
-    migration.entries.forEach((entry, index) => {
-      if (!entry?.siteAlias || !entry?.secret) {
-        skippedCount += 1;
-        return;
-      }
-      const nowMs = startedAtMs + index;
-      const matchIndex = findImportedTotpAccountIndex(mergedAccounts, entry);
-      if (matchIndex >= 0) {
-        const updated = applyImportedTotpEntryToAccount(
-          mergedAccounts[matchIndex],
-          entry,
-          nowMs,
-          resolvedImportFolder.folderId
-        );
-        if (JSON.stringify(updated) === JSON.stringify(mergedAccounts[matchIndex])) {
-          unchangedCount += 1;
-        } else {
-          mergedAccounts[matchIndex] = updated;
-          updatedCount += 1;
-        }
-        return;
-      }
-      const createdAtMs = startedAtMs + index * 1e3;
-      const canonicalSite = etldPlusOne(entry.siteAlias || "");
-      mergedAccounts.push(normalizeAccountShape({
-        accountId: buildAccountId(canonicalSite, entry.username || "", createdAtMs),
-        canonicalSite,
-        usernameAtCreate: entry.username || "",
-        sites: [entry.siteAlias],
-        username: entry.username || "",
-        password: "",
-        totpSecret: entry.secret,
-        createdAtMs,
-        updatedAtMs: createdAtMs,
-        usernameUpdatedAtMs: createdAtMs,
-        usernameUpdatedDeviceName: currentImportDeviceName(),
-        passwordUpdatedAtMs: createdAtMs,
-        passwordUpdatedDeviceName: currentImportDeviceName(),
-        totpUpdatedAtMs: createdAtMs,
-        totpUpdatedDeviceName: currentImportDeviceName(),
-        deletedDeviceName: "",
-        lastOperatedDeviceName: currentImportDeviceName(),
-        createdDeviceName: currentImportDeviceName(),
-        isDeleted: false,
-        deletedAtMs: null,
-        folderIds: resolvedImportFolder.folderId ? [resolvedImportFolder.folderId] : [],
-        folderId: resolvedImportFolder.folderId,
-        passkeyCredentialIds: []
-      }));
-      createdCount += 1;
-    });
-    if (createdCount === 0 && updatedCount === 0) {
-      setStatus(
-        `\u8C37\u6B4C\u9A8C\u8BC1\u5668\u5BFC\u5165\u5B8C\u6210\uFF0C\u6CA1\u6709\u65B0\u589E\u6216\u66F4\u65B0\u8D26\u53F7` + buildGoogleAuthenticatorImportSuffix({
-          importedCount: migration.entries.length,
-          skippedCount,
-          unchangedCount,
-          batchSize: migration.batchSize,
-          batchIndex: migration.batchIndex
-        })
-      );
-      return;
-    }
-    mergedAccounts = syncAliasGroups2(mergedAccounts);
-    mergedAccounts = reconcileAccountFolders2(mergedAccounts, localFolders);
-    const mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, localPasskeys);
-    await writeBusinessDataToStore({
-      accounts: mergedAccounts,
-      passkeys: mergedPasskeys,
-      folders: localFolders
-    });
-    await appendHistory(
-      (resolvedImportFolder.createdFolderName ? `\u521B\u5EFA\u6587\u4EF6\u5939\uFF1A${resolvedImportFolder.createdFolderName}\uFF1B` : "") + `\u5BFC\u5165\u8C37\u6B4C\u9A8C\u8BC1\u5668\u5BFC\u51FA\u4E8C\u7EF4\u7801\uFF1A\u65B0\u589E ${createdCount} \u6761\uFF0C\u66F4\u65B0 ${updatedCount} \u6761` + buildGoogleAuthenticatorImportSuffix({
-        importedCount: migration.entries.length,
-        skippedCount,
-        unchangedCount,
-        batchSize: migration.batchSize,
-        batchIndex: migration.batchIndex
-      })
-    );
-    editingAccountId = null;
-    await refresh({ silent: true });
-    setStatus(
-      `\u8C37\u6B4C\u9A8C\u8BC1\u5668\u5BFC\u5165\u5B8C\u6210\uFF1A\u65B0\u589E ${createdCount} \u6761\uFF0C\u66F4\u65B0 ${updatedCount} \u6761` + (resolvedImportFolder.folderName ? `\uFF0C\u5BFC\u5165\u5230\u6587\u4EF6\u5939 ${resolvedImportFolder.folderName}` : "") + buildGoogleAuthenticatorImportSuffix({
-        importedCount: migration.entries.length,
-        skippedCount,
-        unchangedCount,
-        batchSize: migration.batchSize,
-        batchIndex: migration.batchIndex
-      })
-    );
-  }
-  async function previewSyncWithRemote() {
-    dom.syncPreviewStatus.textContent = "\u6B63\u5728\u62C9\u53D6\u8FDC\u7AEF\u5E76\u8BA1\u7B97\u9884\u89C8\u2026";
-    try {
-      if (!await saveSyncSettings()) throw new Error("\u540C\u6B65\u914D\u7F6E\u65E0\u6548");
-      const targets = buildRemoteSyncTargetsFromDom();
-      if (!targets || targets.length === 0) throw new Error("\u8BF7\u5148\u542F\u7528\u540C\u6B65\u6E90");
-      const localStored = await readBusinessDataFromStore();
-      const localPayload = normalizeSyncPayloadShape(localStored);
-      let primaryRemotePayload = null;
-      const pullErrors = [];
-      for (const target of targets) {
-        let response;
-        try {
-          response = await pullRemotePayload(target);
-        } catch (error) {
-          if (target.isPrimary) throw error;
-          pullErrors.push(`${target.label}: ${error.message}`);
-          continue;
-        }
-        target.remotePayload = response.payload;
-        target.remoteEncrypted = response.encrypted;
-        if (target.isPrimary) {
-          primaryRemotePayload = response.payload ? normalizeSyncPayloadShape(response.payload) : null;
-        }
-      }
-      const mergedPayload = primaryRemotePayload ? mergeSyncPayloads2(localPayload, primaryRemotePayload) : localPayload;
-      const safety = validateSyncSafety(localPayload, primaryRemotePayload, mergedPayload, SYNC_MODE_MERGE);
-      if (!safety.safe) throw new Error(`\u5B89\u5168\u68C0\u67E5\u672A\u901A\u8FC7\uFF1A${safety.reasons.join("\u3001")}`);
-      dom.syncPreviewStatus.textContent = `\u9884\u89C8\uFF08\u672A\u5199\u5165\uFF09\uFF1A\u8D26\u53F7 ${visibleSyncCount(localPayload.accounts)}->${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPayload.passkeys)}->${visibleSyncCount(mergedPayload.passkeys)}\uFF0C\u6587\u4EF6\u5939 ${visibleSyncCount(localPayload.folders)}->${visibleSyncCount(mergedPayload.folders)}\uFF1B\u4E3B\u6E90 ${targets.find((target) => target.isPrimary)?.label || "\u672A\u6307\u5B9A"}`;
-    } catch (error) {
-      dom.syncPreviewStatus.textContent = `\u9884\u89C8\u5931\u8D25\uFF1A${error.message}`;
-    }
-  }
-  async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE, forceOutboxRetry = false) {
-    if (syncInFlight) {
-      setStatus("\u540C\u6B65\u8FDB\u884C\u4E2D\uFF0C\u8BF7\u7A0D\u5019\uFF1B\u672C\u6B21\u8BF7\u6C42\u672A\u91CD\u590D\u6267\u884C");
-      return false;
-    }
-    const lockOwner = createSyncIdempotencyKey();
-    if (!await acquireSyncOperationLock(lockOwner)) {
-      setStatus("\u5DF2\u6709\u540C\u6B65\u4EFB\u52A1\u6B63\u5728\u8FD0\u884C\uFF0C\u8BF7\u7A0D\u5019\uFF1B\u672C\u6B21\u8BF7\u6C42\u672A\u91CD\u590D\u6267\u884C");
-      return false;
-    }
-    syncInFlight = true;
-    try {
-      return await performSyncNowWithRemote(syncMode, lockOwner, forceOutboxRetry);
-    } finally {
-      syncInFlight = false;
-      await releaseSyncOperationLock(lockOwner);
-    }
-  }
-  async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE, syncSessionId = createSyncIdempotencyKey(), forceOutboxRetry = false) {
-    if (!await saveSyncSettings()) return;
-    const targets = buildRemoteSyncTargetsFromDom();
-    if (!targets || targets.length === 0) return;
-    const normalizedSyncMode = normalizeSyncMode(syncMode);
-    const encryptionKey = normalizeSyncEncryptionKey(dom.syncEncryptionKey?.value || "");
-    if (!confirmPlaintextSync(encryptionKey)) return;
-    if (!confirmOverwriteSync(normalizedSyncMode)) return;
-    const localStored = await readBusinessDataFromStore();
-    const localPayload = normalizeSyncPayloadShape(localStored);
-    const localAccounts = localPayload.accounts;
-    const localPasskeys = localPayload.passkeys;
-    const localFolders = localPayload.folders;
-    try {
-      await saveLocalSafetySnapshot(`\u540C\u6B65\u524D\u81EA\u52A8\u5907\u4EFD\uFF08${getSyncModeHistoryLabel(normalizedSyncMode)}\uFF09`);
-    } catch (error) {
-      setStatus(`\u540C\u6B65\u5DF2\u505C\u6B62\uFF0C\u65E0\u6CD5\u521B\u5EFA\u672C\u5730\u5B89\u5168\u5907\u4EFD\uFF1A${error.message}`);
-      return;
-    }
-    let mergedPayload = localPayload;
-    let conflictCount = 0;
-    let primaryRemotePayload = null;
-    const pullErrors = [];
-    {
-      for (const target of targets) {
-        let remotePayload = null;
-        try {
-          const remoteResponse = await pullRemotePayload(target);
-          updateRemoteConcurrencyState(target, remoteResponse.etag);
-          target.remotePayload = remoteResponse.payload;
-          target.remoteEncrypted = remoteResponse.encrypted;
-          remotePayload = remoteResponse.payload;
-          if (target.kind === "webdav" && remotePayload && !String(remoteResponse.etag || "").trim()) {
-            throw new Error(
-              "WebDAV \u8FDC\u7AEF\u5DF2\u6709\u540C\u6B65\u5305\u4F46\u672A\u8FD4\u56DE ETag\uFF0C\u65E0\u6CD5\u5B89\u5168\u505A\u6761\u4EF6\u5199\u5165\u3002\u8BF7\u6539\u7528\u652F\u6301 ETag \u7684 WebDAV\uFF0C\u6216\u6539\u7528\u81EA\u5EFA\u670D\u52A1\u5668\u4F5C\u4E3A\u4E3B\u6E90\u3002"
-            );
-          }
-        } catch (error) {
-          if (target.isPrimary) {
-            setStatus(`${target.label} \u62C9\u53D6\u5931\u8D25: ${error.message}`);
-            return;
-          }
-          pullErrors.push(`${target.label}: ${error.message}`);
-          continue;
-        }
-        if (target.isPrimary) {
-          primaryRemotePayload = remotePayload ? normalizeSyncPayloadShape(remotePayload) : null;
-        }
-      }
-      const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
-      if (!syncPayloadEquals(currentLocalPayload, localPayload)) {
-        setStatus("\u540C\u6B65\u671F\u95F4\u672C\u5730\u6570\u636E\u5DF2\u53D8\u5316\uFF0C\u672C\u6B21\u540C\u6B65\u5DF2\u53D6\u6D88\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65");
-        return;
-      }
-      const primaryTarget = targets.find((target) => target.isPrimary) || targets[0];
-      if (normalizedSyncMode === SYNC_MODE_MERGE) {
-        if (primaryRemotePayload) {
-          conflictCount = countSyncAccountConflicts(localAccounts, primaryRemotePayload.accounts);
-          if (conflictCount > 0) {
-            await saveLocalSafetySnapshot("\u540C\u6B65\u51B2\u7A81\u4E3B\u6E90\u5907\u4EFD", primaryRemotePayload);
-          }
-          mergedPayload = mergeSyncPayloads2(localPayload, primaryRemotePayload);
-        }
-      } else if (normalizedSyncMode === SYNC_MODE_REMOTE_OVERWRITE_LOCAL) {
-        const primaryPayload = primaryTarget?.remotePayload || null;
-        const remoteIsEmpty = !primaryPayload || visibleSyncCount(primaryPayload.accounts) === 0 && visibleSyncCount(primaryPayload.passkeys) === 0 && visibleSyncCount(primaryPayload.folders) === 0;
-        const localIsNonEmpty = visibleSyncCount(localAccounts) > 0 || visibleSyncCount(localPasskeys) > 0 || visibleSyncCount(localFolders) > 0;
-        if (remoteIsEmpty && localIsNonEmpty) {
-          setStatus("\u4E91\u7AEF\u8986\u76D6\u672C\u5730\u5DF2\u505C\u6B62\uFF1A\u4E3B\u540C\u6B65\u6E90\u4E3A\u7A7A\uFF0C\u907F\u514D\u6E05\u7A7A\u672C\u5730\u6570\u636E");
-          return;
-        }
-        mergedPayload = normalizeSyncPayloadShape(primaryPayload || {});
-      }
-    }
-    if (normalizedSyncMode === SYNC_MODE_MERGE && primaryRemotePayload) {
-      const safety = validateSyncSafety(
-        localPayload,
-        primaryRemotePayload,
-        mergedPayload,
-        SYNC_MODE_MERGE
-      );
-      if (!safety.safe) {
-        setStatus(`\u540C\u6B65\u5DF2\u505C\u6B62\uFF0C\u5B89\u5168\u68C0\u67E5\u672A\u901A\u8FC7\uFF1A${safety.reasons.join("\u3001")}`);
-        return;
-      }
-    }
-    await writeBusinessDataToStore(mergedPayload);
-    await appendHistory(
-      `${getSyncModeHistoryLabel(normalizedSyncMode)}\uFF1A\u8D26\u53F7 ${visibleSyncCount(localAccounts)}->${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPasskeys)}->${visibleSyncCount(mergedPayload.passkeys)}` + (conflictCount > 0 ? `\uFF0C\u68C0\u6D4B\u5230 ${conflictCount} \u4E2A\u5B57\u6BB5\u51B2\u7A81\u5E76\u6309\u65F6\u95F4/\u8BBE\u5907\u89C4\u5219\u88C1\u51B3` : "")
-    );
-    const pushErrors = [...pullErrors];
-    let primaryPushFailed = false;
-    const pushTargets = [...targets].sort(
-      (left, right) => Number(right.isPrimary) - Number(left.isPrimary) || Number(right.supportsEtag) - Number(left.supportsEtag)
-    );
-    for (const target of pushTargets) {
-      if (primaryPushFailed && target.isPrimary === false) {
-        pushErrors.push(`${target.label}: \u4E3B\u540C\u6B65\u6E90\u4E0A\u4F20\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\u955C\u50CF\u5199\u5165`);
-        continue;
-      }
-      try {
-        const candidatePayload = { ...mergedPayload };
-        const candidateHash = await syncPayloadSha256(candidatePayload);
-        const pendingItems = await getSyncOutbox();
-        const pending = pendingItems.find((item) => item.targetKey === syncTargetKey(target) && item.payloadSha256 === candidateHash);
-        const result = await pushRemotePayloadWithMode(target, {
-          ...candidatePayload
-        }, normalizedSyncMode, {
-          syncSessionId: pending?.syncSessionId || syncSessionId,
-          operationId: pending?.operationId || "",
-          idempotencyKey: pending?.idempotencyKey || ""
-        });
-        mergedPayload = normalizeSyncPayloadShape(result.payload);
-        await clearSyncOutbox(target);
-      } catch (error) {
-        pushErrors.push(`${target.label}: ${error.message}`);
-        await recordSyncOutboxFailure(target, mergedPayload, error, forceOutboxRetry);
-        if (target.isPrimary) primaryPushFailed = true;
-      }
-    }
-    editingAccountId = null;
-    await refresh({ silent: true });
-    await refreshSyncOutboxStatus();
-    const sourceSummary = targets.map((item) => item.label).join(" + ");
-    if (pushErrors.length > 0) {
-      setStatus(
-        `${getSyncModeStatusLabel(normalizedSyncMode)}\uFF0C\u4F46\u90E8\u5206\u6E90\u4E0A\u4F20\u5931\u8D25\uFF08${sourceSummary}\uFF09\uFF1A${pushErrors.join("\uFF1B")}\uFF08\u8D26\u53F7 ${visibleSyncCount(localAccounts)}->${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPasskeys)}->${visibleSyncCount(mergedPayload.passkeys)}\uFF0C\u6587\u4EF6\u5939 ${visibleSyncCount(localFolders)}->${visibleSyncCount(mergedPayload.folders)}\uFF09`
-      );
-      return;
-    }
-    setStatus(
-      `${getSyncModeStatusLabel(normalizedSyncMode)}\uFF08${sourceSummary}\uFF09\uFF1A\u8D26\u53F7 ${visibleSyncCount(localAccounts)}->${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPasskeys)}->${visibleSyncCount(mergedPayload.passkeys)}\uFF0C\u6587\u4EF6\u5939 ${visibleSyncCount(localPayload.folders)}->${visibleSyncCount(mergedPayload.folders)}` + (conflictCount > 0 ? `\uFF0C\u5B57\u6BB5\u51B2\u7A81 ${conflictCount} \u4E2A` : "")
-    );
-  }
-  async function confirmRemoteOverwriteLocalIfNeeded() {
-    const targets = buildRemoteSyncTargetsFromDom();
-    if (!targets || targets.length === 0) return false;
-    const unreachableTargets = [];
-    const emptyTargets = [];
-    for (const target of targets) {
-      try {
-        const remoteResponse = await pullRemotePayload(target);
-        const remotePayload = remoteResponse.payload ? normalizeSyncPayloadShape(remoteResponse.payload) : null;
-        if (!remotePayload || visibleSyncCount(remotePayload.accounts) === 0 && visibleSyncCount(remotePayload.passkeys) === 0 && visibleSyncCount(remotePayload.folders) === 0) {
-          emptyTargets.push(target.label);
-        }
-      } catch (error) {
-        unreachableTargets.push(`${target.label}\uFF08${error.message}\uFF09`);
-      }
-    }
-    if (unreachableTargets.length === 0 && emptyTargets.length === 0) {
-      return true;
-    }
-    const messages = [];
-    if (unreachableTargets.length > 0) {
-      messages.push(`\u4EE5\u4E0B\u8FDC\u7AEF\u5F53\u524D\u4E0D\u53EF\u8FBE\uFF1A${unreachableTargets.join("\uFF1B")}\u3002\u7EE7\u7EED\u6267\u884C\u540E\uFF0C\u672C\u6B21\u64CD\u4F5C\u5F88\u53EF\u80FD\u76F4\u63A5\u5931\u8D25\u3002`);
-    }
-    if (emptyTargets.length > 0) {
-      messages.push(`\u4EE5\u4E0B\u8FDC\u7AEF\u5F53\u524D\u4E3A\u7A7A\uFF1A${emptyTargets.join("\u3001")}\u3002\u5982\u679C\u6240\u6709\u53EF\u7528\u8FDC\u7AEF\u90FD\u4E3A\u7A7A\uFF0C\u7EE7\u7EED\u6267\u884C\u53EF\u80FD\u628A\u672C\u5730\u6570\u636E\u8986\u76D6\u6210\u7A7A\u3002`);
-    }
-    messages.push("\u786E\u5B9A\u4ECD\u8981\u7EE7\u7EED\u6267\u884C\u201C\u4E91\u7AEF\u8986\u76D6\u672C\u5730\u201D\u5417\uFF1F");
-    return window.confirm(messages.join("\n\n"));
-  }
-  async function confirmLocalOverwriteRemoteIfNeeded() {
-    const localStored = await readBusinessDataFromStore();
-    const localAccounts = Array.isArray(localStored.accounts) ? localStored.accounts : [];
-    const localPasskeys = Array.isArray(localStored.passkeys) ? localStored.passkeys : [];
-    const localFolders = Array.isArray(localStored.folders) ? localStored.folders : [];
-    const isEmpty = visibleSyncCount(localAccounts) === 0 && visibleSyncCount(localPasskeys) === 0 && visibleSyncCount(localFolders) === 0;
-    if (!isEmpty) {
-      return true;
-    }
-    return window.confirm("\u672C\u5730\u6570\u636E\u5F53\u524D\u4E3A\u7A7A\u3002\n\n\u7EE7\u7EED\u6267\u884C\u201C\u672C\u5730\u8986\u76D6\u4E91\u7AEF\u201D\u4F1A\u628A\u6240\u6709\u5DF2\u542F\u7528\u8FDC\u7AEF\u540C\u6B65\u6E90\u8986\u76D6\u6210\u7A7A\u6570\u636E\u3002\n\n\u786E\u5B9A\u7EE7\u7EED\u5417\uFF1F");
-  }
-  function buildRemoteSyncTargetsFromDom() {
-    const targets = [];
-    const primarySource = normalizeSyncPrimarySource(dom.syncPrimarySource.value);
-    if (dom.syncEnableWebdav.checked) {
-      const baseUrl = String(dom.syncWebdavBaseUrl.value || "").trim();
-      const remotePath = normalizeWebdavRemotePath(String(dom.syncWebdavPath.value || "").trim() || "pass-sync-bundle-v2.json");
-      if (!baseUrl || !remotePath) {
-        setStatus("WebDAV \u914D\u7F6E\u4E0D\u5B8C\u6574\uFF1A\u8BF7\u586B\u5199\u5730\u5740\u548C\u8FDC\u7AEF\u8DEF\u5F84");
-        return null;
-      }
-      let url;
-      try {
-        const normalizedBase2 = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-        const base = new URL(normalizedBase2);
-        if (base.username || base.password || base.search || base.hash) throw new Error("WebDAV \u5730\u5740\u4E0D\u80FD\u5305\u542B\u8D26\u53F7\u3001\u67E5\u8BE2\u4E32\u6216\u951A\u70B9");
-        url = new URL(remotePath, normalizedBase2).toString();
-      } catch {
-        setStatus("WebDAV \u5730\u5740\u683C\u5F0F\u4E0D\u6B63\u786E");
-        return null;
-      }
-      const username = String(dom.syncWebdavUsername.value || "");
-      const password = String(dom.syncWebdavPassword.value || "");
-      let authHeader = null;
-      if (username || password) {
-        authHeader = `Basic ${base64EncodeUtf8(`${username}:${password}`)}`;
-      }
-      targets.push({ label: "WebDAV", kind: "webdav", url, authHeader, supportsEtag: false, remoteEtag: null, remoteEncrypted: false, isPrimary: primarySource === SYNC_PRIMARY_WEBDAV });
-    }
-    if (dom.syncEnableServer.checked) {
-      const serverBaseUrl = String(dom.syncServerBaseUrl.value || "").trim();
-      if (!serverBaseUrl) {
-        setStatus("\u670D\u52A1\u5668\u914D\u7F6E\u4E0D\u5B8C\u6574\uFF1A\u8BF7\u586B\u5199\u670D\u52A1\u5730\u5740");
-        return null;
-      }
-      let url;
-      try {
-        const normalizedBase2 = serverBaseUrl.endsWith("/") ? serverBaseUrl : `${serverBaseUrl}/`;
-        url = new URL("v2/sync/state", normalizedBase2).toString();
-      } catch {
-        setStatus("\u670D\u52A1\u5668\u5730\u5740\u683C\u5F0F\u4E0D\u6B63\u786E");
-        return null;
-      }
-      const token = String(dom.syncServerToken.value || "").trim();
-      const authHeader = token ? `Bearer ${token}` : null;
-      targets.push({
-        label: "\u670D\u52A1\u5668",
-        kind: "server",
-        url,
-        versionsUrl: new URL("v2/sync/versions", normalizedBase).toString(),
-        authHeader,
-        supportsEtag: true,
-        remoteEtag: null,
-        remoteEncrypted: false,
-        isPrimary: primarySource === SYNC_PRIMARY_SERVER
-      });
-    }
-    if (targets.length === 0) {
-      setStatus("\u8BF7\u81F3\u5C11\u542F\u7528\u4E00\u4E2A\u8FDC\u7AEF\u540C\u6B65\u6E90\uFF08WebDAV \u6216 \u81EA\u5EFA\u670D\u52A1\u5668\uFF09");
-      return null;
-    }
-    const primaryTarget = targets.find((target) => target.kind === primarySource) || targets.find((target) => target.kind === SYNC_PRIMARY_SERVER) || targets[0];
-    for (const target of targets) target.isPrimary = target === primaryTarget;
-    return targets;
-  }
-  async function pullRemotePayload(target) {
-    const headers = {
-      Accept: "application/json"
-    };
-    if (target.authHeader) {
-      headers.Authorization = target.authHeader;
-    }
-    const response = await fetchWithSyncTimeout(target.url, {
-      method: "GET",
-      headers,
-      cache: "no-store"
-    });
-    const revision = Number(response.headers.get("X-Sync-Revision")) || 0;
-    target.remoteRevision = revision;
-    if (response.status === 404) {
-      return { payload: null, etag: null, encrypted: false, revision: 0 };
-    }
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const text = await response.text();
-    if (!String(text || "").trim()) {
-      return {
-        payload: null,
-        etag: response.headers.get("ETag"),
-        encrypted: false,
-        revision
-      };
-    }
-    let parsed;
-    try {
-      const envelope = JSON.parse(text);
-      const encrypted = String(envelope?.schema || "") === "pass.sync.encrypted.v1";
-      parsed = await decryptSyncBundleDocument(envelope, dom.syncEncryptionKey.value, [dom.syncPreviousEncryptionKey.value]);
-      const payload = parseSyncBundlePayload(parsed, { requireBundleSchema: true });
-      if (!payload) {
-        throw new Error("\u8FDC\u7AEF\u6570\u636E\u683C\u5F0F\u9519\u8BEF\uFF0C\u4EC5\u652F\u6301 pass.sync.bundle.v2");
-      }
-      return {
-        payload,
-        etag: response.headers.get("ETag"),
-        encrypted,
-        revision
-      };
-    } catch (error) {
-      throw new Error(`\u8FDC\u7AEF JSON \u89E3\u6790\u5931\u8D25: ${error.message}`);
-    }
-  }
-  async function loadServerSyncVersions() {
-    dom.syncVersionsStatus.textContent = "\u6B63\u5728\u8BFB\u53D6\u2026";
-    dom.syncVersionsList.replaceChildren();
-    try {
-      if (!await saveSyncSettings()) throw new Error("\u540C\u6B65\u670D\u52A1\u5668\u914D\u7F6E\u65E0\u6548");
-      const targets = buildRemoteSyncTargetsFromDom();
-      const target = targets?.find((item) => item.kind === "server");
-      if (!target) throw new Error("\u8BF7\u5148\u542F\u7528\u5E76\u914D\u7F6E\u81EA\u5EFA\u670D\u52A1\u5668");
-      const headers = { Accept: "application/json" };
-      if (target.authHeader) headers.Authorization = target.authHeader;
-      const response = await fetchWithSyncTimeout(target.versionsUrl, { method: "GET", headers, cache: "no-store" }, "\u8BFB\u53D6\u670D\u52A1\u5668\u5FEB\u7167");
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const parsed = await response.json();
-      const versions = Array.isArray(parsed?.versions) ? parsed.versions : [];
-      renderServerSyncVersions(target, versions);
-      dom.syncVersionsStatus.textContent = `\u5171 ${versions.length} \u4E2A\u5FEB\u7167`;
-    } catch (error) {
-      dom.syncVersionsStatus.textContent = `\u8BFB\u53D6\u5931\u8D25\uFF1A${error.message}`;
-    }
-  }
-  function renderServerSyncVersions(target, versions) {
-    dom.syncVersionsList.replaceChildren();
-    if (versions.length === 0) {
-      dom.syncVersionsList.textContent = "\u670D\u52A1\u5668\u6682\u65E0\u53EF\u6062\u590D\u5FEB\u7167";
-      return;
-    }
-    for (const version of versions) {
-      const row = document.createElement("div");
-      row.className = "sync-version-row";
-      const summary = document.createElement("span");
-      summary.textContent = `\u7248\u672C ${version.versionId} \xB7 \u5BFC\u51FA ${formatTime(version.exportedAtMs)} \xB7 \u4FDD\u5B58 ${formatTime(version.savedAtMs)} \xB7 ${String(version.payloadSha256 || "").slice(0, 12)}`;
-      const restoreButton = document.createElement("button");
-      restoreButton.type = "button";
-      restoreButton.textContent = "\u6062\u590D\u6B64\u7248\u672C";
-      restoreButton.addEventListener("click", () => void restoreServerSyncVersion(target, version));
-      row.append(summary, restoreButton);
-      dom.syncVersionsList.append(row);
-    }
-  }
-  async function saveLocalSafetySnapshot(reason, payloadOverride = null) {
-    const payload = normalizeSyncPayloadShape(payloadOverride || await readBusinessDataFromStore());
-    const snapshots = await getSafetySnapshots();
-    snapshots.unshift({
-      createdAtMs: Date.now(),
-      reason: String(reason || "\u540C\u6B65\u524D\u5907\u4EFD"),
-      payload
-    });
-    await setSafetySnapshots(snapshots);
-  }
-  async function runStorageSelfCheck() {
-    dom.storageDiagnosticsStatus.textContent = "\u6B63\u5728\u68C0\u67E5\u2026";
-    try {
-      const data = await readBusinessDataFromStore();
-      const secrets = await migrateLegacySyncSecrets();
-      const snapshots = await getSafetySnapshots();
-      const invalidSnapshots = snapshots.filter((item) => !item || !item.payload || !Number(item.createdAtMs));
-      if (invalidSnapshots.length > 0) throw new Error(`\u53D1\u73B0 ${invalidSnapshots.length} \u4E2A\u635F\u574F\u672C\u5730\u5FEB\u7167`);
-      dom.storageDiagnosticsStatus.textContent = `\u81EA\u68C0\u901A\u8FC7\uFF1A\u8D26\u53F7 ${visibleSyncCount(data.accounts)}\u3001\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(data.passkeys)}\u3001\u6587\u4EF6\u5939 ${visibleSyncCount(data.folders)}\u3001\u5FEB\u7167 ${snapshots.length}\u3001\u540C\u6B65\u5BC6\u94A5 ${secrets.encryptionKey ? "\u5DF2\u914D\u7F6E" : "\u672A\u914D\u7F6E"}`;
-    } catch (error) {
-      dom.storageDiagnosticsStatus.textContent = `\u81EA\u68C0\u5931\u8D25${error.code ? `\uFF08${error.code}\uFF09` : ""}\uFF1A${error.message}\uFF1B\u672A\u4FEE\u6539\u6570\u636E`;
-    }
-  }
-  async function exportStorageDiagnostics() {
-    try {
-      const data = await readBusinessDataFromStore();
-      const result = await chrome.storage.local.get([STORAGE_KEY_SYNC_DEVICE_ID]);
-      const snapshots = await getSafetySnapshots();
-      const payload = {
-        exportedAtMs: Date.now(),
-        deviceId: String(result[STORAGE_KEY_SYNC_DEVICE_ID] || ""),
-        counts: {
-          accounts: visibleSyncCount(data.accounts),
-          passkeys: visibleSyncCount(data.passkeys),
-          folders: visibleSyncCount(data.folders)
-        },
-        snapshotCount: snapshots.length,
-        note: "\u8BCA\u65AD\u5BFC\u51FA\u4E0D\u5305\u542B\u5BC6\u7801\u5B57\u6BB5\u3001\u540C\u6B65\u4EE4\u724C\u6216\u540C\u6B65\u52A0\u5BC6\u5BC6\u94A5"
-      };
-      await downloadTextFile(`pass-diagnostics-${formatFileTimestamp(payload.exportedAtMs)}.json`, JSON.stringify(payload, null, 2), "application/json");
-      dom.storageDiagnosticsStatus.textContent = "\u8BCA\u65AD\u6587\u4EF6\u5DF2\u5BFC\u51FA\uFF08\u4E0D\u542B\u654F\u611F\u5B57\u6BB5\uFF09";
-    } catch (error) {
-      dom.storageDiagnosticsStatus.textContent = `\u5BFC\u51FA\u5931\u8D25\uFF1A${error.message}`;
-    }
-  }
-  async function restoreLatestSafetySnapshot() {
-    let snapshots;
-    try {
-      snapshots = await getSafetySnapshots();
-    } catch (error) {
-      dom.storageDiagnosticsStatus.textContent = `\u8BFB\u53D6\u672C\u5730\u5B89\u5168\u5FEB\u7167\u5931\u8D25\uFF1A${error.message}`;
-      return;
-    }
-    const latest = snapshots[0];
-    if (!latest?.payload) {
-      dom.storageDiagnosticsStatus.textContent = "\u6CA1\u6709\u53EF\u6062\u590D\u7684\u672C\u5730\u5B89\u5168\u5FEB\u7167";
-      return;
-    }
-    if (!window.confirm(`\u6062\u590D\u6700\u8FD1\u5FEB\u7167\uFF08${latest.reason || "\u540C\u6B65\u524D\u5907\u4EFD"}\uFF09\uFF1F\u6062\u590D\u524D\u4F1A\u518D\u4FDD\u5B58\u5F53\u524D\u6570\u636E\u3002`)) return;
-    try {
-      await saveLocalSafetySnapshot("\u6062\u590D\u6700\u8FD1\u5FEB\u7167\u524D");
-      await writeBusinessDataToStore(latest.payload);
-      await appendHistory(`\u6062\u590D\u6700\u8FD1\u672C\u5730\u5B89\u5168\u5FEB\u7167\uFF1A\u8D26\u53F7 ${visibleSyncCount(latest.payload.accounts)}`);
-      await refresh({ silent: true });
-      dom.storageDiagnosticsStatus.textContent = `\u5DF2\u6062\u590D\u5FEB\u7167\uFF1A\u8D26\u53F7 ${visibleSyncCount(latest.payload.accounts)}\u3001\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(latest.payload.passkeys)}`;
-    } catch (error) {
-      dom.storageDiagnosticsStatus.textContent = `\u6062\u590D\u5931\u8D25\uFF1A${error.message}`;
-    }
-  }
-  async function restoreServerSyncVersion(target, version) {
-    const versionId = Number(version?.versionId);
-    if (!Number.isInteger(versionId) || versionId <= 0) return;
-    const confirmed = window.confirm(
-      `\u786E\u5B9A\u6062\u590D\u670D\u52A1\u5668\u5FEB\u7167\u7248\u672C ${versionId} \u5417\uFF1F
+N¬àBàù[ò›[€àõ‹õX[^ôU\Ÿ\õò[YJò[YJH¬àô]\õà›ö[ô ò[YHàäKùö[J
+N¬àBàù[ò›[€àõ‹õX]VSSQ[\‹ \ H¬à€€ú›]HHô]»]J\ N¬à€€ú›^HH›ö[ô ]KôŸ]U—ù[YX\ä
+H	HL
+KúY›\ù
+ãåäN¬à€€ú›[€ùH›ö[ô ]KôŸ]U”[€ù
 
-\u6062\u590D\u524D\u4F1A\u4FDD\u5B58\u5F53\u524D\u672C\u673A\u6570\u636E\uFF1B\u6062\u590D\u540E\u672C\u673A\u6570\u636E\u5C06\u66FF\u6362\u4E3A\u8BE5\u5FEB\u7167\u5185\u5BB9\u3002`
-    );
-    if (!confirmed) return;
-    dom.syncVersionsStatus.textContent = `\u6B63\u5728\u6062\u590D\u7248\u672C ${versionId}\u2026`;
-    try {
-      await saveLocalSafetySnapshot(`\u6062\u590D\u670D\u52A1\u5668\u5FEB\u7167\u7248\u672C ${versionId} \u524D`);
-      const currentResponse = await pullRemotePayload(target);
-      if (!currentResponse.payload || !currentResponse.etag) {
-        throw new Error("\u670D\u52A1\u5668\u5F53\u524D\u6CA1\u6709\u53EF\u7528\u4E8E\u5E76\u53D1\u4FDD\u62A4\u7684 ETag");
-      }
-      const headers = { Accept: "application/json", "If-Match": currentResponse.etag };
-      if (target.authHeader) headers.Authorization = target.authHeader;
-      const restoreUrl = `${target.versionsUrl}/${encodeURIComponent(versionId)}/restore`;
-      const idempotencyKey = createSyncIdempotencyKey();
-      headers["Idempotency-Key"] = idempotencyKey;
-      const response = await fetchWithSyncTimeout(restoreUrl, { method: "POST", headers, cache: "no-store" }, "\u6062\u590D\u670D\u52A1\u5668\u5FEB\u7167");
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      await verifySelfHostedWriteReceipt(response, idempotencyKey);
-      const restoredRemote = await pullRemotePayload(target);
-      if (!restoredRemote.payload) throw new Error("\u6062\u590D\u540E\u670D\u52A1\u5668\u6CA1\u6709\u8FD4\u56DE\u6709\u6548\u6570\u636E");
-      const before = await readBusinessDataFromStore();
-      await writeBusinessDataToStore(restoredRemote.payload);
-      await appendHistory(
-        `\u6062\u590D\u670D\u52A1\u5668\u5FEB\u7167\u7248\u672C ${versionId}\uFF1A\u8D26\u53F7 ${visibleSyncCount(before.accounts)}->${visibleSyncCount(restoredRemote.payload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(before.passkeys)}->${visibleSyncCount(restoredRemote.payload.passkeys)}`
-      );
-      await refresh({ silent: true });
-      dom.syncVersionsStatus.textContent = `\u7248\u672C ${versionId} \u6062\u590D\u5B8C\u6210`;
-    } catch (error) {
-      dom.syncVersionsStatus.textContent = `\u6062\u590D\u5931\u8D25\uFF1A${error.message}`;
-    }
-  }
-  function updateRemoteConcurrencyState(target, etag) {
-    const normalizedEtag = typeof etag === "string" && etag.trim() ? etag : null;
-    target.remoteEtag = normalizedEtag;
-    if (target.kind === "webdav") {
-      target.supportsEtag = Boolean(normalizedEtag);
-    }
-  }
-  async function verifySelfHostedWriteReceipt(response, idempotencyKey) {
-    const scope = response.headers.get("X-Sync-Scope");
-    const etag = response.headers.get("ETag");
-    const payloadSha256 = response.headers.get("X-Payload-Sha256");
-    const revisionHeader = Number(response.headers.get("X-Sync-Revision"));
-    const idempotencyHeader = response.headers.get("X-Sync-Idempotency-Key");
-    if (!scope || !etag || !payloadSha256) {
-      throw new Error("\u670D\u52A1\u5668\u672A\u8FD4\u56DE\u53EF\u9A8C\u8BC1\u7684\u540C\u6B65\u63D0\u4EA4\u56DE\u6267");
-    }
-    let receipt;
-    try {
-      receipt = await response.json();
-    } catch {
-      throw new Error("\u670D\u52A1\u5668\u63D0\u4EA4\u56DE\u6267\u4E0D\u662F\u6709\u6548 JSON");
-    }
-    if (!receipt?.ok || !receipt?.committed || receipt.scope !== scope || receipt.etag !== etag || receipt.payloadSha256 !== payloadSha256 || !Number.isInteger(receipt.revision) || receipt.revision < 1 || receipt.revision !== revisionHeader || idempotencyKey && idempotencyHeader !== idempotencyKey || idempotencyKey && receipt.idempotencyKey !== idempotencyKey) {
-      throw new Error("\u670D\u52A1\u5668\u63D0\u4EA4\u56DE\u6267\u6821\u9A8C\u5931\u8D25");
-    }
-    return etag;
-  }
-  async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey = null) {
-    if (target.remoteEncrypted && target.remotePayload && syncPayloadEquals(target.remotePayload, payload)) {
-      return { etag: target.remoteEtag, skipped: true };
-    }
-    const bundle = await buildSyncBundleFromPayload(payload);
-    const encryptedBundle = await encryptSyncBundleDocument(bundle, dom.syncEncryptionKey.value);
-    const headers = {
-      "Content-Type": "application/json",
-      Accept: "application/json"
-    };
-    if (target.authHeader) {
-      headers.Authorization = target.authHeader;
-    }
-    if (ifMatch) {
-      headers["If-Match"] = ifMatch;
-    } else if (target.kind === "webdav") {
-      headers["If-None-Match"] = "*";
-    }
-    if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
-    if (target.syncSessionId) headers["X-Sync-Session-Id"] = target.syncSessionId;
-    if (target.operationId) headers["X-Sync-Operation-Id"] = target.operationId;
-    headers["X-Sync-Client-Version"] = PASS_EXTENSION_VERSION;
-    const response = await fetchWithSyncTimeout(target.url, {
-      method: "PUT",
-      headers,
-      body: JSON.stringify(encryptedBundle, null, 2)
-    });
-    if (!response.ok) {
-      const error = new Error(`HTTP ${response.status}`);
-      error.status = response.status;
-      throw error;
-    }
-    const confirmedEtag = target.kind === "server" ? await verifySelfHostedWriteReceipt(response, idempotencyKey) : response.headers.get("ETag");
-    target.remotePayload = payload;
-    target.remoteEncrypted = true;
-    return {
-      etag: confirmedEtag
-    };
-  }
-  function annotateSyncRetryError(error, target, context) {
-    const annotated = error instanceof Error ? error : new Error(String(error || "\u540C\u6B65\u5931\u8D25"));
-    annotated.idempotencyKey = context.idempotencyKey;
-    annotated.syncSessionId = context.syncSessionId;
-    annotated.operationId = context.operationId;
-    annotated.expectedEtag = target.remoteEtag || "";
-    annotated.expectedRevision = target.remoteRevision || 0;
-    return annotated;
-  }
-  function createSyncOperationContext(context = {}) {
-    return {
-      syncSessionId: String(context.syncSessionId || createSyncIdempotencyKey()),
-      operationId: String(context.operationId || createSyncIdempotencyKey()),
-      idempotencyKey: String(context.idempotencyKey || createSyncIdempotencyKey())
-    };
-  }
-  async function pushRemotePayloadWithRetry(target, payload, context = {}) {
-    let candidate = payload;
-    const operation = createSyncOperationContext(context);
-    target.syncSessionId = operation.syncSessionId;
-    target.operationId = operation.operationId;
-    const { idempotencyKey } = operation;
-    for (let attempt = 0; attempt < SYNC_PUSH_CONFLICT_MAX_ATTEMPTS; attempt += 1) {
-      try {
-        const pushResult = await pushRemotePayload(target, candidate, target.remoteEtag, idempotencyKey);
-        updateRemoteConcurrencyState(target, pushResult.etag);
-        target.remotePayload = candidate;
-        target.remoteEncrypted = true;
-        return { payload: candidate };
-      } catch (error) {
-        if (error?.status !== 412 && error?.status !== 428) {
-          try {
-            const probe = await pullRemotePayload(target);
-            if (probe.payload && syncPayloadEquals(probe.payload, candidate)) {
-              updateRemoteConcurrencyState(target, probe.etag);
-              target.remotePayload = candidate;
-              target.remoteEncrypted = true;
-              return { payload: candidate };
-            }
-          } catch (_) {
-          }
-          throw annotateSyncRetryError(error, target, operation);
-        }
-        if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) {
-          throw annotateSyncRetryError(error, target, operation);
-        }
-      }
-      const latestResponse = await pullRemotePayload(target);
-      updateRemoteConcurrencyState(target, latestResponse.etag);
-      target.remotePayload = latestResponse.payload;
-      target.remoteEncrypted = latestResponse.encrypted;
-      if (target.isPrimary === false) {
-        continue;
-      }
-      const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
-      const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
-      if (!syncPayloadEquals(currentLocalPayload, candidate)) {
-        throw annotateSyncRetryError(new Error("\u672C\u5730\u6570\u636E\u5728\u8FDC\u7AEF\u51B2\u7A81\u91CD\u8BD5\u671F\u95F4\u53D1\u751F\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u5199\u5165\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65"), target, operation);
-      }
-      const localAccounts = Array.isArray(candidate.accounts) ? candidate.accounts.map(normalizeAccountShape) : [];
-      const localPasskeys = buildUnifiedPasskeys(
-        localAccounts,
-        Array.isArray(candidate.passkeys) ? candidate.passkeys.map(normalizePasskeyShape) : []
-      );
-      const localFolders = Array.isArray(candidate.folders) ? candidate.folders.map(normalizeFolderShape) : [];
-      const localBeforeMerge = {
-        ...candidate,
-        accounts: localAccounts,
-        passkeys: localPasskeys,
-        folders: localFolders
-      };
-      if (target.isPrimary !== false) {
-        candidate = mergeSyncPayloads2(localBeforeMerge, remotePayload);
-      }
-      const safety = validateSyncSafety(
-        localBeforeMerge,
-        remotePayload,
-        candidate,
-        SYNC_MODE_MERGE
-      );
-      if (!safety.safe) {
-        throw annotateSyncRetryError(new Error(`\u5E76\u53D1\u91CD\u8BD5\u5408\u5E76\u88AB\u5B89\u5168\u68C0\u67E5\u963B\u6B62\uFF1A${safety.reasons.join("\u3001")}`), target, operation);
-      }
-      if (target.isPrimary !== false) {
-        await writeBusinessDataToStore(candidate);
-      }
-    }
-    throw annotateSyncRetryError(new Error("\u8FDC\u7AEF\u5E76\u53D1\u51B2\u7A81\u91CD\u8BD5\u6B21\u6570\u5DF2\u7528\u5C3D"), target, operation);
-  }
-  async function pushRemotePayloadRemotePreferred(target, payload, context = {}) {
-    let candidate = payload;
-    const operation = createSyncOperationContext(context);
-    target.syncSessionId = operation.syncSessionId;
-    target.operationId = operation.operationId;
-    const { idempotencyKey } = operation;
-    for (let attempt = 0; attempt < SYNC_PUSH_CONFLICT_MAX_ATTEMPTS; attempt += 1) {
-      try {
-        const pushResult = await pushRemotePayload(target, candidate, target.remoteEtag, idempotencyKey);
-        updateRemoteConcurrencyState(target, pushResult.etag);
-        target.remotePayload = candidate;
-        return { payload: candidate };
-      } catch (error) {
-        if (error?.status !== 412 && error?.status !== 428) {
-          try {
-            const probe = await pullRemotePayload(target);
-            if (probe.payload && syncPayloadEquals(probe.payload, candidate)) {
-              updateRemoteConcurrencyState(target, probe.etag);
-              target.remotePayload = candidate;
-              target.remoteEncrypted = true;
-              return { payload: candidate };
-            }
-          } catch (_) {
-          }
-          throw annotateSyncRetryError(error, target, operation);
-        }
-        if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) {
-          throw annotateSyncRetryError(error, target, operation);
-        }
-      }
-      const latestResponse = await pullRemotePayload(target);
-      updateRemoteConcurrencyState(target, latestResponse.etag);
-      if (target.isPrimary === false) {
-        target.remotePayload = latestResponse.payload;
-        target.remoteEncrypted = latestResponse.encrypted;
-        continue;
-      }
-      const latestPayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
-      const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
-      if (!syncPayloadEquals(currentLocalPayload, candidate)) {
-        throw annotateSyncRetryError(new Error("\u672C\u5730\u6570\u636E\u5728\u8FDC\u7AEF\u51B2\u7A81\u91CD\u8BD5\u671F\u95F4\u53D1\u751F\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u5199\u5165\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65"), target, operation);
-      }
-      const safety = validateSyncSafety(
-        candidate,
-        latestPayload,
-        latestPayload,
-        SYNC_MODE_REMOTE_OVERWRITE_LOCAL
-      );
-      if (!safety.safe) {
-        throw annotateSyncRetryError(new Error(`\u5E76\u53D1\u91CD\u8BD5\u7684\u4E91\u7AEF\u8986\u76D6\u88AB\u5B89\u5168\u68C0\u67E5\u963B\u6B62: ${safety.reasons.join(",")}`), target, operation);
-      }
-      if (target.isPrimary !== false) {
-        candidate = latestPayload;
-      }
-      target.remotePayload = candidate;
-      target.remoteEncrypted = true;
-      if (target.isPrimary !== false) {
-        await writeBusinessDataToStore(candidate);
-      }
-    }
-    throw annotateSyncRetryError(new Error("\u8FDC\u7AEF\u5E76\u53D1\u51B2\u7A81\u91CD\u8BD5\u6B21\u6570\u5DF2\u7528\u5C3D"), target, operation);
-  }
-  async function pushRemotePayloadWithMode(target, payload, syncMode, context = {}) {
-    switch (syncMode) {
-      case SYNC_MODE_LOCAL_OVERWRITE_REMOTE: {
-        const operation = createSyncOperationContext(context);
-        target.syncSessionId = operation.syncSessionId;
-        target.operationId = operation.operationId;
-        try {
-          const pushResult = await pushRemotePayload(target, payload, target.remoteEtag, operation.idempotencyKey);
-          updateRemoteConcurrencyState(target, pushResult.etag);
-          return { payload };
-        } catch (error) {
-          throw annotateSyncRetryError(error, target, operation);
-        }
-      }
-      case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:
-        return pushRemotePayloadRemotePreferred(target, payload, context);
-      case SYNC_MODE_MERGE:
-      default:
-        return pushRemotePayloadWithRetry(target, payload, context);
-    }
-  }
-  function normalizeSyncMode(value) {
-    switch (String(value || "").trim()) {
-      case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:
-        return SYNC_MODE_REMOTE_OVERWRITE_LOCAL;
-      case SYNC_MODE_LOCAL_OVERWRITE_REMOTE:
-        return SYNC_MODE_LOCAL_OVERWRITE_REMOTE;
-      case SYNC_MODE_MERGE:
-      default:
-        return SYNC_MODE_MERGE;
-    }
-  }
-  function getSyncModeHistoryLabel(syncMode) {
-    switch (syncMode) {
-      case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:
-        return "\u4E91\u7AEF\u8986\u76D6\u672C\u5730";
-      case SYNC_MODE_LOCAL_OVERWRITE_REMOTE:
-        return "\u672C\u5730\u8986\u76D6\u4E91\u7AEF";
-      case SYNC_MODE_MERGE:
-      default:
-        return "\u8FDC\u7AEF\u540C\u6B65\u5408\u5E76";
-    }
-  }
-  function getSyncModeStatusLabel(syncMode) {
-    switch (syncMode) {
-      case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:
-        return "\u4E91\u7AEF\u8986\u76D6\u672C\u5730\u5B8C\u6210";
-      case SYNC_MODE_LOCAL_OVERWRITE_REMOTE:
-        return "\u672C\u5730\u8986\u76D6\u4E91\u7AEF\u5B8C\u6210";
-      case SYNC_MODE_MERGE:
-      default:
-        return "\u8FDC\u7AEF\u540C\u6B65\u5B8C\u6210";
-    }
-  }
-  async function buildSyncBundleFromPayload(payload) {
-    const [deviceName, deviceId] = await Promise.all([getDeviceName(), getOrCreateSyncDeviceId()]);
-    const accounts = Array.isArray(payload?.accounts) ? payload.accounts.map(normalizeAccountShape) : [];
-    const rawPasskeys = Array.isArray(payload?.passkeys) ? payload.passkeys.map(normalizePasskeyShape) : [];
-    const passkeys = buildUnifiedPasskeys(accounts, rawPasskeys);
-    const folders = Array.isArray(payload?.folders) ? payload.folders.map(normalizeFolderShape) : [];
-    return {
-      schema: SYNC_BUNDLE_SCHEMA_V2,
-      exportedAtMs: Date.now(),
-      source: {
-        app: "pass-extension",
-        platform: "chrome-extension",
-        deviceName,
-        deviceId,
-        logicalClockMs: Date.now(),
-        formatVersion: 2
-      },
-      payload: sortSyncPayloadCollections({
-        ...normalizeSyncPayloadShape(payload),
-        accounts,
-        passkeys,
-        folders
-      })
-    };
-  }
-  function base64EncodeUtf8(input) {
-    const bytes = new TextEncoder().encode(String(input || ""));
-    let binary = "";
-    for (const value of bytes) {
-      binary += String.fromCharCode(value);
-    }
-    return btoa(binary);
-  }
-  async function buildSyncBundle() {
-    const [deviceName, deviceId, stored] = await Promise.all([
-      getDeviceName(),
-      getOrCreateSyncDeviceId(),
-      readBusinessDataFromStore()
-    ]);
-    const accounts = Array.isArray(stored.accounts) ? stored.accounts.map(normalizeAccountShape) : [];
-    const storedPasskeys = Array.isArray(stored.passkeys) ? stored.passkeys.map(normalizePasskeyShape) : [];
-    const passkeys = buildUnifiedPasskeys(accounts, storedPasskeys);
-    const folders = Array.isArray(stored.folders) ? stored.folders.map(normalizeFolderShape) : [];
-    return {
-      schema: SYNC_BUNDLE_SCHEMA_V2,
-      exportedAtMs: Date.now(),
-      source: {
-        app: "pass-extension",
-        platform: "chrome-extension",
-        deviceName,
-        deviceId,
-        logicalClockMs: Date.now(),
-        formatVersion: 2
-      },
-      payload: sortSyncPayloadCollections({
-        ...normalizeSyncPayloadShape(stored),
-        accounts,
-        passkeys,
-        folders
-      })
-    };
-  }
-  function parseSyncBundlePayload(input, { requireBundleSchema = false } = {}) {
-    if (!input || typeof input !== "object") return null;
-    const schema = String(input?.schema || "");
-    const hasSchema = schema.length > 0;
-    if (hasSchema && schema !== SYNC_BUNDLE_SCHEMA_V2) return null;
-    if (requireBundleSchema && !hasSchema) return null;
-    const rawPayload = hasSchema ? input.payload : input;
-    if (!rawPayload || typeof rawPayload !== "object") return null;
-    return {
-      accounts: Array.isArray(rawPayload.accounts) ? rawPayload.accounts : [],
-      passkeys: Array.isArray(rawPayload.passkeys) ? rawPayload.passkeys : [],
-      folders: Array.isArray(rawPayload.folders) ? rawPayload.folders : [],
-      allRegularAccountIds: Array.isArray(rawPayload.allRegularAccountIds) ? rawPayload.allRegularAccountIds : [],
-      allRegularOrderUpdatedAtMs: Number(rawPayload.allRegularOrderUpdatedAtMs) || 0,
-      allRegularOrderUpdatedDeviceName: String(rawPayload.allRegularOrderUpdatedDeviceName || ""),
-      folderOrderIds: Array.isArray(rawPayload.folderOrderIds) ? rawPayload.folderOrderIds : [],
-      folderOrderUpdatedAtMs: Number(rawPayload.folderOrderUpdatedAtMs) || 0,
-      folderOrderUpdatedDeviceName: String(rawPayload.folderOrderUpdatedDeviceName || ""),
-      deviceName: String(rawPayload.deviceName || "")
-    };
-  }
-  function pickJsonFile() {
-    return new Promise((resolve) => {
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = ".json,application/json";
-      input.addEventListener(
-        "change",
-        () => {
-          resolve(input.files?.[0] || null);
-        },
-        { once: true }
-      );
-      input.click();
-    });
-  }
-  function pickCsvFile() {
-    return new Promise((resolve) => {
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = ".csv,text/csv,text/plain";
-      input.onchange = () => resolve(input.files?.[0] || null);
-      input.click();
-    });
-  }
-  function pickImageFiles() {
-    return new Promise((resolve) => {
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = "image/png,image/jpeg,image/webp,image/gif,image/bmp,image/tiff";
-      input.multiple = true;
-      input.onchange = () => resolve(Array.from(input.files || []));
-      input.click();
-    });
-  }
-  function normalizeBrowserExportFormat(format) {
-    const value = String(format || "").trim().toLowerCase();
-    if (value === "firefox") return "firefox";
-    if (value === "safari") return "safari";
-    return "chrome";
-  }
-  function browserExportLabel(format) {
-    const browser = normalizeBrowserExportFormat(format);
-    if (browser === "firefox") return "Firefox";
-    if (browser === "safari") return "Safari";
-    return "Chrome";
-  }
-  function countBrowserPasswordRows(accounts) {
-    return (Array.isArray(accounts) ? accounts : []).filter((account) => !account?.isDeleted).reduce((count, account) => count + normalizeSites(account?.sites || []).length, 0);
-  }
-  function buildBrowserPasswordCsv(accounts, format) {
-    const browser = normalizeBrowserExportFormat(format);
-    const headers = browser === "firefox" ? ["url", "username", "password"] : ["name", "url", "username", "password", "note"];
-    const rows = [headers.map(csvEscape).join(",")];
-    for (const account of Array.isArray(accounts) ? accounts : []) {
-      if (account?.isDeleted) continue;
-      const sites = normalizeSites(account?.sites || []);
-      for (const site of sites) {
-        const url = `https://${site}`;
-        const username = String(account?.username || "");
-        const password = String(account?.password || "");
-        const note = String(account?.note || "");
-        const name = String(account?.canonicalSite || "").trim() || site;
-        const columns = browser === "firefox" ? [url, username, password] : [name, url, username, password, note];
-        rows.push(columns.map(csvEscape).join(","));
-      }
-    }
-    return rows.join("\n");
-  }
-  function csvEscape(value) {
-    let text = String(value || "").replaceAll("\r", " ").replaceAll("\n", " ");
-    if (/^[=+\-@\t]/.test(text)) text = `'${text}`;
-    return `"${text.replaceAll('"', '""')}"`;
-  }
-  function parseBrowserPasswordCsv(text) {
-    const normalized = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
-    if (!normalized) {
-      throw new Error("\u6587\u4EF6\u5185\u5BB9\u4E3A\u7A7A");
-    }
-    const rows = parseCsvRows(normalized);
-    if (!rows.length || !rows[0].length) {
-      throw new Error("CSV \u7F3A\u5C11\u8868\u5934");
-    }
-    const headers = rows[0].map((value) => normalizeBrowserCsvHeader(value));
-    const format = detectBrowserCsvFormat(headers);
-    if (!format) {
-      throw new Error("\u65E0\u6CD5\u8BC6\u522B\u4E3A Chrome \u6216 Firefox \u5BFC\u51FA\u7684\u5BC6\u7801 CSV");
-    }
-    const entries = [];
-    let skippedRowCount = 0;
-    for (const row of rows.slice(1)) {
-      const entry = parseBrowserCsvEntry(headers, row);
-      if (entry) {
-        entries.push(entry);
-      } else if (row.join("").trim()) {
-        skippedRowCount += 1;
-      }
-    }
-    return {
-      formatLabel: format,
-      entries,
-      skippedRowCount
-    };
-  }
-  function parseCsvRows(text) {
-    const rows = [];
-    let row = [];
-    let field = "";
-    let inQuotes = false;
-    for (let index = 0; index < text.length; index += 1) {
-      const char = text[index];
-      if (inQuotes) {
-        if (char === '"') {
-          if (text[index + 1] === '"') {
-            field += '"';
-            index += 1;
-          } else {
-            inQuotes = false;
-          }
-        } else {
-          field += char;
-        }
-        continue;
-      }
-      if (char === '"') {
-        inQuotes = true;
-      } else if (char === ",") {
-        row.push(field);
-        field = "";
-      } else if (char === "\n") {
-        row.push(field);
-        rows.push(row);
-        row = [];
-        field = "";
-      } else {
-        field += char;
-      }
-    }
-    if (field || row.length) {
-      row.push(field);
-      rows.push(row);
-    }
-    return rows;
-  }
-  function normalizeBrowserCsvHeader(value) {
-    return String(value || "").trim().toLowerCase().replace(/^\ufeff/, "").replace(/\s+/g, "").replace(/-/g, "_");
-  }
-  function detectBrowserCsvFormat(headers) {
-    const values = new Set(headers);
-    if (values.has("url") && values.has("username") && values.has("password")) {
-      if (values.has("name") || values.has("note") || values.has("notes")) return "Chrome";
-      if (values.has("httprealm") || values.has("formactionorigin") || values.has("guid")) return "Firefox";
-      return "\u6D4F\u89C8\u5668 CSV";
-    }
-    if (values.has("origin") && values.has("username") && values.has("password")) return "Chrome";
-    if (values.has("signon_realm") && values.has("username") && values.has("password")) return "Chrome";
-    return "";
-  }
-  function parseBrowserCsvEntry(headers, row) {
-    const values = {};
-    headers.forEach((header, index) => {
-      values[header] = String(row[index] || "").trim();
-    });
-    const sites = extractBrowserCsvSites(values);
-    const username = normalizeUsername(values.username || "");
-    const password = String(values.password || "");
-    if (!sites.length || !username && !password) {
-      return null;
-    }
-    const note = mergeImportedBrowserNotes([
-      values.name ? `\u6765\u6E90\u540D\u79F0\uFF1A${values.name}` : "",
-      values.note ? `\u5907\u6CE8\uFF1A${values.note}` : "",
-      values.notes ? `\u5907\u6CE8\uFF1A${values.notes}` : "",
-      values.httprealm ? `HTTP Realm\uFF1A${values.httprealm}` : ""
-    ]);
-    return { sites, username, password, note };
-  }
-  function extractBrowserCsvSites(values) {
-    const rawCandidates = [
-      values.url,
-      values.origin,
-      values.website,
-      values.hostname,
-      values.signon_realm,
-      values.formactionorigin,
-      values.action
-    ];
-    return [...new Set(rawCandidates.map(normalizeBrowserCsvSite).filter(Boolean))].sort();
-  }
-  function normalizeBrowserCsvSite(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-    if (raw.includes("://")) {
-      try {
-        return normalizeDomain(new URL(raw).hostname);
-      } catch {
-        return "";
-      }
-    }
-    return normalizeDomain(raw);
-  }
-  function findImportedBrowserAccountIndex(accounts, entry) {
-    const targetSites = new Set(normalizeSites(entry.sites || []));
-    const targetCanonicalSites = new Set([...targetSites].map((site) => etldPlusOne(site)));
-    const normalizedUsername = normalizeUsername(entry.username || "");
-    let bestIndex = -1;
-    let bestScore = -1;
-    accounts.forEach((account, index) => {
-      if (account?.isPermanentlyDeleted) return;
-      const accountSites = new Set(
-        normalizeSites([
-          ...Array.isArray(account?.sites) ? account.sites : [],
-          account?.canonicalSite || ""
-        ])
-      );
-      const accountCanonicalSites = new Set([...accountSites].map((site) => etldPlusOne(site)));
-      accountCanonicalSites.add(String(account?.canonicalSite || ""));
-      const usernameMatches = normalizedUsername ? normalizeUsername(account?.username || "") === normalizedUsername || normalizeUsername(account?.usernameAtCreate || "") === normalizedUsername : !normalizeUsername(account?.username || "");
-      const siteOverlaps = [...targetSites].some((site) => accountSites.has(site));
-      const canonicalMatches = [...targetCanonicalSites].some((site) => accountCanonicalSites.has(site));
-      const aliasMatches = [...targetSites].some(
-        (targetSite) => [...accountSites].some((accountSite) => domainsMatch(targetSite, accountSite))
-      );
-      let score = -1;
-      if (usernameMatches && siteOverlaps) score = account?.isDeleted ? 35 : 40;
-      else if (usernameMatches && canonicalMatches) score = account?.isDeleted ? 25 : 30;
-      else if (usernameMatches && aliasMatches) score = account?.isDeleted ? 15 : 20;
-      else if (!normalizedUsername && siteOverlaps) score = account?.isDeleted ? 15 : 20;
-      else if (!normalizedUsername && canonicalMatches) score = account?.isDeleted ? 5 : 10;
-      else if (!normalizedUsername && aliasMatches) score = account?.isDeleted ? 0 : 5;
-      if (score > bestScore) {
-        bestScore = score;
-        bestIndex = index;
-      }
-    });
-    return bestIndex;
-  }
-  function applyImportedBrowserEntryToAccount(account, entry, nowMs) {
-    const next = normalizeAccountShape(account);
-    if (next.isPermanentlyDeleted) return next;
-    let changed = false;
-    const mergedSites = normalizeSites([...next.sites || [], ...entry.sites || []]);
-    if (JSON.stringify(mergedSites) !== JSON.stringify(next.sites || [])) {
-      next.sites = mergedSites;
-      changed = true;
-    }
-    if (entry.username && entry.username !== next.username) {
-      next.username = entry.username;
-      next.usernameUpdatedAtMs = nowMs;
-      changed = true;
-    }
-    if (entry.password && entry.password !== next.password) {
-      next.password = entry.password;
-      next.passwordUpdatedAtMs = nowMs;
-      changed = true;
-    }
-    const mergedNote = mergeImportedBrowserNotes([next.note || "", entry.note || ""]);
-    if (mergedNote !== String(next.note || "")) {
-      next.note = mergedNote;
-      next.noteUpdatedAtMs = nowMs;
-      changed = true;
-    }
-    if (next.isDeleted && !next.isPermanentlyDeleted) {
-      next.isDeleted = false;
-      next.deletedAtMs = null;
-      next.deletedDeviceName = "";
-      changed = true;
-    }
-    if (changed) {
-      next.updatedAtMs = nowMs;
-      next.lastOperatedDeviceName = currentImportDeviceName();
-    }
-    return next;
-  }
-  function mergeImportedBrowserNotes(parts) {
-    const result = [];
-    const seen = /* @__PURE__ */ new Set();
-    for (const rawPart of Array.isArray(parts) ? parts : []) {
-      const part = String(rawPart || "").trim();
-      if (!part || seen.has(part)) continue;
-      seen.add(part);
-      result.push(part);
-    }
-    return result.join("\n");
-  }
-  function currentImportDeviceName() {
-    return normalizeDeviceName(dom.deviceName?.value);
-  }
-  function formatFileTimestamp(ms) {
-    const date = new Date(Number(ms) || Date.now());
-    const yyyy = String(date.getFullYear()).padStart(4, "0");
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    const hour = String(date.getHours()).padStart(2, "0");
-    const minute = String(date.getMinutes()).padStart(2, "0");
-    const second = String(date.getSeconds()).padStart(2, "0");
-    return `${yyyy}${month}${day}-${hour}${minute}${second}`;
-  }
-  async function clearActiveAccounts() {
-    if (activeAccountView === "recycle") {
-      setStatus("\u5F53\u524D\u662F\u56DE\u6536\u7AD9\u89C6\u56FE\uFF0C\u8BF7\u4F7F\u7528\u201C\u6E05\u7A7A\u56DE\u6536\u7AD9\u201D");
-      return;
-    }
-    const visibleAccounts = currentVisibleAccounts(accountsRaw).filter((item) => !item.isDeleted);
-    const targetAccountIds = new Set(visibleAccounts.map((item) => String(item.accountId || "")));
-    const activeCount = targetAccountIds.size;
-    if (activeCount === 0) {
-      setStatus("\u5F53\u524D\u9875\u9762\u6CA1\u6709\u53EF\u79FB\u5165\u56DE\u6536\u7AD9\u7684\u8D26\u53F7");
-      return;
-    }
-    const confirmed = window.confirm(
-      `\u5C06\u628A\u5F53\u524D\u9875\u9762\u4E2D\u7684 ${activeCount} \u6761\u8BB0\u5F55\u79FB\u5165\u56DE\u6536\u7AD9\uFF0C\u662F\u5426\u7EE7\u7EED\uFF1F`
-    );
-    if (!confirmed) {
-      return;
-    }
-    const now = Date.now();
-    const deviceName = await getDeviceName();
-    const next = cloneAccounts(accountsRaw).map((account) => {
-      const accountId = String(account?.accountId || "");
-      if (account.isDeleted || !targetAccountIds.has(accountId)) return account;
-      return {
-        ...account,
-        isDeleted: true,
-        deletedAtMs: now,
-        updatedAtMs: now,
-        lastOperatedDeviceName: deviceName
-      };
-    });
-    editingAccountId = null;
-    await setAccounts(next);
-    await appendHistory(`\u6279\u91CF\u79FB\u5165\u56DE\u6536\u7AD9\uFF1A${activeCount} \u6761\u8D26\u53F7`, now);
-    await refresh({ silent: true });
-    setStatus(`\u5DF2\u5C06\u5F53\u524D\u9875\u9762 ${activeCount} \u6761\u8D26\u53F7\u79FB\u5165\u56DE\u6536\u7AD9`);
-  }
-  async function clearRecycleBin() {
-    const deletedCount = accountsRaw.filter((item) => item.isDeleted && !item.isPermanentlyDeleted).length;
-    if (deletedCount === 0) {
-      setStatus("\u56DE\u6536\u7AD9\u4E3A\u7A7A\uFF0C\u65E0\u9700\u6E05\u7A7A");
-      return;
-    }
-    const confirmed = window.confirm(
-      `\u5C06\u6C38\u4E45\u5220\u9664\u56DE\u6536\u7AD9\u4E2D\u7684 ${deletedCount} \u6761\u8BB0\u5F55\uFF0C\u6B64\u64CD\u4F5C\u4E0D\u53EF\u6062\u590D\u3002\u662F\u5426\u7EE7\u7EED\uFF1F`
-    );
-    if (!confirmed) {
-      return;
-    }
-    const now = Date.now();
-    const deviceName = await getDeviceName();
-    const next = cloneAccounts(accountsRaw).map((account) => account.isDeleted && !account.isPermanentlyDeleted ? {
-      ...account,
-      isDeleted: true,
-      isPermanentlyDeleted: true,
-      deletedAtMs: now,
-      deletedDeviceName: deviceName,
-      updatedAtMs: now,
-      lastOperatedDeviceName: deviceName
-    } : account);
-    editingAccountId = null;
-    await setAccounts(next);
-    await appendHistory(`\u6E05\u7A7A\u56DE\u6536\u7AD9\uFF1A\u6C38\u4E45\u5220\u9664 ${deletedCount} \u6761\u8D26\u53F7`);
-    await refresh({ silent: true });
-    setStatus(`\u5DF2\u6E05\u7A7A\u56DE\u6536\u7AD9\uFF0C\u6C38\u4E45\u5220\u9664 ${deletedCount} \u6761\u8BB0\u5F55`);
-  }
-  async function createFolderFromPrompt() {
-    const raw = window.prompt("\u65B0\u5EFA\u6587\u4EF6\u5939\n\u8BF7\u8F93\u5165\u6587\u4EF6\u5939\u540D\u79F0\uFF1A", "");
-    if (raw == null) {
-      setStatus("\u5DF2\u53D6\u6D88\u65B0\u5EFA\u6587\u4EF6\u5939");
-      return;
-    }
-    const name = String(raw || "").trim();
-    if (!name) {
-      setStatus("\u6587\u4EF6\u5939\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A");
-      return;
-    }
-    const existed = foldersRaw.some(
-      (item) => String(item?.name || "").trim().toLowerCase() === name.toLowerCase()
-    );
-    if (existed) {
-      setStatus(`\u6587\u4EF6\u5939\u5DF2\u5B58\u5728: ${name}`);
-      return;
-    }
-    const now = Date.now();
-    const nextFolderId = (globalThis.crypto?.randomUUID?.() || stableUuidFromText(`folder|${name}|${now}`)).toLowerCase();
-    const storedData = await readBusinessDataFromStore();
-    const storedFolders = Array.isArray(storedData.folders) ? storedData.folders : [];
-    const nextFolders = sortFoldersForDisplay([
-      ...storedFolders.map(normalizeFolderShape),
-      normalizeFolderShape({
-        id: nextFolderId,
-        name,
-        createdAtMs: now,
-        updatedAtMs: now
-      })
-    ]);
-    await setFolders(nextFolders);
-    await appendHistory(`\u521B\u5EFA\u6587\u4EF6\u5939\uFF1A${name}`, now);
-    await refresh({ silent: true });
-    setStatus(`\u5DF2\u521B\u5EFA\u6587\u4EF6\u5939: ${name}`);
-  }
-  function renderGoogleAuthenticatorImportFolderOptions() {
-    const select = dom.importGoogleAuthFolderSelect;
-    if (!select) return;
-    const previousValue = String(select.value || "");
-    select.innerHTML = "";
-    const empty = document.createElement("option");
-    empty.value = "";
-    empty.textContent = "\u4E0D\u653E\u5165\u6587\u4EF6\u5939";
-    select.appendChild(empty);
-    for (const folder of foldersRaw) {
-      const option = document.createElement("option");
-      option.value = normalizeFolderId(folder?.id);
-      option.textContent = String(folder?.name || "\u672A\u547D\u540D\u6587\u4EF6\u5939");
-      select.appendChild(option);
-    }
-    const hasPrevious = Array.from(select.options).some((option) => option.value === previousValue);
-    select.value = hasPrevious ? previousValue : "";
-  }
-  function buildGoogleAuthenticatorImportFolderPlan() {
-    return {
-      selectedFolderId: normalizeFolderId(dom.importGoogleAuthFolderSelect?.value || ""),
-      newFolderName: String(dom.importGoogleAuthNewFolderName?.value || "").trim()
-    };
-  }
-  function resolveGoogleAuthenticatorImportFolder(folderPlan, foldersInput) {
-    const folders = Array.isArray(foldersInput) ? foldersInput.map(normalizeFolderShape) : [];
-    const newFolderName = String(folderPlan?.newFolderName || "").trim();
-    if (newFolderName) {
-      const existing2 = folders.find((folder) => String(folder?.name || "").trim().toLowerCase() === newFolderName.toLowerCase());
-      if (existing2) {
-        return {
-          folderId: normalizeFolderId(existing2.id),
-          folderName: String(existing2.name || ""),
-          createdFolderName: "",
-          folders
-        };
-      }
-      const now = Date.now();
-      const created = normalizeFolderShape({
-        id: (globalThis.crypto?.randomUUID?.() || stableUuidFromText(`folder|${newFolderName}|${now}`)).toLowerCase(),
-        name: newFolderName,
-        createdAtMs: now,
-        updatedAtMs: now
-      });
-      return {
-        folderId: normalizeFolderId(created.id),
-        folderName: String(created.name || ""),
-        createdFolderName: String(created.name || ""),
-        folders: sortFoldersForDisplay([...folders, created])
-      };
-    }
-    const selectedFolderId = normalizeFolderId(folderPlan?.selectedFolderId || "");
-    if (!selectedFolderId) {
-      return { folderId: "", folderName: "", createdFolderName: "", folders };
-    }
-    const existing = folders.find((folder) => normalizeFolderId(folder?.id) === selectedFolderId);
-    if (!existing) {
-      setStatus("\u76EE\u6807\u6587\u4EF6\u5939\u4E0D\u5B58\u5728");
-      return { folderId: "", folderName: "", createdFolderName: "", folders };
-    }
-    return {
-      folderId: selectedFolderId,
-      folderName: String(existing.name || ""),
-      createdFolderName: "",
-      folders
-    };
-  }
-  async function deleteFolder(folderId) {
-    const normalizedFolderId = normalizeFolderId(folderId);
-    if (!normalizedFolderId) {
-      setStatus("\u76EE\u6807\u6587\u4EF6\u5939\u4E0D\u5B58\u5728");
-      return;
-    }
-    if (normalizedFolderId === FIXED_NEW_ACCOUNT_FOLDER_ID) {
-      setStatus("\u56FA\u5B9A\u6587\u4EF6\u5939\u4E0D\u53EF\u5220\u9664");
-      return;
-    }
-    const folder = foldersRaw.find((item) => normalizeFolderId(item?.id) === normalizedFolderId);
-    if (!folder) {
-      setStatus("\u76EE\u6807\u6587\u4EF6\u5939\u4E0D\u5B58\u5728");
-      return;
-    }
-    const confirmed = window.confirm(`\u5C06\u5220\u9664\u6587\u4EF6\u5939\uFF1A${folder.name}
-\u5E76\u4ECE\u76F8\u5173\u8D26\u53F7\u4E2D\u79FB\u9664\u8BE5\u6587\u4EF6\u5939\u3002\u662F\u5426\u7EE7\u7EED\uFF1F`);
-    if (!confirmed) return;
-    const now = Date.now();
-    const deviceName = await getDeviceName();
-    const storedData = await readBusinessDataFromStore();
-    const storedFolders = Array.isArray(storedData.folders) ? storedData.folders : [];
-    let removedFromAccountCount = 0;
-    const nextAccounts = cloneAccounts(accountsRaw).map((account) => {
-      const currentFolderIds = normalizeFolderIdList(extractAccountFolderIds(account));
-      if (!currentFolderIds.includes(normalizedFolderId)) {
-        return account;
-      }
-      const nextFolderIds = currentFolderIds.filter((id) => id !== normalizedFolderId);
-      const nextAccount = {
-        ...account,
-        folderId: nextFolderIds[0] || null,
-        folderIds: nextFolderIds,
-        folderMembershipStates: {
-          ...account.folderMembershipStates || {},
-          [normalizedFolderId]: { isDeleted: true, updatedAtMs: now, deviceName }
-        },
-        updatedAtMs: now,
-        lastOperatedDeviceName: deviceName
-      };
-      removedFromAccountCount += 1;
-      return nextAccount;
-    });
-    const nextFolders = sortFoldersForDisplay(
-      storedFolders.map((item) => {
-        const normalized = normalizeFolderShape(item);
-        if (normalizeFolderId(normalized.id) !== normalizedFolderId) return normalized;
-        return {
-          ...normalized,
-          isDeleted: true,
-          isPermanentlyDeleted: true,
-          deletedAtMs: now,
-          deletedDeviceName: deviceName,
-          updatedAtMs: now
-        };
-      })
-    );
-    await writeBusinessDataToStore({
-      accounts: nextAccounts,
-      passkeys: passkeysRaw,
-      folders: nextFolders
-    });
-    await appendHistory(
-      removedFromAccountCount > 0 ? `\u5220\u9664\u6587\u4EF6\u5939\uFF1A${folder.name}\uFF0C\u5E76\u4ECE ${removedFromAccountCount} \u4E2A\u8D26\u53F7\u4E2D\u79FB\u9664` : `\u5220\u9664\u6587\u4EF6\u5939\uFF1A${folder.name}`
-    );
-    if (activeAccountView === `folder:${normalizedFolderId}`) {
-      activeAccountView = "all";
-    }
-    await refresh({ silent: true });
-    if (removedFromAccountCount > 0) {
-      setStatus(`\u5DF2\u5220\u9664\u6587\u4EF6\u5939: ${folder.name}\uFF0C\u5E76\u4ECE ${removedFromAccountCount} \u4E2A\u8D26\u53F7\u4E2D\u79FB\u9664`);
-    } else {
-      setStatus(`\u5DF2\u5220\u9664\u6587\u4EF6\u5939: ${folder.name}`);
-    }
-  }
-  async function toggleAccountFolderMembership(accountId, folderId) {
-    const normalizedFolderId = normalizeFolderId(folderId);
-    if (!normalizedFolderId) return;
-    if (!foldersRaw.some((item) => normalizeFolderId(item?.id) === normalizedFolderId)) {
-      setStatus("\u76EE\u6807\u6587\u4EF6\u5939\u4E0D\u5B58\u5728");
-      return;
-    }
-    const next = cloneAccounts(accountsRaw);
-    const target = next.find((item) => String(item?.accountId || "") === String(accountId));
-    if (!target) {
-      setStatus("\u76EE\u6807\u8D26\u53F7\u4E0D\u5B58\u5728");
-      return;
-    }
-    if (target.isDeleted) {
-      setStatus("\u56DE\u6536\u7AD9\u8D26\u53F7\u4E0D\u652F\u6301\u653E\u5165\u6587\u4EF6\u5939");
-      return;
-    }
-    const now = Date.now();
-    const deviceName = await getDeviceName();
-    const current = normalizeFolderIdList(extractAccountFolderIds(target));
-    const exists = current.includes(normalizedFolderId);
-    const nextFolderIds = exists ? current.filter((id) => id !== normalizedFolderId) : normalizeFolderIdList([...current, normalizedFolderId]);
-    target.folderId = nextFolderIds[0] || null;
-    target.folderIds = nextFolderIds;
-    target.folderMembershipStates = {
-      ...target.folderMembershipStates || {},
-      [normalizedFolderId]: { isDeleted: exists, updatedAtMs: now, deviceName }
-    };
-    target.updatedAtMs = now;
-    target.lastOperatedDeviceName = deviceName;
-    await setAccounts(next);
-    const folderName = folderDisplayNameById(normalizedFolderId);
-    await appendHistory(
-      exists ? `${target.accountId}\uFF1A\u4ECE\u6587\u4EF6\u5939\u79FB\u9664 ${folderName}` : `${target.accountId}\uFF1A\u653E\u5165\u6587\u4EF6\u5939 ${folderName}`,
-      now
-    );
-    await refresh({ silent: true });
-    setStatus(exists ? `\u5DF2\u4ECE\u6587\u4EF6\u5939\u79FB\u9664: ${folderName}` : `\u5DF2\u653E\u5165\u6587\u4EF6\u5939: ${folderName}`);
-  }
-  function renderSidebar(inputAccounts) {
-    const accounts = (Array.isArray(inputAccounts) ? inputAccounts : []).map(normalizeAccountShape);
-    const active = accounts.filter((item) => !item.isDeleted && !item.isPermanentlyDeleted);
-    const recycle = accounts.filter((item) => item.isDeleted && !item.isPermanentlyDeleted);
-    const passkeys = active.filter((item) => (item.passkeyCredentialIds || []).length > 0);
-    const totp = active.filter((item) => hasTotpSecret(item.totpSecret));
-    dom.allAccountsCount.textContent = `(${active.length})`;
-    dom.passkeyAccountsCount.textContent = `(${passkeys.length})`;
-    dom.totpAccountsCount.textContent = `(${totp.length})`;
-    dom.recycleAccountsCount.textContent = `(${recycle.length})`;
-    const folderCountMap = /* @__PURE__ */ new Map();
-    for (const account of active) {
-      for (const id of extractAccountFolderIds(account)) {
-        const key = normalizeFolderId(id);
-        if (!key) continue;
-        const prev = folderCountMap.get(key) || 0;
-        folderCountMap.set(key, prev + 1);
-      }
-    }
-    const folderById = new Map(foldersRaw.map((folder) => [normalizeFolderId(folder.id), folder]));
-    if (!folderById.has(FIXED_NEW_ACCOUNT_FOLDER_ID)) {
-      folderById.set(FIXED_NEW_ACCOUNT_FOLDER_ID, normalizeFolderShape({
-        id: FIXED_NEW_ACCOUNT_FOLDER_ID,
-        name: FIXED_NEW_ACCOUNT_FOLDER_NAME,
-        createdAtMs: 0
-      }));
-    }
-    const knownFolders = sortFoldersForDisplay(Array.from(folderById.values()));
-    const unknownFolderEntries = Array.from(folderCountMap.entries()).filter(([id]) => !folderById.has(id)).map(([id, count]) => ({
-      id,
-      name: `\u672A\u547D\u540D\u6587\u4EF6\u5939 ${id.slice(0, 8)}`,
-      createdAtMs: 0,
-      count
-    })).sort((a, b) => a.id.localeCompare(b.id));
-    const folderEntries = [
-      ...knownFolders.map((folder) => ({
-        id: normalizeFolderId(folder.id),
-        name: String(folder.name || FIXED_NEW_ACCOUNT_FOLDER_NAME),
-        createdAtMs: Number(folder.createdAtMs || 0),
-        count: folderCountMap.get(normalizeFolderId(folder.id)) || 0
-      })),
-      ...unknownFolderEntries
-    ];
-    dom.accountsFolderList.innerHTML = "";
-    for (const folder of folderEntries) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "account-view-tab";
-      button.dataset.view = `folder:${folder.id}`;
-      button.dataset.folderId = folder.id;
-      button.textContent = `${folder.name} (${folder.count})`;
-      button.addEventListener("click", () => setAccountView(`folder:${folder.id}`));
-      button.addEventListener("contextmenu", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        openFolderContextMenu({
-          folderId: folder.id,
-          x: event.clientX,
-          y: event.clientY
-        });
-      });
-      dom.accountsFolderList.appendChild(button);
-    }
-  }
-  function currentViewAccounts(inputAccounts) {
-    const accounts = (Array.isArray(inputAccounts) ? inputAccounts : []).map(normalizeAccountShape);
-    const active = accounts.filter((item) => !item.isDeleted && !item.isPermanentlyDeleted);
-    const recycle = accounts.filter((item) => item.isDeleted && !item.isPermanentlyDeleted);
-    if (activeAccountView === "recycle") {
-      return recycle;
-    }
-    if (activeAccountView === "passkeys") {
-      return active.filter((item) => (item.passkeyCredentialIds || []).length > 0);
-    }
-    if (activeAccountView === "totp") {
-      return active.filter((item) => hasTotpSecret(item.totpSecret));
-    }
-    if (String(activeAccountView).startsWith("folder:")) {
-      const folderId = normalizeFolderId(String(activeAccountView).slice("folder:".length));
-      return active.filter((item) => {
-        const ids = extractAccountFolderIds(item).map(normalizeFolderId);
-        return ids.includes(folderId);
-      });
-    }
-    return active;
-  }
-  function currentVisibleAccounts(inputAccounts) {
-    let accounts = currentViewAccounts(inputAccounts);
-    const query = String(dom.allAccountsSearch.value || "").trim().toLowerCase();
-    if (query) {
-      accounts = accounts.filter((account) => isAccountMatchSearch(account, query));
-    }
-    return accounts;
-  }
-  function isSortModalSupportedView() {
-    return activeAccountView !== "recycle";
-  }
-  function getSortableAccountsForCurrentView() {
-    if (!isSortModalSupportedView()) return [];
-    const visible = currentVisibleAccounts(accountsRaw).filter((account) => !account.isDeleted);
-    return sortAccountsForScope(visible);
-  }
-  function openSortModal() {
-    if (!isSortModalSupportedView()) {
-      setStatus("\u56DE\u6536\u7AD9\u4E0D\u652F\u6301\u6392\u5E8F");
-      return;
-    }
-    const visibleAccounts = getSortableAccountsForCurrentView();
-    if (visibleAccounts.length === 0) {
-      setStatus("\u5F53\u524D\u5217\u8868\u6CA1\u6709\u53EF\u6392\u5E8F\u8D26\u53F7");
-      return;
-    }
-    sortModalOrderIds = visibleAccounts.map((account) => String(account.accountId || ""));
-    sortModalDraggingAccountId = "";
-    renderSortModalList();
-    dom.sortModal.classList.remove("hidden");
-    dom.sortModal.setAttribute("aria-hidden", "false");
-  }
-  function closeSortModal() {
-    sortModalDraggingAccountId = "";
-    sortModalOrderIds = [];
-    dom.sortModal.classList.add("hidden");
-    dom.sortModal.setAttribute("aria-hidden", "true");
-    dom.sortModalList.innerHTML = "";
-  }
-  async function openHistoryModal() {
-    await loadHistory();
-    renderHistoryModalList();
-    dom.historyModal.classList.remove("hidden");
-    dom.historyModal.setAttribute("aria-hidden", "false");
-  }
-  function closeHistoryModal() {
-    dom.historyModal.classList.add("hidden");
-    dom.historyModal.setAttribute("aria-hidden", "true");
-    dom.historyModalList.innerHTML = "";
-  }
-  function renderHistoryModalList() {
-    dom.historyModalList.innerHTML = "";
-    if (historyEntries.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = "empty";
-      empty.textContent = "\u6682\u65E0\u5386\u53F2\u8BB0\u5F55";
-      dom.historyModalList.appendChild(empty);
-      return;
-    }
-    for (const entry of historyEntries) {
-      const item = document.createElement("div");
-      item.className = "history-modal-item";
-      const time = document.createElement("div");
-      time.className = "history-modal-item-time";
-      time.textContent = formatTime(entry.timestampMs);
-      item.appendChild(time);
-      const action = document.createElement("div");
-      action.className = "history-modal-item-action";
-      action.textContent = entry.action;
-      item.appendChild(action);
-      dom.historyModalList.appendChild(item);
-    }
-  }
-  function renderSortModalList() {
-    dom.sortModalList.innerHTML = "";
-    const accountById = new Map(
-      accountsRaw.map(normalizeAccountShape).filter((account) => !account.isDeleted).map((account) => [String(account.accountId || ""), account])
-    );
-    const normalizedOrder = sortModalOrderIds.map((accountId) => String(accountId || "")).filter((accountId) => accountById.has(accountId));
-    sortModalOrderIds = normalizedOrder;
-    if (normalizedOrder.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = "empty";
-      empty.textContent = "\u5F53\u524D\u5217\u8868\u6CA1\u6709\u53EF\u6392\u5E8F\u8D26\u53F7";
-      dom.sortModalList.appendChild(empty);
-      return;
-    }
-    for (const accountId of normalizedOrder) {
-      const account = accountById.get(accountId);
-      if (!account) continue;
-      const item = document.createElement("div");
-      item.className = "sort-modal-item";
-      item.draggable = true;
-      item.dataset.accountId = accountId;
-      const row = document.createElement("div");
-      row.className = "sort-modal-item-row";
-      const label = document.createElement("span");
-      label.className = "sort-modal-item-label";
-      label.textContent = formatSortableAccountLabel(account);
-      row.appendChild(label);
-      const pinBtn = document.createElement("button");
-      pinBtn.type = "button";
-      pinBtn.className = "pin-btn sort-modal-pin-btn";
-      const pinned = isPinnedAccount(account);
-      pinBtn.textContent = pinned ? "\u53D6\u6D88\u7F6E\u9876" : "\u7F6E\u9876";
-      pinBtn.classList.toggle("is-unpin", pinned);
-      pinBtn.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        void togglePin(accountId, { fromSortModal: true });
-      });
-      row.appendChild(pinBtn);
-      item.appendChild(row);
-      item.addEventListener("dragstart", (event) => {
-        sortModalDraggingAccountId = accountId;
-        if (event.dataTransfer) {
-          event.dataTransfer.setData("text/plain", accountId);
-          event.dataTransfer.effectAllowed = "move";
-        }
-      });
-      item.addEventListener("dragover", (event) => {
-        if (!sortModalDraggingAccountId || sortModalDraggingAccountId === accountId) return;
-        if (!isSamePinnedGroupForSort(accountById, sortModalDraggingAccountId, accountId)) {
-          return;
-        }
-        event.preventDefault();
-        if (event.dataTransfer) {
-          event.dataTransfer.dropEffect = "move";
-        }
-        item.classList.add("sort-modal-item-target");
-      });
-      item.addEventListener("dragleave", () => {
-        item.classList.remove("sort-modal-item-target");
-      });
-      item.addEventListener("drop", (event) => {
-        event.preventDefault();
-        item.classList.remove("sort-modal-item-target");
-        const sourceId = sortModalDraggingAccountId;
-        sortModalDraggingAccountId = "";
-        if (!sourceId || sourceId === accountId) return;
-        if (!isSamePinnedGroupForSort(accountById, sourceId, accountId)) {
-          setStatus("\u4EC5\u652F\u6301\u7F6E\u9876\u9879\u4E4B\u95F4\u3001\u975E\u7F6E\u9876\u9879\u4E4B\u95F4\u6392\u5E8F");
-          return;
-        }
-        const from = sortModalOrderIds.indexOf(sourceId);
-        const to = sortModalOrderIds.indexOf(accountId);
-        if (from < 0 || to < 0) return;
-        sortModalOrderIds.splice(from, 1);
-        sortModalOrderIds.splice(to, 0, sourceId);
-        renderSortModalList();
-        void persistSortOrderFromModal(sortModalOrderIds);
-      });
-      item.addEventListener("dragend", () => {
-        sortModalDraggingAccountId = "";
-        const highlighted = dom.sortModalList.querySelectorAll(".sort-modal-item-target");
-        highlighted.forEach((node) => node.classList.remove("sort-modal-item-target"));
-      });
-      dom.sortModalList.appendChild(item);
-    }
-  }
-  function isSamePinnedGroupForSort(accountById, sourceId, targetId) {
-    const source = accountById.get(String(sourceId || ""));
-    const target = accountById.get(String(targetId || ""));
-    if (!source || !target) return false;
-    return isPinnedInCurrentScope(source) === isPinnedInCurrentScope(target);
-  }
-  function formatSortableAccountLabel(account) {
-    const site = etldPlusOne(account?.canonicalSite || account?.sites?.[0] || "") || "-";
-    const createdText = formatYYMMDDHHmmss(Number(account?.createdAtMs || 0));
-    const username = String(account?.username || "");
-    return `${site}-${createdText}-${username}`;
-  }
-  async function persistSortOrderFromModal(orderedIds) {
-    const normalizedOrderedIds = [...new Set((Array.isArray(orderedIds) ? orderedIds : []).map((value) => String(value || "")).filter(Boolean))];
-    if (normalizedOrderedIds.length === 0) return;
-    const next = cloneAccounts(accountsRaw).map(normalizeAccountShape);
-    const scopeKey = getActivePinScopeKey();
-    const now = Date.now();
-    const deviceName = await getDeviceName();
-    let changed = false;
-    const pinnedSubset = [];
-    const regularSubset = [];
-    for (const accountId of normalizedOrderedIds) {
-      const target = next.find((item) => String(item.accountId || "") === accountId);
-      if (!target || target.isDeleted) continue;
-      if (getPinnedViewState(target, scopeKey).pinned) {
-        pinnedSubset.push(accountId);
-      } else {
-        regularSubset.push(accountId);
-      }
-    }
-    const visibleIds = new Set(
-      currentVisibleAccounts(next).filter((item) => !item.isDeleted).map((item) => String(item.accountId || ""))
-    );
-    const allPinnedIds = sortAccountsForScope(
-      next.filter((item) => !item.isDeleted && visibleIds.has(String(item.accountId || "")) && getPinnedViewState(item, scopeKey).pinned),
-      scopeKey
-    ).map((item) => String(item.accountId || ""));
-    const allRegularIds = sortAccountsForScope(
-      next.filter((item) => !item.isDeleted && visibleIds.has(String(item.accountId || "")) && !getPinnedViewState(item, scopeKey).pinned),
-      scopeKey
-    ).map((item) => String(item.accountId || ""));
-    const mergedPinnedIds = buildMergedOrderIds(allPinnedIds, pinnedSubset);
-    const mergedRegularIds = buildMergedOrderIds(allRegularIds, regularSubset);
-    for (let i = 0; i < mergedPinnedIds.length; i += 1) {
-      const id = mergedPinnedIds[i];
-      const item = next.find((entry) => String(entry.accountId || "") === id);
-      if (!item) continue;
-      item.pinnedViews = normalizePinnedViewsMap(item.pinnedViews, item);
-      const currentState = getPinnedViewState(item, scopeKey);
-      const currentOrder = currentState.pinnedSortOrder == null ? null : Number(currentState.pinnedSortOrder);
-      if (currentOrder === i) continue;
-      item.pinnedViews[scopeKey] = {
-        ...currentState,
-        pinned: true,
-        pinnedSortOrder: i
-      };
-      item.updatedAtMs = now;
-      item.lastOperatedDeviceName = deviceName;
-      changed = true;
-    }
-    for (let i = 0; i < mergedRegularIds.length; i += 1) {
-      const id = mergedRegularIds[i];
-      const item = next.find((entry) => String(entry.accountId || "") === id);
-      if (!item) continue;
-      item.pinnedViews = normalizePinnedViewsMap(item.pinnedViews, item);
-      const currentState = getPinnedViewState(item, scopeKey);
-      const currentOrder = currentState.regularSortOrder == null ? null : Number(currentState.regularSortOrder);
-      if (currentOrder === i) continue;
-      item.pinnedViews[scopeKey] = {
-        ...currentState,
-        regularSortOrder: i
-      };
-      item.updatedAtMs = now;
-      item.lastOperatedDeviceName = deviceName;
-      changed = true;
-    }
-    if (!changed) return;
-    accountsRaw = cloneAccounts(next);
-    await setAccounts(next);
-    renderSidebar(accountsRaw);
-    renderCurrentView(accountsRaw);
-  }
-  function buildMergedOrderIds(allIds, subsetIds) {
-    const fullOrder = (Array.isArray(allIds) ? allIds : []).map((value) => String(value || "")).filter(Boolean);
-    const fullSet = new Set(fullOrder);
-    const requestedSubset = (Array.isArray(subsetIds) ? subsetIds : []).map((value) => String(value || "")).filter((value, index, values) => Boolean(value) && values.indexOf(value) === index).filter((value) => fullSet.has(value));
-    if (requestedSubset.length === 0) {
-      return fullOrder;
-    }
-    const subsetSet = new Set(requestedSubset);
-    const merged = [];
-    let cursor = 0;
-    for (const id of fullOrder) {
-      if (subsetSet.has(id)) {
-        merged.push(requestedSubset[cursor]);
-        cursor += 1;
-      } else {
-        merged.push(id);
-      }
-    }
-    return merged;
-  }
-  function renderCurrentView(inputAccounts) {
-    let accounts = sortAccountsForScope(currentVisibleAccounts(inputAccounts));
-    dom.allAccountsList.innerHTML = "";
-    if (accounts.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = "empty";
-      empty.textContent = "\u6682\u65E0\u8D26\u53F7";
-      dom.allAccountsList.appendChild(empty);
-      return;
-    }
-    const isRecycle = activeAccountView === "recycle";
-    for (const account of accounts) {
-      const card = document.createElement("article");
-      card.className = "account";
-      if (!isRecycle && isPinnedInCurrentScope(account)) {
-        card.classList.add("account-pinned");
-      }
-      card.addEventListener("contextmenu", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        openAccountContextMenu({
-          account,
-          x: event.clientX,
-          y: event.clientY
-        });
-      });
-      const titleRow = document.createElement("div");
-      titleRow.className = "account-title-row";
-      const title = document.createElement("strong");
-      title.textContent = account.accountId;
-      titleRow.appendChild(title);
-      card.appendChild(titleRow);
-      const meta = document.createElement("div");
-      meta.className = "meta";
-      const sitesMultilineHtml = toMultilineHtml(account.sites.join("\n"));
-      meta.innerHTML = `\u7528\u6237\u540D: ${escapeHtml(account.username || "-")}<br/>\u7AD9\u70B9\u522B\u540D:<div class="meta-multiline">${sitesMultilineHtml}</div>\u901A\u884C\u5BC6\u94A5: ${account.passkeyCredentialIds.length} \u4E2A<br/>`;
-      card.appendChild(meta);
-      const actions = document.createElement("div");
-      actions.className = "account-actions";
-      const totpCopyBtn = hasTotpSecret(account.totpSecret) ? createTotpCopyButton({
-        accountId: account.accountId,
-        username: account.username,
-        totpSecret: account.totpSecret
-      }) : null;
-      if (!isRecycle) {
-        const editBtn = document.createElement("button");
-        editBtn.textContent = editingAccountId === account.accountId ? "\u6536\u8D77\u7F16\u8F91" : "\u7F16\u8F91";
-        editBtn.addEventListener("click", () => {
-          editingAccountId = editingAccountId === account.accountId ? null : account.accountId;
-          renderCurrentView(accountsRaw);
-        });
-        actions.appendChild(editBtn);
-        const deleteBtn = document.createElement("button");
-        deleteBtn.className = "button-danger";
-        deleteBtn.textContent = "\u5220\u9664";
-        deleteBtn.addEventListener("click", async () => {
-          await deleteAccountFromAll(account.accountId);
-        });
-        actions.appendChild(deleteBtn);
-        if (totpCopyBtn) actions.appendChild(totpCopyBtn);
-        card.appendChild(actions);
-        if (editingAccountId === account.accountId) {
-          card.appendChild(buildAccountEditor(account));
-        }
-      } else {
-        const restoreBtn = document.createElement("button");
-        restoreBtn.textContent = "\u6062\u590D";
-        restoreBtn.addEventListener("click", async () => {
-          await restoreDeletedAccount(account.accountId);
-        });
-        actions.appendChild(restoreBtn);
-        const permanentDeleteBtn = document.createElement("button");
-        permanentDeleteBtn.className = "button-danger";
-        permanentDeleteBtn.textContent = "\u6C38\u4E45\u5220\u9664";
-        permanentDeleteBtn.addEventListener("click", async () => {
-          await permanentlyDeleteAccount(account.accountId);
-        });
-        actions.appendChild(permanentDeleteBtn);
-        if (totpCopyBtn) actions.appendChild(totpCopyBtn);
-        card.appendChild(actions);
-      }
-      dom.allAccountsList.appendChild(card);
-    }
-    void refreshVisibleTotpButtons();
-  }
-  function setAccountView(nextView) {
-    closeContextMenu();
-    activeAccountView = String(nextView || "all");
-    const isRecycle = activeAccountView === "recycle";
-    dom.accountsTabAll.classList.toggle("is-active", activeAccountView === "all");
-    dom.accountsTabPasskey.classList.toggle("is-active", activeAccountView === "passkeys");
-    dom.accountsTabTotp.classList.toggle("is-active", activeAccountView === "totp");
-    dom.accountsTabRecycle.classList.toggle("is-active", isRecycle);
-    const folderButtons = dom.accountsFolderList.querySelectorAll(".account-view-tab[data-view]");
-    folderButtons.forEach((button) => {
-      const matched = button.getAttribute("data-view") === activeAccountView;
-      button.classList.toggle("is-active", matched);
-    });
-    dom.clearActiveAccountsBtn.classList.toggle("hidden", isRecycle);
-    dom.clearRecycleBinBtn.classList.toggle("hidden", !isRecycle);
-    dom.openSortModalBtn.classList.toggle("hidden", isRecycle);
-    if (isRecycle) {
-      closeAllAccountsSearchFieldsPanel();
-      closeSortModal();
-    }
-    renderCurrentView(accountsRaw);
-  }
-  function closeContextMenuIfNeeded(event) {
-    if (!contextMenuElement) return;
-    if (contextMenuElement.contains(event.target)) return;
-    closeContextMenu();
-  }
-  function closeContextMenu() {
-    if (contextMenuElement) {
-      contextMenuElement.remove();
-      contextMenuElement = null;
-    }
-    if (contextMenuOutsideHandler) {
-      window.removeEventListener("mousedown", contextMenuOutsideHandler, true);
-      contextMenuOutsideHandler = null;
-    }
-    if (contextMenuEscapeHandler) {
-      window.removeEventListener("keydown", contextMenuEscapeHandler, true);
-      contextMenuEscapeHandler = null;
-    }
-  }
-  function openContextMenu({ x, y, items }) {
-    closeContextMenu();
-    const menu = document.createElement("div");
-    menu.className = "context-menu";
-    for (const item of items) {
-      if (item.type === "separator") {
-        const separator = document.createElement("div");
-        separator.className = "context-menu-separator";
-        menu.appendChild(separator);
-        continue;
-      }
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "context-menu-item";
-      if (item.danger) {
-        button.classList.add("context-danger");
-      }
-      button.textContent = item.label;
-      button.disabled = Boolean(item.disabled);
-      button.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        if (button.disabled) return;
-        closeContextMenu();
-        await item.onSelect?.();
-      });
-      menu.appendChild(button);
-    }
-    document.body.appendChild(menu);
-    contextMenuElement = menu;
-    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-    const rect = menu.getBoundingClientRect();
-    const maxLeft = Math.max(8, viewportWidth - rect.width - 8);
-    const maxTop = Math.max(8, viewportHeight - rect.height - 8);
-    menu.style.left = `${Math.min(Math.max(8, x), maxLeft)}px`;
-    menu.style.top = `${Math.min(Math.max(8, y), maxTop)}px`;
-    contextMenuOutsideHandler = (event) => {
-      if (!menu.contains(event.target)) {
-        closeContextMenu();
-      }
-    };
-    contextMenuEscapeHandler = (event) => {
-      if (event.key === "Escape") {
-        closeContextMenu();
-      }
-    };
-    window.addEventListener("mousedown", contextMenuOutsideHandler, true);
-    window.addEventListener("keydown", contextMenuEscapeHandler, true);
-  }
-  function openAccountContextMenu({ account, x, y }) {
-    if (!account) return;
-    if (account.isDeleted) {
-      openContextMenu({
-        x,
-        y,
-        items: [
-          {
-            label: "\u6062\u590D\u8D26\u53F7",
-            onSelect: async () => restoreDeletedAccount(account.accountId)
-          },
-          {
-            label: "\u6C38\u4E45\u5220\u9664",
-            danger: true,
-            onSelect: async () => permanentlyDeleteAccount(account.accountId)
-          }
-        ]
-      });
-      return;
-    }
-    openContextMenu({
-      x,
-      y,
-      items: [
-        {
-          label: isPinnedInCurrentScope(account) ? "\u53D6\u6D88\u7F6E\u9876" : "\u7F6E\u9876",
-          onSelect: async () => togglePin(account.accountId)
-        },
-        { type: "separator" },
-        {
-          label: "\u7F16\u8F91",
-          onSelect: async () => {
-            editingAccountId = editingAccountId === account.accountId ? null : account.accountId;
-            renderCurrentView(accountsRaw);
-          }
-        },
-        { type: "separator" },
-        {
-          label: "\u653E\u5165\u6587\u4EF6\u5939",
-          disabled: foldersRaw.length === 0,
-          onSelect: async () => openAccountFolderContextMenu(account, { x: x + 16, y: y + 12 })
-        },
-        { type: "separator" },
-        {
-          label: "\u5220\u9664",
-          danger: true,
-          onSelect: async () => deleteAccountFromAll(account.accountId)
-        }
-      ]
-    });
-  }
-  function openFolderContextMenu({ folderId, x, y }) {
-    const normalizedFolderId = normalizeFolderId(folderId);
-    const folder = foldersRaw.find((item) => normalizeFolderId(item?.id) === normalizedFolderId);
-    if (!folder) return;
-    if (normalizedFolderId === FIXED_NEW_ACCOUNT_FOLDER_ID) {
-      openContextMenu({
-        x,
-        y,
-        items: [
-          {
-            label: "\u6307\u5B9A\u7F51\u7AD9\u5168\u90E8\u8D26\u53F7",
-            onSelect: async () => openAddSitesToFolderModal(normalizedFolderId)
-          },
-          { type: "separator" },
-          {
-            label: "\u56FA\u5B9A\u6587\u4EF6\u5939\u4E0D\u53EF\u5220\u9664",
-            disabled: true,
-            onSelect: async () => {
-            }
-          }
-        ]
-      });
-      return;
-    }
-    openContextMenu({
-      x,
-      y,
-      items: [
-        {
-          label: "\u6307\u5B9A\u7F51\u7AD9\u5168\u90E8\u8D26\u53F7",
-          onSelect: async () => openAddSitesToFolderModal(normalizedFolderId)
-        },
-        { type: "separator" },
-        {
-          label: "\u5220\u9664\u6587\u4EF6\u5939",
-          danger: true,
-          onSelect: async () => deleteFolder(normalizedFolderId)
-        }
-      ]
-    });
-  }
-  function openAddSitesToFolderModal(folderId) {
-    addSitesTargetFolderId = normalizeFolderId(folderId);
-    const folder = foldersRaw.find((item) => normalizeFolderId(item?.id) === addSitesTargetFolderId);
-    dom.addSitesToFolderInput.value = Array.isArray(folder?.matchedSites) ? folder.matchedSites.join("\n") : "";
-    dom.addSitesToFolderAutoAdd.checked = Boolean(folder?.autoAddMatchingSites);
-    dom.addSitesToFolderModal.classList.remove("hidden");
-    dom.addSitesToFolderModal.setAttribute("aria-hidden", "false");
-    setTimeout(() => {
-      dom.addSitesToFolderInput.focus();
-    }, 0);
-  }
-  function closeAddSitesToFolderModal() {
-    addSitesTargetFolderId = null;
-    dom.addSitesToFolderInput.value = "";
-    dom.addSitesToFolderAutoAdd.checked = true;
-    dom.addSitesToFolderModal.classList.add("hidden");
-    dom.addSitesToFolderModal.setAttribute("aria-hidden", "true");
-  }
-  async function addAccountsMatchingSitesToFolderFromModal() {
-    const folderId = normalizeFolderId(addSitesTargetFolderId);
-    if (!folderId) {
-      closeAddSitesToFolderModal();
-      setStatus("\u76EE\u6807\u6587\u4EF6\u5939\u4E0D\u5B58\u5728");
-      return;
-    }
-    const sites = parseSites(dom.addSitesToFolderInput.value || "");
-    const autoAddMatchingSites = Boolean(dom.addSitesToFolderAutoAdd.checked);
-    const storedData = await readBusinessDataFromStore();
-    const storedFolders = Array.isArray(storedData.folders) ? storedData.folders : [];
-    const targetIds = accountsRaw.map(normalizeAccountShape).filter((account) => !account.isDeleted).filter((account) => {
-      const accountSites = normalizeSites([...account.sites || [], account.canonicalSite || ""]);
-      return sites.some((site) => accountSites.some((accountSite) => domainsMatch(site, accountSite)));
-    }).map((account) => account.accountId);
-    const next = cloneAccounts(accountsRaw).map(normalizeAccountShape);
-    const nextFolders = storedFolders.map((item) => {
-      const folder = normalizeFolderShape(item);
-      if (normalizeFolderId(folder.id) !== folderId) return folder;
-      return {
-        ...folder,
-        matchedSites: sites,
-        autoAddMatchingSites,
-        updatedAtMs: Date.now()
-      };
-    });
-    const now = Date.now();
-    const deviceName = await getDeviceName();
-    let changedCount = 0;
-    for (const accountId of targetIds) {
-      const target = next.find((item) => String(item.accountId || "") === String(accountId));
-      if (!target || target.isDeleted) continue;
-      const currentFolderIds = normalizeFolderIdList(extractAccountFolderIds(target));
-      if (currentFolderIds.includes(folderId)) continue;
-      const nextFolderIds = normalizeFolderIdList([...currentFolderIds, folderId]);
-      target.folderId = nextFolderIds[0] || null;
-      target.folderIds = nextFolderIds;
-      target.updatedAtMs = now;
-      target.lastOperatedDeviceName = deviceName;
-      changedCount += 1;
-    }
-    closeAddSitesToFolderModal();
-    accountsRaw = cloneAccounts(next);
-    foldersRaw = sortFoldersForDisplay(withFixedFolder(nextFolders));
-    await writeBusinessDataToStore({ accounts: next, passkeys: passkeysRaw, folders: nextFolders });
-    await appendHistory(
-      `\u66F4\u65B0\u6587\u4EF6\u5939\u7AD9\u70B9\u89C4\u5219\uFF1A${folderDisplayNameById(folderId)}\uFF08${sites.length} \u4E2A\u7AD9\u70B9\uFF0C\u81EA\u52A8\u52A0\u5165${autoAddMatchingSites ? "\u5F00" : "\u5173"}\uFF09`,
-      now
-    );
-    if (changedCount > 0) {
-      await appendHistory(`\u6309\u7AD9\u70B9\u6279\u91CF\u52A0\u5165\u6587\u4EF6\u5939\uFF1A${folderDisplayNameById(folderId)}\uFF08${changedCount} \u4E2A\u8D26\u53F7\uFF09`, now);
-    }
-    await refresh({ silent: true });
-    setStatus(
-      changedCount > 0 ? `\u5DF2\u4FDD\u5B58\u89C4\u5219\uFF0C\u5E76\u5C06 ${changedCount} \u4E2A\u8D26\u53F7\u52A0\u5165\u6587\u4EF6\u5939: ${folderDisplayNameById(folderId)}` : `\u5DF2\u4FDD\u5B58\u6587\u4EF6\u5939\u7AD9\u70B9\u89C4\u5219: ${folderDisplayNameById(folderId)}`
-    );
-  }
-  function openAccountFolderContextMenu(account, position) {
-    const normalizedAccount = normalizeAccountShape(account);
-    const checked = new Set(
-      normalizeFolderIdList(extractAccountFolderIds(normalizedAccount))
-    );
-    const folders = sortFoldersForDisplay(foldersRaw.map(normalizeFolderShape));
-    if (folders.length === 0) {
-      setStatus("\u8BF7\u5148\u521B\u5EFA\u6587\u4EF6\u5939");
-      return;
-    }
-    openContextMenu({
-      x: position?.x ?? 100,
-      y: position?.y ?? 100,
-      items: folders.map((folder) => {
-        const id = normalizeFolderId(folder.id);
-        const isChecked = checked.has(id);
-        return {
-          label: `${isChecked ? "\u2611" : "\u2610"} ${folder.name}`,
-          onSelect: async () => {
-            await toggleAccountFolderMembership(normalizedAccount.accountId, id);
-          }
-        };
-      })
-    });
-  }
-  function applyAutoFolderRulesToAccount(account, folders = foldersRaw) {
-    if (!account || account.isDeleted) return account;
-    const accountSites = normalizeSites([
-      ...Array.isArray(account?.sites) ? account.sites : [],
-      account?.canonicalSite || ""
-    ]);
-    if (accountSites.length === 0) return account;
-    const matchedFolderIds = (Array.isArray(folders) ? folders : []).map(normalizeFolderShape).filter((folder) => folder.autoAddMatchingSites).filter((folder) => folder.matchedSites.some(
-      (folderSite) => accountSites.some((accountSite) => domainsMatch(accountSite, folderSite))
-    )).map((folder) => normalizeFolderId(folder.id)).filter(Boolean);
-    if (matchedFolderIds.length === 0) return account;
-    const nextFolderIds = normalizeFolderIdList([
-      ...extractAccountFolderIds(account),
-      ...matchedFolderIds
-    ]);
-    return {
-      ...account,
-      folderId: nextFolderIds[0] || null,
-      folderIds: nextFolderIds
-    };
-  }
-  function getActivePinScopeKey() {
-    return String(activeAccountView || "all");
-  }
-  function getPinScopeLabel(scopeKey = getActivePinScopeKey()) {
-    if (scopeKey === "all") return "\u5168\u90E8";
-    if (scopeKey === "passkeys") return "\u901A\u884C\u5BC6\u94A5";
-    if (scopeKey === "totp") return "\u9A8C\u8BC1\u7801";
-    if (scopeKey === "recycle") return "\u56DE\u6536\u7AD9";
-    if (String(scopeKey).startsWith("folder:")) {
-      const folderId = normalizeFolderId(String(scopeKey).slice("folder:".length));
-      return folderDisplayNameById(folderId);
-    }
-    return String(scopeKey);
-  }
-  function normalizePinnedViewsMap(input, legacyAccount = null) {
-    const result = {};
-    const source = input && typeof input === "object" ? input : {};
-    for (const [scopeKey, rawValue] of Object.entries(source)) {
-      const normalizedScopeKey = String(scopeKey || "").trim();
-      if (!normalizedScopeKey || !rawValue || typeof rawValue !== "object") continue;
-      const pinned = Boolean(rawValue.pinned);
-      const pinnedSortOrder = rawValue.pinnedSortOrder == null ? null : Number(rawValue.pinnedSortOrder);
-      const regularSortOrder = rawValue.regularSortOrder == null ? null : Number(rawValue.regularSortOrder);
-      result[normalizedScopeKey] = {
-        pinned,
-        pinnedSortOrder: Number.isFinite(pinnedSortOrder) ? pinnedSortOrder : null,
-        regularSortOrder: Number.isFinite(regularSortOrder) ? regularSortOrder : null
-      };
-    }
-    if (legacyAccount && !result.all) {
-      result.all = {
-        pinned: Boolean(legacyAccount?.isPinned),
-        pinnedSortOrder: legacyAccount?.pinnedSortOrder == null ? null : Number(legacyAccount.pinnedSortOrder),
-        regularSortOrder: legacyAccount?.regularSortOrder == null ? null : Number(legacyAccount.regularSortOrder)
-      };
-    }
-    return result;
-  }
-  function getPinnedViewState(account, scopeKey = getActivePinScopeKey()) {
-    const pinnedViews = normalizePinnedViewsMap(account?.pinnedViews, account);
-    return pinnedViews[scopeKey] || {
-      pinned: false,
-      pinnedSortOrder: null,
-      regularSortOrder: null
-    };
-  }
-  function isPinnedInCurrentScope(account) {
-    return Boolean(getPinnedViewState(account).pinned);
-  }
-  function isPinnedAccount(account) {
-    return isPinnedInCurrentScope(account);
-  }
-  function compareAccountsForScope(lhs, rhs, scopeKey = getActivePinScopeKey()) {
-    const lhsState = getPinnedViewState(lhs, scopeKey);
-    const rhsState = getPinnedViewState(rhs, scopeKey);
-    if (lhsState.pinned !== rhsState.pinned) {
-      return lhsState.pinned ? -1 : 1;
-    }
-    const lhsUpdatedAt = Number(lhs?.updatedAtMs || 0);
-    const rhsUpdatedAt = Number(rhs?.updatedAtMs || 0);
-    if (lhsUpdatedAt !== rhsUpdatedAt) return rhsUpdatedAt - lhsUpdatedAt;
-    if (lhsState.pinned && rhsState.pinned) {
-      if (lhsState.pinnedSortOrder != null && rhsState.pinnedSortOrder != null && lhsState.pinnedSortOrder !== rhsState.pinnedSortOrder) {
-        return lhsState.pinnedSortOrder - rhsState.pinnedSortOrder;
-      }
-      if (lhsState.pinnedSortOrder != null && rhsState.pinnedSortOrder == null) return -1;
-      if (lhsState.pinnedSortOrder == null && rhsState.pinnedSortOrder != null) return 1;
-    } else {
-      if (lhsState.regularSortOrder != null && rhsState.regularSortOrder != null && lhsState.regularSortOrder !== rhsState.regularSortOrder) {
-        return lhsState.regularSortOrder - rhsState.regularSortOrder;
-      }
-      if (lhsState.regularSortOrder != null && rhsState.regularSortOrder == null) return -1;
-      if (lhsState.regularSortOrder == null && rhsState.regularSortOrder != null) return 1;
-    }
-    const lhsCreatedAt = Number(lhs?.createdAtMs || 0);
-    const rhsCreatedAt = Number(rhs?.createdAtMs || 0);
-    if (lhsCreatedAt !== rhsCreatedAt) return rhsCreatedAt - lhsCreatedAt;
-    return String(lhs?.accountId || "").localeCompare(String(rhs?.accountId || ""));
-  }
-  function sortAccountsForScope(inputAccounts, scopeKey = getActivePinScopeKey()) {
-    return [...Array.isArray(inputAccounts) ? inputAccounts : []].sort(
-      (lhs, rhs) => compareAccountsForScope(lhs, rhs, scopeKey)
-    );
-  }
-  function isAccountMatchSearch(account, query) {
-    const needle = String(query || "").trim().toLowerCase();
-    if (!needle) return true;
-    const haystacks = [];
-    const useAll = accountSearchUseAll;
-    if (useAll || accountSearchFields.has("username")) {
-      haystacks.push(account.username, account.usernameAtCreate);
-    }
-    if (useAll || accountSearchFields.has("sites")) {
-      haystacks.push(account.sites.join(" "), account.canonicalSite);
-    }
-    if (useAll || accountSearchFields.has("note")) {
-      haystacks.push(account.note);
-    }
-    if (useAll || accountSearchFields.has("password")) {
-      haystacks.push(account.password);
-    }
-    if (haystacks.length === 0) return false;
-    return haystacks.some((value) => String(value || "").toLowerCase().includes(needle));
-  }
-  function closeAllAccountsSearchFieldsPanel() {
-    dom.allAccountsSearchFieldsPanel.classList.add("hidden");
-  }
-  function isMultilineInputTarget(target) {
-    return target instanceof HTMLTextAreaElement || target?.isContentEditable;
-  }
-  function findDefaultActionButtonForOptions(target) {
-    if (!dom.addSitesToFolderModal.classList.contains("hidden")) {
-      return dom.confirmAddSitesToFolderBtn;
-    }
-    return null;
-  }
-  function onAllAccountSearchFieldAllChanged() {
-    if (dom.allAccountsSearchFieldAll.checked) {
-      accountSearchUseAll = true;
-      accountSearchFields = /* @__PURE__ */ new Set();
-    } else {
-      accountSearchUseAll = false;
-    }
-    syncAllAccountSearchFieldCheckboxes();
-    renderCurrentView(accountsRaw);
-  }
-  function onAllAccountSearchFieldChanged() {
-    const next = /* @__PURE__ */ new Set();
-    if (dom.allAccountsSearchFieldUsername.checked) next.add("username");
-    if (dom.allAccountsSearchFieldSites.checked) next.add("sites");
-    if (dom.allAccountsSearchFieldNote.checked) next.add("note");
-    if (dom.allAccountsSearchFieldPassword.checked) next.add("password");
-    accountSearchUseAll = false;
-    accountSearchFields = next;
-    syncAllAccountSearchFieldCheckboxes();
-    renderCurrentView(accountsRaw);
-  }
-  function syncAllAccountSearchFieldCheckboxes() {
-    dom.allAccountsSearchFieldUsername.checked = accountSearchFields.has("username");
-    dom.allAccountsSearchFieldSites.checked = accountSearchFields.has("sites");
-    dom.allAccountsSearchFieldNote.checked = accountSearchFields.has("note");
-    dom.allAccountsSearchFieldPassword.checked = accountSearchFields.has("password");
-    dom.allAccountsSearchFieldAll.checked = accountSearchUseAll;
-  }
-  function buildAccountEditor(account) {
-    const editor = document.createElement("div");
-    editor.className = "editor";
-    const sitesInput = createEditorTextarea(editor, "\u7AD9\u70B9\u522B\u540D\uFF08\u6BCF\u884C\u4E00\u4E2A\uFF09", account.sites.join("\n"), {
-      className: "editor-textarea editor-textarea-sites"
-    });
-    const usernameInput = createEditorField(editor, "\u7528\u6237\u540D", account.username);
-    const passwordInput = createEditorField(editor, "\u5BC6\u7801", account.password);
-    const totpInput = createEditorField(editor, "TOTP", account.totpSecret || "");
-    appendTotpImportActions(editor, {
-      totpInput,
-      sitesInput,
-      usernameInput
-    });
-    const recoveryInput = createEditorTextarea(editor, "\u6062\u590D\u7801\uFF08\u6BCF\u884C\u4E00\u4E2A\uFF09", account.recoveryCodes || "", {
-      className: "editor-textarea editor-textarea-recovery"
-    });
-    const noteInput = createEditorTextarea(editor, "\u5907\u6CE8", account.note || "", {
-      className: "editor-textarea"
-    });
-    const details = document.createElement("div");
-    details.className = "meta";
-    details.innerHTML = `\u521B\u5EFA: ${formatTime(account.createdAtMs)} | \u66F4\u65B0: ${formatTime(account.updatedAtMs)}<br/>\u6700\u540E\u64CD\u4F5C\u8BBE\u5907: ${escapeHtml(String(account.lastOperatedDeviceName || "").trim() || "-")}<br/>\u5220\u9664: ${formatTime(account.deletedAtMs)}<br/>\u7528\u6237\u540D\uFF1A${formatTime(account.usernameUpdatedAtMs)} | ${escapeHtml(String(account.usernameUpdatedDeviceName || "").trim() || "-")}<br/>\u5BC6\u7801\uFF1A${formatTime(account.passwordUpdatedAtMs)} | ${escapeHtml(String(account.passwordUpdatedDeviceName || "").trim() || "-")}<br/>TOTP\uFF1A${formatTime(account.totpUpdatedAtMs)} | ${escapeHtml(String(account.totpUpdatedDeviceName || "").trim() || "-")}<br/>\u6062\u590D\u7801\uFF1A${formatTime(account.recoveryCodesUpdatedAtMs)} | ${escapeHtml(String(account.recoveryCodesUpdatedDeviceName || "").trim() || "-")}<br/>\u5907\u6CE8\uFF1A${formatTime(account.noteUpdatedAtMs)} | ${escapeHtml(String(account.noteUpdatedDeviceName || "").trim() || "-")}<br/>\u901A\u884C\u5BC6\u94A5\uFF1A${formatTime(account.passkeyUpdatedAtMs)} | ${escapeHtml(String(account.passkeyUpdatedDeviceName || "").trim() || "-")}<br/>`;
-    editor.appendChild(details);
-    const actions = document.createElement("div");
-    actions.className = "account-actions";
-    const saveBtn = document.createElement("button");
-    saveBtn.textContent = "\u4FDD\u5B58\u7F16\u8F91";
-    saveBtn.addEventListener("click", async () => {
-      await saveAccountEdit(account.accountId, {
-        sitesText: sitesInput.value,
-        username: usernameInput.value,
-        password: passwordInput.value,
-        totpSecret: totpInput.value,
-        recoveryCodes: recoveryInput.value,
-        note: noteInput.value
-      });
-    });
-    actions.appendChild(saveBtn);
-    const cancelBtn = document.createElement("button");
-    cancelBtn.textContent = "\u53D6\u6D88";
-    cancelBtn.addEventListener("click", () => {
-      editingAccountId = null;
-      renderCurrentView(accountsRaw);
-    });
-    actions.appendChild(cancelBtn);
-    editor.appendChild(actions);
-    return editor;
-  }
-  async function saveAccountEdit(accountId, draft) {
-    const next = cloneAccounts(accountsRaw);
-    const target = next.find((item) => String(item.accountId || "") === String(accountId));
-    if (!target) {
-      setStatus("\u672A\u627E\u5230\u7F16\u8F91\u8D26\u53F7");
-      return;
-    }
-    const now = Date.now();
-    const deviceName = await getDeviceName();
-    let changed = false;
-    const historyMessages = [];
-    const nextSites = parseSites(draft.sitesText);
-    const prevSites = normalizeSites(target.sites || []);
-    if (nextSites.length > 0 && JSON.stringify(nextSites) !== JSON.stringify(prevSites)) {
-      target.sites = nextSites;
-      const nextSiteSet = new Set(nextSites.map((site) => String(site).toLowerCase()));
-      const previousSiteSet = new Set(prevSites.map((site) => String(site).toLowerCase()));
-      const states = { ...target.siteAliasStates || {} };
-      for (const site of previousSiteSet) {
-        if (!nextSiteSet.has(site)) states[site] = { isDeleted: true, updatedAtMs: now, deviceName };
-      }
-      for (const site of nextSiteSet) states[site] = { isDeleted: false, updatedAtMs: now, deviceName };
-      target.siteAliasStates = states;
-      changed = true;
-      historyMessages.push(`\u7AD9\u70B9\u522B\u540D\u6539\u4E3A${historyValueSnippet(nextSites.join(", "))}`);
-    }
-    const nextUsername = normalizeUsername(draft.username);
-    if (nextUsername && nextUsername !== String(target.username || "")) {
-      target.username = nextUsername;
-      target.usernameUpdatedAtMs = now;
-      target.usernameUpdatedDeviceName = deviceName;
-      changed = true;
-      historyMessages.push(`\u7528\u6237\u540D\u6539\u4E3A${historyValueSnippet(nextUsername)}`);
-    }
-    if (String(draft.password || "") !== String(target.password || "")) {
-      target.password = String(draft.password || "");
-      target.passwordUpdatedAtMs = now;
-      target.passwordUpdatedDeviceName = deviceName;
-      changed = true;
-      historyMessages.push("\u5BC6\u7801\u5DF2\u4FEE\u6539");
-    }
-    const nextTotpSecret = normalizeTotpSecret(String(draft.totpSecret || ""));
-    if (nextTotpSecret && !isValidTotpSecret(nextTotpSecret)) {
-      setStatus("TOTP \u5BC6\u94A5\u65E0\u6548\uFF0C\u8BF7\u68C0\u67E5\u540E\u518D\u4FDD\u5B58");
-      return;
-    }
-    if (nextTotpSecret !== normalizeTotpSecret(String(target.totpSecret || ""))) {
-      target.totpSecret = nextTotpSecret;
-      target.totpUpdatedAtMs = now;
-      target.totpUpdatedDeviceName = deviceName;
-      changed = true;
-      historyMessages.push("TOTP \u5DF2\u4FEE\u6539");
-    }
-    if (String(draft.recoveryCodes || "") !== String(target.recoveryCodes || "")) {
-      target.recoveryCodes = String(draft.recoveryCodes || "");
-      target.recoveryCodesUpdatedAtMs = now;
-      target.recoveryCodesUpdatedDeviceName = deviceName;
-      changed = true;
-      historyMessages.push("\u6062\u590D\u7801\u5DF2\u4FEE\u6539");
-    }
-    if (String(draft.note || "") !== String(target.note || "")) {
-      target.note = String(draft.note || "");
-      target.noteUpdatedAtMs = now;
-      target.noteUpdatedDeviceName = deviceName;
-      changed = true;
-      historyMessages.push("\u5907\u6CE8\u5DF2\u4FEE\u6539");
-    }
-    if (!changed) {
-      setStatus("\u6CA1\u6709\u53EF\u4FDD\u5B58\u7684\u53D8\u66F4");
-      return;
-    }
-    target.updatedAtMs = now;
-    target.lastOperatedDeviceName = deviceName;
-    const withAutoFolders = next.map(
-      (item) => item === target ? applyAutoFolderRulesToAccount(item) : item
-    );
-    const synced = syncAliasGroups2(withAutoFolders);
-    await setAccounts(synced);
-    for (const message of historyMessages) {
-      await appendHistory(`${target.accountId}\uFF1A${message}`, now);
-    }
-    editingAccountId = null;
-    await refresh({ silent: true });
-    setStatus("\u8D26\u53F7\u7F16\u8F91\u5DF2\u4FDD\u5B58");
-  }
-  async function deleteAccountFromAll(accountId) {
-    const next = cloneAccounts(accountsRaw);
-    const index = next.findIndex((item) => String(item.accountId || "") === String(accountId));
-    if (index < 0) {
-      setStatus("\u672A\u627E\u5230\u76EE\u6807\u8D26\u53F7");
-      return;
-    }
-    const target = next[index];
-    if (target.isDeleted) {
-      if (target.isPermanentlyDeleted) {
-        setStatus("\u8BE5\u8D26\u53F7\u5DF2\u6C38\u4E45\u5220\u9664");
-        return;
-      }
-      const now2 = Date.now();
-      const deviceName2 = await getDeviceName();
-      next[index] = {
-        ...target,
-        isDeleted: true,
-        isPermanentlyDeleted: true,
-        deletedAtMs: now2,
-        deletedDeviceName: deviceName2,
-        updatedAtMs: now2,
-        lastOperatedDeviceName: deviceName2
-      };
-      if (editingAccountId === target.accountId) {
-        editingAccountId = null;
-      }
-      await setAccounts(next);
-      await appendHistory(`${target.accountId}\uFF1A\u6C38\u4E45\u5220\u9664`);
-      await refresh({ silent: true });
-      setStatus(`\u5DF2\u6C38\u4E45\u5220\u9664\u8D26\u53F7: ${target.accountId}`);
-      return;
-    }
-    const now = Date.now();
-    const deviceName = await getDeviceName();
-    target.isDeleted = true;
-    target.deletedAtMs = now;
-    target.updatedAtMs = now;
-    target.lastOperatedDeviceName = deviceName;
-    if (editingAccountId === target.accountId) {
-      editingAccountId = null;
-    }
-    await setAccounts(next);
-    await appendHistory(`${target.accountId}\uFF1A\u79FB\u5165\u56DE\u6536\u7AD9`, now);
-    await refresh({ silent: true });
-    setStatus(`\u5DF2\u79FB\u5165\u56DE\u6536\u7AD9: ${target.accountId}`);
-  }
-  async function restoreDeletedAccount(accountId) {
-    const next = cloneAccounts(accountsRaw);
-    const target = next.find((item) => String(item.accountId || "") === String(accountId));
-    if (!target) {
-      setStatus("\u672A\u627E\u5230\u76EE\u6807\u8D26\u53F7");
-      return;
-    }
-    if (!target.isDeleted) {
-      setStatus("\u8BE5\u8D26\u53F7\u4E0D\u5728\u56DE\u6536\u7AD9");
-      return;
-    }
-    if (target.isPermanentlyDeleted) {
-      setStatus("\u8BE5\u8D26\u53F7\u5DF2\u6C38\u4E45\u5220\u9664\uFF0C\u4E0D\u80FD\u6062\u590D");
-      return;
-    }
-    const confirmed = window.confirm(`\u5C06\u6062\u590D\u8D26\u53F7\uFF1A${target.accountId}
-\u662F\u5426\u7EE7\u7EED\uFF1F`);
-    if (!confirmed) return;
-    const now = Date.now();
-    const deviceName = await getDeviceName();
-    target.isDeleted = false;
-    target.deletedAtMs = null;
-    target.updatedAtMs = now;
-    target.lastOperatedDeviceName = deviceName;
-    if (editingAccountId === target.accountId) {
-      editingAccountId = null;
-    }
-    await setAccounts(next);
-    await appendHistory(`${target.accountId}\uFF1A\u4ECE\u56DE\u6536\u7AD9\u6062\u590D`, now);
-    await refresh({ silent: true });
-    setStatus(`\u5DF2\u6062\u590D\u8D26\u53F7: ${target.accountId}`);
-  }
-  async function permanentlyDeleteAccount(accountId) {
-    const next = cloneAccounts(accountsRaw);
-    const index = next.findIndex((item) => String(item.accountId || "") === String(accountId));
-    if (index < 0) {
-      setStatus("\u672A\u627E\u5230\u76EE\u6807\u8D26\u53F7");
-      return;
-    }
-    const target = next[index];
-    if (!target.isDeleted) {
-      setStatus("\u4EC5\u652F\u6301\u5728\u56DE\u6536\u7AD9\u4E2D\u6C38\u4E45\u5220\u9664");
-      return;
-    }
-    if (target.isPermanentlyDeleted) {
-      setStatus("\u8BE5\u8D26\u53F7\u5DF2\u6C38\u4E45\u5220\u9664");
-      return;
-    }
-    const now = Date.now();
-    const deviceName = await getDeviceName();
-    next[index] = {
-      ...target,
-      isDeleted: true,
-      isPermanentlyDeleted: true,
-      deletedAtMs: now,
-      deletedDeviceName: deviceName,
-      updatedAtMs: now,
-      lastOperatedDeviceName: deviceName
-    };
-    if (editingAccountId === target.accountId) {
-      editingAccountId = null;
-    }
-    await setAccounts(next);
-    await appendHistory(`${target.accountId}\uFF1A\u6C38\u4E45\u5220\u9664`);
-    await refresh({ silent: true });
-    setStatus(`\u5DF2\u6C38\u4E45\u5220\u9664\u8D26\u53F7: ${target.accountId}`);
-  }
-  async function togglePin(accountId, { fromSortModal = false } = {}) {
-    const next = cloneAccounts(accountsRaw);
-    const target = next.find((item) => String(item.accountId || "") === String(accountId));
-    if (!target) {
-      setStatus("\u672A\u627E\u5230\u76EE\u6807\u8D26\u53F7");
-      return;
-    }
-    if (target.isDeleted) {
-      setStatus("\u56DE\u6536\u7AD9\u8D26\u53F7\u4E0D\u652F\u6301\u7F6E\u9876");
-      return;
-    }
-    const scopeKey = getActivePinScopeKey();
-    const scopeLabel = getPinScopeLabel(scopeKey);
-    const now = Date.now();
-    const deviceName = await getDeviceName();
-    target.pinnedViews = normalizePinnedViewsMap(target.pinnedViews, target);
-    const currentState = getPinnedViewState(target, scopeKey);
-    const nextPinned = !currentState.pinned;
-    if (nextPinned) {
-      const maxOrder = next.filter((item) => !item.isDeleted && getPinnedViewState(item, scopeKey).pinned).reduce((maxValue, item) => Math.max(maxValue, Number(getPinnedViewState(item, scopeKey).pinnedSortOrder ?? -1)), -1);
-      target.pinnedViews[scopeKey] = {
-        ...currentState,
-        pinned: true,
-        pinnedSortOrder: maxOrder + 1
-      };
-    } else {
-      target.pinnedViews[scopeKey] = {
-        ...currentState,
-        pinned: false,
-        pinnedSortOrder: null,
-        regularSortOrder: null
-      };
-    }
-    target.updatedAtMs = now;
-    target.lastOperatedDeviceName = deviceName;
-    await setAccounts(next);
-    await appendHistory(
-      nextPinned ? `${target.accountId}\uFF1A\u5728${scopeLabel}\u7F6E\u9876` : `${target.accountId}\uFF1A\u53D6\u6D88${scopeLabel}\u7F6E\u9876`,
-      now
-    );
-    await refresh({ silent: true });
-    setStatus(
-      nextPinned ? `\u8D26\u53F7\u5DF2\u5728${scopeLabel}\u7F6E\u9876: ${target.accountId}` : `\u5DF2\u53D6\u6D88${scopeLabel}\u7F6E\u9876: ${target.accountId}`
-    );
-    if (fromSortModal && !dom.sortModal.classList.contains("hidden")) {
-      sortModalOrderIds = getSortableAccountsForCurrentView().map((account) => String(account.accountId || ""));
-      renderSortModalList();
-    }
-  }
-  function appendTotpImportActions(parent, { totpInput, sitesInput, usernameInput }) {
-    const wrap = document.createElement("div");
-    wrap.className = "editor-row editor-row-multiline totp-import-row";
-    const label = document.createElement("span");
-    label.textContent = "TOTP\u5BFC\u5165";
-    wrap.appendChild(label);
-    const actions = document.createElement("div");
-    actions.className = "totp-import-actions";
-    wrap.appendChild(actions);
-    const rawBtn = document.createElement("button");
-    rawBtn.type = "button";
-    rawBtn.textContent = "\u7C98\u8D34\u539F\u59CB\u5BC6\u94A5";
-    rawBtn.addEventListener("click", () => {
-      void pasteRawTotpSecretFromClipboard({
-        totpInput
-      });
-    });
-    actions.appendChild(rawBtn);
-    const uriBtn = document.createElement("button");
-    uriBtn.type = "button";
-    uriBtn.textContent = "\u7C98\u8D34 otpauth URI";
-    uriBtn.addEventListener("click", () => {
-      void pasteOtpAuthUriFromClipboard({
-        totpInput,
-        sitesInput,
-        usernameInput
-      });
-    });
-    actions.appendChild(uriBtn);
-    const qrBtn = document.createElement("button");
-    qrBtn.type = "button";
-    qrBtn.textContent = "\u8BC6\u522B\u526A\u8D34\u677F\u4E8C\u7EF4\u7801";
-    qrBtn.addEventListener("click", () => {
-      void pasteOtpAuthQrFromClipboard({
-        totpInput,
-        sitesInput,
-        usernameInput
-      });
-    });
-    actions.appendChild(qrBtn);
-    parent.appendChild(wrap);
-  }
-  function createEditorField(parent, labelText, value) {
-    const wrap = document.createElement("label");
-    wrap.className = "editor-row editor-row-inline";
-    const label = document.createElement("span");
-    label.textContent = labelText;
-    wrap.appendChild(label);
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = value || "";
-    wrap.appendChild(input);
-    parent.appendChild(wrap);
-    return input;
-  }
-  function createEditorTextarea(parent, labelText, value, { className = "" } = {}) {
-    const wrap = document.createElement("label");
-    wrap.className = "editor-row editor-row-multiline";
-    const label = document.createElement("span");
-    label.textContent = labelText;
-    wrap.appendChild(label);
-    const input = document.createElement("textarea");
-    input.value = value || "";
-    if (className) {
-      input.className = className;
-    }
-    wrap.appendChild(input);
-    parent.appendChild(wrap);
-    return input;
-  }
-  function cloneAccounts(inputAccounts) {
-    const values = Array.isArray(inputAccounts) ? inputAccounts : [];
-    return values.map((account) => ({
-      ...account,
-      folderIds: Array.isArray(account?.folderIds) ? [...account.folderIds] : [],
-      sites: Array.isArray(account?.sites) ? [...account.sites] : [],
-      passkeyCredentialIds: Array.isArray(account?.passkeyCredentialIds) ? [...account.passkeyCredentialIds] : [],
-      pinnedViews: normalizePinnedViewsMap(account?.pinnedViews, account)
-    }));
-  }
-  async function getDeviceName() {
-    const result = await chrome.storage.local.get([STORAGE_KEY_DEVICE_NAME]);
-    const value = String(result[STORAGE_KEY_DEVICE_NAME] || "").trim();
-    return normalizeDeviceName(value);
-  }
-  async function getOrCreateSyncDeviceId() {
-    const result = await chrome.storage.local.get([STORAGE_KEY_SYNC_DEVICE_ID]);
-    const existing = String(result[STORAGE_KEY_SYNC_DEVICE_ID] || "").trim().toLowerCase();
-    if (existing) return existing;
-    const generated = secureRandomUuid().toLowerCase();
-    await chrome.storage.local.set({ [STORAGE_KEY_SYNC_DEVICE_ID]: generated });
-    return generated;
-  }
-  function normalizeAccountShape(account) {
-    const now = Date.now();
-    const sites = normalizeSites(account?.sites || []);
-    const canonical = account?.canonicalSite || etldPlusOne(sites[0] || "");
-    const createdAtMs = Number(account?.createdAtMs || account?.updatedAtMs || now);
-    const username = String(account?.username || "");
-    const accountId = String(account?.accountId || buildAccountId(canonical, username, createdAtMs));
-    const recordId = normalizeRecordId(account, accountId, createdAtMs);
-    const passkeyCredentialIds = normalizePasskeyCredentialIds(account?.passkeyCredentialIds || []);
-    return {
-      recordId,
-      accountId,
-      canonicalSite: canonical,
-      usernameAtCreate: String(account?.usernameAtCreate || username),
-      isPinned: Boolean(account?.isPinned),
-      pinnedSortOrder: account?.pinnedSortOrder == null ? null : Number(account.pinnedSortOrder),
-      regularSortOrder: account?.regularSortOrder == null ? null : Number(account.regularSortOrder),
-      pinnedViews: normalizePinnedViewsMap(account?.pinnedViews, account),
-      folderId: account?.folderId == null ? null : String(account.folderId),
-      folderIds: Array.isArray(account?.folderIds) ? account.folderIds.map((id) => String(id)) : account?.folderId == null ? [] : [String(account.folderId)],
-      folderMembershipStates: account?.folderMembershipStates && typeof account.folderMembershipStates === "object" ? account.folderMembershipStates : {},
-      sites,
-      siteAliasStates: account?.siteAliasStates && typeof account.siteAliasStates === "object" ? account.siteAliasStates : {},
-      username,
-      password: String(account?.password || ""),
-      totpSecret: String(account?.totpSecret || ""),
-      recoveryCodes: String(account?.recoveryCodes || ""),
-      note: String(account?.note || ""),
-      passkeyCredentialIds,
-      passkeyLinkStates: account?.passkeyLinkStates && typeof account.passkeyLinkStates === "object" ? account.passkeyLinkStates : {},
-      usernameUpdatedAtMs: Number(account?.usernameUpdatedAtMs || createdAtMs),
-      usernameUpdatedDeviceName: String(account?.usernameUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
-      passwordUpdatedAtMs: Number(account?.passwordUpdatedAtMs || createdAtMs),
-      passwordUpdatedDeviceName: String(account?.passwordUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
-      totpUpdatedAtMs: Number(account?.totpUpdatedAtMs || createdAtMs),
-      totpUpdatedDeviceName: String(account?.totpUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
-      recoveryCodesUpdatedAtMs: Number(account?.recoveryCodesUpdatedAtMs || createdAtMs),
-      recoveryCodesUpdatedDeviceName: String(account?.recoveryCodesUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
-      noteUpdatedAtMs: Number(account?.noteUpdatedAtMs || createdAtMs),
-      noteUpdatedDeviceName: String(account?.noteUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
-      passkeyUpdatedAtMs: Number(account?.passkeyUpdatedAtMs || createdAtMs),
-      passkeyUpdatedDeviceName: String(account?.passkeyUpdatedDeviceName || account?.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
-      isDeleted: Boolean(account?.isDeleted),
-      isPermanentlyDeleted: Boolean(account?.isPermanentlyDeleted),
-      deletedAtMs: account?.deletedAtMs == null ? null : Number(account.deletedAtMs),
-      deletedDeviceName: String(account?.deletedDeviceName || "").trim(),
-      lastOperatedDeviceName: String(account?.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
-      createdDeviceName: String(account?.createdDeviceName || account?.lastOperatedDeviceName || "").trim() || DEFAULT_DEVICE_NAME,
-      createdAtMs,
-      updatedAtMs: Number(account?.updatedAtMs || createdAtMs)
-    };
-  }
-  function normalizePasskeyShape(item) {
-    const now = Date.now();
-    const normalizedCompat = normalizePasskeyCreateCompatMethod(item?.createCompatMethod, item?.alg);
-    return {
-      credentialIdB64u: String(item?.credentialIdB64u || item?.id || "").trim(),
-      rpId: normalizeDomain(item?.rpId || ""),
-      userName: normalizeUsername(item?.userName || item?.username || ""),
-      displayName: String(item?.displayName || "").trim(),
-      userHandleB64u: String(item?.userHandleB64u || ""),
-      alg: Number(item?.alg || -7),
-      signCount: Number(item?.signCount || 0),
-      privateJwk: item?.privateJwk || null,
-      publicJwk: item?.publicJwk || null,
-      createdAtMs: Number(item?.createdAtMs || now),
-      updatedAtMs: Number(item?.updatedAtMs || item?.createdAtMs || now),
-      lastUsedAtMs: item?.lastUsedAtMs == null ? null : Number(item.lastUsedAtMs),
-      mode: String(item?.mode || "managed"),
-      createCompatMethod: normalizedCompat,
-      isDeleted: Boolean(item?.isDeleted),
-      isPermanentlyDeleted: Boolean(item?.isPermanentlyDeleted),
-      deletedAtMs: item?.deletedAtMs == null ? null : Number(item.deletedAtMs),
-      deletedDeviceName: String(item?.deletedDeviceName || "").trim()
-    };
-  }
-  function normalizePasskeyCreateCompatMethod(input, alg) {
-    const value = String(input || "").trim().toLowerCase();
-    if (value === "standard" || value === "user_name_fallback" || value === "rs256" || value === "user_name_fallback+rs256" || value === "unknown_linked") {
-      return value;
-    }
-    return Number(alg) === -257 ? "rs256" : "standard";
-  }
-  function normalizeFolderShape(item) {
-    const now = Date.now();
-    const id = normalizeFolderId(item?.id || "");
-    const fixedId = FIXED_NEW_ACCOUNT_FOLDER_ID;
-    const rawName = String(item?.name || "").trim();
-    const safeId = id || (globalThis.crypto?.randomUUID?.() || stableUuidFromText(`folder|${rawName}|${now}`)).toLowerCase();
-    const createdAtMsRaw = Number(item?.createdAtMs ?? now);
-    const createdAtMs = Number.isFinite(createdAtMsRaw) ? createdAtMsRaw : now;
-    const updatedAtMsRaw = Number(item?.updatedAtMs ?? createdAtMs);
-    const updatedAtMs = Number.isFinite(updatedAtMsRaw) ? updatedAtMsRaw : createdAtMs;
-    const safeName = safeId === fixedId ? FIXED_NEW_ACCOUNT_FOLDER_NAME : rawName || `\u672A\u547D\u540D\u6587\u4EF6\u5939 ${safeId.slice(0, 8)}`;
-    return {
-      id: safeId,
-      name: safeName,
-      matchedSites: normalizeSites(item?.matchedSites || []),
-      autoAddMatchingSites: Boolean(item?.autoAddMatchingSites),
-      isDeleted: Boolean(item?.isDeleted),
-      isPermanentlyDeleted: Boolean(item?.isPermanentlyDeleted),
-      deletedAtMs: item?.deletedAtMs == null ? null : Number(item.deletedAtMs),
-      deletedDeviceName: String(item?.deletedDeviceName || "").trim(),
-      createdAtMs,
-      updatedAtMs
-    };
-  }
-  function parseSites(raw) {
-    return normalizeSites(
-      String(raw || "").split(/[\s,;\n\t]+/g).map((value) => value.trim()).filter(Boolean)
-    );
-  }
-  function normalizePasskeyCredentialIds(input) {
-    const values = Array.isArray(input) ? input : [];
-    return [...new Set(values.map((item) => String(item || "").trim()).filter(Boolean))].sort();
-  }
-  function buildUnifiedPasskeys(accountsInput, passkeysInput) {
-    const now = Date.now();
-    const accounts = Array.isArray(accountsInput) ? accountsInput.map(normalizeAccountShape) : [];
-    const storedPasskeys = Array.isArray(passkeysInput) ? passkeysInput.map(normalizePasskeyShape) : [];
-    const linkedById = /* @__PURE__ */ new Map();
-    for (const account of accounts) {
-      const ids = normalizePasskeyCredentialIds(account?.passkeyCredentialIds || []);
-      if (ids.length === 0) continue;
-      const rpId = normalizeDomain(account?.sites && account.sites[0] || account?.canonicalSite || "");
-      const userName = normalizeUsername(account?.username || account?.usernameAtCreate || "");
-      const createdAtMs = Number(account?.createdAtMs || now);
-      for (const rawId of ids) {
-        const credentialIdB64u = String(rawId || "").trim();
-        if (!credentialIdB64u) continue;
-        const existing = linkedById.get(credentialIdB64u);
-        if (existing) {
-          if (!existing.rpId && rpId) {
-            existing.rpId = rpId;
-          }
-          if (!existing.userName && userName) {
-            existing.userName = userName;
-          }
-          continue;
-        }
-        linkedById.set(credentialIdB64u, {
-          credentialIdB64u,
-          rpId,
-          userName,
-          displayName: "",
-          userHandleB64u: "",
-          alg: -7,
-          signCount: 0,
-          privateJwk: null,
-          publicJwk: null,
-          createdAtMs,
-          updatedAtMs: 0,
-          lastUsedAtMs: null,
-          mode: "linked-account",
-          createCompatMethod: "unknown_linked"
-        });
-      }
-    }
-    const linkedPasskeys = Array.from(linkedById.values()).filter((item) => String(item.rpId || "").trim().length > 0);
-    return mergePasskeyCollections2(storedPasskeys, linkedPasskeys);
-  }
-  function normalizeFolderId(value) {
-    return String(value || "").trim().toLowerCase();
-  }
-  function isUuidLower(value) {
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(String(value || ""));
-  }
-  function stableUuidFromText(input) {
-    const raw = String(input || "");
-    const seedParts = [2654435769, 2246822507, 3266489909, 668265263];
-    for (let i = 0; i < raw.length; i += 1) {
-      const code = raw.charCodeAt(i);
-      const idx = i % 4;
-      seedParts[idx] = Math.imul(seedParts[idx] ^ code, 73244475) >>> 0;
-      seedParts[idx] = (seedParts[idx] ^ seedParts[idx] >>> 16) >>> 0;
-    }
-    const hex = seedParts.map((value) => value.toString(16).padStart(8, "0")).join("").slice(0, 32);
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
-  }
-  function normalizeRecordId(account, accountId, createdAtMs) {
-    const direct = normalizeFolderId(account?.recordId || account?.id || "");
-    if (isUuidLower(direct)) return direct;
-    const usernameSeed = String(account?.usernameAtCreate || account?.username || "").trim();
-    const stableSeed = `${String(accountId || "").trim()}|${Number(createdAtMs || 0)}|${usernameSeed}`;
-    return stableUuidFromText(stableSeed);
-  }
-  function normalizeFolderIdList(values) {
-    const source = Array.isArray(values) ? values : [];
-    return [...new Set(source.map(normalizeFolderId).filter(Boolean))].sort();
-  }
-  function withFixedFolder(inputFolders) {
-    const folders = Array.isArray(inputFolders) ? [...inputFolders] : [];
-    const exists = folders.some((item) => normalizeFolderId(item?.id) === FIXED_NEW_ACCOUNT_FOLDER_ID);
-    if (!exists) {
-      folders.push(
-        normalizeFolderShape({
-          id: FIXED_NEW_ACCOUNT_FOLDER_ID,
-          name: FIXED_NEW_ACCOUNT_FOLDER_NAME,
-          createdAtMs: 0
-        })
-      );
-    }
-    return folders.map((folder) => {
-      if (normalizeFolderId(folder?.id) !== FIXED_NEW_ACCOUNT_FOLDER_ID) return folder;
-      return {
-        ...folder,
-        id: FIXED_NEW_ACCOUNT_FOLDER_ID,
-        name: FIXED_NEW_ACCOUNT_FOLDER_NAME
-      };
-    });
-  }
-  function folderDisplayNameById(folderId) {
-    const normalizedFolderId = normalizeFolderId(folderId);
-    const matched = foldersRaw.find((item) => normalizeFolderId(item?.id) === normalizedFolderId);
-    if (!matched) {
-      return `\u672A\u547D\u540D\u6587\u4EF6\u5939 ${normalizedFolderId.slice(0, 8)}`;
-    }
-    return String(matched?.name || `\u672A\u547D\u540D\u6587\u4EF6\u5939 ${normalizedFolderId.slice(0, 8)}`);
-  }
-  function extractAccountFolderIds(account) {
-    if (Array.isArray(account?.folderIds) && account.folderIds.length > 0) {
-      return account.folderIds.map((id) => String(id || ""));
-    }
-    if (account?.folderId != null) {
-      return [String(account.folderId)];
-    }
-    return [];
-  }
-  function sortFoldersForDisplay(inputFolders) {
-    const folders = Array.isArray(inputFolders) ? inputFolders : [];
-    return [...folders].sort((lhs, rhs) => {
-      const lhsId = normalizeFolderId(lhs?.id);
-      const rhsId = normalizeFolderId(rhs?.id);
-      if (lhsId === FIXED_NEW_ACCOUNT_FOLDER_ID && rhsId !== FIXED_NEW_ACCOUNT_FOLDER_ID) return -1;
-      if (rhsId === FIXED_NEW_ACCOUNT_FOLDER_ID && lhsId !== FIXED_NEW_ACCOUNT_FOLDER_ID) return 1;
-      const lhsCreated = Number(lhs?.createdAtMs || 0);
-      const rhsCreated = Number(rhs?.createdAtMs || 0);
-      if (lhsCreated !== rhsCreated) return lhsCreated - rhsCreated;
-      return String(lhs?.name || "").localeCompare(String(rhs?.name || ""));
-    });
-  }
-  function mergeSyncPayloads2(local, remote) {
-    const merged = mergeSyncPayloads(
-      normalizeSyncPayloadShape(local),
-      normalizeSyncPayloadShape(remote),
-      syncMergeHelpers()
-    );
-    merged.accounts = syncAliasGroups2(merged.accounts);
-    merged.passkeys = buildUnifiedPasskeys(merged.accounts, merged.passkeys);
-    return normalizeSyncPayloadShape(merged);
-  }
-  function mergePasskeyCollections2(local, remote) {
-    return mergePasskeyCollections(local, remote, syncMergeHelpers());
-  }
-  function reconcileAccountFolders2(accounts, folders) {
-    return reconcileAccountFolders(accounts, folders, syncMergeHelpers());
-  }
-  function syncMergeHelpers() {
-    return {
-      normalizeAccountShape,
-      normalizeFolderIdList,
-      normalizeFolderId,
-      extractAccountFolderIds,
-      normalizeSites,
-      etldPlusOne,
-      normalizePasskeyCredentialIds,
-      stableUuidFromText,
-      normalizePasskeyShape,
-      normalizePasskeyCreateCompatMethod,
-      normalizeFolderShape,
-      sortFoldersForDisplay,
-      fixedNewAccountFolderId: FIXED_NEW_ACCOUNT_FOLDER_ID,
-      fixedNewAccountFolderName: FIXED_NEW_ACCOUNT_FOLDER_NAME
-    };
-  }
-  function validateSyncSafety(local, remote, merged, mode = SYNC_MODE_MERGE) {
-    return evaluateSyncSafety({ local, remote, merged, mode }, syncMergeHelpers());
-  }
-  function formatTime(ms) {
-    if (ms == null) return "-";
-    const date = new Date(Number(ms));
-    if (Number.isNaN(date.getTime())) return "-";
-    const yy = String(date.getFullYear() % 100);
-    const month = date.getMonth() + 1;
-    const day = date.getDate();
-    const hour = date.getHours();
-    const minute = date.getMinutes();
-    const second = date.getSeconds();
-    return `${yy}-${month}-${day} ${hour}:${minute}:${second}`;
-  }
-  function escapeHtml(value) {
-    return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
-  }
-  function toMultilineHtml(value) {
-    const text = String(value || "").replace(/\r\n?/g, "\n").trim();
-    if (!text) return "-";
-    return escapeHtml(text).replaceAll("\n", "<br/>");
-  }
-  function classifyToastTone(message) {
-    const text = String(message || "").trim();
-    const lower = text.toLowerCase();
-    const errorTokens = [
-      "\u5931\u8D25",
-      "\u9519\u8BEF",
-      "\u65E0\u6CD5",
-      "\u4E0D\u80FD",
-      "\u62D2\u7EDD",
-      "\u65E0\u6548",
-      "\u7981\u6B62",
-      "\u4E0D\u5339\u914D",
-      "\u5DF2\u505C\u6B62",
-      "\u7F3A\u5931",
-      "\u4E0D\u5B58\u5728",
-      "\u8D85\u65F6",
-      "\u5F02\u5E38",
-      "\u672A\u627E\u5230",
-      "\u4E0D\u6B63\u786E",
-      "error",
-      "failed",
-      "fail"
-    ];
-    if (errorTokens.some((token) => text.includes(token) || lower.includes(token))) return "error";
-    const warningTokens = [
-      "\u8B66\u544A",
-      "\u8BF7\u5148",
-      "\u8BF7\u786E\u8BA4",
-      "\u5DF2\u53D6\u6D88",
-      "\u53D6\u6D88",
-      "\u6682\u65E0",
-      "\u672A\u542F\u7528",
-      "\u672A\u914D\u7F6E",
-      "\u6CE8\u610F",
-      "\u8DF3\u8FC7",
-      "\u672A\u9009\u62E9",
-      "\u4E0D\u5B8C\u6574",
-      "warning",
-      "warn",
-      "cancel"
-    ];
-    if (warningTokens.some((token) => text.includes(token) || lower.includes(token))) return "warning";
-    return "success";
-  }
-  function setStatus(message) {
-    const text = String(message || "").trim();
-    if (!text) return;
-    dom.status.textContent = text;
-    showOptionsToast(text);
-  }
-  function setDeviceStatus(message) {
-    dom.deviceStatus.textContent = message;
-  }
-  function showOptionsToast(message) {
-    let toast = document.getElementById("optionsToast");
-    if (!(toast instanceof HTMLDivElement)) {
-      toast = document.createElement("div");
-      toast.id = "optionsToast";
-      toast.className = "options-toast";
-      document.body.appendChild(toast);
-    }
-    const text = String(message || "");
-    const tone = classifyToastTone(text);
-    toast.textContent = text;
-    toast.classList.remove("options-toast-success", "options-toast-error", "options-toast-warning");
-    toast.classList.add(`options-toast-${tone}`);
-    toast.classList.add("options-toast-show");
-    if (optionsToastTimer != null) {
-      clearTimeout(optionsToastTimer);
-    }
-    optionsToastTimer = window.setTimeout(() => {
-      const current = document.getElementById("optionsToast");
-      if (!(current instanceof HTMLDivElement)) return;
-      current.classList.remove("options-toast-show");
-    }, OPTIONS_TOAST_DURATION_MS);
-  }
-  function hasTotpSecret(value) {
-    return String(value || "").trim().length > 0;
-  }
-  function isValidTotpSecret(secret) {
-    const normalized = normalizeTotpSecret(secret);
-    if (!normalized) return false;
-    return decodeBase32(normalized).length > 0;
-  }
-  async function pasteRawTotpSecretFromClipboard({ totpInput }) {
-    try {
-      const raw = String(await navigator.clipboard.readText() || "");
-      const secret = normalizeTotpSecret(raw);
-      if (!secret) {
-        setStatus("\u526A\u8D34\u677F\u6587\u672C\u4E3A\u7A7A");
-        return;
-      }
-      if (!isValidTotpSecret(secret)) {
-        setStatus("\u7C98\u8D34\u5931\u8D25\uFF1A\u539F\u59CB\u5BC6\u94A5\u4E0D\u662F\u6709\u6548 TOTP");
-        return;
-      }
-      totpInput.value = secret;
-      setStatus("\u5DF2\u586B\u5145 TOTP \u539F\u59CB\u5BC6\u94A5");
-    } catch (error) {
-      setStatus(`\u8BFB\u53D6\u526A\u8D34\u677F\u5931\u8D25: ${error.message}`);
-    }
-  }
-  async function pasteOtpAuthUriFromClipboard({ totpInput, sitesInput, usernameInput }) {
-    try {
-      const raw = String(await navigator.clipboard.readText() || "");
-      const payload = parseOtpAuthUriPayload(raw);
-      if (!payload) {
-        setStatus("\u7C98\u8D34\u5931\u8D25\uFF1A\u4E0D\u662F\u6709\u6548\u7684 otpauth://totp URI");
-        return;
-      }
-      applyOtpAuthPayloadToInputs(payload, {
-        totpInput,
-        sitesInput,
-        usernameInput,
-        includeSiteAndUsername: true
-      });
-      setStatus("\u5DF2\u89E3\u6790 otpauth URI\uFF0C\u5E76\u586B\u5145 TOTP/\u7AD9\u70B9\u522B\u540D/\u7528\u6237\u540D");
-    } catch (error) {
-      setStatus(`\u8BFB\u53D6\u526A\u8D34\u677F\u5931\u8D25: ${error.message}`);
-    }
-  }
-  async function pasteOtpAuthQrFromClipboard({ totpInput, sitesInput, usernameInput }) {
-    try {
-      const payloadText = await parseQrPayloadFromClipboard();
-      if (!payloadText) {
-        setStatus("\u7C98\u8D34\u5931\u8D25\uFF1A\u526A\u8D34\u677F\u6CA1\u6709\u53EF\u8BC6\u522B\u7684\u4E8C\u7EF4\u7801\u56FE\u7247");
-        return;
-      }
-      const payload = parseOtpAuthUriPayload(payloadText);
-      if (!payload) {
-        setStatus("\u7C98\u8D34\u5931\u8D25\uFF1A\u4E8C\u7EF4\u7801\u5185\u5BB9\u4E0D\u662F\u6709\u6548\u7684 otpauth://totp URI");
-        return;
-      }
-      applyOtpAuthPayloadToInputs(payload, {
-        totpInput,
-        sitesInput,
-        usernameInput,
-        includeSiteAndUsername: true
-      });
-      setStatus("\u5DF2\u89E3\u6790\u4E8C\u7EF4\u7801\uFF0C\u5E76\u586B\u5145 TOTP/\u7AD9\u70B9\u522B\u540D/\u7528\u6237\u540D");
-    } catch (error) {
-      setStatus(`\u8BC6\u522B\u4E8C\u7EF4\u7801\u5931\u8D25: ${error.message}`);
-    }
-  }
-  function applyOtpAuthPayloadToInputs(payload, { totpInput, sitesInput, usernameInput, includeSiteAndUsername }) {
-    totpInput.value = payload.secret;
-    if (!includeSiteAndUsername) return;
-    if (sitesInput && payload.siteAlias) {
-      sitesInput.value = payload.siteAlias;
-    }
-    if (usernameInput && payload.username) {
-      usernameInput.value = payload.username;
-    }
-  }
-  function parseOtpAuthUriPayload(raw) {
-    const trimmed = String(raw || "").trim();
-    if (!trimmed) return null;
-    let parsed;
-    try {
-      parsed = new URL(trimmed);
-    } catch {
-      return null;
-    }
-    if (String(parsed.protocol || "").toLowerCase() !== "otpauth:") return null;
-    if (String(parsed.hostname || "").toLowerCase() !== "totp") return null;
-    let secretRaw = "";
-    let issuerFromQuery = "";
-    for (const [key, value] of parsed.searchParams.entries()) {
-      const normalizedKey = String(key || "").toLowerCase();
-      if (normalizedKey === "secret" && !secretRaw) {
-        secretRaw = String(value || "");
-      } else if (normalizedKey === "issuer" && !issuerFromQuery) {
-        issuerFromQuery = String(value || "").trim();
-      }
-    }
-    const secret = normalizeTotpSecret(secretRaw);
-    if (!isValidTotpSecret(secret)) return null;
-    let decodedPath = String(parsed.pathname || "");
-    try {
-      decodedPath = decodeURIComponent(decodedPath);
-    } catch {
-    }
-    const label = decodedPath.replace(/^\/+/g, "").trim();
-    let labelIssuer = "";
-    let labelUsername = "";
-    const colonIndex = label.indexOf(":");
-    if (colonIndex >= 0) {
-      labelIssuer = label.slice(0, colonIndex).trim();
-      labelUsername = label.slice(colonIndex + 1).trim();
-    } else {
-      labelUsername = label.trim();
-    }
-    const issuer = issuerFromQuery || labelIssuer;
-    return {
-      secret,
-      siteAlias: resolveImportedSiteAlias({ issuer, username: labelUsername }),
-      username: labelUsername || ""
-    };
-  }
-  function siteAliasFromIssuer(issuer) {
-    const compactIssuer = String(issuer || "").trim().replaceAll(" ", "");
-    if (!compactIssuer) return "";
-    const normalized = normalizeDomain(compactIssuer);
-    if (!normalized) return "";
-    if (normalized.includes(".")) {
-      return normalized;
-    }
-    return `${normalized}.com`;
-  }
-  function resolveImportedSiteAlias({ issuer, username }) {
-    const byIssuer = siteAliasFromIssuer(issuer);
-    if (byIssuer) return byIssuer;
-    const byUsername = siteAliasFromUsername(username);
-    if (byUsername) return byUsername;
-    return "";
-  }
-  function siteAliasFromUsername(username) {
-    const raw = String(username || "").trim();
-    if (!raw) return "";
-    const atIndex = raw.lastIndexOf("@");
-    if (atIndex >= 0 && atIndex < raw.length - 1) {
-      return normalizeDomain(raw.slice(atIndex + 1));
-    }
-    return normalizeDomain(raw);
-  }
-  async function readGoogleAuthenticatorMigrationFromClipboard() {
-    let rawText = "";
-    if (typeof navigator?.clipboard?.readText === "function") {
-      try {
-        rawText = String(await navigator.clipboard.readText() || "").trim();
-      } catch {
-        rawText = "";
-      }
-    }
-    let parsed = parseGoogleAuthenticatorMigrationUriPayload(rawText);
-    if (parsed) return parsed;
-    const qrPayload = await parseQrPayloadFromClipboard();
-    if (!qrPayload) {
-      return null;
-    }
-    parsed = parseGoogleAuthenticatorMigrationUriPayload(qrPayload);
-    if (parsed) return parsed;
-    throw new Error("\u4E8C\u7EF4\u7801\u5185\u5BB9\u4E0D\u662F\u6709\u6548\u7684\u8C37\u6B4C\u9A8C\u8BC1\u5668\u5BFC\u51FA\u6570\u636E");
-  }
-  async function readGoogleAuthenticatorMigrationFromFiles(files) {
-    if (typeof BarcodeDetector === "undefined") {
-      throw new Error("\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u4E8C\u7EF4\u7801\u8BC6\u522B");
-    }
-    const detector = new BarcodeDetector({ formats: ["qr_code"] });
-    const migrations = [];
-    for (const file of Array.isArray(files) ? files : []) {
-      const payloadText = await parseQrPayloadFromBlob(file, detector);
-      if (!payloadText) continue;
-      const parsed = parseGoogleAuthenticatorMigrationUriPayload(payloadText);
-      if (parsed) {
-        migrations.push(parsed);
-      }
-    }
-    if (migrations.length === 0) return null;
-    return mergeGoogleAuthenticatorMigrations(migrations);
-  }
-  function parseGoogleAuthenticatorMigrationUriPayload(raw) {
-    const trimmed = String(raw || "").trim();
-    if (!trimmed) return null;
-    let parsed;
-    try {
-      parsed = new URL(trimmed);
-    } catch {
-      return null;
-    }
-    if (String(parsed.protocol || "").toLowerCase() !== "otpauth-migration:") return null;
-    if (String(parsed.hostname || "").toLowerCase() !== "offline") return null;
-    const payloadB64 = String(parsed.searchParams.get("data") || "").trim();
-    if (!payloadB64) return null;
-    const bytes = decodeBase64ToBytes(payloadB64);
-    if (!bytes || bytes.length === 0) return null;
-    return decodeGoogleAuthenticatorMigrationPayload(bytes);
-  }
-  function decodeGoogleAuthenticatorMigrationPayload(bytes) {
-    const payload = {
-      entries: [],
-      skippedCount: 0,
-      batchSize: 0,
-      batchIndex: 0
-    };
-    let offset = 0;
-    while (offset < bytes.length) {
-      const tag = readProtoVarint(bytes, offset);
-      if (!tag) break;
-      offset = tag.nextOffset;
-      const fieldNumber = tag.value >>> 3;
-      const wireType = tag.value & 7;
-      if (fieldNumber === 1 && wireType === 2) {
-        const chunk = readProtoLengthDelimited(bytes, offset);
-        if (!chunk) break;
-        offset = chunk.nextOffset;
-        const entry = decodeGoogleAuthenticatorOtpParameters(chunk.value);
-        if (entry) {
-          payload.entries.push(entry);
-        } else {
-          payload.skippedCount += 1;
-        }
-        continue;
-      }
-      if (fieldNumber === 3 && wireType === 0) {
-        const value = readProtoVarint(bytes, offset);
-        if (!value) break;
-        payload.batchSize = value.value;
-        offset = value.nextOffset;
-        continue;
-      }
-      if (fieldNumber === 4 && wireType === 0) {
-        const value = readProtoVarint(bytes, offset);
-        if (!value) break;
-        payload.batchIndex = value.value;
-        offset = value.nextOffset;
-        continue;
-      }
-      offset = skipProtoField(bytes, offset, wireType);
-      if (offset < 0) break;
-    }
-    return payload;
-  }
-  function decodeGoogleAuthenticatorOtpParameters(bytes) {
-    let secretBytes = null;
-    let name = "";
-    let issuer = "";
-    let algorithm = 1;
-    let digits = 1;
-    let type = 2;
-    let offset = 0;
-    while (offset < bytes.length) {
-      const tag = readProtoVarint(bytes, offset);
-      if (!tag) break;
-      offset = tag.nextOffset;
-      const fieldNumber = tag.value >>> 3;
-      const wireType = tag.value & 7;
-      if (fieldNumber === 1 && wireType === 2) {
-        const chunk = readProtoLengthDelimited(bytes, offset);
-        if (!chunk) return null;
-        secretBytes = chunk.value;
-        offset = chunk.nextOffset;
-        continue;
-      }
-      if (fieldNumber === 2 && wireType === 2) {
-        const chunk = readProtoLengthDelimited(bytes, offset);
-        if (!chunk) return null;
-        name = decodeProtoUtf8(chunk.value);
-        offset = chunk.nextOffset;
-        continue;
-      }
-      if (fieldNumber === 3 && wireType === 2) {
-        const chunk = readProtoLengthDelimited(bytes, offset);
-        if (!chunk) return null;
-        issuer = decodeProtoUtf8(chunk.value);
-        offset = chunk.nextOffset;
-        continue;
-      }
-      if ((fieldNumber === 4 || fieldNumber === 5 || fieldNumber === 6) && wireType === 0) {
-        const value = readProtoVarint(bytes, offset);
-        if (!value) return null;
-        if (fieldNumber === 4) algorithm = value.value;
-        if (fieldNumber === 5) digits = value.value;
-        if (fieldNumber === 6) type = value.value;
-        offset = value.nextOffset;
-        continue;
-      }
-      offset = skipProtoField(bytes, offset, wireType);
-      if (offset < 0) return null;
-    }
-    if (!secretBytes || secretBytes.length === 0) return null;
-    if (type !== 2 || algorithm !== 1 || digits !== 1) return null;
-    const labelParts = parseImportedOtpLabel(name);
-    const effectiveIssuer = String(issuer || "").trim() || labelParts.issuer;
-    const username = labelParts.username || String(name || "").trim();
-    const siteAlias = resolveImportedSiteAlias({ issuer: effectiveIssuer, username });
-    const secret = bytesToBase32(secretBytes);
-    if (!secret || !siteAlias || !isValidTotpSecret(secret)) return null;
-    return {
-      secret,
-      siteAlias,
-      username
-    };
-  }
-  function parseImportedOtpLabel(label) {
-    const text = String(label || "").trim();
-    if (!text) {
-      return { issuer: "", username: "" };
-    }
-    const colonIndex = text.indexOf(":");
-    if (colonIndex < 0) {
-      return { issuer: "", username: text };
-    }
-    return {
-      issuer: text.slice(0, colonIndex).trim(),
-      username: text.slice(colonIndex + 1).trim()
-    };
-  }
-  function readProtoVarint(bytes, startOffset) {
-    let result = 0;
-    let shift = 0;
-    let offset = startOffset;
-    while (offset < bytes.length && shift <= 35) {
-      const byte = bytes[offset];
-      result |= (byte & 127) << shift;
-      offset += 1;
-      if ((byte & 128) === 0) {
-        return { value: result >>> 0, nextOffset: offset };
-      }
-      shift += 7;
-    }
-    return null;
-  }
-  function readProtoLengthDelimited(bytes, startOffset) {
-    const lengthValue = readProtoVarint(bytes, startOffset);
-    if (!lengthValue) return null;
-    const start = lengthValue.nextOffset;
-    const end = start + lengthValue.value;
-    if (end > bytes.length) return null;
-    return {
-      value: bytes.slice(start, end),
-      nextOffset: end
-    };
-  }
-  function skipProtoField(bytes, startOffset, wireType) {
-    if (wireType === 0) {
-      const value = readProtoVarint(bytes, startOffset);
-      return value ? value.nextOffset : -1;
-    }
-    if (wireType === 1) {
-      return startOffset + 8 <= bytes.length ? startOffset + 8 : -1;
-    }
-    if (wireType === 2) {
-      const chunk = readProtoLengthDelimited(bytes, startOffset);
-      return chunk ? chunk.nextOffset : -1;
-    }
-    if (wireType === 5) {
-      return startOffset + 4 <= bytes.length ? startOffset + 4 : -1;
-    }
-    return -1;
-  }
-  function decodeBase64ToBytes(input) {
-    const normalized = String(input || "").trim().replace(/-/g, "+").replace(/_/g, "/");
-    if (!normalized) return new Uint8Array();
-    const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
-    const bin = atob(padded);
-    const out = new Uint8Array(bin.length);
-    for (let index = 0; index < bin.length; index += 1) {
-      out[index] = bin.charCodeAt(index);
-    }
-    return out;
-  }
-  function decodeProtoUtf8(bytes) {
-    return new TextDecoder().decode(bytes).trim();
-  }
-  function bytesToBase32(bytes) {
-    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-    let output = "";
-    let buffer = 0;
-    let bitsInBuffer = 0;
-    for (const byte of bytes) {
-      buffer = buffer << 8 | byte;
-      bitsInBuffer += 8;
-      while (bitsInBuffer >= 5) {
-        output += alphabet[buffer >> bitsInBuffer - 5 & 31];
-        bitsInBuffer -= 5;
-      }
-    }
-    if (bitsInBuffer > 0) {
-      output += alphabet[buffer << 5 - bitsInBuffer & 31];
-    }
-    return output;
-  }
-  function findImportedTotpAccountIndex(accounts, entry) {
-    return findImportedBrowserAccountIndex(accounts, {
-      sites: [entry.siteAlias],
-      username: entry.username || ""
-    });
-  }
-  function applyImportedTotpEntryToAccount(account, entry, nowMs, targetFolderId = "") {
-    const next = normalizeAccountShape(account);
-    if (next.isPermanentlyDeleted) return next;
-    let changed = false;
-    const mergedSites = normalizeSites([...next.sites || [], entry.siteAlias || ""]);
-    if (JSON.stringify(mergedSites) !== JSON.stringify(next.sites || [])) {
-      next.sites = mergedSites;
-      changed = true;
-    }
-    if (entry.username && entry.username !== next.username) {
-      next.username = entry.username;
-      next.usernameUpdatedAtMs = nowMs;
-      changed = true;
-    }
-    if (entry.secret && entry.secret !== next.totpSecret) {
-      next.totpSecret = entry.secret;
-      next.totpUpdatedAtMs = nowMs;
-      changed = true;
-    }
-    if (targetFolderId) {
-      const mergedFolderIds = normalizeFolderIdList([...next.folderIds || [], targetFolderId]);
-      if (JSON.stringify(mergedFolderIds) !== JSON.stringify(normalizeFolderIdList(next.folderIds || []))) {
-        next.folderIds = mergedFolderIds;
-        next.folderId = mergedFolderIds[0] || null;
-        changed = true;
-      }
-    }
-    if (next.isDeleted && !next.isPermanentlyDeleted) {
-      next.isDeleted = false;
-      next.deletedAtMs = null;
-      next.deletedDeviceName = "";
-      changed = true;
-    }
-    if (changed) {
-      next.updatedAtMs = nowMs;
-      next.lastOperatedDeviceName = currentImportDeviceName();
-    }
-    return next;
-  }
-  function buildGoogleAuthenticatorImportSuffix({ importedCount, skippedCount, unchangedCount, batchSize, batchIndex }) {
-    let suffix = `\uFF0C\u89E3\u6790 ${Number(importedCount || 0)} \u6761`;
-    if (Number(skippedCount || 0) > 0) {
-      suffix += `\uFF0C\u8DF3\u8FC7 ${Number(skippedCount)} \u6761`;
-    }
-    if (Number(unchangedCount || 0) > 0) {
-      suffix += `\uFF0C\u672A\u53D8\u5316 ${Number(unchangedCount)} \u6761`;
-    }
-    if (Number(batchSize || 0) > 1) {
-      suffix += `\uFF0C\u5F53\u524D\u6279\u6B21 ${Number(batchIndex || 0) + 1}/${Number(batchSize)}`;
-    }
-    return suffix;
-  }
-  function mergeGoogleAuthenticatorMigrations(migrations) {
-    const merged = {
-      entries: [],
-      skippedCount: 0,
-      batchSize: 0,
-      batchIndex: 0
-    };
-    const seen = /* @__PURE__ */ new Set();
-    for (const migration of Array.isArray(migrations) ? migrations : []) {
-      merged.skippedCount += Number(migration?.skippedCount || 0);
-      merged.batchSize += Math.max(Number(migration?.batchSize || 0), migration?.entries?.length ? 1 : 0);
-      for (const entry of Array.isArray(migration?.entries) ? migration.entries : []) {
-        const key = [
-          String(entry?.siteAlias || ""),
-          String(entry?.username || ""),
-          String(entry?.secret || "")
-        ].join("|");
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        merged.entries.push(entry);
-      }
-    }
-    merged.batchSize = Math.max(merged.batchSize, Array.isArray(migrations) ? migrations.length : 0);
-    return merged;
-  }
-  async function parseQrPayloadFromClipboard() {
-    if (typeof navigator?.clipboard?.read !== "function") {
-      throw new Error("\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u8BFB\u53D6\u526A\u8D34\u677F\u56FE\u7247");
-    }
-    if (typeof BarcodeDetector === "undefined") {
-      throw new Error("\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u4E8C\u7EF4\u7801\u8BC6\u522B");
-    }
-    const detector = new BarcodeDetector({ formats: ["qr_code"] });
-    const items = await navigator.clipboard.read();
-    for (const item of items) {
-      const imageType = item.types.find((type) => String(type).startsWith("image/"));
-      if (!imageType) continue;
-      const blob = await item.getType(imageType);
-      const payload = await parseQrPayloadFromBlob(blob, detector);
-      if (payload) return payload;
-    }
-    return "";
-  }
-  async function parseQrPayloadFromBlob(blob, detector) {
-    if (!blob) return "";
-    const bitmap = await createImageBitmap(blob);
-    try {
-      const results = await detector.detect(bitmap);
-      for (const result of results) {
-        const payload = String(result?.rawValue || "").trim();
-        if (payload) return payload;
-      }
-      return "";
-    } finally {
-      if (typeof bitmap.close === "function") {
-        bitmap.close();
-      }
-    }
-  }
-  function createTotpCopyButton({ accountId, username, totpSecret }) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "totp-copy-button";
-    button.dataset.passTotpSecret = String(totpSecret || "");
-    button.dataset.passTotpAccountId = String(accountId || "");
-    button.dataset.passTotpCode = "";
-    button.textContent = "\u9A8C\u8BC1\u7801: \u8BA1\u7B97\u4E2D...";
-    button.addEventListener("click", async () => {
-      const code = String(button.dataset.passTotpCode || "");
-      if (!code) {
-        setStatus("\u9A8C\u8BC1\u7801\u6682\u4E0D\u53EF\u7528");
-        return;
-      }
-      try {
-        await navigator.clipboard.writeText(code);
-        const label = String(username || accountId || "");
-        setStatus(`\u9A8C\u8BC1\u7801\u5DF2\u590D\u5236: ${label}`);
-      } catch (error) {
-        setStatus(`\u590D\u5236\u9A8C\u8BC1\u7801\u5931\u8D25: ${error.message}`);
-      }
-    });
-    return button;
-  }
-  function startTotpRefreshTicker() {
-    if (totpRefreshTimer != null) return;
-    totpRefreshTimer = window.setInterval(() => {
-      void refreshVisibleTotpButtons();
-    }, TOTP_REFRESH_INTERVAL_MS);
-  }
-  async function refreshVisibleTotpButtons() {
-    const buttons = Array.from(document.querySelectorAll(".totp-copy-button[data-pass-totp-secret]"));
-    if (buttons.length === 0) return;
-    const bySecret = /* @__PURE__ */ new Map();
-    for (const button of buttons) {
-      const rawSecret = String(button.dataset.passTotpSecret || "");
-      const secret = normalizeTotpSecret(rawSecret);
-      const key = secret || "__invalid__";
-      if (!bySecret.has(key)) {
-        bySecret.set(key, []);
-      }
-      bySecret.get(key).push(button);
-    }
-    for (const [secret, group] of bySecret.entries()) {
-      const result = secret === "__invalid__" ? null : await generateTotpCode(secret, Date.now());
-      for (const button of group) {
-        applyTotpResultToButton(button, result);
-      }
-    }
-  }
-  function applyTotpResultToButton(button, result) {
-    if (!(button instanceof HTMLButtonElement)) return;
-    if (!button.isConnected) return;
-    if (!result) {
-      button.textContent = "\u9A8C\u8BC1\u7801: TOTP \u5BC6\u94A5\u65E0\u6548";
-      button.dataset.passTotpCode = "";
-      button.disabled = true;
-      button.classList.add("totp-invalid");
-      return;
-    }
-    button.textContent = `\u9A8C\u8BC1\u7801: ${result.code} (${result.remainingSeconds}s)`;
-    button.dataset.passTotpCode = result.code;
-    button.disabled = false;
-    button.classList.remove("totp-invalid");
-  }
-  function normalizeTotpSecret(input) {
-    return String(input || "").trim().toUpperCase().replaceAll(" ", "").replaceAll("-", "").replace(/=+$/g, "");
-  }
-  function decodeBase32(secret) {
-    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-    let bits = 0;
-    let value = 0;
-    const output = [];
-    for (const char of secret) {
-      const index = alphabet.indexOf(char);
-      if (index < 0) {
-        return new Uint8Array();
-      }
-      value = value << 5 | index;
-      bits += 5;
-      if (bits >= 8) {
-        output.push(value >>> bits - 8 & 255);
-        bits -= 8;
-      }
-    }
-    return new Uint8Array(output);
-  }
-  async function generateTotpCode(secret, nowMs) {
-    const normalized = normalizeTotpSecret(secret);
-    if (!normalized) return null;
-    const keyBytes = decodeBase32(normalized);
-    if (keyBytes.length === 0) return null;
-    const counter = BigInt(Math.floor(nowMs / 1e3 / TOTP_PERIOD_SECONDS));
-    const counterBytes = new Uint8Array(8);
-    let tempCounter = counter;
-    for (let i = 7; i >= 0; i -= 1) {
-      counterBytes[i] = Number(tempCounter & 0xffn);
-      tempCounter >>= 8n;
-    }
-    let cryptoKey;
-    try {
-      cryptoKey = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
-    } catch {
-      return null;
-    }
-    const signature = new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, counterBytes));
-    if (signature.length < 20) return null;
-    const offset = signature[signature.length - 1] & 15;
-    if (offset + 3 >= signature.length) return null;
-    const binary = (signature[offset] & 127) << 24 | (signature[offset + 1] & 255) << 16 | (signature[offset + 2] & 255) << 8 | signature[offset + 3] & 255;
-    const code = String(binary % 10 ** TOTP_DIGITS).padStart(TOTP_DIGITS, "0");
-    const remainingSeconds = TOTP_PERIOD_SECONDS - Math.floor(nowMs / 1e3) % TOTP_PERIOD_SECONDS;
-    return { code, remainingSeconds };
-  }
-})();
+H
+»JKúY›\ù
+ãåäN¬à€€ú›^HH›ö[ô ]KôŸ]U—]J
+JKúY›\ù
+ãåäN¬à€€ú››\àH›ö[ô ]KôŸ]U“›\ú 
+JKúY›\ù
+ãåäN¬à€€ú›Z[ù]HH›ö[ô ]KôŸ]U”Z[ù]\ 
+JKúY›\ù
+ãåäN¬à€€ú›ŸX€€ôH›ö[ô ]KôŸ]U‘ŸX€€ô 
+JKúY›\ù
+ãåäN¬àô]\õà	ﬁ^_I€[€ùIŸ^_I⁄›\üI€Z[ù]_I‹ŸX€€ôX¬àBàù[ò›[€àùZ[Xÿ€›[ùY
+ÿ[õ€öXÿ[⁄]K\Ÿ\õò[YK‹ôX]Y]\ H¬àô]\õà	ÿÿ[õ€öXÿ[⁄]_KIŸõ‹õX]VSSQ[\‹ ‹ôX]Y]\ _KI›\Ÿ\õò[Y_X¬àBàù[ò›[€àﬁ[ò–[X\—‹õ›\Ãä[ú]Xÿ€›[ùÀ‹[€ú»HﬂJH¬à€€ú›[\ú»H¬à€XZ[ê[X\—‹õ›\Ÿ^Kàõ‹õX[^ôQ€XZ[ãà]\”€ôBàN¬à€€ú›ô\›[Hﬁ[ò–[X\—‹õ›\ [ú]Xÿ€›[ùÀ[\úÀ¬àõ›”\Œà‹[€úÀõõ›”\Àà]öXŸSò[YNà‹[€úÀô]öXŸSò[YHêúõ›‹Ÿ\àÇàJN¬àô]\õàô\›[òXÿ€›[ùŒ¬àBÇàÀ»ããÀããÿ€‹ôK‹\‹◊ÿ€‹ôK⁄úÀ‹ﬁ[ò◊€Y\ôŸWÿ€‹ôKöú¬àù[ò›[€à\”ù[Xô\äò[YJH¬à€€ú›\úŸYHù[Xô\äò[YH
+N¬àô]\õàù[Xô\ãö\—ö[ö]J\úŸY
+H»\úŸYà¬àBàù[ò›[€à\‘›ö[ô ò[YJH¬àô]\õà›ö[ô ò[YHàäN¬àBàù[ò›[€à›XõUYUò[YJò[YJH¬àô]\õà\‘›ö[ô ò[YJKùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬àBàù[ò›[€àXÿ€›[ù€›\òŸUYRŸ^JXÿ€›[ù
+H¬àô]\õà¬à›XõUYUò[YJXÿ€›[ùÀò‹ôX]Y]öXŸSò[YJKà›XõUYUò[YJXÿ€›[ùÀõ\›‹\ò]Y]öXŸSò[YJKà›XõUYUò[YJXÿ€›[ùÀòXÿ€›[ùY
+Kà›XõUYUò[YJXÿ€›[ùÀòÿ[õ€öXÿ[⁄]JKà›XõUYUò[YJXÿ€›[ùÀù\Ÿ\õò[YP]‹ôX]JKà›XõUYUò[YJXÿ€›[ùÀúôX€‹ôYXÿ€›[ùÀöY
+BàKöõ⁄[äóäN¬àBàù[ò›[€àôYô\êXÿ€›[ù€›\òŸJYùöY⁄
+H¬àô]\õàXÿ€›[ù€›\òŸUYRŸ^JYù
+HèHXÿ€›[ù€›\òŸUYRŸ^JöY⁄
+H»YùàöY⁄¬àBàù[ò›[€àô\]Z\ôQù[ò›[€ä[\úÀò[YJH¬à€€ú›ÿ[ôY]HH[\úœÀñ€ò[YWN¬àYà
+\[Ÿàÿ[ôY]HOOHôù[ò›[€àäH¬àõ›»ô]»\úõ‹äﬁ[ò◊€Y\ôŸWÿ€‹ôHZ\‹⁄[ô»[\éà	€ò[Y_X
+N¬àBàô]\õàÿ[ôY]N¬àBàù[ò›[€àô\€€ôR[\ú [\ú H¬àô]\õà¬àõ‹õX[^ôPXÿ€›[ù⁄\Nàô\]Z\ôQù[ò›[€ä[\úÀõõ‹õX[^ôPXÿ€›[ù⁄\HäKàõ‹õX[^ôQõ€\íY\›àô\]Z\ôQù[ò›[€ä[\úÀõõ‹õX[^ôQõ€\íY\›äKàõ‹õX[^ôQõ€\íYàô\]Z\ôQù[ò›[€ä[\úÀõõ‹õX[^ôQõ€\íYäKà^òX›Xÿ€›[ùõ€\íYŒàô\]Z\ôQù[ò›[€ä[\úÀô^òX›Xÿ€›[ùõ€\íY»äKàõ‹õX[^ôT⁄]\Œàô\]Z\ôQù[ò›[€ä[\úÀõõ‹õX[^ôT⁄]\»äKà]\”€ôNàô\]Z\ôQù[ò›[€ä[\úÀô]\”€ôHäKàõ‹õX[^ôT\‹⁄Ÿ^P‹ôY[ùX[YŒàô\]Z\ôQù[ò›[€ä[\úÀõõ‹õX[^ôT\‹⁄Ÿ^P‹ôY[ùX[Y»äKà›XõU]ZYúõ€U^àô\]Z\ôQù[ò›[€ä[\úÀú›XõU]ZYúõ€U^äKàõ‹õX[^ôT\‹⁄Ÿ^T⁄\Nàô\]Z\ôQù[ò›[€ä[\úÀõõ‹õX[^ôT\‹⁄Ÿ^T⁄\HäKàõ‹õX[^ôT\‹⁄Ÿ^P‹ôX]P€€\]Y]Ÿàô\]Z\ôQù[ò›[€ä[\úÀõõ‹õX[^ôT\‹⁄Ÿ^P‹ôX]P€€\]Y]ŸäKàõ‹õX[^ôQõ€\î⁄\Nàô\]Z\ôQù[ò›[€ä[\úÀõõ‹õX[^ôQõ€\î⁄\HäKà€‹ùõ€\ú—õ‹ë\‹^Nàô\]Z\ôQù[ò›[€ä[\úÀú€‹ùõ€\ú—õ‹ë\‹^HäKàö^Yô]–Xÿ€›[ùõ€\íYà\‘›ö[ô [\úœÀôö^Yô]–Xÿ€›[ùõ€\íY
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+Kàö^Yô]–Xÿ€›[ùõ€\ìò[YNà\‘›ö[ô [\úœÀôö^Yô]–Xÿ€›[ùõ€\ìò[YJKùö[J
+HóMçPåNçóML—ç»ÇàN¬àBàù[ò›[€àô]Ÿ\ëöY[
+’ò[YK’\]Y]—]öXŸSò[YK–Xÿ€›[ù\]Y]ö’ò[YKö’\]Y]ö—]öXŸSò[YKö–Xÿ€›[ù\]Y]
+H¬à€€ú›Yù\]YH\”ù[Xô\ä’\]Y]
+N¬à€€ú›öY⁄\]YH\”ù[Xô\äö’\]Y]
+N¬àYà
+Yù\]YàöY⁄\]Y
+Hô]\õà»ò[YNà\‘›ö[ô ’ò[YJK\]Y]\ŒàYù\]Y]öXŸSò[YNà\‘›ö[ô —]öXŸSò[YJHN¬àYà
+öY⁄\]YàYù\]Y
+Hô]\õà»ò[YNà\‘›ö[ô ö’ò[YJK\]Y]\ŒàöY⁄\]Y]öXŸSò[YNà\‘›ö[ô ö—]öXŸSò[YJHN¬à€€ú›Yùò[YHH\‘›ö[ô ’ò[YJN¬à€€ú›öY⁄ò[YHH\‘›ö[ô ö’ò[YJN¬àYà
+Yùò[YHOOHöY⁄ò[YJH¬à€€ú›Yù]öXŸLàH›XõUYUò[YJ—]öXŸSò[YJN¬à€€ú›öY⁄]öXŸLàH›XõUYUò[YJö—]öXŸSò[YJN¬à€€ú›]öXŸSò[YHHYù]öXŸLàèHöY⁄]öXŸLà»\‘›ö[ô —]öXŸSò[YJKùö[J
+Hà\‘›ö[ô ö—]öXŸSò[YJKùö[J
+N¬àô]\õà¬àò[YNàYùò[YKà\]Y]\ŒàYù\]Yà]öXŸSò[YNà]öXŸSò[YHQêUS—UíP—W”êSQBàN¬àBàYà
+[Yùò[YH	âàöY⁄ò[YJH¬àô]\õà»ò[YNàöY⁄ò[YK\]Y]\ŒàöY⁄\]Y]öXŸSò[YNà\‘›ö[ô ö—]öXŸSò[YJHN¬àBàYà
+Yùò[YH	âà\öY⁄ò[YJH¬àô]\õà»ò[YNàYùò[YK\]Y]\ŒàYù\]Y]öXŸSò[YNà\‘›ö[ô —]öXŸSò[YJHN¬àBà€€ú›YùXÿ€›[ù\]YH\”ù[Xô\ä–Xÿ€›[ù\]Y]
+N¬à€€ú›öY⁄Xÿ€›[ù\]YH\”ù[Xô\äö–Xÿ€›[ù\]Y]
+N¬àYà
+YùXÿ€›[ù\]YàöY⁄Xÿ€›[ù\]Y
+H¬àô]\õà»ò[YNàYùò[YK\]Y]\ŒàYù\]Y]öXŸSò[YNà\‘›ö[ô —]öXŸSò[YJHN¬àBàYà
+öY⁄Xÿ€›[ù\]YàYùXÿ€›[ù\]Y
+H¬àô]\õà»ò[YNàöY⁄ò[YK\]Y]\ŒàöY⁄\]Y]öXŸSò[YNà\‘›ö[ô ö—]öXŸSò[YJHN¬àBà€€ú›Yù]öXŸHH›XõUYUò[YJ—]öXŸSò[YJN¬à€€ú›öY⁄]öXŸHH›XõUYUò[YJö—]öXŸSò[YJN¬àYà
+Yù]öXŸHOOHöY⁄]öXŸJH¬àô]\õàYù]öXŸHàöY⁄]öXŸH»»ò[YNàYùò[YK\]Y]\ŒàYù\]Y]öXŸSò[YNà\‘›ö[ô —]öXŸSò[YJHHà»ò[YNàöY⁄ò[YK\]Y]\ŒàöY⁄\]Y]öXŸSò[YNà\‘›ö[ô ö—]öXŸSò[YJHN¬àBàô]\õàYùò[YHèHöY⁄ò[YH»»ò[YNàYùò[YK\]Y]\ŒàYù\]Y]öXŸSò[YNà\‘›ö[ô —]öXŸSò[YJHHà»ò[YNàöY⁄ò[YK\]Y]\ŒàöY⁄\]Y]öXŸSò[YNà\‘›ö[ô ö—]öXŸSò[YJHN¬àBàù[ò›[€àY\ôŸQõ€\ìY[Xô\ú⁄\›]\ YùöY⁄
+H¬à€€ú›€€X›H
+Xÿ€›[ù
+HOà¬à€€ú››]\»HXÿ€›[ùÀôõ€\ìY[Xô\ú⁄\›]\»	âà\[ŸàXÿ€›[ùôõ€\ìY[Xô\ú⁄\›]\»OOHõÿöôX›à»Xÿ€›[ùôõ€\ìY[Xô\ú⁄\›]\»àﬂN¬à€€ú›ô\›[H à◊‘TëW◊»
+ã»ô]»X\
+
+N¬àõ‹à
+€€ú›‹ò]“Yò]‘›]WHŸàÿöôX›ô[ùöY\ ›]\ JH¬à€€ú›YH\‘›ö[ô ò]“Y
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬àYà
+ZY
+H€€ù[ùYN¬àô\›[úŸ]
+Y¬à\—[]Yàõ€€X[äò]‘›]OÀö\—[]Y
+Kà\]Y]\Œà\”ù[Xô\äò]‘›]OÀù\]Y]\»Xÿ€›[ùÀù\]Y]\»Xÿ€›[ùÀò‹ôX]Y]\ Kà]öXŸSò[YNà\‘›ö[ô ò]‘›]OÀô]öXŸSò[YHXÿ€›[ùÀõ\›‹\ò]Y]öXŸSò[YJKùö[J
+BàJN¬àBàõ‹à
+€€ú›ò]“YŸàXÿ€›[ùÀôõ€\íY»◊JH¬à€€ú›YH\‘›ö[ô ò]“Y
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬àYà
+Y	âà\ô\›[ö\ Y
+JHô\›[úŸ]
+Y»\—[]Yàò[ŸK\]Y]\Œà\”ù[Xô\äXÿ€›[ùÀù\]Y]\»Xÿ€›[ùÀò‹ôX]Y]\ K]öXŸSò[YNà\‘›ö[ô Xÿ€›[ùÀõ\›‹\ò]Y]öXŸSò[YJKùö[J
+HJN¬àBàô]\õàô\›[¬àN¬à€€ú›Y\ôŸYH€€X›
+Yù
+N¬àõ‹à
+€€ú›⁄Y[ò€€Z[ô◊HŸà€€X›
+öY⁄
+JH¬à€€ú››\úô[ùHY\ôŸYôŸ]
+Y
+N¬àYà
+X›\úô[ù⁄›[ôYô\îô[][€î›]J[ò€€Z[ôÀ›\úô[ù
+JH¬àY\ôŸYúŸ]
+Y[ò€€Z[ô N¬àBàBàô]\õàÿöôX›ôúõ€Q[ùöY\ ÀããõY\ôŸYô[ùöY\ 
+WKú€‹ù
+
+ÿWKÿóJHOàHà»LHàHàà»Hà
+JN¬àBàù[ò›[€à⁄›[ôYô\îô[][€î›]J[ò€€Z[ôÀ›\úô[ù
+H¬àYà
+[ò€€Z[ôÀù\]Y]\»à›\úô[ùù\]Y]\ Hô]\õàùYN¬àYà
+[ò€€Z[ôÀù\]Y]\»›\úô[ùù\]Y]\ Hô]\õàò[ŸN¬àYà
+[ò€€Z[ôÀö\—[]Y	âàX›\úô[ùö\—[]Y
+Hô]\õàùYN¬àYà
+[ò€€Z[ôÀö\—[]YOOH›\úô[ùö\—[]Y
+H¬àô]\õà›XõUYUò[YJ[ò€€Z[ôÀô]öXŸSò[YJHà›XõUYUò[YJ›\úô[ùô]öXŸSò[YJN¬àBàô]\õàò[ŸN¬àBàù[ò›[€àY\ôŸTô[][€î›]\ YùöY⁄›]RŸ^KYùò[Y\ÀöY⁄ò[Y\Àõ‹õX[^ôRY
+H¬à€€ú›€€X›H
+Xÿ€›[ùò[Y\ HOà¬à€€ú››]\»HXÿ€›[ùÀñ‹›]RŸ^WH	âà\[ŸàXÿ€›[ù‹›]RŸ^WHOOHõÿöôX›à»Xÿ€›[ù‹›]RŸ^WHàﬂN¬à€€ú›ô\›[H à◊‘TëW◊»
+ã»ô]»X\
+
+N¬àõ‹à
+€€ú›‹ò]“Yò]‘›]WHŸàÿöôX›ô[ùöY\ ›]\ JH¬à€€ú›YHõ‹õX[^ôRY
+ò]“Y
+N¬àYà
+ZY
+H€€ù[ùYN¬àô\›[úŸ]
+Y¬à\—[]Yàõ€€X[äò]‘›]OÀö\—[]Y
+Kà\]Y]\Œà\”ù[Xô\äò]‘›]OÀù\]Y]\»Xÿ€›[ùÀù\]Y]\»Xÿ€›[ùÀò‹ôX]Y]\ Kà]öXŸSò[YNà\‘›ö[ô ò]‘›]OÀô]öXŸSò[YHXÿ€›[ùÀõ\›‹\ò]Y]öXŸSò[YJKùö[J
+BàJN¬àBàõ‹à
+€€ú›ò]“YŸàò[Y\»◊JH¬à€€ú›YHõ‹õX[^ôRY
+ò]“Y
+N¬àYà
+Y	âà\ô\›[ö\ Y
+JHô\›[úŸ]
+Y»\—[]Yàò[ŸK\]Y]\Œà\”ù[Xô\äXÿ€›[ùÀù\]Y]\»Xÿ€›[ùÀò‹ôX]Y]\ K]öXŸSò[YNà\‘›ö[ô Xÿ€›[ùÀõ\›‹\ò]Y]öXŸSò[YJKùö[J
+HJN¬àBàô]\õàô\›[¬àN¬à€€ú›Y\ôŸYH€€X›
+YùYùò[Y\ N¬àõ‹à
+€€ú›⁄Y[ò€€Z[ô◊HŸà€€X›
+öY⁄öY⁄ò[Y\ JH¬à€€ú››\úô[ùHY\ôŸYôŸ]
+Y
+N¬àYà
+X›\úô[ù⁄›[ôYô\îô[][€î›]J[ò€€Z[ôÀ›\úô[ù
+JHY\ôŸYúŸ]
+Y[ò€€Z[ô N¬àBàô]\õàÿöôX›ôúõ€Q[ùöY\ ÀããõY\ôŸYô[ùöY\ 
+WKú€‹ù
+
+ÿWKÿóJHOàHà»LHàHàà»Hà
+JN¬àBàù[ò›[€àY\ôŸTÿ[YPXÿ€›[ù
+ÀöÀ
+H¬à€€ú›YùHõõ‹õX[^ôPXÿ€›[ù⁄\J N¬à€€ú›öY⁄Hõõ‹õX[^ôPXÿ€›[ù⁄\Jö N¬à€€ú›ö[X\ûHH\”ù[Xô\äYùò‹ôX]Y]\ H\”ù[Xô\äöY⁄ò‹ôX]Y]\ H»Yùà\”ù[Xô\äöY⁄ò‹ôX]Y]\ H\”ù[Xô\äYùò‹ôX]Y]\ H»öY⁄àôYô\êXÿ€›[ù€›\òŸJYùöY⁄
+N¬à€€ú›ŸX€€ô\ûHHö[X\ûHOOHYù»öY⁄àYù¬à€€ú›⁄]P[X\‘›]\»HY\ôŸTô[][€î›]\ YùöY⁄ú⁄]P[X\‘›]\»ãYùú⁄]\ÀöY⁄ú⁄]\À
+Y
+HOà\‘›ö[ô Y
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+JN¬à€€ú›Y\ôŸY⁄]\»Hõõ‹õX[^ôT⁄]\ ÿöôX›ô[ùöY\ ⁄]P[X\‘›]\ Kôö[\ä
+À›]WJHOà\›]Kö\—[]Y
+KõX\
+
+⁄YJHOàY
+JN¬à€€ú›ÿ[õ€öXÿ[ûT⁄]\»Hô]\”€ôJY\ôŸY⁄]\÷ÃHàäN¬à€€ú›ÿ[õ€öXÿ[⁄]HHÿ[õ€öXÿ[ûT⁄]\»ö[X\ûKòÿ[õ€öXÿ[⁄]HŸX€€ô\ûKòÿ[õ€öXÿ[⁄]Hàé¬à€€ú›õ€\ìY[Xô\ú⁄\›]\»HY\ôŸQõ€\ìY[Xô\ú⁄\›]\ YùöY⁄
+N¬à€€ú›Y\ôŸYõ€\íY»Hõõ‹õX[^ôQõ€\íY\›
+ÿöôX›ô[ùöY\ õ€\ìY[Xô\ú⁄\›]\ Kôö[\ä
+À›]WJHOà\›]Kö\—[]Y
+KõX\
+
+⁄YJHOàY
+JN¬à€€ú›\Ÿ\õò[YQöY[Hô]Ÿ\ëöY[
+àYùù\Ÿ\õò[YKàYùù\Ÿ\õò[YU\]Y]\ÀàYùù\Ÿ\õò[YU\]Y]öXŸSò[YKàYùù\]Y]\ÀàöY⁄ù\Ÿ\õò[YKàöY⁄ù\Ÿ\õò[YU\]Y]\ÀàöY⁄ù\Ÿ\õò[YU\]Y]öXŸSò[YKàöY⁄ù\]Y]\¬à
+N¬à€€ú›\‹›€‹ôöY[Hô]Ÿ\ëöY[
+àYùú\‹›€‹ôàYùú\‹›€‹ô\]Y]\ÀàYùú\‹›€‹ô\]Y]öXŸSò[YKàYùù\]Y]\ÀàöY⁄ú\‹›€‹ôàöY⁄ú\‹›€‹ô\]Y]\ÀàöY⁄ú\‹›€‹ô\]Y]öXŸSò[YKàöY⁄ù\]Y]\¬à
+N¬à€€ú››öY[Hô]Ÿ\ëöY[
+àYùù›ŸX‹ô]àYùù›\]Y]\ÀàYùù›\]Y]öXŸSò[YKàYùù\]Y]\ÀàöY⁄ù›ŸX‹ô]àöY⁄ù›\]Y]\ÀàöY⁄ù›\]Y]öXŸSò[YKàöY⁄ù\]Y]\¬à
+N¬à€€ú›ôX€›ô\ûQöY[Hô]Ÿ\ëöY[
+àYùúôX€›ô\ûP€Ÿ\ÀàYùúôX€›ô\ûP€Ÿ\’\]Y]\ÀàYùúôX€›ô\ûP€Ÿ\’\]Y]öXŸSò[YKàYùù\]Y]\ÀàöY⁄úôX€›ô\ûP€Ÿ\ÀàöY⁄úôX€›ô\ûP€Ÿ\’\]Y]\ÀàöY⁄úôX€›ô\ûP€Ÿ\’\]Y]öXŸSò[YKàöY⁄ù\]Y]\¬à
+N¬à€€ú›õ›QöY[Hô]Ÿ\ëöY[
+àYùõõ›KàYùõõ›U\]Y]\ÀàYùõõ›U\]Y]öXŸSò[YKàYùù\]Y]\ÀàöY⁄õõ›KàöY⁄õõ›U\]Y]\ÀàöY⁄õõ›U\]Y]öXŸSò[YKàöY⁄ù\]Y]\¬à
+N¬à€€ú›\‹⁄Ÿ^S[ö‘›]\»HY\ôŸTô[][€î›]\ YùöY⁄ú\‹⁄Ÿ^S[ö‘›]\»ãYùú\‹⁄Ÿ^P‹ôY[ùX[YÀöY⁄ú\‹⁄Ÿ^P‹ôY[ùX[YÀ
+Y
+HOà\‘›ö[ô Y
+Kùö[J
+JN¬à€€ú›Y\ôŸY\‹⁄Ÿ^RY»Hõõ‹õX[^ôT\‹⁄Ÿ^P‹ôY[ùX[Y ÿöôX›ô[ùöY\ \‹⁄Ÿ^S[ö‘›]\ Kôö[\ä
+À›]WJHOà\›]Kö\—[]Y
+KõX\
+
+⁄YJHOàY
+JN¬à€€ú›\‹⁄Ÿ^U\]Y]\»HX]õX^
+à\”ù[Xô\äYùú\‹⁄Ÿ^U\]Y]\»Yùù\]Y]\»Yùò‹ôX]Y]\ Kà\”ù[Xô\äöY⁄ú\‹⁄Ÿ^U\]Y]\»öY⁄ù\]Y]\»öY⁄ò‹ôX]Y]\ Bà
+N¬à€€ú›Yù\‹⁄Ÿ^PX›]ö]HH\”ù[Xô\äYùú\‹⁄Ÿ^U\]Y]\»Yùù\]Y]\»Yùò‹ôX]Y]\ N¬à€€ú›öY⁄\‹⁄Ÿ^PX›]ö]HH\”ù[Xô\äöY⁄ú\‹⁄Ÿ^U\]Y]\»öY⁄ù\]Y]\»öY⁄ò‹ôX]Y]\ N¬à€€ú›\‹⁄Ÿ^T€›\òŸHHYù\‹⁄Ÿ^PX›]ö]HàöY⁄\‹⁄Ÿ^PX›]ö]H»YùàöY⁄\‹⁄Ÿ^PX›]ö]HàYù\‹⁄Ÿ^PX›]ö]H»öY⁄àôYô\êXÿ€›[ù€›\òŸJYùöY⁄
+N¬à€€ú›\‹⁄Ÿ^U\]Y]öXŸSò[YHH\‘›ö[ô \‹⁄Ÿ^T€›\òŸKú\‹⁄Ÿ^U\]Y]öXŸSò[YJKùö[J
+H\‘›ö[ô \‹⁄Ÿ^T€›\òŸKõ\›‹\ò]Y]öXŸSò[YJKùö[J
+HQêUS—UíP—W”êSQN¬à€€ú›]\›€€ù[ù\]Y]HX]õX^
+à\Ÿ\õò[YQöY[ù\]Y]\Àà\‹›€‹ôöY[ù\]Y]\Àà›öY[ù\]Y]\ÀàôX€›ô\ûQöY[ù\]Y]\Ààõ›QöY[ù\]Y]\Àà\‹⁄Ÿ^U\]Y]\¬à
+N¬à€€ú›Yù[]Y]HYùö\—[]Y»\”ù[Xô\äYùô[]Y]\ Hà¬à€€ú›öY⁄[]Y]HöY⁄ö\—[]Y»\”ù[Xô\äöY⁄ô[]Y]\ Hà¬à€€ú›]\›[]Y]HX]õX^
+Yù[]Y]öY⁄[]Y]
+N¬à€€ú›]\›X›]ö]P]HX]õX^
+]\›€€ù[ù\]Y]Yùù\]Y]\ÀöY⁄ù\]Y]\ N¬à€€ú›ŸY\[]YH]\›[]Y]à	âà]\›[]Y]èH]\›X›]ö]P]¬à€€ú›ŸY\\õX[ô[ùQ[]YHõ€€X[äYùö\‘\õX[ô[ùQ[]YöY⁄ö\‘\õX[ô[ùQ[]Y
+N¬à€€ú›[]Y]öXŸSò[YHHYù[]Y]àöY⁄[]Y]»\‘›ö[ô Yùô[]Y]öXŸSò[YJKùö[J
+HàöY⁄[]Y]àYù[]Y]»\‘›ö[ô öY⁄ô[]Y]öXŸSò[YJKùö[J
+Hà›XõUYUò[YJYùô[]Y]öXŸSò[YJHèH›XõUYUò[YJöY⁄ô[]Y]öXŸSò[YJH»\‘›ö[ô Yùô[]Y]öXŸSò[YJKùö[J
+Hà\‘›ö[ô öY⁄ô[]Y]öXŸSò[YJKùö[J
+N¬à€€ú›Yù\]Y]H\”ù[Xô\äYùù\]Y]\ N¬à€€ú›öY⁄\]Y]H\”ù[Xô\äöY⁄ù\]Y]\ N¬à€€ú›ô]Ÿ\êXÿ€›[ùHYù\]Y]àöY⁄\]Y]»YùàöY⁄\]Y]àYù\]Y]»öY⁄àôYô\êXÿ€›[ù€›\òŸJYùöY⁄
+N¬à€€ú›€\êXÿ€›[ùHô]Ÿ\êXÿ€›[ùOOHYù»öY⁄àYù¬à€€ú›‹ôX]Y]\»HX]õZ[ä\”ù[Xô\äYùò‹ôX]Y]\ K\”ù[Xô\äöY⁄ò‹ôX]Y]\ JN¬à€€ú›\]Y]\»HX]õX^
+àYù\]Y]àöY⁄\]Y]à]\›€€ù[ù\]Y]à]\›[]Y]à‹ôX]Y]\¬à
+N¬à€€ú›\Ÿ\õò[YP]‹ôX]HH\‘›ö[ô ö[X\ûKù\Ÿ\õò[YP]‹ôX]JKùö[J
+H\‘›ö[ô ŸX€€ô\ûKù\Ÿ\õò[YP]‹ôX]JKùö[J
+H\‘›ö[ô ö[X\ûKù\Ÿ\õò[YJKùö[J
+H\‘›ö[ô ŸX€€ô\ûKù\Ÿ\õò[YJKùö[J
+N¬à€€ú›‹ôX]Y]öXŸSò[YHH\‘›ö[ô ö[X\ûKò‹ôX]Y]öXŸSò[YJKùö[J
+H\‘›ö[ô ŸX€€ô\ûKò‹ôX]Y]öXŸSò[YJKùö[J
+H\‘›ö[ô ö[X\ûKõ\›‹\ò]Y]öXŸSò[YJKùö[J
+H\‘›ö[ô ŸX€€ô\ûKõ\›‹\ò]Y]öXŸSò[YJKùö[J
+HQêUS—UíP—W”êSQN¬à€€ú›\›‹\ò]Y]öXŸSò[YHH\‘›ö[ô ô]Ÿ\êXÿ€›[ùõ\›‹\ò]Y]öXŸSò[YJKùö[J
+H\‘›ö[ô €\êXÿ€›[ùõ\›‹\ò]Y]öXŸSò[YJKùö[J
+HQêUS—UíP—W”êSQN¬àô]\õà¬àôX€‹ôYàö[X\ûKúôX€‹ôYYùúôX€‹ôYöY⁄úôX€‹ôYú›XõU]ZYúõ€U^
+	‹ö[X\ûKòXÿ€›[ùY_	ÿ‹ôX]Y]\ﬂX
+KàXÿ€›[ùYàö[X\ûKòXÿ€›[ùYàÿ[õ€öXÿ[⁄]Kà\Ÿ\õò[YP]‹ôX]Kà\‘[õôYàõ€€X[äô]Ÿ\êXÿ€›[ùö\‘[õôY
+Kà[õôY€‹ù‹ô\éàô]Ÿ\êXÿ€›[ùú[õôY€‹ù‹ô\àOHù[»ù[à\”ù[Xô\äô]Ÿ\êXÿ€›[ùú[õôY€‹ù‹ô\äKàôY›[\î€‹ù‹ô\éàô]Ÿ\êXÿ€›[ùúôY›[\î€‹ù‹ô\àOHù[»ù[à\”ù[Xô\äô]Ÿ\êXÿ€›[ùúôY›[\î€‹ù‹ô\äKàÀ»[õôY›]H\»ﬁ[ò⁄õ€ö^ôY\àöY]»ÿ€‹KàŸY\öY]‹»]€õH^\›àÀ»€à€ôH⁄YK⁄[HHô]Ÿ\àXÿ€›[ù⁄[ú»⁄[àõ›⁄Y\»Y]YBàÀ»ÿ[YHÿ€‹KÇà[õôYöY]‹ŒàY\ôŸT[õôYöY]‹ àYùú[õôYöY]‹ÀàöY⁄ú[õôYöY]‹Ààô]Ÿ\êXÿ€›[ùOOHöY⁄à
+Kàõ€\íYàY\ôŸYõ€\íY÷ÃH
+ô]Ÿ\êXÿ€›[ùôõ€\íYOHù[»ù[àõõ‹õX[^ôQõ€\íY
+ô]Ÿ\êXÿ€›[ùôõ€\íY
+JKàõ€\íYŒàY\ôŸYõ€\íYÀàõ€\ìY[Xô\ú⁄\›]\ÀàÀ»[\H\»[ù[ù[€ò[à]ô\ûH⁄]HX^HôH€Xú›€ôYàô]ô\àô]ö]ôHö[X\ûKú⁄]\ÀÇà⁄]\ŒàY\ôŸY⁄]\Àà⁄]P[X\‘›]\Àà\Ÿ\õò[YNà\Ÿ\õò[YQöY[ùò[YKà\‹›€‹ôà\‹›€‹ôöY[ùò[YKà›ŸX‹ô]à›öY[ùò[YKàôX€›ô\ûP€Ÿ\ŒàôX€›ô\ûQöY[ùò[YKàõ›Nàõ›QöY[ùò[YKà\‹⁄Ÿ^P‹ôY[ùX[YŒàY\ôŸY\‹⁄Ÿ^RYÀà\‹⁄Ÿ^S[ö‘›]\Àà\Ÿ\õò[YU\]Y]\Œà\Ÿ\õò[YQöY[ù\]Y]\Àà\Ÿ\õò[YU\]Y]öXŸSò[YNà\Ÿ\õò[YQöY[ô]öXŸSò[YKà\‹›€‹ô\]Y]\Œà\‹›€‹ôöY[ù\]Y]\Àà\‹›€‹ô\]Y]öXŸSò[YNà\‹›€‹ôöY[ô]öXŸSò[YKà›\]Y]\Œà›öY[ù\]Y]\Àà›\]Y]öXŸSò[YNà›öY[ô]öXŸSò[YKàôX€›ô\ûP€Ÿ\’\]Y]\ŒàôX€›ô\ûQöY[ù\]Y]\ÀàôX€›ô\ûP€Ÿ\’\]Y]öXŸSò[YNàôX€›ô\ûQöY[ô]öXŸSò[YKàõ›U\]Y]\Œàõ›QöY[ù\]Y]\Ààõ›U\]Y]öXŸSò[YNàõ›QöY[ô]öXŸSò[YKà\‹⁄Ÿ^U\]Y]\Àà\‹⁄Ÿ^U\]Y]öXŸSò[YKà\—[]YàŸY\\õX[ô[ùQ[]YŸY\[]Yà\‘\õX[ô[ùQ[]YàŸY\\õX[ô[ùQ[]Yà[]Y]\ŒàŸY\\õX[ô[ùQ[]YŸY\[]Y»]\›[]Y]\]Y]\»àù[à[]Y]öXŸSò[YNàŸY\\õX[ô[ùQ[]YŸY\[]Y»[]Y]öXŸSò[YH\›‹\ò]Y]öXŸSò[YHààãà‹ôX]Y]\Àà\]Y]\Àà\›‹\ò]Y]öXŸSò[YKà‹ôX]Y]öXŸSò[YBàN¬àBàù[ò›[€àY\ôŸTÿ[YT\‹⁄Ÿ^JÀöÀ
+H¬à€€ú›YùHõõ‹õX[^ôT\‹⁄Ÿ^T⁄\J N¬à€€ú›öY⁄Hõõ‹õX[^ôT\‹⁄Ÿ^T⁄\Jö N¬à€€ú›Yù\]YH\”ù[Xô\äYùù\]Y]\»Yùò‹ôX]Y]\ N¬à€€ú›öY⁄\]YH\”ù[Xô\äöY⁄ù\]Y]\»öY⁄ò‹ôX]Y]\ N¬à€€ú›Yù[]Y]HYùö\—[]Y»\”ù[Xô\äYùô[]Y]\ Hà¬à€€ú›öY⁄[]Y]HöY⁄ö\—[]Y»\”ù[Xô\äöY⁄ô[]Y]\ Hà¬à€€ú›]\›[]Y]HX]õX^
+Yù[]Y]öY⁄[]Y]
+N¬à€€ú›ŸY\\õX[ô[ùQ[]YHõ€€X[äYùö\‘\õX[ô[ùQ[]YöY⁄ö\‘\õX[ô[ùQ[]Y
+N¬à€€ú›ŸY\[]YHŸY\\õX[ô[ùQ[]Y]\›[]Y]à	âà]\›[]Y]èHX]õX^
+Yù\]YöY⁄\]Y
+N¬à€€ú›[]Y]öXŸSò[YHHYù[]Y]èHöY⁄[]Y]»\‘›ö[ô Yùô[]Y]öXŸSò[YJKùö[J
+Hà\‘›ö[ô öY⁄ô[]Y]öXŸSò[YJKùö[J
+N¬à€€ú›ô]Ÿ\àHYù\]YèHöY⁄\]Y»YùàöY⁄¬à€€ú›€\àHô]Ÿ\àOOHYù»öY⁄àYù¬à€€ú›ô\€€ôY[»H\”ù[Xô\äô]Ÿ\ãò[»€\ãò[»M N¬àô]\õà¬à‹ôY[ùX[YççNàô]Ÿ\ãò‹ôY[ùX[YççH€\ãò‹ôY[ùX[YççKàúYàô]Ÿ\ãúúY€\ãúúYà\Ÿ\ìò[YNàô]Ÿ\ãù\Ÿ\ìò[YH€\ãù\Ÿ\ìò[YKà\‹^Sò[YNàô]Ÿ\ãô\‹^Sò[YH€\ãô\‹^Sò[YKà\Ÿ\í[ôPççNàô]Ÿ\ãù\Ÿ\í[ôPççH€\ãù\Ÿ\í[ôPççKà[Œà\”ù[Xô\äô]Ÿ\ãò[»€\ãò[»M Kà⁄Y€ê€›[ùàX]õX^
+\”ù[Xô\äYùú⁄Y€ê€›[ù
+K\”ù[Xô\äöY⁄ú⁄Y€ê€›[ù
+JKàö]ò]Rù⁄Œàô]Ÿ\ãúö]ò]Rù⁄»€\ãúö]ò]Rù⁄»ù[àXõX“ù⁄Œàô]Ÿ\ãúXõX“ù⁄»€\ãúXõX“ù⁄»ù[à‹ôX]Y]\ŒàX]õZ[ä\”ù[Xô\äYùò‹ôX]Y]\ K\”ù[Xô\äöY⁄ò‹ôX]Y]\ JKà\]Y]\ŒàX]õX^
+Yù\]YöY⁄\]Y
+Kà\›\ŸY]\ŒàX]õX^
+\”ù[Xô\äYùõ\›\ŸY]\ K\”ù[Xô\äöY⁄õ\›\ŸY]\ JHù[à[ŸNàô]Ÿ\ãõ[ŸH€\ãõ[ŸHõX[òYŸYãà‹ôX]P€€\]Y]Ÿàõõ‹õX[^ôT\‹⁄Ÿ^P‹ôX]P€€\]Y]Ÿ
+àô]Ÿ\ãò‹ôX]P€€\]Y]Ÿ€\ãò‹ôX]P€€\]Y]Ÿàô\€€ôY[¬à
+Kà\—[]YàŸY\[]Yà\‘\õX[ô[ùQ[]YàŸY\\õX[ô[ùQ[]Yà[]Y]\ŒàŸY\[]Y»]\›[]Y]X]õX^
+Yù\]YöY⁄\]Y
+Hàù[à[]Y]öXŸSò[YNàŸY\[]Y»[]Y]öXŸSò[YHQêUS—UíP—W”êSQHààÇàN¬àBàù[ò›[€àY\ôŸTÿ[YQõ€\äÀöÀ
+H¬à€€ú›YùHõõ‹õX[^ôQõ€\î⁄\J N¬à€€ú›öY⁄Hõõ‹õX[^ôQõ€\î⁄\Jö N¬à€€ú›YHõõ‹õX[^ôQõ€\íY
+YùöYöY⁄öY
+N¬à€€ú›Yù\]Y]H\”ù[Xô\äYùù\]Y]\»Yùò‹ôX]Y]\ N¬à€€ú›öY⁄\]Y]H\”ù[Xô\äöY⁄ù\]Y]\»öY⁄ò‹ôX]Y]\ N¬à€€ú›Yù[]Y]HYùö\—[]Y»\”ù[Xô\äYùô[]Y]\ Hà¬à€€ú›öY⁄[]Y]HöY⁄ö\—[]Y»\”ù[Xô\äöY⁄ô[]Y]\ Hà¬à€€ú›]\›[]Y]HX]õX^
+Yù[]Y]öY⁄[]Y]
+N¬à€€ú›ŸY\\õX[ô[ùQ[]YHõ€€X[äYùö\‘\õX[ô[ùQ[]YöY⁄ö\‘\õX[ô[ùQ[]Y
+N¬à€€ú›ŸY\[]YHŸY\\õX[ô[ùQ[]Y]\›[]Y]à	âà]\›[]Y]èHX]õX^
+Yù\]Y]öY⁄\]Y]
+N¬à€€ú›[]Y]öXŸSò[YHHYù[]Y]èHöY⁄[]Y]»\‘›ö[ô Yùô[]Y]öXŸSò[YJKùö[J
+Hà\‘›ö[ô öY⁄ô[]Y]öXŸSò[YJKùö[J
+N¬à€€ú›‹ô\ëúõ€TöY⁄HôYô\îô[[›S‹ô\äàYùúôY›[\ì‹ô\ï\]Y]\ÀàYùúôY›[\ì‹ô\ï\]Y]öXŸSò[YKàöY⁄úôY›[\ì‹ô\ï\]Y]\ÀàöY⁄úôY›[\ì‹ô\ï\]Y]öXŸSò[YBà
+N¬à€€ú›‹ô\î€›\òŸHH‹ô\ëúõ€TöY⁄»öY⁄àYù¬à€€ú›ôY›[\ì‹ô\ëöY[»H¬àôY›[\êXÿ€›[ùYŒà\úò^Kö\–\úò^J‹ô\î€›\òŸKúôY›[\êXÿ€›[ùY H»Àããõ‹ô\î€›\òŸKúôY›[\êXÿ€›[ùY◊Hà◊KàôY›[\ì‹ô\ï\]Y]\Œà\”ù[Xô\ä‹ô\î€›\òŸKúôY›[\ì‹ô\ï\]Y]\ KàôY›[\ì‹ô\ï\]Y]öXŸSò[YNà\‘›ö[ô ‹ô\î€›\òŸKúôY›[\ì‹ô\ï\]Y]öXŸSò[YJKùö[J
+BàN¬àYà
+YOOHôö^Yô]–Xÿ€›[ùõ€\íY
+H¬àô]\õà¬àYàò[YNàôö^Yô]–Xÿ€›[ùõ€\ìò[YKàããúôY›[\ì‹ô\ëöY[ÀàX]⁄Y⁄]\ŒàöY⁄\]Y]èHYù\]Y]»öY⁄õX]⁄Y⁄]\»◊HàYùõX]⁄Y⁄]\»◊Kà]]–YX]⁄[ô‘⁄]\ŒàöY⁄\]Y]èHYù\]Y]»õ€€X[äöY⁄ò]]–YX]⁄[ô‘⁄]\ Hàõ€€X[äYùò]]–YX]⁄[ô‘⁄]\ Kà\—[]Yàò[ŸKà\‘\õX[ô[ùQ[]Yàò[ŸKà[]Y]\Œàù[à[]Y]öXŸSò[YNààãà‹ôX]Y]\ŒàX]õZ[ä\”ù[Xô\äYùò‹ôX]Y]\ K\”ù[Xô\äöY⁄ò‹ôX]Y]\ JKà\]Y]\ŒàX]õX^
+Yù\]Y]öY⁄\]Y]
+BàN¬àBà€€ú›Yùò[YHH\‘›ö[ô Yùõò[YJKùö[J
+N¬à€€ú›öY⁄ò[YHH\‘›ö[ô öY⁄õò[YJKùö[J
+N¬à]ò[YHHYùò[YHöY⁄ò[YHMçÃêWMM—MMMçN◊MQçóMNLŒH	⁄Yú€XŸJ
+_X¬àYà
+öY⁄\]Y]àYù\]Y]	âàöY⁄ò[YJH¬àò[YHHöY⁄ò[YN¬àH[ŸHYà
+Yù\]Y]àöY⁄\]Y]	âàYùò[YJH¬àò[YHHYùò[YN¬àBàô]\õà¬àYàò[YKàããúôY›[\ì‹ô\ëöY[ÀàX]⁄Y⁄]\ŒàöY⁄\]Y]àYù\]Y]»öY⁄õX]⁄Y⁄]\»◊HàYùõX]⁄Y⁄]\»◊Kà]]–YX]⁄[ô‘⁄]\ŒàöY⁄\]Y]àYù\]Y]»õ€€X[äöY⁄ò]]–YX]⁄[ô‘⁄]\ Hàõ€€X[äYùò]]–YX]⁄[ô‘⁄]\ Kà\—[]YàŸY\[]Yà\‘\õX[ô[ùQ[]YàŸY\\õX[ô[ùQ[]Yà[]Y]\ŒàŸY\[]Y»]\›[]Y]X]õX^
+Yù\]Y]öY⁄\]Y]
+Hàù[à[]Y]öXŸSò[YNàŸY\[]Y»[]Y]öXŸSò[YHQêUS—UíP—W”êSQHààãà‹ôX]Y]\ŒàX]õZ[ä\”ù[Xô\äYùò‹ôX]Y]\ K\”ù[Xô\äöY⁄ò‹ôX]Y]\ JKà\]Y]\ŒàX]õX^
+Yù\]Y]öY⁄\]Y]
+BàN¬àBàù[ò›[€àY\ôŸPXÿ€›[ù€€X›[€ú ÿÿ[ô[[›K[\ú H¬à€€ú›Hô\€€ôR[\ú [\ú N¬à€€ú›Y\ôŸYH◊N¬àõ‹à
+€€ú›Xÿ€›[ùŸàÀããê\úò^Kö\–\úò^Jÿÿ[
+H»ÿÿ[à◊Kããê\úò^Kö\–\úò^Jô[[›JH»ô[[›Hà◊WJH¬à€€ú›õ‹õX[^ôYHõõ‹õX[^ôPXÿ€›[ù⁄\JXÿ€›[ù
+N¬à€€ú›Xÿ€›[ùYH\‘›ö[ô õ‹õX[^ôYòXÿ€›[ùY
+Kùö[J
+N¬à€€ú›ôX€‹ôYH\‘›ö[ô õ‹õX[^ôYúôX€‹ôYõ‹õX[^ôYöY
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬àYà
+XXÿ€›[ùY	âà\ôX€‹ôY
+H€€ù[ùYN¬à€€ú›^\›[ô“[ô^HY\ôŸYôö[ô[ô^
+
+ÿ[ôY]JHOà¬à€€ú›ÿ[ôY]PXÿ€›[ùYH\‘›ö[ô ÿ[ôY]KòXÿ€›[ùY
+Kùö[J
+N¬à€€ú›ÿ[ôY]TôX€‹ôYH\‘›ö[ô ÿ[ôY]KúôX€‹ôYÿ[ôY]KöY
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬àYà
+ôX€‹ôY
+Hô]\õàÿ[ôY]TôX€‹ôYOOHôX€‹ôY¬àô]\õàXÿ[ôY]TôX€‹ôY	âàXÿ€›[ùY	âàÿ[ôY]PXÿ€›[ùYOOHXÿ€›[ùY¬àJN¬àYà
+^\›[ô“[ô^èH
+H¬àY\ôŸYŸ^\›[ô“[ô^HHY\ôŸTÿ[YPXÿ€›[ù
+Y\ôŸYŸ^\›[ô“[ô^Kõ‹õX[^ôY
+N¬àH[ŸH¬àY\ôŸYú\⁄
+õ‹õX[^ôY
+N¬àBàBàô]\õàY\ôŸYôö[\äõ€€X[äKú€‹ù
+
+YùöY⁄
+HOà¬à€€ú›YùôX€‹ôYH\‘›ö[ô YùÀúôX€‹ôYYùÀöY
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬à€€ú›öY⁄ôX€‹ôYH\‘›ö[ô öY⁄ÀúôX€‹ôYöY⁄ÀöY
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬àYà
+YùôX€‹ôYöY⁄ôX€‹ôY
+Hô]\õàLN¬àYà
+YùôX€‹ôYàöY⁄ôX€‹ôY
+Hô]\õàN¬à€€ú›YùXÿ€›[ùYH\‘›ö[ô YùÀòXÿ€›[ùY
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬à€€ú›öY⁄Xÿ€›[ùYH\‘›ö[ô öY⁄ÀòXÿ€›[ùY
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬àYà
+YùXÿ€›[ùYöY⁄Xÿ€›[ùY
+Hô]\õàLN¬àYà
+YùXÿ€›[ùYàöY⁄Xÿ€›[ùY
+Hô]\õàN¬àô]\õà¬àJN¬àBàù[ò›[€àY\ôŸT\‹⁄Ÿ^P€€X›[€ú ÿÿ[ô[[›K[\ú H¬à€€ú›Hô\€€ôR[\ú [\ú N¬à€€ú›Y\ôŸYûRYH à◊‘TëW◊»
+ã»ô]»X\
+
+N¬à€€ú›€›\òŸHHÀããê\úò^Kö\–\úò^Jÿÿ[
+H»ÿÿ[à◊Kããê\úò^Kö\–\úò^Jô[[›JH»ô[[›Hà◊WN¬àõ‹à
+€€ú›\‹⁄Ÿ^HŸà€›\òŸJH¬à€€ú›õ‹õX[^ôYHõõ‹õX[^ôT\‹⁄Ÿ^T⁄\J\‹⁄Ÿ^JN¬à€€ú›YH\‘›ö[ô õ‹õX[^ôYò‹ôY[ùX[YççJKùö[J
+N¬àYà
+ZY
+H€€ù[ùYN¬àYà
+Y\ôŸYûRYö\ Y
+JH¬àY\ôŸYûRYúŸ]
+YY\ôŸTÿ[YT\‹⁄Ÿ^JY\ôŸYûRYôŸ]
+Y
+Kõ‹õX[^ôY
+JN¬àH[ŸH¬àY\ôŸYûRYúŸ]
+Yõ‹õX[^ôY
+N¬àBàBàô]\õà\úò^Kôúõ€JY\ôŸYûRYùò[Y\ 
+JKú€‹ù
+
+KäHOà¬à€€ú›YùH\”ù[Xô\äOÀù\]Y]\»OÀò‹ôX]Y]\ N¬à€€ú›öY⁄H\”ù[Xô\äèÀù\]Y]\»èÀò‹ôX]Y]\ N¬àYà
+YùOOHöY⁄
+Hô]\õàöY⁄HYù¬à€€ú›YùYH\‘›ö[ô OÀò‹ôY[ùX[YççJN¬à€€ú›öY⁄YH\‘›ö[ô èÀò‹ôY[ùX[YççJN¬àYà
+YùYöY⁄Y
+Hô]\õàLN¬àYà
+YùYàöY⁄Y
+Hô]\õàN¬àô]\õà¬àJN¬àBàù[ò›[€àY\ôŸQõ€\ê€€X›[€ú ÿÿ[ô[[›K[\ú H¬à€€ú›Hô\€€ôR[\ú [\ú N¬à€€ú›Y\ôŸYH à◊‘TëW◊»
+ã»ô]»X\
+
+N¬à€€ú›€›\òŸHHÀããê\úò^Kö\–\úò^Jÿÿ[
+H»ÿÿ[à◊Kããê\úò^Kö\–\úò^Jô[[›JH»ô[[›Hà◊WN¬àõ‹à
+€€ú›õ€\àŸà€›\òŸJH¬à€€ú›õ‹õX[^ôYHõõ‹õX[^ôQõ€\î⁄\Jõ€\äN¬à€€ú›YHõõ‹õX[^ôQõ€\íY
+õ‹õX[^ôYöY
+N¬àYà
+ZY
+H€€ù[ùYN¬àYà
+Y\ôŸYö\ Y
+JH¬àY\ôŸYúŸ]
+YY\ôŸTÿ[YQõ€\äY\ôŸYôŸ]
+Y
+Kõ‹õX[^ôY
+JN¬àH[ŸH¬àY\ôŸYúŸ]
+Yõ‹õX[^ôY
+N¬àBàBà€€ú›^\›[ô—ö^YHY\ôŸYôŸ]
+ôö^Yô]–Xÿ€›[ùõ€\íY
+N¬àYà
+Y^\›[ô—ö^Y
+H¬àY\ôŸYúŸ]
+àôö^Yô]–Xÿ€›[ùõ€\íYàõõ‹õX[^ôQõ€\î⁄\J¬àYàôö^Yô]–Xÿ€›[ùõ€\íYàò[YNàôö^Yô]–Xÿ€›[ùõ€\ìò[YKà‹ôX]Y]\ŒààJBà
+N¬àH[ŸH¬àY\ôŸYúŸ]
+àôö^Yô]–Xÿ€›[ùõ€\íYà¬àããô^\›[ô—ö^YàYàôö^Yô]–Xÿ€›[ùõ€\íYàò[YNàôö^Yô]–Xÿ€›[ùõ€\ìò[YBàBà
+N¬àBàô]\õàú€‹ùõ€\ú—õ‹ë\‹^J\úò^Kôúõ€JY\ôŸYùò[Y\ 
+JJN¬àBàù[ò›[€àôYô\îô[[›S‹ô\äÿÿ[\]Y]\Àÿÿ[]öXŸSò[YKô[[›U\]Y]\Àô[[›Q]öXŸSò[YJH¬àô]\õà\”ù[Xô\äô[[›U\]Y]\ Hà\”ù[Xô\äÿÿ[\]Y]\ H\”ù[Xô\äô[[›U\]Y]\ HOOH\”ù[Xô\äÿÿ[\]Y]\ H	âà›XõUYUò[YJô[[›Q]öXŸSò[YJHà›XõUYUò[YJÿÿ[]öXŸSò[YJN¬àBàù[ò›[€àY\ôŸS‹ô\íY ÿÿ[ô[[›Kÿÿ[\]Y]\Àÿÿ[]öXŸSò[YKô[[›U\]Y]\Àô[[›Q]öXŸSò[YJH¬à€€ú›ô[[›U⁄[ú»HôYô\îô[[›S‹ô\äàÿÿ[\]Y]\Ààÿÿ[]öXŸSò[YKàô[[›U\]Y]\Ààô[[›Q]öXŸSò[YBà
+N¬à€€ú›⁄[õô\àHô[[›U⁄[ú»»ô[[›Hàÿÿ[¬à€€ú›‹Ÿ\àHô[[›U⁄[ú»»ÿÿ[àô[[›N¬à€€ú›ŸY[àH à◊‘TëW◊»
+ã»ô]»Ÿ]
+
+N¬àô]\õàÀããê\úò^Kö\–\úò^J⁄[õô\äH»⁄[õô\àà◊Kããê\úò^Kö\–\úò^J‹Ÿ\äH»‹Ÿ\àà◊WKõX\
+
+Y
+HOà\‘›ö[ô Y
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+JKôö[\ä
+Y
+HOàY	âà\ŸY[ãö\ Y
+H	âàŸY[ãòY
+Y
+JN¬àBàù[ò›[€àõ‹õX[^ôTôY›[\ì‹ô\äÿ]ôYYÀXÿ€›[ùÀõ€\íY[\ú H¬à€€ú›õ‹õX[^ôYõ€\íYHõ€\íYOHù[»ù[à[\úÀõõ‹õX[^ôQõ€\íY
+õ€\íY
+N¬à€€ú›[Y⁄XõHH
+Xÿ€›[ù
+HOà¬àYà
+Xÿ€›[ùÀö\—[]YXÿ€›[ùÀö\‘\õX[ô[ùQ[]Y
+Hô]\õàò[ŸN¬àYà
+õ‹õX[^ôYõ€\íYOHù[
+Hô]\õàùYN¬àô]\õà[\úÀô^òX›Xÿ€›[ùõ€\íY Xÿ€›[ù
+Kú€€YJ
+Y
+HOà[\úÀõõ‹õX[^ôQõ€\íY
+Y
+HOOHõ‹õX[^ôYõ€\íY
+N¬àN¬à€€ú›ò[YH à◊‘TëW◊»
+ã»ô]»X\
+
+N¬àõ‹à
+€€ú›Xÿ€›[ùŸàXÿ€›[ù H¬à€€ú›YH\‘›ö[ô Xÿ€›[ùÀúôX€‹ôYXÿ€›[ùÀöY
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬àYà
+Y	âà[Y⁄XõJXÿ€›[ù
+JHò[YúŸ]
+YXÿ€›[ù
+N¬àBà€€ú›ô\›[H◊N¬à€€ú›ŸY[àH à◊‘TëW◊»
+ã»ô]»Ÿ]
+
+N¬àõ‹à
+€€ú›ò]“YŸà\úò^Kö\–\úò^Jÿ]ôYY H»ÿ]ôYY»à◊JH¬à€€ú›YH\‘›ö[ô ò]“Y
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬àYà
+Y	âàò[Yö\ Y
+H	âà\ŸY[ãö\ Y
+JH¬àŸY[ãòY
+Y
+N¬àô\›[ú\⁄
+Y
+N¬àBàBà€€ú›Z\‹⁄[ô»HÀããùò[Yô[ùöY\ 
+WKôö[\ä
+⁄YJHOà\ŸY[ãö\ Y
+JKú€‹ù
+
+ÀYùKÀöY⁄JHOà\”ù[Xô\äYùÀúôY›[\î€‹ù‹ô\äHH\”ù[Xô\äöY⁄ÀúôY›[\î€‹ù‹ô\äH\”ù[Xô\äöY⁄Àù\]Y]\ HH\”ù[Xô\äYùÀù\]Y]\ H\‘›ö[ô YùÀúôX€‹ôYYùÀöY
+Kõÿÿ[P€€\\ôJ\‘›ö[ô öY⁄ÀúôX€‹ôYöY⁄ÀöY
+JJN¬àô\›[ú\⁄
+ããõZ\‹⁄[ôÀõX\
+
+⁄YJHOàY
+JN¬àô]\õàô\›[¬àBàù[ò›[€àõ‹õX[^ôQõ€\îôY›[\ì‹ô\ú õ€\úÀXÿ€›[ùÀ[\ú H¬à€€ú›Hô\€€ôR[\ú [\ú N¬àô]\õà
+\úò^Kö\–\úò^Jõ€\ú H»õ€\ú»à◊JKõX\
+
+õ€\äHOà¬à€€ú›ô^H»ããôõ€\àN¬àô^úôY›[\êXÿ€›[ùY»Hô^ö\—[]Yô^ö\‘\õX[ô[ùQ[]Y»◊Hàõ‹õX[^ôTôY›[\ì‹ô\äô^úôY›[\êXÿ€›[ùYÀXÿ€›[ùÀô^öY
+N¬àô]\õàô^¬àJN¬àBàù[ò›[€à\Qõ€\ì‹ô\äõ€\úÀÿ]ôYYÀ[\ú H¬à€€ú›Hô\€€ôR[\ú [\ú N¬à€€ú›ûRYHô]»X\
+
+\úò^Kö\–\úò^Jõ€\ú H»õ€\ú»à◊JKõX\
+
+õ€\äHOà⁄õõ‹õX[^ôQõ€\íY
+õ€\èÀöY
+Kõ€\óJKôö[\ä
+⁄YJHOàY
+JN¬à€€ú›‹ô\àH◊N¬à€€ú›ŸY[àH à◊‘TëW◊»
+ã»ô]»Ÿ]
+
+N¬à€€ú›ö^YYHôö^Yô]–Xÿ€›[ùõ€\íY¬àYà
+ûRYôŸ]
+ö^YY
+H	âàXûRYôŸ]
+ö^YY
+Kö\—[]Y	âàXûRYôŸ]
+ö^YY
+Kö\‘\õX[ô[ùQ[]Y
+H¬à‹ô\ãú\⁄
+ö^YY
+N¬àŸY[ãòY
+ö^YY
+N¬àBàõ‹à
+€€ú›ò]“YŸà\úò^Kö\–\úò^Jÿ]ôYY H»ÿ]ôYY»à◊JH¬à€€ú›YHõõ‹õX[^ôQõ€\íY
+ò]“Y
+N¬à€€ú›õ€\àHûRYôŸ]
+Y
+N¬àYà
+õ€\à	âàYõ€\ãö\—[]Y	âàYõ€\ãö\‘\õX[ô[ùQ[]Y	âà\ŸY[ãö\ Y
+JH¬à‹ô\ãú\⁄
+Y
+N¬àŸY[ãòY
+Y
+N¬àBàBàõ‹à
+€€ú›⁄Yõ€\óHŸàûRY
+H¬àYà
+Yõ€\ãö\—[]Y	âàYõ€\ãö\‘\õX[ô[ùQ[]Y	âà\ŸY[ãö\ Y
+JH¬à‹ô\ãú\⁄
+Y
+N¬àŸY[ãòY
+Y
+N¬àBàBà€€ú›‹ô\ôYH◊N¬àõ‹à
+€€ú›YŸà‹ô\äH¬àYà
+ûRYö\ Y
+JH‹ô\ôYú\⁄
+ûRYôŸ]
+Y
+JN¬àBàõ‹à
+€€ú›⁄Yõ€\óHŸàûRY
+H¬àYà
+\ŸY[ãö\ Y
+JH‹ô\ôYú\⁄
+õ€\äN¬àBàô]\õà»õ€\úŒà‹ô\ôYõ€\ì‹ô\íYŒà‹ô\àN¬àBàù[ò›[€àY\ôŸTﬁ[ò‘^[ÿY ÿÿ[[ú]ô[[›R[ú][\ú H¬à€€ú›Hô\€€ôR[\ú [\ú N¬à€€ú›ÿÿ[Hÿÿ[[ú]	âà\[Ÿàÿÿ[[ú]OOHõÿöôX›à»ÿÿ[[ú]àﬂN¬à€€ú›ô[[›HHô[[›R[ú]	âà\[Ÿàô[[›R[ú]OOHõÿöôX›à»ô[[›R[ú]àﬂN¬à]Xÿ€›[ù»HY\ôŸPXÿ€›[ù€€X›[€ú ÿÿ[òXÿ€›[ùÀô[[›KòXÿ€›[ùÀ
+N¬à]õ€\ú»HY\ôŸQõ€\ê€€X›[€ú ÿÿ[ôõ€\úÀô[[›Kôõ€\úÀ
+N¬à€€ú›\‹⁄Ÿ^\»HY\ôŸT\‹⁄Ÿ^P€€X›[€ú ÿÿ[ú\‹⁄Ÿ^\Àô[[›Kú\‹⁄Ÿ^\À
+N¬àXÿ€›[ù»HôX€€ò⁄[PXÿ€›[ùõ€\ú Xÿ€›[ùÀõ€\úÀ
+N¬à€€ú›[‹ô\ëúõ€Tô[[›HHôYô\îô[[›S‹ô\äàÿÿ[ò[ôY›[\ì‹ô\ï\]Y]\Ààÿÿ[ò[ôY›[\ì‹ô\ï\]Y]öXŸSò[YKàô[[›Kò[ôY›[\ì‹ô\ï\]Y]\Ààô[[›Kò[ôY›[\ì‹ô\ï\]Y]öXŸSò[YBà
+N¬à€€ú›õ€\ì‹ô\ëúõ€Tô[[›HHôYô\îô[[›S‹ô\äàÿÿ[ôõ€\ì‹ô\ï\]Y]\Ààÿÿ[ôõ€\ì‹ô\ï\]Y]öXŸSò[YKàô[[›Kôõ€\ì‹ô\ï\]Y]\Ààô[[›Kôõ€\ì‹ô\ï\]Y]öXŸSò[YBà
+N¬à€€ú›[ôY›[\êXÿ€›[ùY»Hõ‹õX[^ôTôY›[\ì‹ô\äàY\ôŸS‹ô\íY àÿÿ[ò[ôY›[\êXÿ€›[ùYÀàô[[›Kò[ôY›[\êXÿ€›[ùYÀàÿÿ[ò[ôY›[\ì‹ô\ï\]Y]\Ààÿÿ[ò[ôY›[\ì‹ô\ï\]Y]öXŸSò[YKàô[[›Kò[ôY›[\ì‹ô\ï\]Y]\Ààô[[›Kò[ôY›[\ì‹ô\ï\]Y]öXŸSò[YBà
+KàXÿ€›[ùÀàù[àà
+N¬àõ€\ú»Hõ‹õX[^ôQõ€\îôY›[\ì‹ô\ú õ€\úÀXÿ€›[ùÀ
+N¬à€€ú›õ€\ì‹ô\íY»HY\ôŸS‹ô\íY àÿÿ[ôõ€\ì‹ô\íYÀàô[[›Kôõ€\ì‹ô\íYÀàÿÿ[ôõ€\ì‹ô\ï\]Y]\Ààÿÿ[ôõ€\ì‹ô\ï\]Y]öXŸSò[YKàô[[›Kôõ€\ì‹ô\ï\]Y]\Ààô[[›Kôõ€\ì‹ô\ï\]Y]öXŸSò[YBà
+N¬à€€ú›õ€\îô\›[H\Qõ€\ì‹ô\äõ€\úÀõ€\ì‹ô\íYÀ
+N¬àô]\õà¬àXÿ€›[ùÀàõ€\úŒàõ€\îô\›[ôõ€\úÀà\‹⁄Ÿ^\Àà[ôY›[\êXÿ€›[ùYÀà[ôY›[\ì‹ô\ï\]Y]\Œà[‹ô\ëúõ€Tô[[›H»\”ù[Xô\äô[[›Kò[ôY›[\ì‹ô\ï\]Y]\ Hà\”ù[Xô\äÿÿ[ò[ôY›[\ì‹ô\ï\]Y]\ Kà[ôY›[\ì‹ô\ï\]Y]öXŸSò[YNà[‹ô\ëúõ€Tô[[›H»\‘›ö[ô ô[[›Kò[ôY›[\ì‹ô\ï\]Y]öXŸSò[YJHà\‘›ö[ô ÿÿ[ò[ôY›[\ì‹ô\ï\]Y]öXŸSò[YJKàõ€\ì‹ô\íYŒàõ€\îô\›[ôõ€\ì‹ô\íYÀàõ€\ì‹ô\ï\]Y]\Œàõ€\ì‹ô\ëúõ€Tô[[›H»\”ù[Xô\äô[[›Kôõ€\ì‹ô\ï\]Y]\ Hà\”ù[Xô\äÿÿ[ôõ€\ì‹ô\ï\]Y]\ Kàõ€\ì‹ô\ï\]Y]öXŸSò[YNàõ€\ì‹ô\ëúõ€Tô[[›H»\‘›ö[ô ô[[›Kôõ€\ì‹ô\ï\]Y]öXŸSò[YJHà\‘›ö[ô ÿÿ[ôõ€\ì‹ô\ï\]Y]öXŸSò[YJBàN¬àBàù[ò›[€àôX€€ò⁄[PXÿ€›[ùõ€\ú Xÿ€›[ùÀõ€\úÀ[\ú H¬à€€ú›Hô\€€ôR[\ú [\ú N¬à€€ú›ò[YY»Hô]»Ÿ]
+
+\úò^Kö\–\úò^Jõ€\ú H»õ€\ú»à◊JKôö[\ä
+õ€\äHOàYõ€\èÀö\—[]Y
+KõX\
+
+õ€\äHOàõõ‹õX[^ôQõ€\íY
+õ€\èÀöY
+JJN¬à€€ú›ò[Y\»H\úò^Kö\–\úò^JXÿ€›[ù H»Xÿ€›[ù»à◊N¬àô]\õàò[Y\ÀõX\
+
+Xÿ€›[ù
+HOà¬à€€ú›õ‹õX[^ôYHõõ‹õX[^ôPXÿ€›[ù⁄\JXÿ€›[ù
+N¬à€€ú›ô]ö[›\“Y»Hõõ‹õX[^ôQõ€\íY\›
+ô^òX›Xÿ€›[ùõ€\íY õ‹õX[^ôY
+JN¬à€€ú›ô\€€ôYHõõ‹õX[^ôQõ€\íY\›
+àô]ö[›\“YÀôö[\ä
+Y
+HOàò[YYÀö\ õõ‹õX[^ôQõ€\íY
+Y
+JJBà
+N¬à€€ú›ô]ö[›\‘Ÿ]Hô]»Ÿ]
+ô]ö[›\“YÀõX\
+
+Y
+HOàõõ‹õX[^ôQõ€\íY
+Y
+JJN¬à€€ú›ô\€€ôYŸ]Hô]»Ÿ]
+ô\€€ôYõX\
+
+Y
+HOàõõ‹õX[^ôQõ€\íY
+Y
+JJN¬à€€ú›õ€\ìY[Xô\ú⁄\›]\»H¬àããõõ‹õX[^ôYôõ€\ìY[Xô\ú⁄\›]\»	âà\[Ÿàõ‹õX[^ôYôõ€\ìY[Xô\ú⁄\›]\»OOHõÿöôX›à»õ‹õX[^ôYôõ€\ìY[Xô\ú⁄\›]\»àﬂBàN¬à€€ú›€Xú›€ôP]HX]õX^
+à\”ù[Xô\äõ‹õX[^ôYù\]Y]\ Kà\”ù[Xô\äõ‹õX[^ôYò‹ôX]Y]\ Bà
+N¬à€€ú›]öXŸSò[YHH\‘›ö[ô õ‹õX[^ôYõ\›‹\ò]Y]öXŸSò[YJKùö[J
+HQêUS—UíP—W”êSQN¬àõ‹à
+€€ú›YŸàô]ö[›\‘Ÿ]
+H¬àYà
+ZYô\€€ôYŸ]ö\ Y
+JH€€ù[ùYN¬à€€ú›^\›[ô»Hõ€\ìY[Xô\ú⁄\›]\÷⁄YHﬂN¬àõ€\ìY[Xô\ú⁄\›]\÷⁄YHH¬à\—[]YàùYKà\]Y]\ŒàX]õX^
+\”ù[Xô\ä^\›[ôÀù\]Y]\ K€Xú›€ôP]
+Kà]öXŸSò[YNà\‘›ö[ô ^\›[ôÀô]öXŸSò[YJKùö[J
+H]öXŸSò[YBàN¬àBàõ‹à
+€€ú›YŸàô\€€ôYŸ]
+H¬àYà
+ZY
+H€€ù[ùYN¬à€€ú›^\›[ô»Hõ€\ìY[Xô\ú⁄\›]\÷⁄YN¬àYà
+Y^\›[ô»^\›[ôÀö\—[]Y
+H¬àõ€\ìY[Xô\ú⁄\›]\÷⁄YHH¬à\—[]Yàò[ŸKà\]Y]\ŒàX]õX^
+\”ù[Xô\ä^\›[ôœÀù\]Y]\ K€Xú›€ôP]
+Kà]öXŸSò[YNà\‘›ö[ô ^\›[ôœÀô]öXŸSò[YJKùö[J
+H]öXŸSò[YBàN¬àBàBàô]\õà¬àããõõ‹õX[^ôYàõ€\íYàô\€€ôYÃHù[àõ€\íYŒàô\€€ôYàõ€\ìY[Xô\ú⁄\›]\¬àN¬àJN¬àBàù[ò›[€àY[ù]TŸ]
+ò[Y\ÀY[ù]QõäH¬à€€ú›ô\›[H à◊‘TëW◊»
+ã»ô]»Ÿ]
+
+N¬àõ‹à
+€€ú›ò[YHŸà\úò^Kö\–\úò^Jò[Y\ H»ò[Y\»à◊JH¬à€€ú›Y[ù]HHY[ù]Qõäò[YJN¬àYà
+Y[ù]JHô\›[òY
+Y[ù]JN¬àBàô]\õàô\›[¬àBàù[ò›[€àY\ôŸT[õôYöY]‹ Yùò[YKöY⁄ò[YKôYô\îöY⁄
+H¬à€€ú›YùHYùò[YH	âà\[ŸàYùò[YHOOHõÿöôX›à	âàP\úò^Kö\–\úò^JYùò[YJH»Yùò[YHàﬂN¬à€€ú›öY⁄HöY⁄ò[YH	âà\[ŸàöY⁄ò[YHOOHõÿöôX›à	âàP\úò^Kö\–\úò^JöY⁄ò[YJH»öY⁄ò[YHàﬂN¬à€€ú›Y\ôŸYHﬂN¬àõ‹à
+€€ú›Ÿ^HŸà à◊‘TëW◊»
+ã»ô]»Ÿ]
+ÀããìÿöôX›öŸ^\ Yù
+KããìÿöôX›öŸ^\ öY⁄
+WJJH¬àYà
+ÿöôX›úõ››\Kö\”›€îõ‹\ùKòÿ[
+YùŸ^JH	âàÿöôX›úõ››\Kö\”›€îõ‹\ùKòÿ[
+öY⁄Ÿ^JJH¬àY\ôŸY⁄Ÿ^WHHôYô\îöY⁄»öY⁄⁄Ÿ^WHàYù⁄Ÿ^WN¬àH[ŸHYà
+ÿöôX›úõ››\Kö\”›€îõ‹\ùKòÿ[
+YùŸ^JJH¬àY\ôŸY⁄Ÿ^WHHYù⁄Ÿ^WN¬àH[ŸH¬àY\ôŸY⁄Ÿ^WHHöY⁄⁄Ÿ^WN¬àBàBàô]\õàÿöôX›öŸ^\ Y\ôŸY
+Kõ[ô›à»Y\ôŸYàù[¬àBàù[ò›[€àZ\‹⁄[ô“Y[ù]Y\ €›\òŸK\ôŸ]Y[ù]QõäH¬à€€ú›€›\òŸRY»HY[ù]TŸ]
+€›\òŸKY[ù]QõäN¬à€€ú›\ôŸ]Y»HY[ù]TŸ]
+\ôŸ]Y[ù]QõäN¬àô]\õà\úò^Kôúõ€J€›\òŸRY Kôö[\ä
+Y[ù]JHOà]\ôŸ]YÀö\ Y[ù]JJN¬àBàù[ò›[€à›[[X\ö^ôTﬁ[ò‘^[ÿY
+^[ÿY[\ú H¬à€€ú›Hô\€€ôR[\ú [\ú N¬à€€ú›Xÿ€›[ù»H\úò^Kö\–\úò^J^[ÿYÀòXÿ€›[ù H»^[ÿYòXÿ€›[ùÀõX\
+õõ‹õX[^ôPXÿ€›[ù⁄\JHà◊N¬à€€ú›õ€\ú»H\úò^Kö\–\úò^J^[ÿYÀôõ€\ú H»^[ÿYôõ€\úÀõX\
+õõ‹õX[^ôQõ€\î⁄\JHà◊N¬à€€ú›\‹⁄Ÿ^\»H\úò^Kö\–\úò^J^[ÿYÀú\‹⁄Ÿ^\ H»^[ÿYú\‹⁄Ÿ^\ÀõX\
+õõ‹õX[^ôT\‹⁄Ÿ^T⁄\JHà◊N¬àô]\õà¬àXÿ€›[ùŒàXÿ€›[ùÀôö[\ä
+][JHOàZ][OÀö\‘\õX[ô[ùQ[]Y
+Kõ[ô›àX›]ôPXÿ€›[ùŒàXÿ€›[ùÀôö[\ä
+][JHOàZ][OÀö\—[]Y	âàZ][OÀö\‘\õX[ô[ùQ[]Y
+Kõ[ô›à[]YXÿ€›[ùŒàXÿ€›[ùÀôö[\ä
+][JHOàõ€€X[ä][OÀö\—[]Y
+H	âàZ][OÀö\‘\õX[ô[ùQ[]Y
+Kõ[ô›àõ€\úŒàõ€\úÀôö[\ä
+][JHOàZ][OÀö\‘\õX[ô[ùQ[]Y
+Kõ[ô›à\‹⁄Ÿ^\Œà\‹⁄Ÿ^\Àôö[\ä
+][JHOàZ][OÀö\‘\õX[ô[ùQ[]Y
+Kõ[ô›àXÿ€›[ùYŒàY[ù]TŸ]
+Xÿ€›[ùÀ
+][JHOà\‘›ö[ô ][OÀúôX€‹ôY][OÀöY][OÀòXÿ€›[ùY
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+JKàõ€\íYŒàY[ù]TŸ]
+õ€\úÀ
+][JHOàõõ‹õX[^ôQõ€\íY
+][OÀöY
+JKà\‹⁄Ÿ^RYŒàY[ù]TŸ]
+\‹⁄Ÿ^\À
+][JHOà\‘›ö[ô ][OÀò‹ôY[ùX[YççH][OÀöY
+Kùö[J
+JBàN¬àBàù[ò›[€à]ò[X]Tﬁ[ò‘ÿYô]J»ÿÿ[ô[[›KY\ôŸY[ŸHHõY\ôŸHàK[\ú H¬à€€ú›ÿÿ[›[[X\ûHH›[[X\ö^ôTﬁ[ò‘^[ÿY
+ÿÿ[[\ú N¬à€€ú›ô[[›T›[[X\ûHHô[[›HOHù[»ù[à›[[X\ö^ôTﬁ[ò‘^[ÿY
+ô[[›K[\ú N¬à€€ú›Y\ôŸY›[[X\ûHH›[[X\ö^ôTﬁ[ò‘^[ÿY
+Y\ôŸY[\ú N¬à€€ú›ôX\€€ú»H◊N¬à€€ú›ÿÿ[õ€ë[\HHÿÿ[›[[X\ûKòXÿ€›[ù»
+»ÿÿ[›[[X\ûKôõ€\ú»
+»ÿÿ[›[[X\ûKú\‹⁄Ÿ^\»à¬à€€ú›ô[[›Sõ€ë[\HHõ€€X[äô[[›T›[[X\ûJH	âàô[[›T›[[X\ûKòXÿ€›[ù»
+»ô[[›T›[[X\ûKôõ€\ú»
+»ô[[›T›[[X\ûKú\‹⁄Ÿ^\»à¬àYà
+[ŸHOOHõY\ôŸHäH¬àYà
+ÿÿ[õ€ë[\H	âàô[[›T›[[X\ûH	âà\ô[[›Sõ€ë[\JH¬àôX\€€úÀú\⁄
+îëSS’W—STW—ì‘ó”ì”ó—STW”––SäN¬àBà€€ú›Z\‹⁄[ô–Xÿ€›[ù»HZ\‹⁄[ô“Y[ù]Y\ àÿÿ[ÀòXÿ€›[ùÀàY\ôŸYÀòXÿ€›[ùÀà
+][JHOà\‘›ö[ô ][OÀúôX€‹ôY][OÀöY][OÀòXÿ€›[ùY
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+Bà
+N¬à€€ú›Z\‹⁄[ô—õ€\ú»HZ\‹⁄[ô“Y[ù]Y\ àÿÿ[Àôõ€\úÀàY\ôŸYÀôõ€\úÀà
+][JHOà\‘›ö[ô ][OÀöY
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+Bà
+N¬à€€ú›Z\‹⁄[ô‘\‹⁄Ÿ^\»HZ\‹⁄[ô“Y[ù]Y\ àÿÿ[Àú\‹⁄Ÿ^\ÀàY\ôŸYÀú\‹⁄Ÿ^\Àà
+][JHOà\‘›ö[ô ][OÀò‹ôY[ùX[YççH][OÀöY
+Kùö[J
+Bà
+N¬àYà
+Z\‹⁄[ô–Xÿ€›[ùÀõ[ô›à
+HôX\€€úÀú\⁄
+ì––S–P–”’Sï◊—ì‘QäN¬àYà
+Z\‹⁄[ô—õ€\úÀõ[ô›à
+HôX\€€úÀú\⁄
+ì––S—ì”Tî◊—ì‘QäN¬àYà
+Z\‹⁄[ô‘\‹⁄Ÿ^\Àõ[ô›à
+HôX\€€úÀú\⁄
+ì––S‘T‘“—VT◊—ì‘QäN¬à€€ú›Z\‹⁄[ô‘ô[[›PXÿ€›[ù»HZ\‹⁄[ô“Y[ù]Y\ àô[[›OÀòXÿ€›[ùÀàY\ôŸYÀòXÿ€›[ùÀà
+][JHOà\‘›ö[ô ][OÀúôX€‹ôY][OÀöY][OÀòXÿ€›[ùY
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+Bà
+N¬à€€ú›Z\‹⁄[ô‘ô[[›Qõ€\ú»HZ\‹⁄[ô“Y[ù]Y\ àô[[›OÀôõ€\úÀàY\ôŸYÀôõ€\úÀà
+][JHOà\‘›ö[ô ][OÀöY
+Kùö[J
+Kù”›Ÿ\êÿ\ŸJ
+Bà
+N¬à€€ú›Z\‹⁄[ô‘ô[[›T\‹⁄Ÿ^\»HZ\‹⁄[ô“Y[ù]Y\ àô[[›OÀú\‹⁄Ÿ^\ÀàY\ôŸYÀú\‹⁄Ÿ^\Àà
+][JHOà\‘›ö[ô ][OÀò‹ôY[ùX[YççH][OÀöY
+Kùö[J
+Bà
+N¬àYà
+Z\‹⁄[ô‘ô[[›PXÿ€›[ùÀõ[ô›à
+HôX\€€úÀú\⁄
+îëSS’W–P–”’Sï◊—ì‘QäN¬àYà
+Z\‹⁄[ô‘ô[[›Qõ€\úÀõ[ô›à
+HôX\€€úÀú\⁄
+îëSS’W—ì”Tî◊—ì‘QäN¬àYà
+Z\‹⁄[ô‘ô[[›T\‹⁄Ÿ^\Àõ[ô›à
+HôX\€€úÀú\⁄
+îëSS’W‘T‘“—VT◊—ì‘QäN¬àô]\õà¬àÿYôNàôX\€€úÀõ[ô›OOHàôX\€€úÀàÿÿ[à»ããõÿÿ[›[[X\ûKXÿ€›[ùYŒàõ⁄Yõ€\íYŒàõ⁄Y\‹⁄Ÿ^RYŒàõ⁄YKàô[[›Nàô[[›T›[[X\ûH»»ããúô[[›T›[[X\ûKXÿ€›[ùYŒàõ⁄Yõ€\íYŒàõ⁄Y\‹⁄Ÿ^RYŒàõ⁄YHàù[àY\ôŸYà»ããõY\ôŸY›[[X\ûKXÿ€›[ùYŒàõ⁄Yõ€\íYŒàõ⁄Y\‹⁄Ÿ^RYŒàõ⁄YBàN¬àBàYà
+[ŸHOOHúô[[›S›ô\ù‹ö]Sÿÿ[äH¬àYà
+\ô[[›Sõ€ë[\H	âàÿÿ[õ€ë[\JHôX\€€úÀú\⁄
+îëSS’W—STW—ì‘ó”ì”ó—STW”––SäN¬àô]\õà¬àÿYôNàôX\€€úÀõ[ô›OOHàôX\€€úÀàÿÿ[à»ããõÿÿ[›[[X\ûKXÿ€›[ùYŒàõ⁄Yõ€\íYŒàõ⁄Y\‹⁄Ÿ^RYŒàõ⁄YKàô[[›Nàô[[›T›[[X\ûH»»ããúô[[›T›[[X\ûKXÿ€›[ùYŒàõ⁄Yõ€\íYŒàõ⁄Y\‹⁄Ÿ^RYŒàõ⁄YHàù[àY\ôŸYà»ããõY\ôŸY›[[X\ûKXÿ€›[ùYŒàõ⁄Yõ€\íYŒàõ⁄Y\‹⁄Ÿ^RYŒàõ⁄YBàN¬àBàô]\õà¬àÿYôNàùYKàôX\€€úÀàÿÿ[à»ããõÿÿ[›[[X\ûKXÿ€›[ùYŒàõ⁄Yõ€\íYŒàõ⁄Y\‹⁄Ÿ^RYŒàõ⁄YKàô[[›Nàô[[›T›[[X\ûH»»ããúô[[›T›[[X\ûKXÿ€›[ùYŒàõ⁄Yõ€\íYŒàõ⁄Y\‹⁄Ÿ^RYŒàõ⁄YHàù[àY\ôŸYà»ããõY\ôŸY›[[X\ûKXÿ€›[ùYŒàõ⁄Yõ€\íYŒàõ⁄Y\‹⁄Ÿ^RYŒàõ⁄YBàN¬àBÇàÀ»ÿ⁄◊ÿ‹û\Àöú¬àò\à–“◊–‘ëQSïPS’ëTî“S”àHé¬àò\à–“◊‘í—åó“UTêUS”î»HÃYM¬àù[ò›[€àû]\’–ò\ŸMç
+û]\ H¬à]ö[ò\ûHHàé¬àõ‹à
+€€ú›ò[YHŸàû]\ Hö[ò\ûH
+œH›ö[ôÀôúõ€P⁄\ê€ŸJò[YJN¬àô]\õàùÿJö[ò\ûJN¬àBàù[ò›[€àò\ŸMç–û]\ ò\ŸMç
+H¬àûH¬à€€ú›ö[ò\ûHH]ÿä›ö[ô ò\ŸMçàäJN¬à€€ú››]]Hô]»Z[ù\úò^Jö[ò\ûKõ[ô›
+N¬àõ‹à
+]HH»Hö[ò\ûKõ[ô›»H
+œHJH›]]⁄WHHö[ò\ûKò⁄\ê€ŸP]
+JN¬àô]\õà›]]¬àHÿ]⁄¬àô]\õàô]»Z[ù\úò^J
+N¬àBàBàù[ò›[€àõ‹õX[^ôSÿ⁄”X\›\ê‹ôY[ùX[
+ò[YJH¬àYà
+]ò[YH\[Ÿàò[YHOOHõÿöôX›äHô]\õàù[¬à€€ú›ô\ú⁄[€àHù[Xô\äò[YKùô\ú⁄[€àJN¬à€€ú›ÿ[ò\ŸMçH›ö[ô ò[YKúÿ[ò\ŸMçàäN¬à€€ú›YŸ\›ò\ŸMçH›ö[ô ò[YKôYŸ\›ò\ŸMçàäN¬àYà
+VÃK–“◊–‘ëQSïPS’ëTî“S”óKö[ò€Y\ ô\ú⁄[€äH\ÿ[ò\ŸMçYYŸ\›ò\ŸMç
+Hô]\õàù[¬à€€ú›ÿ[û]\»Hò\ŸMç–û]\ ÿ[ò\ŸMç
+N¬àYà
+ÿ[û]\Àõ[ô›MäHô]\õàù[¬à€€ú›]\ò][€ú»Hô\ú⁄[€àOOH–“◊–‘ëQSïPS’ëTî“S”à»ù[Xô\äò[YKö]\ò][€ú»–“◊‘í—åó“UTêUS”î HàN¬àYà
+Sù[Xô\ãö\“[ùYŸ\ä]\ò][€ú H]\ò][€ú»JHô]\õàù[¬àô]\õà»ô\ú⁄[€ãÿ[ò\ŸMçYŸ\›ò\ŸMç]\ò][€ú»N¬àBà\ﬁ[ò»ù[ò›[€àYÿXﬁQYŸ\›
+\‹›€‹ôÿ[û]\ H¬à€€ú›\‹›€‹ôû]\»Hô]»^[ò€Ÿ\ä
+Kô[ò€ŸJ›ö[ô \‹›€‹ôàäJN¬à€€ú›Y\ôŸYHô]»Z[ù\úò^Jÿ[û]\Àõ[ô›
+»\‹›€‹ôû]\Àõ[ô›
+N¬àY\ôŸYúŸ]
+ÿ[û]\À
+N¬àY\ôŸYúŸ]
+\‹›€‹ôû]\Àÿ[û]\Àõ[ô›
+N¬àô]\õàô]»Z[ù\úò^J]ÿZ]‹û\Àú›XùKôYŸ\›
+î“KLçMàãY\ôŸY
+JN¬àBà\ﬁ[ò»ù[ò›[€àöŸåëYŸ\›
+\‹›€‹ôÿ[û]\À]\ò][€ú H¬à€€ú›Ÿ^SX]\öX[H]ÿZ]‹û\Àú›XùKö[\‹ùŸ^Jàúò]»ãàô]»^[ò€Ÿ\ä
+Kô[ò€ŸJ›ö[ô \‹›€‹ôàäJKàîí—åàãàò[ŸKà»ô\ö]ôPö]»óBà
+N¬à€€ú›ö]»H]ÿZ]‹û\Àú›XùKô\ö]ôPö] à»ò[YNàîí—åàã\⁄àî“KLçMàãÿ[àÿ[û]\À]\ò][€ú»KàŸ^SX]\öX[àçMÇà
+N¬àô]\õàô]»Z[ù\úò^Jö] N¬àBà\ﬁ[ò»ù[ò›[€à‹ôX]Sÿ⁄”X\›\ê‹ôY[ùX[
+\‹›€‹ô
+H¬à€€ú›õ‹õX[^ôY\‹›€‹ôH›ö[ô \‹›€‹ôàäN¬àYà
+[õ‹õX[^ôY\‹›€‹ô
+Hô]\õàù[¬à€€ú›ÿ[û]\»H‹û\ÀôŸ]ò[ô€Uò[Y\ ô]»Z[ù\úò^JMäJN¬à€€ú›YŸ\›H]ÿZ]öŸåëYŸ\›
+õ‹õX[^ôY\‹›€‹ôÿ[û]\À–“◊‘í—åó“UTêUS”î N¬àô]\õà¬àô\ú⁄[€éà–“◊–‘ëQSïPS’ëTî“S”ãàÿ[ò\ŸMçàû]\’–ò\ŸMç
+ÿ[û]\ KàYŸ\›ò\ŸMçàû]\’–ò\ŸMç
+YŸ\›
+Kà]\ò][€úŒà–“◊‘í—åó“UTêUS”î¬àN¬àBà\ﬁ[ò»ù[ò›[€àô\öYûSÿ⁄”X\›\î\‹›€‹ô
+‹ôY[ùX[\‹›€‹ô
+H¬à€€ú›õ‹õX[^ôYHõ‹õX[^ôSÿ⁄”X\›\ê‹ôY[ùX[
+‹ôY[ùX[
+N¬àYà
+[õ‹õX[^ôY
+Hô]\õàò[ŸN¬à€€ú›ÿ[û]\»Hò\ŸMç–û]\ õ‹õX[^ôYúÿ[ò\ŸMç
+N¬à€€ú›YŸ\›Hõ‹õX[^ôYùô\ú⁄[€àOOHH»]ÿZ]YÿXﬁQYŸ\›
+›ö[ô \‹›€‹ôàäKÿ[û]\ Hà]ÿZ]öŸåëYŸ\›
+›ö[ô \‹›€‹ôàäKÿ[û]\Àõ‹õX[^ôYö]\ò][€ú N¬àô]\õà[Z[ô‘ÿYôQ\]X[
+YŸ\›ò\ŸMç–û]\ õ‹õX[^ôYôYŸ\›ò\ŸMç
+JN¬àBàù[ò›[€à[Z[ô‘ÿYôQ\]X[
+Àö H¬àYà
+Àõ[ô›OOHöÀõ[ô›
+Hô]\õàò[ŸN¬à]Yôô\ô[òŸHH¬àõ‹à
+]HH»HÀõ[ô›»H
+œHJHYôô\ô[òŸHH÷⁄WHàö÷⁄WN¬àô]\õàYôô\ô[òŸHOOH¬àBÇàÀ»ﬁ[ò◊€›]õﬁöú¬àù[ò›[€àﬁ[ò’\ôŸ]Ÿ^J\ôŸ]
+H¬àô]\õà	‘›ö[ô \ôŸ]Àö⁄[ôàäKùö[J
+__	‘›ö[ô \ôŸ]Àù\õàäKùö[J
+_X¬àBàù[ò›[€àÿ[õ€öXÿ[ú€€äò[YJH¬àYà
+\úò^Kö\–\úò^Jò[YJJHô]\õà…›ò[YKõX\
+ÿ[õ€öXÿ[ú€€äKöõ⁄[äãä_WX¬àYà
+ò[YH	âà\[Ÿàò[YHOOHõÿöôX›äH¬àô]\õà…”ÿöôX›öŸ^\ ò[YJKú€‹ù
+
+KõX\
+
+Ÿ^JHOà	“î””ãú›ö[ô⁄YûJŸ^J_Nâÿÿ[õ€öXÿ[ú€€äò[YV⁄Ÿ^WJ_X
+Köõ⁄[äãä__X¬àBàô]\õàî””ãú›ö[ô⁄YûJò[YHœ»ù[
+N¬àBà\ﬁ[ò»ù[ò›[€àﬁ[ò‘^[ÿY⁄LçMä^[ÿY‹û\–\HH€ÿò[\Àò‹û\ H¬àYà
+X‹û\–\OÀú›XùOÀôYŸ\›
+Hõ›»ô]»\úõ‹äóMQçL◊MLçMÃ–QóMN◊MLMçLëóMåÃWMM◊MêççH^[ÿYMçNNNWNêLWM–éM»äN¬à€€ú›û]\»Hô]»^[ò€Ÿ\ä
+Kô[ò€ŸJÿ[õ€öXÿ[ú€€ä^[ÿY
+JN¬à€€ú›YŸ\›Hô]»Z[ù\úò^J]ÿZ]‹û\–\Kú›XùKôYŸ\›
+î“KLçMàãû]\ JN¬àô]\õà\úò^Kôúõ€JYŸ\›
+ò[YJHOàò[YKù‘›ö[ô MäKúY›\ù
+ãåäJKöõ⁄[äàäN¬àBàù[ò›[€àõ‹õX[^ôTﬁ[ò”›]õﬁ][J][Kõ›”\»H]Kõõ› 
+JH¬à€€ú›\ôŸ]Ÿ^HH›ö[ô ][OÀù\ôŸ]Ÿ^HàäKùö[J
+N¬à€€ú›^[ÿYH][OÀú^[ÿY¬àYà
+]\ôŸ]Ÿ^H\^[ÿY\[Ÿà^[ÿYOOHõÿöôX›äHô]\õàù[¬à€€ú›õ€ìôYÿ]]ôSù[Xô\àH
+ò]Àò[òX⁄ HOà¬à€€ú›\úŸYHù[Xô\äò] N¬àô]\õàù[Xô\ãö\—ö[ö]J\úŸY
+H	âà\úŸYèH»\úŸYàò[òX⁄Œ¬àN¬àô]\õà¬à\ôŸ]Ÿ^Kà^[ÿYà^[ÿY⁄LçMéà›ö[ô ][OÀú^[ÿY⁄LçMààäKùö[J
+Kù”›Ÿ\êÿ\ŸJ
+Kà^X›Y]YŒà›ö[ô ][OÀô^X›Y]Y»àäKùö[J
+Kà^X›Yô]ö\⁄[€éàX]ôõ€‹äõ€ìôYÿ]]ôSù[Xô\ä][OÀô^X›Yô]ö\⁄[€ã
+JKàY[\›[òﬁRŸ^Nà›ö[ô ][OÀöY[\›[òﬁRŸ^HàäKùö[J
+Kàﬁ[ò‘Ÿ\‹⁄[€íYà›ö[ô ][OÀúﬁ[ò‘Ÿ\‹⁄[€íYàäKùö[J
+Kà‹\ò][€íYà›ö[ô ][OÀõ‹\ò][€íYàäKùö[J
+Kà€›\òŸU\Nà›ö[ô ][OÀú€›\òŸU\H\ôŸ]Ÿ^Kú‹]
+üãJVÃHàäKùö[J
+Kàÿ€‹Nà›ö[ô ][OÀúÿ€‹HàäKùö[J
+Kà›]\Œà›ö[ô ][OÀú›]\»ú[ô[ô‘ô]ûHäKùö[J
+Hú[ô[ô‘ô]ûHãà‹ôX]Y]\Œàõ€ìôYÿ]]ôSù[Xô\ä][OÀò‹ôX]Y]\Àõ›”\ Kà][\ŒàX]õZ[ä÷Sê◊”’Uì÷”PV–USTÀX]ôõ€‹äõ€ìôYÿ]]ôSù[Xô\ä][OÀò][\À
+JJKà\›][\]\Œàõ€ìôYÿ]]ôSù[Xô\ä][OÀõ\›][\]\À
+Kàô^ô]ûP]\Œàõ€ìôYÿ]]ôSù[Xô\ä][OÀõô^ô]ûP]\À
+Kà\›\úõ‹ê€ŸNà›ö[ô ][OÀõ\›\úõ‹ê€ŸHàäKùö[J
+Kà\›\úõ‹éà›ö[ô ][OÀõ\›\úõ‹ààäBàN¬àBàù[ò›[€àõ‹õX[^ôTﬁ[ò”›]õﬁ
+ò[YKõ›”\»H]Kõõ› 
+JH¬à€€ú›ûU\ôŸ]H à◊‘TëW◊»
+ã»ô]»X\
+
+N¬àõ‹à
+€€ú›][HŸà\úò^Kö\–\úò^Jò[YJH»ò[YHà◊JH¬à€€ú›õ‹õX[^ôYHõ‹õX[^ôTﬁ[ò”›]õﬁ][J][Kõ›”\ N¬àYà
+[õ‹õX[^ôY
+H€€ù[ùYN¬àûU\ôŸ]úŸ]
+õ‹õX[^ôYù\ôŸ]Ÿ^Kõ‹õX[^ôY
+N¬àBàô]\õàÀããòûU\ôŸ]ùò[Y\ 
+WKú€‹ù
+
+YùöY⁄
+HOàYùò‹ôX]Y]\»HöY⁄ò‹ôX]Y]\ N¬àBàù[ò›[€à\Ÿ\ùﬁ[ò”›]õﬁ
+ò[YK¬à\ôŸ]Ÿ^Kà^[ÿYà\úõ‹ãà^[ÿY⁄LçMàHàãà^X›Y]Y»Hàãà^X›Yô]ö\⁄[€àHàY[\›[òﬁRŸ^HHàãàﬁ[ò‘Ÿ\‹⁄[€íYHàãà‹\ò][€íYHàãà€›\òŸU\HHàãàÿ€‹HHàãàõ‹òŸTô\›[YHHò[ŸKàõ›”\»H]Kõõ› 
+BàJH¬à€€ú››\úô[ùHõ‹õX[^ôTﬁ[ò”›]õﬁ
+ò[YKõ›”\ N¬à€€ú›ô]ö[›\»H›\úô[ùôö[ô
+
+][JHOà][Kù\ôŸ]Ÿ^HOOH\ôŸ]Ÿ^JN¬à€€ú›õ‹õX[^ôY\⁄H›ö[ô ^[ÿY⁄LçMààäKùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬à€€ú›ÿ[YSŸ⁄Xÿ[‹ö]HHõ€€X[äô]ö[›\»	âàõ‹õX[^ôY\⁄	âàô]ö[›\Àú^[ÿY⁄LçMàOOHõ‹õX[^ôY\⁄
+N¬à€€ú›ÿ\‘]\ŸYHô]ö[›\œÀú›]\»OOHú]\ŸYé¬à€€ú›][\»HX]õZ[äà÷Sê◊”’Uì÷”PV–USTÀà
+ÿ[YSŸ⁄Xÿ[‹ö]H»õ‹òŸTô\›[YH	âàÿ\‘]\ŸY»àù[Xô\äô]ö[›\œÀò][\»
+Hà
+H
+»Bà
+N¬à€€ú›ô^Hõ‹õX[^ôTﬁ[ò”›]õﬁ][J¬à\ôŸ]Ÿ^Kà^[ÿYà^[ÿY⁄LçMéàõ‹õX[^ôY\⁄à^X›Y]YÀà^X›Yô]ö\⁄[€ãàY[\›[òﬁRŸ^NàY[\›[òﬁRŸ^H
+ÿ[YSŸ⁄Xÿ[‹ö]H»ô]ö[›\ÀöY[\›[òﬁRŸ^HààäKàﬁ[ò‘Ÿ\‹⁄[€íYàﬁ[ò‘Ÿ\‹⁄[€íY
+ÿ[YSŸ⁄Xÿ[‹ö]H»ô]ö[›\Àúﬁ[ò‘Ÿ\‹⁄[€íYààäKà‹\ò][€íYà‹\ò][€íY
+ÿ[YSŸ⁄Xÿ[‹ö]H»ô]ö[›\Àõ‹\ò][€íYààäKà€›\òŸU\Kàÿ€‹Kà›]\Œà][\»èH÷Sê◊”’Uì÷”PV–UST»»ú]\ŸYààú[ô[ô‘ô]ûHãà‹ôX]Y]\Œàÿ[YSŸ⁄Xÿ[‹ö]H»ô]ö[›\Àò‹ôX]Y]\»àõ›”\Àà][\Àà\›][\]\Œàõ›”\Ààô^ô]ûP]\Œàõ›”\»
+»ﬁ[ò”›]õﬁô]ûQ[^S\ ][\ Kà\›\úõ‹ê€ŸNà›ö[ô \úõ‹èÀò€ŸHàäKà\›\úõ‹éà›ö[ô \úõ‹èÀõY\‹ÿYŸH\úõ‹ààäBàKõ›”\ N¬àô]\õàõ‹õX[^ôTﬁ[ò”›]õﬁ
+›\úô[ùôö[\ä
+][JHOà][Kù\ôŸ]Ÿ^HOOH\ôŸ]Ÿ^JKò€€òÿ]
+ô^
+Kõ›”\ N¬àBàù[ò›[€àô[[›ôS‹ú[ôYﬁ[ò”›]õﬁ
+ò[YKX›]ôU\ôŸ]Ÿ^\ H¬à€€ú›X›]ôHHô]»Ÿ]
+\úò^Kôúõ€JX›]ôU\ôŸ]Ÿ^\»◊K
+][JHOà›ö[ô ][HàäKùö[J
+JKôö[\äõ€€X[äJN¬àô]\õàõ‹õX[^ôTﬁ[ò”›]õﬁ
+ò[YJKôö[\ä
+][JHOàX›]ôKö\ ][Kù\ôŸ]Ÿ^JJN¬àBÇàÀ»]W‹›‹ôKöú¬àò\àó”êSQHHú\‹Àõÿÿ[ôãùåHé¬àò\àó’ëTî“S”àHN¬àò\à’‘ëW–””P’S”î»Hò€€X›[€ú»é¬àò\à””P’S”ó–P–”’Sï»HòXÿ€›[ù»é¬àò\à””P’S”ó‘T‘“—VT»Hú\‹⁄Ÿ^\»é¬àò\à””P’S”ó—ì”Tî»Hôõ€\ú»é¬àò\à””P’S”ó”VS’UHõ^[›]é¬àò\à””P’S”ó“T’‘ñHHö\›‹ûHé¬àò\à””P’S”ó‘÷Sê◊‘—P‘ëU»Húﬁ[ò‘ŸX‹ô]»é¬àò\à””P’S”ó‘÷Sê◊‘–QëUW‘”êT“’»Húﬁ[ò‘ÿYô]T€ò\⁄›»é¬àò\à””P’S”ó‘÷Sê◊”’Uì÷Húﬁ[ò”›]õﬁé¬àò\àT’‘ñW”PV—SïíQT»HL¬àò\à–QëUW‘”êT“’”PV—SïíQT»HN¬àò\àQ–P÷W‘’‘êQ—W“—VW–P–”’Sï»Hú\‹ÀòXÿ€›[ù»é¬àò\àQ–P÷W‘’‘êQ—W“—VW‘T‘“—VT»Hú\‹Àú\‹⁄Ÿ^\»é¬àò\àQ–P÷W‘’‘êQ—W“—VW—ì”Tî»Hú\‹Àôõ€\ú»é¬àò\à’‘êQ—W“—VW”RQ‘êUS”ó—”ëHHú\‹Àô]KõZY‹ò]Y“[ô^YãùåHé¬àò\à’‘êQ—W“—VW—Sê‘ñTS”ó“—VHHú\‹Àô]Kô[ò‹û\[€íŸ^KùåHé¬àò\à’‘êQ—W“—VW’‘êTQ—Sê‘ñTS”ó“—VHHú\‹Àô]Kù‹ò\Y[ò‹û\[€íŸ^Kùåàé¬àò\à’‘êQ—W“—VW‘—T‘“S”ó—Sê‘ñTS”ó“—VHHú\‹Àô]KúŸ\‹⁄[€ë[ò‹û\[€íŸ^Kùåàé¬àò\àQ–P÷W‘’‘êQ—W“—VW‘÷Sê◊’—PëUó‘T‘’”‘ëHú\‹Àúﬁ[òÀùŸXô]ãú\‹›€‹ôùåàé¬àò\àQ–P÷W‘’‘êQ—W“—VW‘÷Sê◊‘—TïëTó’“—SàHú\‹Àúﬁ[òÀúŸ\ùô\ãù⁄Ÿ[ãùåàé¬àò\àQ–P÷W‘’‘êQ—W“—VW‘÷Sê◊—Sê‘ñTS”ó“—VHHú\‹Àúﬁ[òÀô[ò‹û\[€íŸ^KùåHé¬àò\àQ–P÷W‘’‘êQ—W“—VW”––S‘–QëUW‘”êT“’»Hú\‹Àõÿÿ[ÿYô]T€ò\⁄›ÀùåHé¬àò\à’‘êQ—W“—VW—UW–ïSTHú\‹Àô]Kòù[\ùåHé¬àò\àîõ€Z\ŸHHù[¬àò\àôXYTõ€Z\ŸHHù[¬àò\à[õÿ⁄ŸY[ò‹û\[€íŸ^HHù[¬àò\à[ò‹û\[€íŸ^Tõ€Z\ŸHHù[¬àù[ò›[€àÿ[ö]^ôR\›‹ûPX›[€äò[YJH¬à€€ú›X›[€àH›ö[ô ò[YHàäKùö[J
+N¬àYà
+XX›[€äHô]\õààé¬à€€ú›õ‹õX[^ôYHX›[€ãúô\XŸJŒãŸÀóQëåPHäN¬àYà
+ 9b&˘nÓ∫-)πcÌﬂ‹ôX]YXÿ€›[ù
+W ñ˚Ô"
+V◊◊◊Jè 9k·πË y•.y..ü\‹›€‹ô äŒò⁄[ôŸY _\‹›€‹ôÿ\»Ÿ] V◊◊◊Jè÷˚Ô"JWK⁄Kù\›
+õ‹õX[^ôY
+JH¬àô]\õàóMçPåMQQêWNçóML—ç»é¬àBà€€ú›Ÿ\\ò]‹àHõ‹õX[^ôYö[ô^ŸäóQëåPHäN¬à€€ú›ôYö^HŸ\\ò]‹àèH»	€õ‹õX[^ôYú€XŸJŸ\\ò]‹ä_WQëåPXààé¬àYà
+ 9k·πË y•.y..ü\‹›€‹ô äŒò⁄[ôŸY _\‹›€‹ôÿ\»Ÿ] K⁄Kù\›
+õ‹õX[^ôY
+JH¬àô]\õà	‹ôYö^WMPêÕóMŒWMQåóMëQWMçLŒX¬àBàYà
+ ’ π•.y..ü› äŒò⁄[ôŸY _› äŒò⁄[ôŸY JK⁄Kù\›
+õ‹õX[^ôY
+JH¬àô]\õà	‹ôYö^U’MQåóMëQWMçLŒX¬àBàYà
+ 9†hπi#yË y•.y..üôX€›ô\ûJŒó ò€Ÿ\œ O◊ äŒò⁄[ôŸY JK⁄Kù\›
+õ‹õX[^ôY
+JH¬àô]\õà	‹ôYö^WMååóMNLMŒWMQåóMëQWMçLŒX¬àBàYà
+ 9i!˘¨Í9•.y..üõ›W äŒò⁄[ôŸY _õ›\œ◊ äŒò⁄[ôŸY JK⁄Kù\›
+õ‹õX[^ôY
+JH¬àô]\õà	‹ôYö^WMNL◊Mê—NMQåóMëQWMçLŒX¬àBàô]\õàX›[€é¬àBàù[ò›[€àô\]Y\›\‘õ€Z\ŸJô\]Y\›
+H¬àô]\õàô]»õ€Z\ŸJ
+ô\€€ôKôZôX›
+HOà¬àô\]Y\›õ€ú›XÿŸ\‹»H
+
+HOàô\€€ôJô\]Y\›úô\›[
+N¬àô\]Y\›õ€ô\úõ‹àH
+
+HOàôZôX›
+ô\]Y\›ô\úõ‹àô]»\úõ‹äí[ô^Yàô\]Y\›òZ[YäJN¬àJN¬àBàù[ò›[€à‹[ë]Xò\ŸJ
+H¬àYà
+îõ€Z\ŸJHô]\õàîõ€Z\ŸN¬àîõ€Z\ŸHHô]»õ€Z\ŸJ
+ô\€€ôKôZôX›
+HOà¬à€€ú›ô\]Y\›H[ô^Yãõ‹[äó”êSQKó’ëTî“S”äN¬àô\]Y\›õ€ù\‹òY[ôYYYH
+
+HOà¬à€€ú›àHô\]Y\›úô\›[¬àYà
+YãõÿöôX››‹ôSò[Y\Àò€€ùZ[ú ’‘ëW–””P’S”î JH¬àãò‹ôX]SÿöôX››‹ôJ’‘ëW–””P’S”îÀ»Ÿ^T]àöŸ^HàJN¬àBàN¬àô\]Y\›õ€ú›XÿŸ\‹»H
+
+HOà¬à€€ú›àHô\]Y\›úô\›[¬àãõ€ùô\ú⁄[€ò⁄[ôŸHH
+
+HOà¬àãò€‹ŸJ
+N¬àîõ€Z\ŸHHù[¬àN¬àô\€€ôJäN¬àN¬àô\]Y\›õ€ô\úõ‹àH
+
+HOà¬àîõ€Z\ŸHHù[¬àôZôX›
+ô\]Y\›ô\úõ‹àô]»\úõ‹äëòZ[Y»‹[à[ô^YàäJN¬àN¬àô\]Y\›õ€òõÿ⁄ŸYH
+
+HOà¬àîõ€Z\ŸHHù[¬àôZôX›
+ô]»\úõ‹äëòZ[Y»‹[à[ô^Yéàõÿ⁄ŸYäJN¬àN¬àJKòÿ]⁄
+
+\úõ‹äHOà¬àîõ€Z\ŸHHù[¬àõ›»\úõ‹é¬àJN¬àô]\õàîõ€Z\ŸN¬àBà\ﬁ[ò»ù[ò›[€àôXY€€X›[€äŸ^JH¬à€€ú›àH]ÿZ]‹[ë]Xò\ŸJ
+N¬à€€ú›Hãùò[úÿX›[€ä’‘ëW–””P’S”îÀúôXY€õHäN¬à€€ú››‹ôHHõÿöôX››‹ôJ’‘ëW–””P’S”î N¬à€€ú›õ›»H]ÿZ]ô\]Y\›\‘õ€Z\ŸJ›‹ôKôŸ]
+Ÿ^JJN¬àYà
+\õ› Hô]\õà◊N¬àYà
+\úò^Kö\–\úò^Jõ›Àùò[YJJH¬à]ÿZ]‹ö]P€€X›[€äŸ^Kõ›Àùò[YJN¬àô]\õàõ›Àùò[YN¬àBàYà
+ù[Xô\äõ›Àùô\ú⁄[€äHOOHH\õ›Àõõ€òŸPò\ŸMç\õ›Àò⁄\\ù^ò\ŸMç
+H¬àõ›»ô]»\úõ‹ä[ô^YàNMêÕóMMMé–◊MQåóMçQLMçMà	⁄Ÿ^_X
+N¬àBà€€ú›‹û\“Ÿ^HH]ÿZ]ÿY‹ê‹ôX]Q[ò‹û\[€íŸ^J
+N¬à]Z[ù^¬àûH¬àZ[ù^H]ÿZ]‹û\Àú›XùKôX‹û\
+à»ò[YNàêQTÀQ–”Hã]éàò\ŸMç–û]\ õ›Àõõ€òŸPò\ŸMç
+KY][€ò[]Nàô]»^[ò€Ÿ\ä
+Kô[ò€ŸJŸ^JHKà‹û\“Ÿ^Kàò\ŸMç–û]\ õ›Àò⁄\\ù^ò\ŸMç
+Bà
+N¬àHÿ]⁄
+\úõ‹äH¬àYà
+Ÿ^HOOH””P’S”ó“T’‘ñH	âà›ö[ô \úõ‹èÀõò[YHàäHOOHì‹\ò][€ë\úõ‹àäHô]\õà◊N¬àõ›»\úõ‹é¬àBà€€ú›X€ŸYHî””ãú\úŸJô]»^X€Ÿ\ä
+KôX€ŸJZ[ù^
+JN¬àô]\õà\úò^Kö\–\úò^JX€ŸY
+H»X€ŸYà◊N¬àBà\ﬁ[ò»ù[ò›[€à‹ö]P€€X›[€äŸ^Kò[YJH¬à]ÿZ]‹ö]P€€X›[€îõ›‹ ﬁ»Ÿ^Kò[YHWJN¬àBà\ﬁ[ò»ù[ò›[€à[ò‹û\€€X›[€îõ› Ÿ^Kò[YJH¬à€€ú›‹û\“Ÿ^HH]ÿZ]ÿY‹ê‹ôX]Q[ò‹û\[€íŸ^J
+N¬à€€ú›õ€òŸHH‹û\ÀôŸ]ò[ô€Uò[Y\ ô]»Z[ù\úò^JLäJN¬à€€ú›Z[ù^Hô]»^[ò€Ÿ\ä
+Kô[ò€ŸJî””ãú›ö[ô⁄YûJ\úò^Kö\–\úò^Jò[YJH»ò[YHà◊JJN¬à€€ú›⁄\\ù^H]ÿZ]‹û\Àú›XùKô[ò‹û\
+à»ò[YNàêQTÀQ–”Hã]éàõ€òŸKY][€ò[]Nàô]»^[ò€Ÿ\ä
+Kô[ò€ŸJŸ^JHKà‹û\“Ÿ^KàZ[ù^à
+N¬àô]\õà¬àŸ^Kàô\ú⁄[€éàKàõ€òŸPò\ŸMçàû]\’–ò\ŸMç
+õ€òŸJKà⁄\\ù^ò\ŸMçàû]\’–ò\ŸMç
+ô]»Z[ù\úò^J⁄\\ù^
+JBàN¬àBà\ﬁ[ò»ù[ò›[€à‹ö]P€€X›[€îõ›‹ [ùöY\ H¬à€€ú›õ›‹»H]ÿZ]õ€Z\ŸKò[
+[ùöY\ÀõX\
+
+[ùûJHOà[ò‹û\€€X›[€îõ› [ùûKöŸ^K[ùûKùò[YJJJN¬à€€ú›àH]ÿZ]‹[ë]Xò\ŸJ
+N¬à€€ú›Hãùò[úÿX›[€ä’‘ëW–””P’S”îÀúôXY‹ö]HäN¬à€€ú››‹ôHHõÿöôX››‹ôJ’‘ëW–””P’S”î N¬àõ‹à
+€€ú›õ›»Ÿàõ›‹ H›‹ôKú]
+õ› N¬à]ÿZ]ô]»õ€Z\ŸJ
+ô\€€ôKôZôX›
+HOà¬àõ€ò€€\]HH
+
+HOàô\€€ôJ
+N¬àõ€ô\úõ‹àH
+
+HOàôZôX›
+ô\úõ‹àô]»\úõ‹äí[ô^Yàò[úÿX›[€àòZ[YäJN¬àõ€òXõ‹ùH
+
+HOàôZôX›
+ô\úõ‹àô]»\úõ‹äí[ô^Yàò[úÿX›[€àXõ‹ùYäJN¬àJN¬àBà\ﬁ[ò»ù[ò›[€àÿY‹ê‹ôX]Q[ò‹û\[€íŸ^J
+H¬àYà
+[õÿ⁄ŸY[ò‹û\[€íŸ^JHô]\õà[õÿ⁄ŸY[ò‹û\[€íŸ^N¬àYà
+[ò‹û\[€íŸ^Tõ€Z\ŸJHô]\õà[ò‹û\[€íŸ^Tõ€Z\ŸN¬à[ò‹û\[€íŸ^Tõ€Z\ŸHH
+\ﬁ[ò»
+
+HOà¬àYà
+[õÿ⁄ŸY[ò‹û\[€íŸ^JHô]\õà[õÿ⁄ŸY[ò‹û\[€íŸ^N¬à€€ú›Ÿ\‹⁄[€àH]ÿZ]⁄õ€YKú›‹òYŸKúŸ\‹⁄[€ãôŸ]
+‘’‘êQ—W“—VW‘—T‘“S”ó—Sê‘ñTS”ó“—VWJN¬à€€ú›Ÿ\‹⁄[€íŸ^HHò\ŸMç–û]\ Ÿ\‹⁄[€ñ‘’‘êQ—W“—VW‘—T‘“S”ó—Sê‘ñTS”ó“—VWJN¬àYà
+Ÿ\‹⁄[€íŸ^Kõ[ô›OOHÃäH¬à[õÿ⁄ŸY[ò‹û\[€íŸ^HH]ÿZ]‹û\Àú›XùKö[\‹ùŸ^Júò]»ãŸ\‹⁄[€íŸ^KêQTÀQ–”Hãò[ŸK»ô[ò‹û\ãôX‹û\óJN¬àô]\õà[õÿ⁄ŸY[ò‹û\[€íŸ^N¬àBà€€ú››‹ôYH]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[ôŸ]
+¬à’‘êQ—W“—VW—Sê‘ñTS”ó“—VKà’‘êQ—W“—VW’‘êTQ—Sê‘ñTS”ó“—VBàJN¬àYà
+›‹ôY‘’‘êQ—W“—VW’‘êTQ—Sê‘ñTS”ó“—VWJH¬àõ›»ô]»\úõ‹äóMåçéWMPÕMWMQåóNMLWMPéPWQëå◊MçQLMê—WNëêóML—óMçÃê◊MMÃÃMçMÃMåÕëHäN¬àBà]ò]“Ÿ^HHò\ŸMç–û]\ ›‹ôY‘’‘êQ—W“—VW—Sê‘ñTS”ó“—VWJN¬àYà
+ò]“Ÿ^Kõ[ô›OOHÃäH¬àYà
+]ÿZ]\—[ò‹û\Y€€X›[€ú 
+JH¬àõ›»ô]»\úõ‹äóMçÃê◊MMÃÃMçMÃMåÕëWMPêÕóNMMWM—å–WMNLÃWQëå◊Nëç◊MååóMNLMPêÕóNMMWMååMóMP—WMNL◊MQëMPëê◊MLMçHäN¬àBàò]“Ÿ^HH‹û\ÀôŸ]ò[ô€Uò[Y\ ô]»Z[ù\úò^JÃäJN¬à]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[úŸ]
+»‘’‘êQ—W“—VW—Sê‘ñTS”ó“—VWNàû]\’–ò\ŸMç
+ò]“Ÿ^JHJN¬àBà[õÿ⁄ŸY[ò‹û\[€íŸ^HH]ÿZ]‹û\Àú›XùKö[\‹ùŸ^Júò]»ãò]“Ÿ^KêQTÀQ–”Hãò[ŸK»ô[ò‹û\ãôX‹û\óJN¬àô]\õà[õÿ⁄ŸY[ò‹û\[€íŸ^N¬àJJ
+Kòÿ]⁄
+
+\úõ‹äHOà¬à[ò‹û\[€íŸ^Tõ€Z\ŸHHù[¬àõ›»\úõ‹é¬àJN¬àô]\õà[ò‹û\[€íŸ^Tõ€Z\ŸN¬àBà\ﬁ[ò»ù[ò›[€à\—[ò‹û\Y€€X›[€ú 
+H¬àô]\õà]ÿZ]ô]»õ€Z\ŸJ
+ô\€€ôJHOà¬à€€ú›ô\]Y\›H[ô^Yãõ‹[äó”êSQKó’ëTî“S”äN¬àô\]Y\›õ€ù\‹òY[ôYYYH
+
+HOà¬à€€ú›àHô\]Y\›úô\›[¬àYà
+YãõÿöôX››‹ôSò[Y\Àò€€ùZ[ú ’‘ëW–””P’S”î JH¬àãò‹ôX]SÿöôX››‹ôJ’‘ëW–””P’S”îÀ»Ÿ^T]àöŸ^HàJN¬àBàN¬àô\]Y\›õ€ô\úõ‹àH
+
+HOàô\€€ôJò[ŸJN¬àô\]Y\›õ€ú›XÿŸ\‹»H
+
+HOà¬à€€ú›àHô\]Y\›úô\›[¬àûH¬à€€ú›Hãùò[úÿX›[€ä’‘ëW–””P’S”îÀúôXY€õHäN¬à€€ú››‹ôHHõÿöôX››‹ôJ’‘ëW–””P’S”î N¬à€€ú›Ÿ][H›‹ôKôŸ][
+
+N¬àŸ][õ€ú›XÿŸ\‹»H
+
+HOà¬à€€ú›õ›‹»H\úò^Kö\–\úò^JŸ][úô\›[
+H»Ÿ][úô\›[à◊N¬àãò€‹ŸJ
+N¬àô\€€ôJõ›‹Àú€€YJ
+õ› HOà¬àô]\õàõ›»	âàù[Xô\äõ›Àùô\ú⁄[€äHOOHH	âàõ›Àõõ€òŸPò\ŸMç	âàõ›Àò⁄\\ù^ò\ŸMç¬àJJN¬àN¬àŸ][õ€ô\úõ‹àH
+
+HOà¬àãò€‹ŸJ
+N¬àô\€€ôJò[ŸJN¬àN¬àHÿ]⁄¬àûH¬àãò€‹ŸJ
+N¬àHÿ]⁄¬àBàô\€€ôJò[ŸJN¬àBàN¬àJN¬àBà\ﬁ[ò»ù[ò›[€àÿ⁄—]Q[ò‹û\[€ä
+H¬à[õÿ⁄ŸY[ò‹û\[€íŸ^HHù[¬à[ò‹û\[€íŸ^Tõ€Z\ŸHHù[¬à]ÿZ]⁄õ€YKú›‹òYŸKúŸ\‹⁄[€ãúô[[›ôJ’‘êQ—W“—VW‘—T‘“S”ó—Sê‘ñTS”ó“—VJN¬àBà\ﬁ[ò»ù[ò›[€à›X⁄]Pù[\
+ôX\€€äH¬àûH¬à]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[úŸ]
+¬à‘’‘êQ—W“—VW—UW–ïSTNà]Kõõ› 
+Kàú\‹Àô]Kòù[\ôX\€€ãùåHéà›ö[ô ôX\€€ààäBàJN¬àHÿ]⁄¬àBàBàù[ò›[€àYÿXﬁP€€X›[€ïò[YJYÿXﬁKŸ^JH¬à€€ú›ò[YHHYÿXﬁV⁄Ÿ^WN¬àô]\õà\úò^Kö\–\úò^Jò[YJH»ò[YHà◊N¬àBàù[ò›[€à€€X›[€îôX€‹ôY[ù]Jò[YK€€X›[€íŸ^K[ô^
+H¬àYà
+]ò[YH\[Ÿàò[YHOOHõÿöôX›äHô]\õà[ô^â⁄[ô^X¬à€€ú›ÿ[ôY]\»H€€X›[€íŸ^HOOH””P’S”ó–P–”’Sï»»›ò[YKúôX€‹ôYò[YKöYò[YKòXÿ€›[ùYHà€€X›[€íŸ^HOOH””P’S”ó‘T‘“—VT»»›ò[YKò‹ôY[ùX[YççKò[YKò‹ôY[ùX[Yò[YKöYHà›ò[YKöYò[YKôõ€\íYN¬à€€ú›Y[ù]HHÿ[ôY]\Àôö[ô
+
+ÿ[ôY]JHOà›ö[ô ÿ[ôY]HàäKùö[J
+JN¬àYà
+ZY[ù]JHô]\õà[ô^â⁄[ô^X¬à€€ú›õ‹õX[^ôYH›ö[ô Y[ù]JKùö[J
+N¬àô]\õà€€X›[€íŸ^HOOH””P’S”ó—ì”Tî»»õ‹õX[^ôYù”›Ÿ\êÿ\ŸJ
+Hàõ‹õX[^ôY¬àBàù[ò›[€à€€X›[€îôX€‹ô\]Y]
+ò[YJH¬à€€ú›[Y\›[\Hù[Xô\äò[YOÀù\]Y]\»œ»ò[YOÀò‹ôX]Y]\»œ»
+N¬àô]\õàù[Xô\ãö\—ö[ö]J[Y\›[\
+H»[Y\›[\à¬àBàù[ò›[€àY\ôŸSYÿXﬁP€€X›[€ä›\úô[ùYÿXﬁK€€X›[€íŸ^JH¬à€€ú›Y\ôŸYH à◊‘TëW◊»
+ã»ô]»X\
+
+N¬à€€ú›‹ô\àH◊N¬à€€ú›YH
+ò[YK[ô^ôYô\ì€ë\]X[
+HOà¬à€€ú›Y[ù]HH€€X›[€îôX€‹ôY[ù]Jò[YK€€X›[€íŸ^K[ô^
+N¬à€€ú›^\›[ô»HY\ôŸYôŸ]
+Y[ù]JN¬àYà
+Y^\›[ô H¬àY\ôŸYúŸ]
+Y[ù]K»ò[YK\]Y]\Œà€€X›[€îôX€‹ô\]Y]
+ò[YJHJN¬à‹ô\ãú\⁄
+Y[ù]JN¬àô]\õé¬àBà€€ú›\]Y]\»H€€X›[€îôX€‹ô\]Y]
+ò[YJN¬àYà
+\]Y]\»à^\›[ôÀù\]Y]\»ôYô\ì€ë\]X[	âà\]Y]\»OOH^\›[ôÀù\]Y]\ H¬àY\ôŸYúŸ]
+Y[ù]K»ò[YK\]Y]\»JN¬àBàN¬àYÿXﬁKôõ‹ëXX⁄
+
+ò[YK[ô^
+HOàY
+ò[YK[ô^ò[ŸJJN¬à›\úô[ùôõ‹ëXX⁄
+
+ò[YK[ô^
+HOàY
+ò[YK[ô^ùYJJN¬àô]\õà‹ô\ãõX\
+
+Y[ù]JHOàY\ôŸYôŸ]
+Y[ù]JKùò[YJN¬àBà\ﬁ[ò»ù[ò›[€àZY‹ò]SYÿXﬁP€€X›[€ú ›\úô[ù€€X›[€úÀYÿXﬁJH¬à€€ú›€€X›[€îZ\ú»H¬à–””P’S”ó–P–”’SïÀ›\úô[ù€€X›[€úÀòXÿ€›[ùÀYÿXﬁP€€X›[€ïò[YJYÿXﬁKQ–P÷W‘’‘êQ—W“—VW–P–”’Sï WKà–””P’S”ó‘T‘“—VTÀ›\úô[ù€€X›[€úÀú\‹⁄Ÿ^\ÀYÿXﬁP€€X›[€ïò[YJYÿXﬁKQ–P÷W‘’‘êQ—W“—VW‘T‘“—VT WKà–””P’S”ó—ì”TîÀ›\úô[ù€€X›[€úÀôõ€\úÀYÿXﬁP€€X›[€ïò[YJYÿXﬁKQ–P÷W‘’‘êQ—W“—VW—ì”Tî WBàN¬à]⁄[ôŸYHò[ŸN¬àõ‹à
+€€ú›ÿ€€X›[€íŸ^K›\úô[ùYÿXﬁUò[YWHŸà€€X›[€îZ\ú H¬àYà
+YÿXﬁUò[YKõ[ô›OOH
+H€€ù[ùYN¬à€€ú›Y\ôŸYHY\ôŸSYÿXﬁP€€X›[€ä›\úô[ùYÿXﬁUò[YK€€X›[€íŸ^JN¬àYà
+î””ãú›ö[ô⁄YûJY\ôŸY
+HOOHî””ãú›ö[ô⁄YûJ›\úô[ù
+JH€€ù[ùYN¬à]ÿZ]‹ö]P€€X›[€ä€€X›[€íŸ^KY\ôŸY
+N¬à⁄[ôŸYHùYN¬àBàYà
+⁄[ôŸY
+H]ÿZ]›X⁄]Pù[\
+õYÿXﬁK[ZY‹ò][€àäN¬àô]\õà⁄[ôŸY¬àBà\ﬁ[ò»ù[ò›[€àôXY€€X›[€ëõ‹ìZY‹ò][€äŸ^KYÿXﬁUò[YJH¬àûH¬àô]\õà]ÿZ]ôXY€€X›[€äŸ^JN¬àHÿ]⁄
+\úõ‹äH¬àYà
+YÿXﬁUò[YKõ[ô›à	âà›ö[ô \úõ‹èÀõò[YHàäHOOHì‹\ò][€ë\úõ‹àäHô]\õà◊N¬àõ›»\úõ‹é¬àBàBà\ﬁ[ò»ù[ò›[€àZY‹ò]SYÿXﬁT›‹òYŸRYìôYYY
+
+H¬à€€ú›YÿXﬁHH]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[ôŸ]
+¬àQ–P÷W‘’‘êQ—W“—VW–P–”’SïÀàQ–P÷W‘’‘êQ—W“—VW‘T‘“—VTÀàQ–P÷W‘’‘êQ—W“—VW—ì”Tî¬àJN¬àûH¬à€€ú›YÿXﬁPXÿ€›[ù»HYÿXﬁP€€X›[€ïò[YJYÿXﬁKQ–P÷W‘’‘êQ—W“—VW–P–”’Sï N¬à€€ú›YÿXﬁT\‹⁄Ÿ^\»HYÿXﬁP€€X›[€ïò[YJYÿXﬁKQ–P÷W‘’‘êQ—W“—VW‘T‘“—VT N¬à€€ú›YÿXﬁQõ€\ú»HYÿXﬁP€€X›[€ïò[YJYÿXﬁKQ–P÷W‘’‘êQ—W“—VW—ì”Tî N¬à€€ú›ÿXÿ€›[ùÀ\‹⁄Ÿ^\Àõ€\ú◊HH]ÿZ]õ€Z\ŸKò[
+¬àôXY€€X›[€ëõ‹ìZY‹ò][€ä””P’S”ó–P–”’SïÀYÿXﬁPXÿ€›[ù KàôXY€€X›[€ëõ‹ìZY‹ò][€ä””P’S”ó‘T‘“—VTÀYÿXﬁT\‹⁄Ÿ^\ KàôXY€€X›[€ëõ‹ìZY‹ò][€ä””P’S”ó—ì”TîÀYÿXﬁQõ€\ú BàJN¬à]ÿZ]ZY‹ò]SYÿXﬁP€€X›[€ú »Xÿ€›[ùÀ\‹⁄Ÿ^\Àõ€\ú»KYÿXﬁJN¬àHÿ]⁄
+\úõ‹äH¬àYà
+›ö[ô \úõ‹èÀõY\‹ÿYŸHàäHOOHóMåçéWMPÕMWMQåóNMLWMPéPWQëå◊MçQLMê—WNëêóML—óMçÃê◊MMÃÃMçMÃMåÕëHäHô]\õé¬àõ›»\úõ‹é¬àBà]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[úŸ]
+»‘’‘êQ—W“—VW”RQ‘êUS”ó—”ëWNàùYHJN¬àBà\ﬁ[ò»ù[ò›[€à[ú›\ôQ]T›‹òYŸTôXYJ
+H¬àYà
+\ôXYTõ€Z\ŸJH¬àôXYTõ€Z\ŸHH
+\ﬁ[ò»
+
+HOà¬à]ÿZ]‹[ë]Xò\ŸJ
+N¬à]ÿZ]ZY‹ò]SYÿXﬁT›‹òYŸRYìôYYY
+
+N¬àJJ
+Kòÿ]⁄
+
+\úõ‹äHOà¬àôXYTõ€Z\ŸHHù[¬àõ›»\úõ‹é¬àJN¬àBàô]\õàôXYTõ€Z\ŸN¬àBà\ﬁ[ò»ù[ò›[€àŸ]Xÿ€›[ù Xÿ€›[ù H¬à]ÿZ][ú›\ôQ]T›‹òYŸTôXYJ
+N¬à]ÿZ]‹ö]P€€X›[€ä””P’S”ó–P–”’SïÀXÿ€›[ù N¬à]ÿZ]›X⁄]Pù[\
+””P’S”ó–P–”’Sï N¬àBà\ﬁ[ò»ù[ò›[€àŸ]õ€\ú õ€\ú H¬à]ÿZ][ú›\ôQ]T›‹òYŸTôXYJ
+N¬à]ÿZ]‹ö]P€€X›[€ä””P’S”ó—ì”TîÀõ€\ú N¬à]ÿZ]›X⁄]Pù[\
+””P’S”ó—ì”Tî N¬àBà\ﬁ[ò»ù[ò›[€àŸ][]J
+H¬à]ÿZ][ú›\ôQ]T›‹òYŸTôXYJ
+N¬à€€ú›ÿXÿ€›[ùÀ\‹⁄Ÿ^\Àõ€\úÀ^[›]õ›‹◊HH]ÿZ]õ€Z\ŸKò[
+¬àôXY€€X›[€ä””P’S”ó–P–”’Sï KàôXY€€X›[€ä””P’S”ó‘T‘“—VT KàôXY€€X›[€ä””P’S”ó—ì”Tî KàôXY€€X›[€ä””P’S”ó”VS’U
+BàJN¬à€€ú›^[›]H^[›]õ›‹÷ÃH	âà\[Ÿà^[›]õ›‹÷ÃHOOHõÿöôX›à»^[›]õ›‹÷ÃHàﬂN¬àô]\õà¬àXÿ€›[ùÀà\‹⁄Ÿ^\Ààõ€\úÀà[ôY›[\êXÿ€›[ùYŒà\úò^Kö\–\úò^J^[›]ò[ôY›[\êXÿ€›[ùY H»^[›]ò[ôY›[\êXÿ€›[ùY»à◊Kà[ôY›[\ì‹ô\ï\]Y]\Œàù[Xô\ä^[›]ò[ôY›[\ì‹ô\ï\]Y]\ Hà[ôY›[\ì‹ô\ï\]Y]öXŸSò[YNà›ö[ô ^[›]ò[ôY›[\ì‹ô\ï\]Y]öXŸSò[YHàäKàõ€\ì‹ô\íYŒà\úò^Kö\–\úò^J^[›]ôõ€\ì‹ô\íY H»^[›]ôõ€\ì‹ô\íY»à◊Kàõ€\ì‹ô\ï\]Y]\Œàù[Xô\ä^[›]ôõ€\ì‹ô\ï\]Y]\ Hàõ€\ì‹ô\ï\]Y]öXŸSò[YNà›ö[ô ^[›]ôõ€\ì‹ô\ï\]Y]öXŸSò[YHàäKà]öXŸSò[YNà›ö[ô ^[›]ô]öXŸSò[YHàäBàN¬àBà\ﬁ[ò»ù[ò›[€àŸ][]J¬àXÿ€›[ùÀà\‹⁄Ÿ^\Ààõ€\úÀà[ôY›[\êXÿ€›[ùY»H◊Kà[ôY›[\ì‹ô\ï\]Y]\»Hà[ôY›[\ì‹ô\ï\]Y]öXŸSò[YHHàãàõ€\ì‹ô\íY»H◊Kàõ€\ì‹ô\ï\]Y]\»Hàõ€\ì‹ô\ï\]Y]öXŸSò[YHHàãà]öXŸSò[YHHàÇàJH¬àûH¬à]ÿZ][ú›\ôQ]T›‹òYŸTôXYJ
+N¬àHÿ]⁄
+\úõ‹äH¬àYà
+›ö[ô \úõ‹èÀõò[YHàäHOOHì‹\ò][€ë\úõ‹àäHõ›»\úõ‹é¬àBà]ÿZ]‹ö]P€€X›[€îõ›‹ ¬à»Ÿ^Nà””P’S”ó–P–”’SïÀò[YNàXÿ€›[ù»Kà»Ÿ^Nà””P’S”ó‘T‘“—VTÀò[YNà\‹⁄Ÿ^\»Kà»Ÿ^Nà””P’S”ó—ì”TîÀò[YNàõ€\ú»Kà¬àŸ^Nà””P’S”ó”VS’Uàò[YNàﬁ¬à[ôY›[\êXÿ€›[ùYŒà\úò^Kö\–\úò^J[ôY›[\êXÿ€›[ùY H»[ôY›[\êXÿ€›[ùY»à◊Kà[ôY›[\ì‹ô\ï\]Y]\Œàù[Xô\ä[ôY›[\ì‹ô\ï\]Y]\ Hà[ôY›[\ì‹ô\ï\]Y]öXŸSò[YNà›ö[ô [ôY›[\ì‹ô\ï\]Y]öXŸSò[YHàäKàõ€\ì‹ô\íYŒà\úò^Kö\–\úò^Jõ€\ì‹ô\íY H»õ€\ì‹ô\íY»à◊Kàõ€\ì‹ô\ï\]Y]\Œàù[Xô\äõ€\ì‹ô\ï\]Y]\ Hàõ€\ì‹ô\ï\]Y]öXŸSò[YNà›ö[ô õ€\ì‹ô\ï\]Y]öXŸSò[YHàäKà]öXŸSò[YNà›ö[ô ]öXŸSò[YHàäBàWBàBàJN¬à]ÿZ]›X⁄]Pù[\
+ò[äN¬àBàù[ò›[€àõ‹õX[^ôTﬁ[ò‘ŸX‹ô] ò[YJH¬à€€ú›€›\òŸHHò[YH	âà\[Ÿàò[YHOOHõÿöôX›à»ò[YHàﬂN¬àô]\õà¬àŸXô]î\‹›€‹ôà›ö[ô €›\òŸKùŸXô]î\‹›€‹ôàäKàŸ\ùô\ï⁄Ÿ[éà›ö[ô €›\òŸKúŸ\ùô\ï⁄Ÿ[ààäKùö[J
+Kà[ò‹û\[€íŸ^Nà›ö[ô €›\òŸKô[ò‹û\[€íŸ^HàäKùö[J
+Kàô]ö[›\—[ò‹û\[€íŸ^Nà›ö[ô €›\òŸKúô]ö[›\—[ò‹û\[€íŸ^HàäKùö[J
+BàN¬àBà\ﬁ[ò»ù[ò›[€àŸ]ﬁ[ò‘ŸX‹ô] 
+H¬à]ÿZ][ú›\ôQ]T›‹òYŸTôXYJ
+N¬à€€ú›[ùöY\»H]ÿZ]ôXY€€X›[€ä””P’S”ó‘÷Sê◊‘—P‘ëU N¬àô]\õàõ‹õX[^ôTﬁ[ò‘ŸX‹ô] \úò^Kö\–\úò^J[ùöY\ H»[ùöY\÷ÃHàù[
+N¬àBà\ﬁ[ò»ù[ò›[€àŸ]ﬁ[ò‘ŸX‹ô] ò[YJH¬à]ÿZ][ú›\ôQ]T›‹òYŸTôXYJ
+N¬à€€ú›õ‹õX[^ôYHõ‹õX[^ôTﬁ[ò‘ŸX‹ô] ò[YJN¬à]ÿZ]‹ö]P€€X›[€ä””P’S”ó‘÷Sê◊‘—P‘ëUÀ€õ‹õX[^ôYJN¬àô]\õàõ‹õX[^ôY¬àBàù[ò›[€àõ‹õX[^ôTÿYô]T€ò\⁄› ò[YJH¬à€€ú›õ‹õX[^ôYH
+\úò^Kö\–\úò^Jò[YJH»ò[YHà◊JKôö[\ä
+][JHOà][H	âà\[Ÿà][HOOHõÿöôX›à	âà][Kú^[ÿY	âà\[Ÿà][Kú^[ÿYOOHõÿöôX›äKõX\
+
+][JHOà
+¬àYà›ö[ô ][KöYﬁ[òÀ\€ò\⁄›I”ù[Xô\ä][Kò‹ôX]Y]\»
+_X
+Kà‹ôX]Y]\Œàù[Xô\ä][Kò‹ôX]Y]\»
+KàôX\€€éà›ö[ô ][KúôX\€€àóMM◊MêççWMLçMNL◊MQëäKà^[ÿYà][Kú^[ÿYàJJKôö[\ä
+][JHOàù[Xô\ãö\—ö[ö]J][Kò‹ôX]Y]\ H	âà][Kò‹ôX]Y]\»à
+N¬à€€ú›[ö\]YHH à◊‘TëW◊»
+ã»ô]»X\
+
+N¬àõ‹à
+€€ú›€ò\⁄›Ÿàõ‹õX[^ôY
+H¬àYà
+][ö\]YKö\ €ò\⁄›öY
+JH[ö\]YKúŸ]
+€ò\⁄›öY€ò\⁄›
+N¬àBàô]\õàÀããù[ö\]YKùò[Y\ 
+WKú€‹ù
+
+Àö HOàöÀò‹ôX]Y]\»HÀò‹ôX]Y]\ Kú€XŸJ–QëUW‘”êT“’”PV—SïíQT N¬àBà\ﬁ[ò»ù[ò›[€àŸ]ÿYô]T€ò\⁄› 
+H¬à]ÿZ][ú›\ôQ]T›‹òYŸTôXYJ
+N¬à€€ú›YÿXﬁTô\›[H]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[ôŸ]
+”Q–P÷W‘’‘êQ—W“—VW”––S‘–QëUW‘”êT“’◊JN¬à€€ú›YÿXﬁHHõ‹õX[^ôTÿYô]T€ò\⁄› YÿXﬁTô\›[”Q–P÷W‘’‘êQ—W“—VW”––S‘–QëUW‘”êT“’◊JN¬à][ò‹û\Y¬àûH¬à[ò‹û\YHõ‹õX[^ôTÿYô]T€ò\⁄› ]ÿZ]ôXY€€X›[€ä””P’S”ó‘÷Sê◊‘–QëUW‘”êT“’ JN¬àHÿ]⁄
+\úõ‹äH¬àYà
+›ö[ô \úõ‹èÀõò[YHàäHOOHì‹\ò][€ë\úõ‹ààYÿXﬁKõ[ô›OOH
+Hõ›»\úõ‹é¬à[ò‹û\YH◊N¬àBà€€ú›Y\ôŸYHõ‹õX[^ôTÿYô]T€ò\⁄› Àããô[ò‹û\YããõYÿXﬁWJN¬àYà
+YÿXﬁKõ[ô›àî””ãú›ö[ô⁄YûJY\ôŸY
+HOOHî””ãú›ö[ô⁄YûJ[ò‹û\Y
+JH¬à]ÿZ]‹ö]P€€X›[€ä””P’S”ó‘÷Sê◊‘–QëUW‘”êT“’ÀY\ôŸY
+N¬àBàYà
+YÿXﬁTô\›[”Q–P÷W‘’‘êQ—W“—VW”––S‘–QëUW‘”êT“’◊HOOHõ⁄Y
+H¬à]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[úô[[›ôJQ–P÷W‘’‘êQ—W“—VW”––S‘–QëUW‘”êT“’ N¬àBàô]\õàY\ôŸY¬àBà\ﬁ[ò»ù[ò›[€àŸ]ÿYô]T€ò\⁄› ò[YJH¬à]ÿZ][ú›\ôQ]T›‹òYŸTôXYJ
+N¬à€€ú›õ‹õX[^ôYHõ‹õX[^ôTÿYô]T€ò\⁄› ò[YJN¬à]ÿZ]‹ö]P€€X›[€ä””P’S”ó‘÷Sê◊‘–QëUW‘”êT“’Àõ‹õX[^ôY
+N¬à]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[úô[[›ôJQ–P÷W‘’‘êQ—W“—VW”––S‘–QëUW‘”êT“’ N¬àô]\õàõ‹õX[^ôY¬àBà\ﬁ[ò»ù[ò›[€àŸ]ﬁ[ò”›]õﬁ
+
+H¬à]ÿZ][ú›\ôQ]T›‹òYŸTôXYJ
+N¬àô]\õàõ‹õX[^ôTﬁ[ò”›]õﬁ
+]ÿZ]ôXY€€X›[€ä””P’S”ó‘÷Sê◊”’Uì÷
+JN¬àBà\ﬁ[ò»ù[ò›[€àŸ]ﬁ[ò”›]õﬁ
+ò[YJH¬à]ÿZ][ú›\ôQ]T›‹òYŸTôXYJ
+N¬à€€ú›õ‹õX[^ôYHõ‹õX[^ôTﬁ[ò”›]õﬁ
+ò[YJN¬à]ÿZ]‹ö]P€€X›[€ä””P’S”ó‘÷Sê◊”’Uì÷õ‹õX[^ôY
+N¬àô]\õàõ‹õX[^ôY¬àBà\ﬁ[ò»ù[ò›[€àZY‹ò]SYÿXﬁTﬁ[ò‘ŸX‹ô] 
+H¬à]^\›[ô»Hõ‹õX[^ôTﬁ[ò‘ŸX‹ô] ù[
+N¬à]^\›[ô–€€X›[€ï[úôXYXõHHò[ŸN¬àûH¬à^\›[ô»H]ÿZ]Ÿ]ﬁ[ò‘ŸX‹ô] 
+N¬àHÿ]⁄
+\úõ‹äH¬àYà
+›ö[ô \úõ‹èÀõò[YHàäHOOHì‹\ò][€ë\úõ‹àäHõ›»\úõ‹é¬à^\›[ô–€€X›[€ï[úôXYXõHHùYN¬àBà€€ú›YÿXﬁHH]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[ôŸ]
+¬àQ–P÷W‘’‘êQ—W“—VW‘÷Sê◊’—PëUó‘T‘’”‘ëàQ–P÷W‘’‘êQ—W“—VW‘÷Sê◊‘—TïëTó’“—SãàQ–P÷W‘’‘êQ—W“—VW‘÷Sê◊—Sê‘ñTS”ó“—VBàJN¬à€€ú›ZY‹ò]YHõ‹õX[^ôTﬁ[ò‘ŸX‹ô] ¬àŸXô]î\‹›€‹ôà^\›[ôÀùŸXô]î\‹›€‹ôYÿXﬁV”Q–P÷W‘’‘êQ—W“—VW‘÷Sê◊’—PëUó‘T‘’”‘ëKàŸ\ùô\ï⁄Ÿ[éà^\›[ôÀúŸ\ùô\ï⁄Ÿ[àYÿXﬁV”Q–P÷W‘’‘êQ—W“—VW‘÷Sê◊‘—TïëTó’“—SóKà[ò‹û\[€íŸ^Nà^\›[ôÀô[ò‹û\[€íŸ^HYÿXﬁV”Q–P÷W‘’‘êQ—W“—VW‘÷Sê◊—Sê‘ñTS”ó“—VWKàô]ö[›\—[ò‹û\[€íŸ^Nà^\›[ôÀúô]ö[›\—[ò‹û\[€íŸ^BàJN¬à€€ú›\”YÿXﬁTôX€›ô\ûTŸX‹ô]»Hõ€€X[äàZY‹ò]YùŸXô]î\‹›€‹ôZY‹ò]YúŸ\ùô\ï⁄Ÿ[àZY‹ò]Yô[ò‹û\[€íŸ^Bà
+N¬àYà
+^\›[ô–€€X›[€ï[úôXYXõH	âàZ\”YÿXﬁTôX€›ô\ûTŸX‹ô] H¬à€€ú›\úõ‹àHô]»\úõ‹äóMM◊MêççWMLQQMåÕëWNMêÕóMMMçQLMê—WNQL◊MPêÕóQëå◊MLMMê–LWMçÃWML—QóMÕLéMçQM◊MLQQMåÕëWQëåPóMLŒQóMçMÃMåÕëWMçÃêWNNóMÕëàäN¬à\úõ‹ãò€ŸHHî÷Sê◊‘—P‘ëU◊’SîëPQPìHé¬àõ›»\úõ‹é¬àBàYà
+^\›[ô–€€X›[€ï[úôXYXõH\”YÿXﬁTôX€›ô\ûTŸX‹ô] H¬à]ÿZ]Ÿ]ﬁ[ò‘ŸX‹ô] ZY‹ò]Y
+N¬àBà]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[úô[[›ôJ¬àQ–P÷W‘’‘êQ—W“—VW‘÷Sê◊’—PëUó‘T‘’”‘ëàQ–P÷W‘’‘êQ—W“—VW‘÷Sê◊‘—TïëTó’“—SãàQ–P÷W‘’‘êQ—W“—VW‘÷Sê◊—Sê‘ñTS”ó“—VBàJN¬àô]\õàZY‹ò]Y¬àBà\ﬁ[ò»ù[ò›[€àŸ]\›‹ûJ
+H¬à]ÿZ][ú›\ôQ]T›‹òYŸTôXYJ
+N¬à€€ú›ò]—[ùöY\»H]ÿZ]ôXY€€X›[€ä””P’S”ó“T’‘ñJN¬à€€ú›[ùöY\»H\úò^Kö\–\úò^Jò]—[ùöY\ H»ò]—[ùöY\»à◊N¬à€€ú›õ‹õX[^ôYH[ùöY\Àôö[\ä
+][JHOà][H	âà\[Ÿà][HOOHõÿöôX›äKõX\
+
+][JHOà
+¬àYà›ö[ô ][KöYàäKà[Y\›[\\Œàù[Xô\ä][Kù[Y\›[\\»
+KàX›[€éàÿ[ö]^ôR\›‹ûPX›[€ä][KòX›[€äBàJJKôö[\ä
+][JHOà][Kù[Y\›[\\»à	âà][KòX›[€ãùö[J
+Kõ[ô›à
+Kú€‹ù
+
+Àö HOà¬àYà
+Àù[Y\›[\\»OOHöÀù[Y\›[\\ Hô]\õàöÀù[Y\›[\\»HÀù[Y\›[\\Œ¬àô]\õàÀöYõÿÿ[P€€\\ôJöÀöY
+N¬àJN¬à€€ú›ôYY”ZY‹ò][€àH[ùöY\Àõ[ô›OOHõ‹õX[^ôYõ[ô›[ùöY\Àú€€YJà
+][K[ô^
+HOà›ö[ô ][OÀòX›[€ààäKùö[J
+HOOHõ‹õX[^ôY⁄[ô^OÀòX›[€Çà
+N¬àYà
+ôYY”ZY‹ò][€äH¬à]ÿZ]‹ö]P€€X›[€ä””P’S”ó“T’‘ñKõ‹õX[^ôY
+N¬à]ÿZ]›X⁄]Pù[\
+””P’S”ó“T’‘ñJN¬àBàô]\õàõ‹õX[^ôY¬àBà\ﬁ[ò»ù[ò›[€àŸ]\›‹ûJ[ùöY\ H¬à]ÿZ][ú›\ôQ]T›‹òYŸTôXYJ
+N¬à€€ú›õ‹õX[^ôYH
+\úò^Kö\–\úò^J[ùöY\ H»[ùöY\»à◊JKôö[\ä
+][JHOà][H	âà\[Ÿà][HOOHõÿöôX›äKõX\
+
+][JHOà
+¬àYà›ö[ô ][KöYàäKà[Y\›[\\Œàù[Xô\ä][Kù[Y\›[\\»
+KàX›[€éàÿ[ö]^ôR\›‹ûPX›[€ä][KòX›[€äBàJJKôö[\ä
+][JHOà][Kù[Y\›[\\»à	âà][KòX›[€ãõ[ô›à
+Kú€‹ù
+
+Àö HOà¬àYà
+Àù[Y\›[\\»OOHöÀù[Y\›[\\ Hô]\õàöÀù[Y\›[\\»HÀù[Y\›[\\Œ¬àô]\õàÀöYõÿÿ[P€€\\ôJöÀöY
+N¬àJKú€XŸJT’‘ñW”PV—SïíQT N¬à]ÿZ]‹ö]P€€X›[€ä””P’S”ó“T’‘ñKõ‹õX[^ôY
+N¬à]ÿZ]›X⁄]Pù[\
+””P’S”ó“T’‘ñJN¬àBà\ﬁ[ò»ù[ò›[€à\[ô\›‹ûQ[ùûJ»[Y\›[\\ÀX›[€àJH¬à€€ú›õ‹õX[^ôYX›[€àHÿ[ö]^ôR\›‹ûPX›[€äX›[€äN¬àYà
+[õ‹õX[^ôYX›[€äHô]\õé¬à€€ú›»Hù[Xô\ä[Y\›[\\»]Kõõ› 
+JN¬à€€ú›[ùûHH¬àYà
+
+
+HOà¬àûH¬àYà
+\[Ÿà€ÿò[\Àò‹û\œÀúò[ô€UURQOOHôù[ò›[€àäHô]\õà€ÿò[\Àò‹û\Àúò[ô€UURQ
+
+N¬à€€ú›û]\»H€ÿò[\Àò‹û\ÀôŸ]ò[ô€Uò[Y\ ô]»Z[ù\úò^JMäJN¬àô]\õà\úò^Kôúõ€Jû]\À
+ò[YJHOàò[YKù‘›ö[ô MäKúY›\ù
+ãåäJKöõ⁄[äàäN¬àHÿ]⁄¬àõ›»ô]»\úõ‹äóMQçL◊MLçMÃ–QóMN◊MLMçLëóMåÃWMPéWMLMéNMéóMçÃ–WMçMÃäN¬àBàJJ
+Kà[Y\›[\\Œàù[Xô\ãö\—ö[ö]J H	âà»à»»à]Kõõ› 
+KàX›[€éàõ‹õX[^ôYX›[€ÇàN¬à€€ú››\úô[ùH]ÿZ]Ÿ]\›‹ûJ
+N¬à]ÿZ]Ÿ]\›‹ûJŸ[ùûKããò›\úô[ùJN¬àBÇàÀ»ÿ⁄◊‹›]Köú¬àò\à’‘êQ—W“—VW”–“◊—SêPìQHú\‹Àõÿ⁄Àô[òXõYé¬àò\à’‘êQ—W“—VW”–“◊‘”P÷HHú\‹Àõÿ⁄Àú€XﬁHé¬àò\à’‘êQ—W“—VW”–“◊“QW”RSïUT»Hú\‹Àõÿ⁄ÀöYSZ[ù]\»é¬àò\à’‘êQ—W“—VW”–“◊”PT’Tó–‘ëQSïPSHú\‹Àõÿ⁄ÀõX\›\ê‹ôY[ùX[ùåHé¬àò\à–“◊‘”P÷W””ê—W’SïS‘URUHõ€òŸU[ù[]Z]é¬àò\à–“◊‘”P÷W“QW’SQS’UHöYU[Y[›]é¬àò\à–“◊‘”P÷W””ó–êP“—‘ì’SëHõ€êòX⁄Ÿ‹õ›[ôé¬àò\à–“◊“QW”RSïUT◊—QêUSHN¬àò\à–“◊“QW”RSïUT◊”RSàHN¬àò\à–“◊“QW”RSïUT◊”PVHå¬àò\à–“◊‘’UW–“Së—Q”QT‘–Q—HHîT‘◊”–“◊‘’UW–“Së—Qé¬àù[ò›[€àõ‹õX[^ôSÿ⁄‘€XﬁJò[YJH¬à€€ú›€XﬁHH›ö[ô ò[YHàäKùö[J
+N¬àYà
+€XﬁHOOH–“◊‘”P÷W“QW’SQS’U
+Hô]\õà–“◊‘”P÷W“QW’SQS’U¬àYà
+€XﬁHOOH–“◊‘”P÷W””ó–êP“—‘ì’Së
+Hô]\õà–“◊‘”P÷W””ó–êP“—‘ì’Së¬àô]\õà–“◊‘”P÷W””ê—W’SïS‘URU¬àBàù[ò›[€à€[\ÿ⁄“YSZ[ù]\ ò[YJH¬à€€ú›\úŸYHX]úõ›[ô
+ù[Xô\äò[YJJN¬àYà
+Sù[Xô\ãö\—ö[ö]J\úŸY
+JHô]\õà–“◊“QW”RSïUT◊—QêUS¬àô]\õàX]õZ[äX]õX^
+\úŸY–“◊“QW”RSïUT◊”RSäK–“◊“QW”RSïUT◊”PV
+N¬àBà\ﬁ[ò»ù[ò›[€à\Sÿ⁄‘›]P⁄[ôŸYY\‹ÿYŸJY\‹ÿYŸK»ÿ⁄À€X\ã[õÿ⁄»HHﬂJH¬àYà
+Y\‹ÿYŸOÀù\HOOH–“◊‘’UW–“Së—Q”QT‘–Q—JHô]\õàò[ŸN¬àYà
+Y\‹ÿYŸOÀú^[ÿYÀõÿ⁄ŸY
+H¬àûH¬à]ÿZ]ÿ⁄œÀä
+N¬àHö[ò[H¬à]ÿZ]€X\èÀä
+N¬àBàô]\õàõÿ⁄ŸYé¬àBà]ÿZ][õÿ⁄œÀä
+N¬àô]\õàù[õÿ⁄ŸYé¬àBàù[ò›[€à‹ôX]Sÿ⁄‘›]Uò[ú⁄][€î]Y]YJ
+H¬à][ô[ô»Hõ€Z\ŸKúô\€€ôJ
+N¬àô]\õà
+Y\‹ÿYŸKÿ[òX⁄‹ HOà¬à[ô[ô»H[ô[ôÀòÿ]⁄
+
+
+HOà¬àJKù[ä
+
+HOà\Sÿ⁄‘›]P⁄[ôŸYY\‹ÿYŸJY\‹ÿYŸKÿ[òX⁄‹ JN¬àô]\õà[ô[ôŒ¬àN¬àBÇàÀ»ﬁ[ò◊ÿ‹û\Àöú¬àò\à÷Sê◊—Sê‘ñTQ‘–“SPW’åHHú\‹Àúﬁ[òÀô[ò‹û\YùåHé¬àò\à÷Sê◊‘RSïV‘–“SPHHú\‹Àúﬁ[òÀòù[ôKùåàé¬àù[ò›[€àŸ[ô\ò]Tﬁ[ò—[ò‹û\[€íŸ^J
+H¬àô]\õàû]\’–ò\ŸMç\õ
+‹û\ÀôŸ]ò[ô€Uò[Y\ ô]»Z[ù\úò^JÃäJJN¬àBàù[ò›[€àõ‹õX[^ôTﬁ[ò—[ò‹û\[€íŸ^Jò[YJH¬à€€ú›õ‹õX[^ôYH›ö[ô ò[YHàäKùö[J
+N¬àYà
+[õ‹õX[^ôY
+Hô]\õààé¬àô]\õàò\ŸMç\õ–û]\ õ‹õX[^ôY
+Kõ[ô›OOHÃà»õ‹õX[^ôYààé¬àBàù[ò›[€à\‘ﬁ[ò—[ò‹û\[€ë[òXõY
+ò]“Ÿ^JH¬àô]\õàõ€€X[äõ‹õX[^ôTﬁ[ò—[ò‹û\[€íŸ^Jò]“Ÿ^JJN¬àBà\ﬁ[ò»ù[ò›[€àﬁ[ò—[ò‹û\[€íŸ^RY
+ò]“Ÿ^JH¬à€€ú›Ÿ^HHõ‹õX[^ôTﬁ[ò—[ò‹û\[€íŸ^Jò]“Ÿ^JN¬àYà
+ZŸ^JHô]\õààé¬à€€ú›YŸ\›H]ÿZ]‹û\Àú›XùKôYŸ\›
+î“KLçMàãò\ŸMç\õ–û]\ Ÿ^JJN¬àô]\õàÃKI–\úò^Kôúõ€Jô]»Z[ù\úò^JYŸ\›
+JKõX\
+
+ò[YJHOàò[YKù‘›ö[ô MäKúY›\ù
+ãåäJKöõ⁄[äàäKú€XŸJMä_X¬àBà\ﬁ[ò»ù[ò›[€à[ò‹û\ﬁ[ò–ù[ôQÿ›[Y[ù
+ÿ›[Y[ùãò]“Ÿ^JH¬à€€ú›Ÿ^HHõ‹õX[^ôTﬁ[ò—[ò‹û\[€íŸ^Jò]“Ÿ^JN¬àYà
+ZŸ^JH¬àô]\õàÿ›[Y[ùé¬àBà€€ú›[\‹ùYH]ÿZ][\‹ùﬁ[ò“Ÿ^JŸ^K»ô[ò‹û\óJN¬à€€ú›õ€òŸHH‹û\ÀôŸ]ò[ô€Uò[Y\ ô]»Z[ù\úò^JLäJN¬à€€ú›Z[ù^Hô]»^[ò€Ÿ\ä
+Kô[ò€ŸJî””ãú›ö[ô⁄YûJÿ›[Y[ùäJN¬à€€ú›⁄\\ù^H]ÿZ]‹û\Àú›XùKô[ò‹û\
+à»ò[YNàêQTÀQ–”Hã]éàõ€òŸKY][€ò[]Nàô]»^[ò€Ÿ\ä
+Kô[ò€ŸJ÷Sê◊—Sê‘ñTQ‘–“SPW’åJHKà[\‹ùYàZ[ù^à
+N¬àô]\õà¬àÿ⁄[XNà÷Sê◊—Sê‘ñTQ‘–“SPW’åKà^‹ùY]\Œàù[Xô\äÿ›[Y[ùèÀô^‹ùY]\»]Kõõ› 
+JKàŸ^RYà]ÿZ]ﬁ[ò—[ò‹û\[€íŸ^RY
+Ÿ^JKà⁄\\éàêQTÀLçMãQ–”Hãàõ€òŸPò\ŸMçàû]\’–ò\ŸMçäô]»Z[ù\úò^Jõ€òŸJJKà⁄\\ù^ò\ŸMçàû]\’–ò\ŸMçäô]»Z[ù\úò^J⁄\\ù^
+JBàN¬àBà\ﬁ[ò»ù[ò›[€àX‹û\ﬁ[ò–ù[ôQÿ›[Y[ù
+[ùô[‹Kò]“Ÿ^Kò[òX⁄“Ÿ^\»H◊JH¬à€€ú›ÿ⁄[XHH›ö[ô [ùô[‹OÀúÿ⁄[XHàäN¬àYà
+ÿ⁄[XHOOH÷Sê◊‘RSïV‘–“SPJH¬àYà
+\‘ﬁ[ò—[ò‹û\[€ë[òXõY
+ò]“Ÿ^JJH¬àõ›»ô]»\úõ‹äóMM◊MêççWMPêÕóNMMWMQåóNLMM—çëWQëå◊MåëóM—QMçÃêWMLêLMPêÕóMM◊MêççWMLÃHäN¬àBàô]\õà[ùô[‹N¬àBàYà
+ÿ⁄[XHOOH÷Sê◊—Sê‘ñTQ‘–“SPW’åJH¬àõ›»ô]»\úõ‹äóMLMçLëóMåÃWMÕéMM◊MêççWMLÃWMé–◊MQåàäN¬àBà€€ú›ÿ[ôY]\»HÀããõô]»Ÿ]
+‹ò]“Ÿ^Kããê\úò^Kö\–\úò^Jò[òX⁄“Ÿ^\ H»ò[òX⁄“Ÿ^\»à◊WKõX\
+õ‹õX[^ôTﬁ[ò—[ò‹û\[€íŸ^JKôö[\äõ€€X[äJWN¬àYà
+ÿ[ôY]\Àõ[ô›OOH
+H¬àõ›»ô]»\úõ‹äóNëMWMM◊MêççWMLÃWML–WMLêLMPêÕóMëLWMPÃWQëå◊MçóMQçL◊MLçMçÃêWNLMM—çëWMM◊MêççWMLêLMPêÕóMPêÕóNMMHäN¬àBàYà
+[ùô[‹OÀò⁄\\àOOHêQTÀLçMãQ–”HäHõ›»ô]»\úõ‹äóMLMçLëóMåÃWMÕéMM◊MêççWMLêLMPêÕóM–éM◊Mê—HäN¬à€€ú›X€\ôYŸ^RYH›ö[ô [ùô[‹OÀöŸ^RYàäKùö[J
+N¬à€€ú›X]⁄[ô–ÿ[ôY]\»HX€\ôYŸ^RY»
+]ÿZ]õ€Z\ŸKò[
+ÿ[ôY]\ÀõX\
+\ﬁ[ò»
+Ÿ^JHOà
+»Ÿ^KŸ^RYà]ÿZ]ﬁ[ò—[ò‹û\[€íŸ^RY
+Ÿ^JHJJJJKôö[\ä
+ÿ[ôY]JHOàÿ[ôY]KöŸ^RYOOHX€\ôYŸ^RY
+KõX\
+
+ÿ[ôY]JHOàÿ[ôY]KöŸ^JHàÿ[ôY]\Œ¬àYà
+X]⁄[ô–ÿ[ôY]\Àõ[ô›OOH
+H¬àõ›»ô]»\úõ‹äóMM◊MêççWMPêÕóNMMHQMLMLÃŒWNLMQëå◊Nëç◊NLWMåëNWMLWNë◊M–QQóMçMÃMåÕëWMÕëéMM◊MÕéMM◊MêççWMPêÕóNMMWMååMóMPé◊MååLMPêÕóNMMWNçëWMåÕåàäN¬àBàõ‹à
+€€ú›Ÿ^HŸàX]⁄[ô–ÿ[ôY]\ H¬àûH¬à€€ú›[\‹ùYH]ÿZ][\‹ùﬁ[ò“Ÿ^JŸ^K»ôX‹û\óJN¬à€€ú›Z[ù^H]ÿZ]‹û\Àú›XùKôX‹û\
+à¬àò[YNàêQTÀQ–”Hãà]éàò\ŸMç–û]\Ãä[ùô[‹Kõõ€òŸPò\ŸMç
+KàY][€ò[]Nàô]»^[ò€Ÿ\ä
+Kô[ò€ŸJ÷Sê◊—Sê‘ñTQ‘–“SPW’åJBàKà[\‹ùYàò\ŸMç–û]\Ãä[ùô[‹Kò⁄\\ù^ò\ŸMç
+Bà
+N¬àô]\õàî””ãú\úŸJô]»^X€Ÿ\ä
+KôX€ŸJZ[ù^
+JN¬àHÿ]⁄¬àBàBàõ›»ô]»\úõ‹äóMM◊MêççWMLÃWNQL◊MPêÕóMNLÃWNçWQëå◊Nëç◊MŒëWNêMMåçMçÃWNêëWMNL◊Mç—óMÕLéMM◊MLMM◊MêççWMPêÕóNMMHäN¬àBà\ﬁ[ò»ù[ò›[€à[\‹ùﬁ[ò“Ÿ^Jò]“Ÿ^K\ÿYŸ\ H¬à€€ú›õ‹õX[^ôYHõ‹õX[^ôTﬁ[ò—[ò‹û\[€íŸ^Jò]“Ÿ^JN¬àYà
+[õ‹õX[^ôY
+Hõ›»ô]»\úõ‹äóMM◊MêççWMLêLMPêÕóMPêÕóNMMWMçQLMçMQëå◊MQêÕWNN–óMçåëàçMàMçMPêÕóNMMHäN¬àô]\õà‹û\Àú›XùKö[\‹ùŸ^Júò]»ãò\ŸMç\õ–û]\ õ‹õX[^ôY
+KêQTÀQ–”Hãò[ŸK\ÿYŸ\ N¬àBàù[ò›[€àû]\’–ò\ŸMçäû]\ H¬à]ö[ò\ûHHàé¬àõ‹à
+€€ú›ò[YHŸàû]\ Hö[ò\ûH
+œH›ö[ôÀôúõ€P⁄\ê€ŸJò[YJN¬àô]\õàùÿJö[ò\ûJN¬àBàù[ò›[€àû]\’–ò\ŸMç\õ
+û]\ H¬àô]\õàû]\’–ò\ŸMçäû]\ Kúô\XŸP[
+ä»ããHäKúô\XŸP[
+ã»ãó»äKúô\XŸJœJ…ŸÀàäN¬àBàù[ò›[€àò\ŸMç–û]\Ãäò\ŸMç
+H¬àûH¬à€€ú›ö[ò\ûHH]ÿä›ö[ô ò\ŸMçàäJN¬à€€ú››]]Hô]»Z[ù\úò^Jö[ò\ûKõ[ô›
+N¬àõ‹à
+]HH»Hö[ò\ûKõ[ô›»H
+œHJH›]]⁄WHHö[ò\ûKò⁄\ê€ŸP]
+JN¬àô]\õà›]]¬àHÿ]⁄¬àô]\õàô]»Z[ù\úò^J
+N¬àBàBàù[ò›[€àò\ŸMç\õ–û]\ ò[YJH¬à€€ú›ò\ŸMçH›ö[ô ò[YHàäKúô\XŸP[
+ãHãä»äKúô\XŸP[
+ó»ãã»äN¬àô]\õàò\ŸMç–û]\Ãäò\ŸMç
+»èHãúô\X]
+
+Hò\ŸMçõ[ô›	H
+H	H
+JN¬àBÇàÀ»ŸX›\ôW‹ò[ô€Köú¬àù[ò›[€àŸX›\ôTò[ô€U]ZY
+‹û\–\HH€ÿò[\Àò‹û\ H¬àYà
+\[Ÿà‹û\–\OÀúò[ô€UURQOOHôù[ò›[€àäHô]\õà‹û\–\Kúò[ô€UURQ
+
+N¬àYà
+\[Ÿà‹û\–\OÀôŸ]ò[ô€Uò[Y\»OOHôù[ò›[€àäH¬àõ›»ô]»\úõ‹äóMQçL◊MLçMÃ–QóMN◊MLMçLëóMåÃWMPéWMLMéNMéóMçÃ–WMçMÃQëå◊MQåóMLP◊MêçåóMM◊MêççWMç—MçP»äN¬àBà€€ú›û]\»H‹û\–\KôŸ]ò[ô€Uò[Y\ ô]»Z[ù\úò^JMäJN¬àû]\÷ÕóHHû]\÷ÕóH	àMHç¬àû]\÷ŒHHû]\÷ŒH	àå»Lé¬à€€ú›^H\úò^Kôúõ€Jû]\À
+ò[YJHOàò[YKù‘›ö[ô MäKúY›\ù
+ãåäJN¬àô]\õà	⁄^ú€XŸJ
+Köõ⁄[äàä_KI⁄^ú€XŸJäKöõ⁄[äàä_KI⁄^ú€XŸJã
+Köõ⁄[äàä_KI⁄^ú€XŸJL
+Köõ⁄[äàä_KI⁄^ú€XŸJL
+Köõ⁄[äàä_X¬àBàù[ò›[€à‹ôX]Tﬁ[ò“Y[\›[òﬁRŸ^Jõ›»H]Kõõ› 
+K‹û\–\HH€ÿò[\Àò‹û\ H¬àô]\õà\‹ÀI”ù[Xô\äõ› _KI‹ŸX›\ôTò[ô€U]ZY
+‹û\–\J_X¬àBÇàÀ»›€õÿYŸö[Köú¬àù[ò›[€à›€õÿY^ö[Jö[Sò[YK€€ù[ùZ[YU\K¬àÿ›[Y[ùôYàH€ÿò[\Àôÿ›[Y[ùà\õôYàH€ÿò[\ÀïTìàõÿê›‹àH€ÿò[\Àêõÿãàô]õ⁄ŸQ[^S\»HYL¬àHHﬂJH¬àô]\õàô]»õ€Z\ŸJ
+ô\€€ôKôZôX›
+HOà¬à]\õHàé¬à][ò⁄‹àHù[¬àûH¬àYà
+Yÿ›[Y[ùôYèÀòõŸJHõ›»ô]»\úõ‹äóMPëê◊MLQêWNNÕWNMÕåóMPÃPWMçÃêWMPé◊MååLMLêLNç—äN¬àYà
+\[Ÿàõÿê›‹àOOHôù[ò›[€àäHõ›»ô]»\úõ‹äóMQçL◊MLçMëóNPŒMMçéMLMçLëóMåÃWMçN◊MQçóMPëê◊MLQêHäN¬àYà
+\[Ÿà\õôYèÀò‹ôX]SÿöôX›TìOOHôù[ò›[€àäHõ›»ô]»\úõ‹äóMQçL◊MLçMëóNPŒMMçéMLMçLëóMåÃWMçN◊MQçóMPëê◊MLQêHäN¬à€€ú›õÿàHô]»õÿê›‹äÿ€€ù[ùK»\NàZ[YU\HJN¬à\õH\õôYãò‹ôX]SÿöôX›Tì
+õÿäN¬à[ò⁄‹àHÿ›[Y[ùôYãò‹ôX]Q[[Y[ù
+òHäN¬à[ò⁄‹ãöôYàH\õ¬à[ò⁄‹ãô›€õÿYHö[Sò[YN¬à[ò⁄‹ãú›[Kô\‹^HHõõ€ôHé¬àÿ›[Y[ùôYãòõŸKò\[ô⁄[
+[ò⁄‹äN¬à[ò⁄‹ãò€X⁄ 
+N¬àŸ][Y[›]
+
+
+HOà¬àYà
+\õ
+H\õôYãúô]õ⁄ŸSÿöôX›Tì
+\õ
+N¬à[ò⁄‹èÀúô[[›ôJ
+N¬àô\€€ôJ
+N¬àKô]õ⁄ŸQ[^S\ N¬àHÿ]⁄
+\úõ‹äH¬àYà
+\õ
+H\õôYãúô]õ⁄ŸSÿöôX›Tì
+\õ
+N¬à[ò⁄‹èÀúô[[›ôJ
+N¬àôZôX›
+\úõ‹äN¬àBàJN¬àBÇàÀ»‹[€úÀöú¬àò\à’‘êQ—W“—VW—UíP—W”êSQHHú\‹Àô]öXŸSò[YHé¬àò\à’‘êQ—W“—VW‘÷Sê◊—SêPìW’—PëUàHú\‹Àúﬁ[òÀô[òXõUŸXëUãùå»é¬àò\à’‘êQ—W“—VW‘÷Sê◊—SêPìW‘—Só“‘’Q‘—TïëTàHú\‹Àúﬁ[òÀô[òXõTŸ[í‹›YŸ\ùô\ãùå»é¬àò\à’‘êQ—W“—VW‘÷Sê◊’—PëUó–êT—W’TìHú\‹Àúﬁ[òÀùŸXô]ãòò\ŸU\õùåàé¬àò\à’‘êQ—W“—VW‘÷Sê◊’—PëUó‘UHú\‹Àúﬁ[òÀùŸXô]ãú]ùåàé¬àò\à’‘êQ—W“—VW‘÷Sê◊’—PëUó’T—TìêSQHHú\‹Àúﬁ[òÀùŸXô]ãù\Ÿ\õò[YKùåàé¬àò\à’‘êQ—W“—VW‘÷Sê◊‘—TïëTó–êT—W’TìHú\‹Àúﬁ[òÀúŸ\ùô\ãòò\ŸU\õùåàé¬àò\à’‘êQ—W“—VW‘÷Sê◊‘íSPTñW‘”’Tê—HHú\‹Àúﬁ[òÀúö[X\ûT€›\òŸKùåHé¬àò\à’‘êQ—W“—VW‘÷Sê◊–UU◊“SïTïêS”RSïUT»Hú\‹Àúﬁ[òÀò]]“[ù\ùò[Z[ù]\ÀùåHé¬àò\à’‘êQ—W“—VW‘÷Sê◊—UíP—W“QHú\‹Àúﬁ[òÀô]öXŸRYùåHé¬àò\à’‘êQ—W“—VW‘÷Sê◊”‘TêUS”ó”–“»Hú\‹Àúﬁ[òÀõ‹\ò][€ìÿ⁄ÀùåHé¬àò\à÷Sê◊”‘TêUS”ó”–“◊’”T»HL
+àå
+àYLŒ¬àò\àQêUS‘—Só“‘’Q‘—TïëTó–êT—W’TìHöŒãÀ›ZÀúÿòûãùX⁄çM»é¬àò\à÷Sê◊”S—W”QTë—HHõY\ôŸHé¬àò\à÷Sê◊”S—W‘ëSS’W”’ëTï‘íUW”––SHúô[[›S›ô\ù‹ö]Sÿÿ[é¬àò\à÷Sê◊”S—W”––S”’ëTï‘íUW‘ëSS’HHõÿÿ[›ô\ù‹ö]Tô[[›Hé¬àò\à÷Sê◊‘íSPTñW‘—TïëTàHúŸ\ùô\àé¬àò\à÷Sê◊‘íSPTñW’—PëUàHùŸXô]àé¬àò\à÷Sê◊–ïSëW‘–“SPW’åàHú\‹Àúﬁ[òÀòù[ôKùåàé¬àò\à’‘TíS—‘—P””ë»HÃ¬àò\à’—Q“U»Hé¬àò\à’‘ëQîëT““SïTïêS”T»HYLŒ¬àò\à‘S”î◊’–T’—TêUS”ó”T»HŸLŒ¬àò\à÷Sê◊“’SQS’U”T»HŸM¬à\ﬁ[ò»ù[ò›[€àô]⁄⁄]ﬁ[ò’[Y[›]
+\õ‹[€ú»HﬂK›YŸHHóMM◊MêççWNëç◊MêÕàäH¬à€€ú›€€ùõ€\àH\[ŸàXõ‹ù€€ùõ€\àOOHôù[ò›[€àà»ô]»Xõ‹ù€€ùõ€\ä
+Hàù[¬à€€ú›[Y[›]YH€€ùõ€\à»Ÿ][Y[›]
+
+
+HOà€€ùõ€\ãòXõ‹ù
+
+K÷Sê◊“’SQS’U”T Hàù[¬àûH¬àô]\õà]ÿZ]ô]⁄
+\õ€€ùõ€\à»»ããõ‹[€úÀ⁄Y€ò[à€€ùõ€\ãú⁄Y€ò[Hà‹[€ú N¬àHÿ]⁄
+\úõ‹äH¬àYà
+€€ùõ€\èÀú⁄Y€ò[òXõ‹ùY
+H¬àõ›»ô]»\úõ‹ä	‹›YŸ_WNWMçQçóQëå	‘÷Sê◊“’SQS’U”T»»YLﬂHMŒQóQëåX
+N¬àBàõ›»\úõ‹é¬àHö[ò[H¬àYà
+[Y[›]Y
+H€X\ï[Y[›]
+[Y[›]Y
+N¬àBàBàù[ò›[€àõ‹õX[^ôUŸXô]îô[[›T]
+ò[YJH¬à€€ú›ò]»H›ö[ô ò[YHàäKùö[J
+N¬àYà
+\ò]»◊ñÿK^óVÿK^ó
+ÀãWJéã⁄Kù\›
+ò] Hò]Àö[ò€Y\ è»äHò]Àö[ò€Y\ à»äJH¬àõ›»ô]»\úõ‹äïŸXëUàNë◊M–QQóNQóMQéMQêÕWNN–óMçåëóMÕëéMPëéWNQóMQéQëå◊MLMMLNëMLÃWMMêóMç—MWNëLóMLÃóMååMóNMLPWMÃéHäN¬àBà€€ú›]Hò]Àúô\XŸJ◊ó ÀÀàäN¬à€€ú›\ù»H]ú‹]
+ã»äN¬àYà
+\ùÀú€€YJ
+\ù
+HOà\\ù\ùOOHãàà\ùOOHããàäJH¬àõ›»ô]»\úõ‹äïŸXëUàNë◊M–QQóNQóMQéMLÃWMMêóNMÕQWMê—WNQóMQéMêêçHäN¬àBàô]\õà\ùÀöõ⁄[äã»äN¬àBàù[ò›[€àõ‹õX[^ôSYÿXﬁTŸ[í‹›YŸ\ùô\êò\ŸU\õ
+ò[YJH¬à€€ú›ö[[YYH›ö[ô ò[YHàäKùö[J
+N¬àYà
+]ö[[YY
+Hô]\õàQêUS‘—Só“‘’Q‘—TïëTó–êT—W’Tì¬àûH¬à€€ú›\úŸYHô]»Tì
+ö[[YY
+N¬àYà
+Z\‘ŸX›\ôTﬁ[ò—[ô⁄[ù
+\úŸY
+JHô]\õààé¬à€€ú›‹›H›ö[ô \úŸYö‹›ò[YHàäKù”›Ÿ\êÿ\ŸJ
+N¬à€€ú›‹ùH\úŸYú‹ù»ù[Xô\ä\úŸYú‹ù
+Hà\úŸYúõ›ÿ€€OOHöŒàà»»à¬àYà
+
+‹›OOHåLçÀåååHà‹›OOHõÿÿ[‹›äH	âà‹ùOOHLÃÃÃ H¬àô]\õàQêUS‘—Só“‘’Q‘—TïëTó–êT—W’Tì¬àBàYà
+‹›OOHõ‹ãúÿòûãùX⁄à	âà‹ùOOHM H¬àô]\õàQêUS‘—Só“‘’Q‘—TïëTó–êT—W’Tì¬àBàHÿ]⁄¬àô]\õàö[[YY¬àBàô]\õàö[[YY¬àBàù[ò›[€à\‘ŸX›\ôTﬁ[ò—[ô⁄[ù
+\õ
+H¬àYà
+\õúõ›ÿ€€OOHöŒàäHô]\õàùYN¬à€€ú›‹›H›ö[ô \õö‹›ò[YHàäKù”›Ÿ\êÿ\ŸJ
+N¬àô]\õà\õúõ›ÿ€€OOHöàà	âà»õÿÿ[‹›ãåLçÀåååHãééåHóKö[ò€Y\ ‹›
+N¬àBàù[ò›[€à\‘ŸX›\ôTﬁ[ò—[ô⁄[ùò[YJò[YJH¬àûH¬àô]\õà\‘ŸX›\ôTﬁ[ò—[ô⁄[ù
+ô]»Tì
+›ö[ô ò[YHàäKùö[J
+JJN¬àHÿ]⁄¬àô]\õàò[ŸN¬àBàBàò\à€HH¬à]öXŸSò[YNàÿ›[Y[ùôŸ][[Y[ùûRY
+ô]öXŸSò[YHäKàﬁ[ò—[òXõUŸXô]éàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò—[òXõUŸXô]àäKàﬁ[ò—[òXõTŸ\ùô\éàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò—[òXõTŸ\ùô\àäKàﬁ[ò‘ö[X\ûT€›\òŸNàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò‘ö[X\ûT€›\òŸHäKàﬁ[ò”Y\ôŸPùéàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò”Y\ôŸPùàäKàﬁ[ò‘ô]öY]–ùéàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò‘ô]öY]–ùàäKàﬁ[ò‘ô]öY]‘›]\Œàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò‘ô]öY]‘›]\»äKàﬁ[ò‘ô[[›S›ô\ù‹ö]Sÿÿ[ùéàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò‘ô[[›S›ô\ù‹ö]Sÿÿ[ùàäKàﬁ[ò”ÿÿ[›ô\ù‹ö]Tô[[›Pùéàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò”ÿÿ[›ô\ù‹ö]Tô[[›PùàäKàﬁ[ò”ÿYô\ú⁄[€ú–ùéàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò”ÿYô\ú⁄[€ú–ùàäKàﬁ[ò’ô\ú⁄[€ú‘›]\Œàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò’ô\ú⁄[€ú‘›]\»äKàﬁ[ò’ô\ú⁄[€ú”\›àÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò’ô\ú⁄[€ú”\›äKàﬁ[ò’ŸXô]ëöY[Œàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò’ŸXô]ëöY[»äKàﬁ[ò‘Ÿ\ùô\ëöY[Œàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò‘Ÿ\ùô\ëöY[»äKàﬁ[ò’ŸXô]êò\ŸU\õàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò’ŸXô]êò\ŸU\õäKàﬁ[ò’ŸXô]î]àÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò’ŸXô]î]äKàﬁ[ò’ŸXô]ï\Ÿ\õò[YNàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò’ŸXô]ï\Ÿ\õò[YHäKàﬁ[ò’ŸXô]î\‹›€‹ôàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò’ŸXô]î\‹›€‹ôäKàﬁ[ò‘Ÿ\ùô\êò\ŸU\õàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò‘Ÿ\ùô\êò\ŸU\õäKàﬁ[ò‘Ÿ\ùô\ï⁄Ÿ[éàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò‘Ÿ\ùô\ï⁄Ÿ[àäKàﬁ[ò—[ò‹û\[€íŸ^Nàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò—[ò‹û\[€íŸ^HäKàﬁ[ò—[ò‹û\[€íŸ^RY›]\Œàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò—[ò‹û\[€íŸ^RY›]\»äKàﬁ[ò‘ô]ö[›\—[ò‹û\[€íŸ^Nàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò‘ô]ö[›\—[ò‹û\[€íŸ^HäKàŸ[ô\ò]Tﬁ[ò—[ò‹û\[€íŸ^Pùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ôŸ[ô\ò]Tﬁ[ò—[ò‹û\[€íŸ^PùàäKàﬁ[ò–]]“[ù\ùò[àÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò–]]“[ù\ùò[äKàﬁ[ò–]]‘›]\Œàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò–]]‘›]\»äKàﬁ[ò”›]õﬁ›]\Œàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò”›]õﬁ›]\»äKàﬁ[ò‘ô]ûS›]õﬁùéàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò‘ô]ûS›]õﬁùàäKàﬁ[ò–€X\ì‹ú[ôY›]õﬁùéàÿ›[Y[ùôŸ][[Y[ùûRY
+úﬁ[ò–€X\ì‹ú[ôY›]õﬁùàäKà›‹òYŸTŸ[ê⁄X⁄–ùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ú›‹òYŸTŸ[ê⁄X⁄–ùàäKà^‹ùXY€õ‹›X‹–ùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ô^‹ùXY€õ‹›X‹–ùàäKàô\›‹ôS]\›€ò\⁄›ùéàÿ›[Y[ùôŸ][[Y[ùûRY
+úô\›‹ôS]\›€ò\⁄›ùàäKà›‹òYŸQXY€õ‹›X‹‘›]\Œàÿ›[Y[ùôŸ][[Y[ùûRY
+ú›‹òYŸQXY€õ‹›X‹‘›]\»äKà]öXŸT›]\Œàÿ›[Y[ùôŸ][[Y[ùûRY
+ô]öXŸT›]\»äKàÿ⁄—[òXõYàÿ›[Y[ùôŸ][[Y[ùûRY
+õÿ⁄—[òXõYäKàÿ⁄–Yò[òŸYöY[Œàÿ›[Y[ùôŸ][[Y[ùûRY
+õÿ⁄–Yò[òŸYöY[»äKàÿ⁄‘€XﬁS€òŸTòY[Œàÿ›[Y[ùôŸ][[Y[ùûRY
+õÿ⁄‘€XﬁS€òŸHäKàÿ⁄‘€XﬁRYTòY[Œàÿ›[Y[ùôŸ][[Y[ùûRY
+õÿ⁄‘€XﬁRYHäKàÿ⁄‘€XﬁPòX⁄Ÿ‹õ›[ôòY[Œàÿ›[Y[ùôŸ][[Y[ùûRY
+õÿ⁄‘€XﬁPòX⁄Ÿ‹õ›[ôäKàÿ⁄“YSZ[ù]\‘õ›Œàÿ›[Y[ùôŸ][[Y[ùûRY
+õÿ⁄“YSZ[ù]\‘õ›»äKàÿ⁄“YSZ[ù]\Œàÿ›[Y[ùôŸ][[Y[ùûRY
+õÿ⁄“YSZ[ù]\»äKàÿ⁄”X\›\î\‹›€‹ôàÿ›[Y[ùôŸ][[Y[ùûRY
+õÿ⁄”X\›\î\‹›€‹ôäKàÿ⁄”X\›\î\‹›€‹ô€€ôö\õNàÿ›[Y[ùôŸ][[Y[ùûRY
+õÿ⁄”X\›\î\‹›€‹ô€€ôö\õHäKàÿ⁄–‹ôY[ùX[[ùàÿ›[Y[ùôŸ][[Y[ùûRY
+õÿ⁄–‹ôY[ùX[[ùäKà[Xÿ€›[ù–€›[ùàÿ›[Y[ùôŸ][[Y[ùûRY
+ò[Xÿ€›[ù–€›[ùäKà\‹⁄Ÿ^PXÿ€›[ù–€›[ùàÿ›[Y[ùôŸ][[Y[ùûRY
+ú\‹⁄Ÿ^PXÿ€›[ù–€›[ùäKà›Xÿ€›[ù–€›[ùàÿ›[Y[ùôŸ][[Y[ùûRY
+ù›Xÿ€›[ù–€›[ùäKà[Xÿ€›[ù”\›àÿ›[Y[ùôŸ][[Y[ùûRY
+ò[Xÿ€›[ù”\›äKàôXﬁX€PXÿ€›[ù–€›[ùàÿ›[Y[ùôŸ][[Y[ùûRY
+úôXﬁX€PXÿ€›[ù–€›[ùäKàXÿ€›[ù’Xê[àÿ›[Y[ùôŸ][[Y[ùûRY
+òXÿ€›[ù’Xê[äKàXÿ€›[ù’Xî\‹⁄Ÿ^Nàÿ›[Y[ùôŸ][[Y[ùûRY
+òXÿ€›[ù’Xî\‹⁄Ÿ^HäKàXÿ€›[ù’Xï›àÿ›[Y[ùôŸ][[Y[ùûRY
+òXÿ€›[ù’Xï›äKàXÿ€›[ù’XîôXﬁX€Nàÿ›[Y[ùôŸ][[Y[ùûRY
+òXÿ€›[ù’XîôXﬁX€HäKàXÿ€›[ù—õ€\ì\›àÿ›[Y[ùôŸ][[Y[ùûRY
+òXÿ€›[ù—õ€\ì\›äKà‹ôX]Qõ€\êùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ò‹ôX]Qõ€\êùàäKà[Xÿ€›[ù‘ŸX\ò⁄‹ò\àÿ›[Y[ùôŸ][[Y[ùûRY
+ò[Xÿ€›[ù‘ŸX\ò⁄‹ò\äKà[Xÿ€›[ù‘ŸX\ò⁄öY[–ùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ò[Xÿ€›[ù‘ŸX\ò⁄öY[–ùàäKà[Xÿ€›[ù‘ŸX\ò⁄öY[‘[ô[àÿ›[Y[ùôŸ][[Y[ùûRY
+ò[Xÿ€›[ù‘ŸX\ò⁄öY[‘[ô[äKà[Xÿ€›[ù‘ŸX\ò⁄öY[[àÿ›[Y[ùôŸ][[Y[ùûRY
+ò[Xÿ€›[ù‘ŸX\ò⁄öY[[äKà[Xÿ€›[ù‘ŸX\ò⁄öY[\Ÿ\õò[YNàÿ›[Y[ùôŸ][[Y[ùûRY
+ò[Xÿ€›[ù‘ŸX\ò⁄öY[\Ÿ\õò[YHäKà[Xÿ€›[ù‘ŸX\ò⁄öY[⁄]\Œàÿ›[Y[ùôŸ][[Y[ùûRY
+ò[Xÿ€›[ù‘ŸX\ò⁄öY[⁄]\»äKà[Xÿ€›[ù‘ŸX\ò⁄öY[õ›Nàÿ›[Y[ùôŸ][[Y[ùûRY
+ò[Xÿ€›[ù‘ŸX\ò⁄öY[õ›HäKà[Xÿ€›[ù‘ŸX\ò⁄öY[\‹›€‹ôàÿ›[Y[ùôŸ][[Y[ùûRY
+ò[Xÿ€›[ù‘ŸX\ò⁄öY[\‹›€‹ôäKà[Xÿ€›[ù‘ŸX\ò⁄àÿ›[Y[ùôŸ][[Y[ùûRY
+ò[Xÿ€›[ù‘ŸX\ò⁄äKà‹[î€‹ù[Ÿ[ùéàÿ›[Y[ùôŸ][[Y[ùûRY
+õ‹[î€‹ù[Ÿ[äKà‹[í\›‹ûS[Ÿ[ùéàÿ›[Y[ùôŸ][[Y[ùûRY
+õ‹[í\›‹ûS[Ÿ[äKà€X\êX›]ôPXÿ€›[ù–ùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ò€X\êX›]ôPXÿ€›[ù»äKà€X\îôXﬁX€Pö[êùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ò€X\îôXﬁX€Pö[àäKà€‹ù[Ÿ[àÿ›[Y[ùôŸ][[Y[ùûRY
+ú€‹ù[Ÿ[äKà€‹ù[Ÿ[\›àÿ›[Y[ùôŸ][[Y[ùûRY
+ú€‹ù[Ÿ[\›äKà€‹ŸT€‹ù[Ÿ[ùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ò€‹ŸT€‹ù[Ÿ[äKà\›‹ûS[Ÿ[àÿ›[Y[ùôŸ][[Y[ùûRY
+ö\›‹ûS[Ÿ[äKà\›‹ûS[Ÿ[\›àÿ›[Y[ùôŸ][[Y[ùûRY
+ö\›‹ûS[Ÿ[\›äKà€‹ŸR\›‹ûS[Ÿ[ùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ò€‹ŸR\›‹ûS[Ÿ[äKàY⁄]\’—õ€\ì[Ÿ[àÿ›[Y[ùôŸ][[Y[ùûRY
+òY⁄]\’—õ€\ì[Ÿ[äKàY⁄]\’—õ€\í[ú]àÿ›[Y[ùôŸ][[Y[ùûRY
+òY⁄]\’—õ€\í[ú]äKàY⁄]\’—õ€\ê]]–Yàÿ›[Y[ùôŸ][[Y[ùûRY
+òY⁄]\’—õ€\ê]]–YäKàÿ[òŸ[Y⁄]\’—õ€\êùéàÿ›[Y[ùôŸ][[Y[ùûRY
+òÿ[òŸ[Y⁄]\’—õ€\àäKà€€ôö\õPY⁄]\’—õ€\êùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ò€€ôö\õPY⁄]\’—õ€\àäKàôYúô\⁄ùéàÿ›[Y[ùôŸ][[Y[ùûRY
+úôYúô\⁄ùàäKà^‹ùﬁ[ò–ù[ôPùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ô^‹ùﬁ[ò–ù[ôPùàäKà^‹ù⁄õ€YP‹›êùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ô^‹ù⁄õ€YP‹›êùàäKà^‹ùö\ôYõﬁ‹›êùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ô^‹ùö\ôYõﬁ‹›êùàäKà^‹ùÿYò\öP‹›êùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ô^‹ùÿYò\öP‹›êùàäKà[\‹ùﬁ[ò–ù[ôPùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ö[\‹ùﬁ[ò–ù[ôPùàäKà[\‹ùúõ›‹Ÿ\ê‹›êùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ö[\‹ùúõ›‹Ÿ\ê‹›êùàäKà[\‹ù€€Ÿ€P]]\êùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ö[\‹ù€€Ÿ€P]]\êùàäKà[\‹ù€€Ÿ€P]]\ëö[\–ùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ö[\‹ù€€Ÿ€P]]\ëö[\–ùàäKà[\‹ù€€Ÿ€P]]õ€\îŸ[X›àÿ›[Y[ùôŸ][[Y[ùûRY
+ö[\‹ù€€Ÿ€P]]õ€\îŸ[X›äKà[\‹ù€€Ÿ€P]]ô]—õ€\ìò[YNàÿ›[Y[ùôŸ][[Y[ùûRY
+ö[\‹ù€€Ÿ€P]]ô]—õ€\ìò[YHäKà€X\êùéàÿ›[Y[ùôŸ][[Y[ùûRY
+ò€X\êùàäKà›]\Œàÿ›[Y[ùôŸ][[Y[ùûRY
+ú›]\»äBàN¬àò\àXÿ€›[ù‘ò]»H◊N¬àò\à\‹⁄Ÿ^\‘ò]»H◊N¬àò\àõ€\ú‘ò]»H◊N¬àò\àY][ô–Xÿ€›[ùYHù[¬àò\à›ôYúô\⁄[Y\àHù[¬àò\àXÿ€›[ùŸX\ò⁄\ŸP[HùYN¬àò\àXÿ€›[ùŸX\ò⁄öY[»H à◊‘TëW◊»
+ã»ô]»Ÿ]
+
+N¬àò\àX›]ôPXÿ€›[ùöY]»Hò[é¬àò\à€€ù^Y[ùQ[[Y[ùHù[¬àò\à€€ù^Y[ùS›]⁄YR[ô\àHù[¬àò\à€€ù^Y[ùQ\ÿÿ\R[ô\àHù[¬àò\àÿ⁄–‹ôY[ùX[^\›»Hò[ŸN¬àò\à€‹ù[Ÿ[‹ô\íY»H◊N¬àò\à€‹ù[Ÿ[òYŸ⁄[ô–Xÿ€›[ùYHàé¬àò\à\›‹ûQ[ùöY\»H◊N¬àò\à‹[€ú’ÿ\›[Y\àHù[¬àò\àY⁄]\’\ôŸ]õ€\íYHù[¬àò\à]öXŸSò[YTÿ]ôU[Y\àHù[¬àò\àﬁ[ò‘Ÿ][ô‹‘ÿ]ôU[Y\àHù[¬àò\àÿ⁄‘Ÿ][ô‹‘ÿ]ôU[Y\àHù[¬àò\àﬁ[ò“[ëõY⁄Hò[ŸN¬àò\à‹[€ú”ÿ⁄ŸYHò[ŸN¬àò\à[ú]Y]YSÿ⁄‘›]Uò[ú⁄][€àH‹ôX]Sÿ⁄‘›]Uò[ú⁄][€î]Y]YJ
+N¬à\ﬁ[ò»ù[ò›[€àX‹]Z\ôTﬁ[ò”‹\ò][€ìÿ⁄ ›€ô\äH¬à€€ú››‹òYŸHH⁄õ€YKú›‹òYŸOÀúŸ\‹⁄[€é¬àYà
+\›‹òYŸJHô]\õà›€ô\é¬à€€ú›õ›»H]Kõõ› 
+N¬à€€ú››\úô[ùH]ÿZ]›‹òYŸKôŸ]
+‘’‘êQ—W“—VW‘÷Sê◊”‘TêUS”ó”–“◊JN¬à€€ú›ÿ⁄»H›\úô[ù‘’‘êQ—W“—VW‘÷Sê◊”‘TêUS”ó”–“◊N¬àYà
+ÿ⁄»	âàù[Xô\äÿ⁄Àô^\ô\–]\ Hàõ›»	âàÿ⁄Àõ›€ô\àOOH›€ô\äHô]\õàù[¬à]ÿZ]›‹òYŸKúŸ]
+¬à‘’‘êQ—W“—VW‘÷Sê◊”‘TêUS”ó”–“◊Nà»›€ô\ã^\ô\–]\Œàõ›»
+»÷Sê◊”‘TêUS”ó”–“◊’”T»BàJN¬à€€ú›ô\öYöYYH]ÿZ]›‹òYŸKôŸ]
+‘’‘êQ—W“—VW‘÷Sê◊”‘TêUS”ó”–“◊JN¬àô]\õàô\öYöYY‘’‘êQ—W“—VW‘÷Sê◊”‘TêUS”ó”–“◊OÀõ›€ô\àOOH›€ô\à»›€ô\ààù[¬àBà\ﬁ[ò»ù[ò›[€àô[X\ŸTﬁ[ò”‹\ò][€ìÿ⁄ ›€ô\äH¬à€€ú››‹òYŸHH⁄õ€YKú›‹òYŸOÀúŸ\‹⁄[€é¬àYà
+\›‹òYŸJHô]\õé¬à€€ú››\úô[ùH]ÿZ]›‹òYŸKôŸ]
+‘’‘êQ—W“—VW‘÷Sê◊”‘TêUS”ó”–“◊JN¬àYà
+›\úô[ù‘’‘êQ—W“—VW‘÷Sê◊”‘TêUS”ó”–“◊OÀõ›€ô\àOOH›€ô\äH¬à]ÿZ]›‹òYŸKúô[[›ôJ’‘êQ—W“—VW‘÷Sê◊”‘TêUS”ó”–“ N¬àBàBàò\àUU◊‘÷Sê◊“SïTïêS”‘S”î»H à◊‘TëW◊»
+ã»ô]»Ÿ]
+»åãåHãå»ãçHãåLãåMHãåÃãçåóJN¬à[ö]
+
+Kòÿ]⁄
+
+\úõ‹äHOà¬à€€ú€€Kô\úõ‹äñ‘\‹»‹[€ú◊HMLåQMNP–óMLÃMóMNLÃWNçHã\úõ‹äN¬à€€ú›]Z[HŸ\úõ‹èÀõò[YK\úõ‹èÀò€ŸK\úõ‹èÀõY\‹ÿYŸK›ö[ô \úõ‹äWKõX\
+
+ò[YJHOà›ö[ô ò[YHàäKùö[J
+JKôö[\ä
+ò[YK[ô^ò[Y\ HOàò[YH	âàò[Y\Àö[ô^Ÿäò[YJHOOH[ô^
+Köõ⁄[äàäN¬àŸ]›]\ MLåQMNP–óMLÃMóMNLÃWNçNà	Ÿ]Z[óMçÃêWMÕ—MWNMLNWNëQóQëå◊Nëç◊Mç—MWMÕÃóMåçéWMPÕMHŸ\ùöXŸH€‹öŸ\àMå–M◊MLåÕóML—åüWQëåPóMçMÃMåÕëWMçÃêWNPóMëQWMçLŒX
+N¬àJN¬à\ﬁ[ò»ù[ò›[€à[ö]
+
+H¬à⁄õ€YKúù[ù[YKõ€ìY\‹ÿYŸKòY\›[ô\ä[ôTù[ù[YSY\‹ÿYŸJN¬à]ÿZ]ÿY]öXŸSò[YJ
+N¬à]ÿZ]ÿYÿ⁄‘Ÿ][ô‹ 
+N¬à]ÿZ][ú›\ôS‹[€ú’[õÿ⁄ŸY
+
+N¬à]ÿZ][ú›\ôQ]T›‹òYŸTôXYJ
+N¬à]ÿZ]ÿYﬁ[ò‘Ÿ][ô‹ 
+N¬à]ÿZ]ôYúô\⁄ﬁ[ò”›]õﬁ›]\ 
+N¬à]ÿZ]ôYúô\⁄
+
+N¬à›\ù›ôYúô\⁄X⁄Ÿ\ä
+N¬à€Kúﬁ[ò”Y\ôŸPùãòY]ô[ù\›[ô\äò€X⁄»ã
+
+HOàﬁ[ò”õ›’⁄]ô[[›J÷Sê◊”S—W”QTë—JJN¬à€Kúﬁ[ò‘ô]ûS›]õﬁùãòY]ô[ù\›[ô\äò€X⁄»ã
+
+HOàﬁ[ò”õ›’⁄]ô[[›J÷Sê◊”S—W”QTë—KùYJJN¬à€Kúﬁ[ò–€X\ì‹ú[ôY›]õﬁùãòY]ô[ù\›[ô\äò€X⁄»ã
+
+HOàõ⁄Y€X\ì‹ú[ôYﬁ[ò”›]õﬁ
+
+JN¬à€Kú›‹òYŸTŸ[ê⁄X⁄–ùãòY]ô[ù\›[ô\äò€X⁄»ã
+
+HOàõ⁄Yù[î›‹òYŸTŸ[ê⁄X⁄ 
+JN¬à€Kô^‹ùXY€õ‹›X‹–ùãòY]ô[ù\›[ô\äò€X⁄»ã
+
+HOàõ⁄Y^‹ù›‹òYŸQXY€õ‹›X‹ 
+JN¬à€Kúô\›‹ôS]\›€ò\⁄›ùãòY]ô[ù\›[ô\äò€X⁄»ã
+
+HOàõ⁄Yô\›‹ôS]\›ÿYô]T€ò\⁄›
+
+JN¬à€Kúﬁ[ò‘ô]öY]–ùãòY]ô[ù\›[ô\äò€X⁄»ã
+
+HOàõ⁄Yô]öY]‘ﬁ[ò’⁄]ô[[›J
+JN¬à€Kúﬁ[ò‘ô[[›S›ô\ù‹ö]Sÿÿ[ùãòY]ô[ù\›[ô\äò€X⁄»ã\ﬁ[ò»
+
+HOà¬à€€ú›⁄›[€€ù[ùYHH]ÿZ]€€ôö\õTô[[›S›ô\ù‹ö]Sÿÿ[YìôYYY
+
+N¬àYà
+\⁄›[€€ù[ùYJHô]\õé¬à]ÿZ]ﬁ[ò”õ›’⁄]ô[[›J÷Sê◊”S—W‘ëSS’W”’ëTï‘íUW”––S
+N¬àJN¬à€Kúﬁ[ò”ÿÿ[›ô\ù‹ö]Tô[[›PùãòY]ô[ù\›[ô\äò€X⁄»ã\ﬁ[ò»
+
+HOà¬à€€ú›⁄›[€€ù[ùYHH]ÿZ]€€ôö\õSÿÿ[›ô\ù‹ö]Tô[[›RYìôYYY
+
+N¬àYà
+\⁄›[€€ù[ùYJHô]\õé¬à]ÿZ]ﬁ[ò”õ›’⁄]ô[[›J÷Sê◊”S—W”––S”’ëTï‘íUW‘ëSS’JN¬àJN¬à€Kúﬁ[ò”ÿYô\ú⁄[€ú–ùãòY]ô[ù\›[ô\äò€X⁄»ã
+
+HOàõ⁄YÿYŸ\ùô\îﬁ[ò’ô\ú⁄[€ú 
+JN¬à€Kô]öXŸSò[YKòY]ô[ù\›[ô\äö[ú]ã
+
+HOà¬àÿ⁄Y[Q]öXŸSò[YTÿ]ôJ
+N¬àJN¬à€Kô]öXŸSò[YKòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOà¬àõ⁄Yÿ]ôQ]öXŸSò[YJ»⁄›‘›]\Œàò[ŸHJN¬àJN¬à€Kúﬁ[ò—[òXõUŸXô]ãòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOà¬àô[ô\îﬁ[ò–òX⁄Ÿ[ôöY[ 
+N¬àõ⁄Y\ú⁄\›ﬁ[ò‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJN¬àJN¬à€Kúﬁ[ò—[òXõTŸ\ùô\ãòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOà¬àô[ô\îﬁ[ò–òX⁄Ÿ[ôöY[ 
+N¬àõ⁄Y\ú⁄\›ﬁ[ò‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJN¬àJN¬à€Kúﬁ[ò‘ö[X\ûT€›\òŸKòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOàõ⁄Y\ú⁄\›ﬁ[ò‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJJN¬à€Kúﬁ[ò–]]“[ù\ùò[òY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOà¬àô[ô\ê]]‘ﬁ[ò‘›]\ 
+N¬àõ⁄Y\ú⁄\›ﬁ[ò‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJN¬àJN¬à€Kúﬁ[ò’ŸXô]êò\ŸU\õòY]ô[ù\›[ô\äö[ú]ãÿ⁄Y[Tﬁ[ò‘Ÿ][ô‹‘ÿ]ôJN¬à€Kúﬁ[ò’ŸXô]î]òY]ô[ù\›[ô\äö[ú]ãÿ⁄Y[Tﬁ[ò‘Ÿ][ô‹‘ÿ]ôJN¬à€Kúﬁ[ò’ŸXô]ï\Ÿ\õò[YKòY]ô[ù\›[ô\äö[ú]ãÿ⁄Y[Tﬁ[ò‘Ÿ][ô‹‘ÿ]ôJN¬à€Kúﬁ[ò’ŸXô]î\‹›€‹ôòY]ô[ù\›[ô\äö[ú]ãÿ⁄Y[Tﬁ[ò‘Ÿ][ô‹‘ÿ]ôJN¬à€Kúﬁ[ò‘Ÿ\ùô\êò\ŸU\õòY]ô[ù\›[ô\äö[ú]ãÿ⁄Y[Tﬁ[ò‘Ÿ][ô‹‘ÿ]ôJN¬à€Kúﬁ[ò‘Ÿ\ùô\ï⁄Ÿ[ãòY]ô[ù\›[ô\äö[ú]ãÿ⁄Y[Tﬁ[ò‘Ÿ][ô‹‘ÿ]ôJN¬à€Kúﬁ[ò—[ò‹û\[€íŸ^KòY]ô[ù\›[ô\äö[ú]ãÿ⁄Y[Tﬁ[ò‘Ÿ][ô‹‘ÿ]ôJN¬à€Kúﬁ[ò—[ò‹û\[€íŸ^KòY]ô[ù\›[ô\äö[ú]ã
+
+HOàõ⁄YôYúô\⁄ﬁ[ò—[ò‹û\[€íŸ^RY›]\ 
+JN¬à€Kúﬁ[ò’ŸXô]êò\ŸU\õòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOàõ⁄Y\ú⁄\›ﬁ[ò‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJJN¬à€Kúﬁ[ò’ŸXô]î]òY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOàõ⁄Y\ú⁄\›ﬁ[ò‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJJN¬à€Kúﬁ[ò’ŸXô]ï\Ÿ\õò[YKòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOàõ⁄Y\ú⁄\›ﬁ[ò‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJJN¬à€Kúﬁ[ò’ŸXô]î\‹›€‹ôòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOàõ⁄Y\ú⁄\›ﬁ[ò‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJJN¬à€Kúﬁ[ò‘Ÿ\ùô\êò\ŸU\õòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOàõ⁄Y\ú⁄\›ﬁ[ò‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJJN¬à€Kúﬁ[ò‘Ÿ\ùô\ï⁄Ÿ[ãòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOàõ⁄Y\ú⁄\›ﬁ[ò‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJJN¬à€Kúﬁ[ò—[ò‹û\[€íŸ^KòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOàõ⁄Y\ú⁄\›ﬁ[ò‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJJN¬à€Kúﬁ[ò‘ô]ö[›\—[ò‹û\[€íŸ^KòY]ô[ù\›[ô\äö[ú]ãÿ⁄Y[Tﬁ[ò‘Ÿ][ô‹‘ÿ]ôJN¬à€Kúﬁ[ò‘ô]ö[›\—[ò‹û\[€íŸ^KòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOàõ⁄Y\ú⁄\›ﬁ[ò‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJJN¬à€KôŸ[ô\ò]Tﬁ[ò—[ò‹û\[€íŸ^PùãòY]ô[ù\›[ô\äò€X⁄»ã
+
+HOà¬à€Kúﬁ[ò—[ò‹û\[€íŸ^Kùò[YHHŸ[ô\ò]Tﬁ[ò—[ò‹û\[€íŸ^J
+N¬àõ⁄Y\ú⁄\›ﬁ[ò‘Ÿ][ô‹ »⁄›‘›]\ŒàùYHJN¬àJN¬à€Kõÿ⁄—[òXõYòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOà¬àô[ô\ìÿ⁄‘Ÿ][ô‹—öY[ 
+N¬àõ⁄Yÿ]ôSÿ⁄‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJN¬àJN¬à€Kõÿ⁄‘€XﬁS€òŸTòY[ÀòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOà¬àô[ô\ìÿ⁄‘Ÿ][ô‹—öY[ 
+N¬àõ⁄Yÿ]ôSÿ⁄‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJN¬àJN¬à€Kõÿ⁄‘€XﬁRYTòY[ÀòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOà¬àô[ô\ìÿ⁄‘Ÿ][ô‹—öY[ 
+N¬àõ⁄Yÿ]ôSÿ⁄‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJN¬àJN¬à€Kõÿ⁄‘€XﬁPòX⁄Ÿ‹õ›[ôòY[ÀòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOà¬àô[ô\ìÿ⁄‘Ÿ][ô‹—öY[ 
+N¬àõ⁄Yÿ]ôSÿ⁄‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJN¬àJN¬à€Kõÿ⁄“YSZ[ù]\ÀòY]ô[ù\›[ô\äö[ú]ãÿ⁄Y[Sÿ⁄‘Ÿ][ô‹‘ÿ]ôJN¬à€Kõÿ⁄“YSZ[ù]\ÀòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOàõ⁄Yÿ]ôSÿ⁄‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJJN¬à€Kõÿ⁄”X\›\î\‹›€‹ôòY]ô[ù\›[ô\äö[ú]ãÿ⁄Y[Sÿ⁄‘Ÿ][ô‹‘ÿ]ôJN¬à€Kõÿ⁄”X\›\î\‹›€‹ô€€ôö\õKòY]ô[ù\›[ô\äö[ú]ãÿ⁄Y[Sÿ⁄‘Ÿ][ô‹‘ÿ]ôJN¬à€Kõÿ⁄”X\›\î\‹›€‹ôòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOàõ⁄Yÿ]ôSÿ⁄‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJJN¬à€Kõÿ⁄”X\›\î\‹›€‹ô€€ôö\õKòY]ô[ù\›[ô\äò⁄[ôŸHã
+
+HOàõ⁄Yÿ]ôSÿ⁄‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJJN¬à€Kò‹ôX]Qõ€\êùãòY]ô[ù\›[ô\äò€X⁄»ã‹ôX]Qõ€\ëúõ€Tõ€\
+N¬à€KòXÿ€›[ù—õ€\ì\›òY]ô[ù\›[ô\äò€€ù^Y[ùHã
+]ô[ù
+HOà¬àYà
+]ô[ùù\ôŸ]ò€‹Ÿ\›
+ãòXÿ€›[ù]öY]À]XàäJHô]\õé¬à]ô[ùúô]ô[ùYò][
+
+N¬à€‹ŸP€€ù^Y[ùJ
+N¬àJN¬à€Kò[Xÿ€›[ù”\›òY]ô[ù\›[ô\äò€€ù^Y[ùHã
+]ô[ù
+HOà¬àYà
+]ô[ùù\ôŸ]ò€‹Ÿ\›
+ãòXÿ€›[ùäJHô]\õé¬à]ô[ùúô]ô[ùYò][
+
+N¬à€‹ŸP€€ù^Y[ùJ
+N¬àJN¬à€KòXÿ€›[ù’Xê[òY]ô[ù\›[ô\äò€X⁄»ã
+
+HOàŸ]Xÿ€›[ùöY] ò[äJN¬à€KòXÿ€›[ù’Xî\‹⁄Ÿ^KòY]ô[ù\›[ô\äò€X⁄»ã
+
+HOàŸ]Xÿ€›[ùöY] ú\‹⁄Ÿ^\»äJN¬à€KòXÿ€›[ù’Xï›òY]ô[ù\›[ô\äò€X⁄»ã
+
+HOàŸ]Xÿ€›[ùöY] ù›äJN¬à€KòXÿ€›[ù’XîôXﬁX€KòY]ô[ù\›[ô\äò€X⁄»ã
+
+HOàŸ]Xÿ€›[ùöY] úôXﬁX€HäJN¬à€Kò[Xÿ€›[ù‘ŸX\ò⁄òY]ô[ù\›[ô\äö[ú]ã
+
+HOàô[ô\ê›\úô[ùöY] Xÿ€›[ù‘ò] JN¬à€Kõ‹[î€‹ù[Ÿ[ùãòY]ô[ù\›[ô\äò€X⁄»ã‹[î€‹ù[Ÿ[
+N¬à€Kõ‹[í\›‹ûS[Ÿ[ùãòY]ô[ù\›[ô\äò€X⁄»ã‹[í\›‹ûS[Ÿ[
+N¬à€Kò€‹ŸT€‹ù[Ÿ[ùãòY]ô[ù\›[ô\äò€X⁄»ã€‹ŸT€‹ù[Ÿ[
+N¬à€Kò€‹ŸR\›‹ûS[Ÿ[ùãòY]ô[ù\›[ô\äò€X⁄»ã€‹ŸR\›‹ûS[Ÿ[
+N¬à€Kòÿ[òŸ[Y⁄]\’—õ€\êùãòY]ô[ù\›[ô\äò€X⁄»ã€‹ŸPY⁄]\’—õ€\ì[Ÿ[
+N¬à€Kò€€ôö\õPY⁄]\’—õ€\êùãòY]ô[ù\›[ô\äò€X⁄»ãYXÿ€›[ù”X]⁄[ô‘⁄]\’—õ€\ëúõ€S[Ÿ[
+N¬à€Kú€‹ù[Ÿ[òY]ô[ù\›[ô\äò€X⁄»ã
+]ô[ù
+HOà¬àYà
+]ô[ùù\ôŸ]OOH€Kú€‹ù[Ÿ[
+H¬à€‹ŸT€‹ù[Ÿ[
+
+N¬àBàJN¬à€Kö\›‹ûS[Ÿ[òY]ô[ù\›[ô\äò€X⁄»ã
+]ô[ù
+HOà¬àYà
+]ô[ùù\ôŸ]OOH€Kö\›‹ûS[Ÿ[
+H¬à€‹ŸR\›‹ûS[Ÿ[
+
+N¬àBàJN¬à€KòY⁄]\’—õ€\ì[Ÿ[òY]ô[ù\›[ô\äò€X⁄»ã
+]ô[ù
+HOà¬àYà
+]ô[ùù\ôŸ]OOH€KòY⁄]\’—õ€\ì[Ÿ[
+H¬à€‹ŸPY⁄]\’—õ€\ì[Ÿ[
+
+N¬àBàJN¬à€Kò[Xÿ€›[ù‘ŸX\ò⁄öY[–ùãòY]ô[ù\›[ô\äò€X⁄»ã
+]ô[ù
+HOà¬à]ô[ùú›‹õ‹Yÿ][€ä
+N¬à€Kò[Xÿ€›[ù‘ŸX\ò⁄öY[‘[ô[ò€\‹”\›ùŸŸ€JöY[àäN¬àﬁ[ò–[Xÿ€›[ùŸX\ò⁄öY[⁄X⁄ÿõﬁ\ 
+N¬àJN¬à€Kò[Xÿ€›[ù‘ŸX\ò⁄öY[[òY]ô[ù\›[ô\äò⁄[ôŸHã€ê[Xÿ€›[ùŸX\ò⁄öY[[⁄[ôŸY
+N¬à€Kò[Xÿ€›[ù‘ŸX\ò⁄öY[\Ÿ\õò[YKòY]ô[ù\›[ô\äò⁄[ôŸHã€ê[Xÿ€›[ùŸX\ò⁄öY[⁄[ôŸY
+N¬à€Kò[Xÿ€›[ù‘ŸX\ò⁄öY[⁄]\ÀòY]ô[ù\›[ô\äò⁄[ôŸHã€ê[Xÿ€›[ùŸX\ò⁄öY[⁄[ôŸY
+N¬à€Kò[Xÿ€›[ù‘ŸX\ò⁄öY[õ›KòY]ô[ù\›[ô\äò⁄[ôŸHã€ê[Xÿ€›[ùŸX\ò⁄öY[⁄[ôŸY
+N¬à€Kò[Xÿ€›[ù‘ŸX\ò⁄öY[\‹›€‹ôòY]ô[ù\›[ô\äò⁄[ôŸHã€ê[Xÿ€›[ùŸX\ò⁄öY[⁄[ôŸY
+N¬à€Kò[Xÿ€›[ù‘ŸX\ò⁄öY[‘[ô[òY]ô[ù\›[ô\äò€X⁄»ã
+]ô[ù
+HOà¬à]ô[ùú›‹õ‹Yÿ][€ä
+N¬àJN¬àÿ›[Y[ùòY]ô[ù\›[ô\äò€X⁄»ã
+]ô[ù
+HOà¬à€‹ŸP€€ù^Y[ùRYìôYYY
+]ô[ù
+N¬àYà
+€Kò[Xÿ€›[ù‘ŸX\ò⁄öY[‘[ô[ò€\‹”\›ò€€ùZ[ú öY[àäJHô]\õé¬à€€ú›‹ò\H€Kò[Xÿ€›[ù‘ŸX\ò⁄öY[‘[ô[ò€‹Ÿ\›
+ãúŸX\ò⁄Yö[\ã]‹ò\äN¬àYà
+‹ò\	âà‹ò\ò€€ùZ[ú ]ô[ùù\ôŸ]
+JHô]\õé¬à€‹ŸP[Xÿ€›[ù‘ŸX\ò⁄öY[‘[ô[
+
+N¬àJN¬àÿ›[Y[ùòY]ô[ù\›[ô\äöŸ^Y›€àã
+]ô[ù
+HOà¬àYà
+]ô[ùöŸ^HOOHë\ÿÿ\HäH¬à€‹ŸP€€ù^Y[ùJ
+N¬àBàYà
+]ô[ùöŸ^HOOHë\ÿÿ\Hà	âàY€Kú€‹ù[Ÿ[ò€\‹”\›ò€€ùZ[ú öY[àäJH¬à€‹ŸT€‹ù[Ÿ[
+
+N¬àô]\õé¬àBàYà
+]ô[ùöŸ^HOOHë\ÿÿ\Hà	âàY€Kö\›‹ûS[Ÿ[ò€\‹”\›ò€€ùZ[ú öY[àäJH¬à€‹ŸR\›‹ûS[Ÿ[
+
+N¬àô]\õé¬àBàYà
+]ô[ùöŸ^HOOHë\ÿÿ\Hà	âàY€KòY⁄]\’—õ€\ì[Ÿ[ò€\‹”\›ò€€ùZ[ú öY[àäJH¬à€‹ŸPY⁄]\’—õ€\ì[Ÿ[
+
+N¬àô]\õé¬àBàYà
+]ô[ùöŸ^HOOHë\ÿÿ\Hà	âàY€Kò[Xÿ€›[ù‘ŸX\ò⁄öY[‘[ô[ò€\‹”\›ò€€ùZ[ú öY[àäJH¬à€‹ŸP[Xÿ€›[ù‘ŸX\ò⁄öY[‘[ô[
+
+N¬àBàYà
+]ô[ùöŸ^HOOHë[ù\àà	âàY]ô[ùú⁄YùŸ^H	âàY]ô[ùõY]RŸ^H	âàY]ô[ùò›õŸ^H	âàY]ô[ùò[Ÿ^H	âàY]ô[ùö\–€€\‹⁄[ô H¬àYà
+\”][[[ôR[ú]\ôŸ]
+]ô[ùù\ôŸ]
+JHô]\õé¬à€€ú›X›[€êù]€àHö[ôYò][X›[€êù]€ëõ‹ì‹[€ú ]ô[ùù\ôŸ]
+N¬àYà
+X›[€êù]€à	âàXX›[€êù]€ãô\ÿXõY
+H¬à]ô[ùúô]ô[ùYò][
+
+N¬àX›[€êù]€ãò€X⁄ 
+N¬àBàBàJN¬àÿ›[Y[ùòY]ô[ù\›[ô\äúÿ‹õ€ã
+
+HOà¬à€‹ŸP€€ù^Y[ùJ
+N¬àKùYJN¬à€Kò€X\êX›]ôPXÿ€›[ù–ùãòY]ô[ù\›[ô\äò€X⁄»ã€X\êX›]ôPXÿ€›[ù N¬à€Kò€X\îôXﬁX€Pö[êùãòY]ô[ù\›[ô\äò€X⁄»ã€X\îôXﬁX€Pö[äN¬à€KúôYúô\⁄ùãòY]ô[ù\›[ô\äò€X⁄»ã
+
+HOàôYúô\⁄
+
+JN¬à€Kô^‹ùﬁ[ò–ù[ôPùãòY]ô[ù\›[ô\äò€X⁄»ã^‹ùﬁ[ò–ù[ôJN¬à€Kô^‹ù⁄õ€YP‹›êùãòY]ô[ù\›[ô\äò€X⁄»ã
+
+HOà^‹ùúõ›‹Ÿ\î\‹›€‹ô‹›äò⁄õ€YHäJN¬à€Kô^‹ùö\ôYõﬁ‹›êùãòY]ô[ù\›[ô\äò€X⁄»ã
+
+HOà^‹ùúõ›‹Ÿ\î\‹›€‹ô‹›äôö\ôYõﬁäJN¬à€Kô^‹ùÿYò\öP‹›êùãòY]ô[ù\›[ô\äò€X⁄»ã
+
+HOà^‹ùúõ›‹Ÿ\î\‹›€‹ô‹›äúÿYò\öHäJN¬à€Kö[\‹ùﬁ[ò–ù[ôPùãòY]ô[ù\›[ô\äò€X⁄»ã[\‹ùﬁ[ò–ù[ôP[ôY\ôŸJN¬à€Kö[\‹ùúõ›‹Ÿ\ê‹›êùãòY]ô[ù\›[ô\äò€X⁄»ã[\‹ùúõ›‹Ÿ\î\‹›€‹ô‹›äN¬à€Kö[\‹ù€€Ÿ€P]]\êùãòY]ô[ù\›[ô\äò€X⁄»ã[\‹ù€€Ÿ€P]][ùXÿ]‹ë^‹ù\ëúõ€P€\õÿ\ô
+N¬à€Kö[\‹ù€€Ÿ€P]]\ëö[\–ùãòY]ô[ù\›[ô\äò€X⁄»ã[\‹ù€€Ÿ€P]][ùXÿ]‹ë^‹ù\ëúõ€Qö[\ N¬à€Kò€X\êùãòY]ô[ù\›[ô\äò€X⁄»ã€X\ê[
+N¬àBàù[ò›[€à[ôTù[ù[YSY\‹ÿYŸJY\‹ÿYŸJH¬àYà
+Y\‹ÿYŸOÀù\HOOH–“◊‘’UW–“Së—Q”QT‘–Q—JHô]\õé¬àõ⁄Y[ú]Y]YSÿ⁄‘›]Uò[ú⁄][€äY\‹ÿYŸK¬àÿ⁄Œà\ﬁ[ò»
+
+HOà¬à‹[€ú”ÿ⁄ŸYHùYN¬à]ÿZ]ÿ⁄—]Q[ò‹û\[€ä
+N¬àKà€X\éà
+
+HOà¬à€X\ì‹[€ú‘Ÿ[ú⁄]]ôT›]J
+N¬àŸ]›]\ óMåçéWMPÕMWMQåóNMLWMPéPWQëå◊Nëç◊NéL◊MLMçWML–óMPêÕóMŒWMMWNLP—MçPåMLêLNç—NêëWM—çëWLÃàäN¬àKà[õÿ⁄Œà\ﬁ[ò»
+
+HOà¬à‹[€ú”ÿ⁄ŸYHò[ŸN¬à]ÿZ]ô\›[YS‹[€ú–Yù\ë^\õò[[õÿ⁄ 
+N¬àBàJKòÿ]⁄
+
+\úõ‹äHOà¬à€€ú€€Kùÿ\õäñ‘\‹»‹[€ú◊HNMLWMÃêçóMåWMLå◊MåÕåóMNLÃWNçHã\úõ‹äN¬àJN¬àBàù[ò›[€à€X\ì‹[€ú‘Ÿ[ú⁄]]ôT›]J
+H¬àXÿ€›[ù‘ò]»H◊N¬à\‹⁄Ÿ^\‘ò]»H◊N¬àõ€\ú‘ò]»H◊N¬à\›‹ûQ[ùöY\»H◊N¬àY][ô–Xÿ€›[ùYHù[¬à€‹ŸP€€ù^Y[ùJ
+N¬à€‹ŸT€‹ù[Ÿ[
+
+N¬à€‹ŸR\›‹ûS[Ÿ[
+
+N¬à€‹ŸPY⁄]\’—õ€\ì[Ÿ[
+
+N¬à€‹ŸP[Xÿ€›[ù‘ŸX\ò⁄öY[‘[ô[
+
+N¬à€Kúﬁ[ò’ŸXô]î\‹›€‹ôùò[YHHàé¬à€Kúﬁ[ò‘Ÿ\ùô\ï⁄Ÿ[ãùò[YHHàé¬à€Kúﬁ[ò—[ò‹û\[€íŸ^Kùò[YHHàé¬à€Kúﬁ[ò‘ô]ö[›\—[ò‹û\[€íŸ^Kùò[YHHàé¬à€Kõÿ⁄”X\›\î\‹›€‹ôùò[YHHàé¬à€Kõÿ⁄”X\›\î\‹›€‹ô€€ôö\õKùò[YHHàé¬àô[ô\î⁄YXò\äXÿ€›[ù‘ò] N¬àô[ô\ê›\úô[ùöY] Xÿ€›[ù‘ò] N¬àBà\ﬁ[ò»ù[ò›[€àô\›[YS‹[€ú–Yù\ë^\õò[[õÿ⁄ 
+H¬àûH¬à]ÿZ][ú›\ôS‹[€ú’[õÿ⁄ŸY
+
+N¬àYà
+‹[€ú”ÿ⁄ŸY
+Hô]\õé¬à]ÿZ]õ€Z\ŸKò[
+€ÿYﬁ[ò‘Ÿ][ô‹ 
+KôYúô\⁄ﬁ[ò”›]õﬁ›]\ 
+KôYúô\⁄
+»⁄[[ùàùYHJWJN¬àŸ]›]\ óMåçéWMPÕMWMQåóNQL◊NMLWQëå◊MQåóNLP—MçPåMLêLNç—MçMÃMåÕëWLÃàäN¬àHÿ]⁄¬àBàBà\ﬁ[ò»ù[ò›[€à[ú›\ôS‹[€ú’[õÿ⁄ŸY
+
+H¬à€€ú››]\»H]ÿZ]⁄õ€YKúù[ù[YKúŸ[ôY\‹ÿYŸJ»\NàîT‘◊”–“◊‘’UT»àJN¬à‹[€ú”ÿ⁄ŸYHõ€€X[ä›]\œÀô[òXõY	âà›]\œÀõÿ⁄ŸY
+N¬àYà
+[‹[€ú”ÿ⁄ŸY
+Hô]\õé¬à€€ú›\‹›€‹ôH›ö[ô ⁄[ô›Àúõ€\
+óNëç◊NéL◊MLMçWML–óMPêÕóMŒWMQMWMåçL◊MQå\‹»NêëWM—çëHãàäHàäN¬àYà
+\\‹›€‹ô
+Hõ›»ô]»\úõ‹äóMåçéWMPÕMWMQåóNMLWMPéPWQëå◊MçÃêWMLêLNç—NçóML—ç◊MçMÃMåÕëHäN¬à€€ú›ô\›[H]ÿZ]⁄õ€YKúù[ù[YKúŸ[ôY\‹ÿYŸJ¬à\NàîT‘◊”–“◊’Sì–“»ãà^[ÿYà»\‹›€‹ôBàJN¬àYà
+\ô\›[Àõ⁄»ô\›[Àõÿ⁄ŸY
+Hõ›»ô]»\úõ‹äóML–óMPêÕóMŒWNMLNWNëQóQëå◊MçÃêWMLêLNç—NçóML—ç◊MçMÃMåÕëHäN¬à‹[€ú”ÿ⁄ŸYHò[ŸN¬àBà\ﬁ[ò»ù[ò›[€àÿY]öXŸSò[YJ
+H¬à€€ú›ô\›[H]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[ôŸ]
+‘’‘êQ—W“—VW—UíP—W”êSQWJN¬à€Kô]öXŸSò[YKùò[YHH›ö[ô ô\›[‘’‘êQ—W“—VW—UíP—W”êSQWHQêUS—UíP—W”êSQJN¬àBàù[ò›[€àÿ⁄Y[Q]öXŸSò[YTÿ]ôJ
+H¬à⁄[ô›Àò€X\ï[Y[›]
+]öXŸSò[YTÿ]ôU[Y\äN¬à]öXŸSò[YTÿ]ôU[Y\àH⁄[ô›ÀúŸ][Y[›]
+
+
+HOà¬àõ⁄Yÿ]ôQ]öXŸSò[YJ»⁄›‘›]\Œàò[ŸHJN¬àKçL
+N¬àBàù[ò›[€àÿ⁄Y[Tﬁ[ò‘Ÿ][ô‹‘ÿ]ôJ
+H¬à⁄[ô›Àò€X\ï[Y[›]
+ﬁ[ò‘Ÿ][ô‹‘ÿ]ôU[Y\äN¬àﬁ[ò‘Ÿ][ô‹‘ÿ]ôU[Y\àH⁄[ô›ÀúŸ][Y[›]
+
+
+HOà¬àõ⁄Y\ú⁄\›ﬁ[ò‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJN¬àKçL
+N¬àBàù[ò›[€àÿ⁄Y[Sÿ⁄‘Ÿ][ô‹‘ÿ]ôJ
+H¬à⁄[ô›Àò€X\ï[Y[›]
+ÿ⁄‘Ÿ][ô‹‘ÿ]ôU[Y\äN¬àÿ⁄‘Ÿ][ô‹‘ÿ]ôU[Y\àH⁄[ô›ÀúŸ][Y[›]
+
+
+HOà¬àõ⁄Yÿ]ôSÿ⁄‘Ÿ][ô‹ »⁄›‘›]\Œàò[ŸHJN¬àKÕL
+N¬àBà\ﬁ[ò»ù[ò›[€àÿ]ôQ]öXŸSò[YJ»⁄›‘›]\»HùYHHHﬂJH¬à€€ú›ô^H›ö[ô €Kô]öXŸSò[YKùò[YHàäKùö[J
+N¬àYà
+[ô^
+H¬àYà
+⁄›‘›]\ H¬àŸ]]öXŸT›]\ óNêëWMNL◊MMMŒQåMLNëML–WM–M–HäN¬àBàô]\õé¬àBà]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[úŸ]
+»‘’‘êQ—W“—VW—UíP—W”êSQWNàô^JN¬àYà
+⁄›‘›]\ H¬àŸ]]öXŸT›]\ NêëWMNL◊MMMŒQåMQåóMëMPçNML–H	€ô^X
+N¬àBàBà\ﬁ[ò»ù[ò›[€àôXYù\⁄[ô\‹—]Qúõ€T›‹ôJ
+H¬à€€ú››‹ôYH]ÿZ]Ÿ][]J
+N¬àô]\õà¬àXÿ€›[ùŒà\úò^Kö\–\úò^J›‹ôYÀòXÿ€›[ù H»›‹ôYòXÿ€›[ù»à◊Kà\‹⁄Ÿ^\Œà\úò^Kö\–\úò^J›‹ôYÀú\‹⁄Ÿ^\ H»›‹ôYú\‹⁄Ÿ^\»à◊Kàõ€\úŒà\úò^Kö\–\úò^J›‹ôYÀôõ€\ú H»›‹ôYôõ€\ú»à◊Kà[ôY›[\êXÿ€›[ùYŒà\úò^Kö\–\úò^J›‹ôYÀò[ôY›[\êXÿ€›[ùY H»›‹ôYò[ôY›[\êXÿ€›[ùY»à◊Kà[ôY›[\ì‹ô\ï\]Y]\Œàù[Xô\ä›‹ôYÀò[ôY›[\ì‹ô\ï\]Y]\ Hà[ôY›[\ì‹ô\ï\]Y]öXŸSò[YNà›ö[ô ›‹ôYÀò[ôY›[\ì‹ô\ï\]Y]öXŸSò[YHàäKàõ€\ì‹ô\íYŒà\úò^Kö\–\úò^J›‹ôYÀôõ€\ì‹ô\íY H»›‹ôYôõ€\ì‹ô\íY»à◊Kàõ€\ì‹ô\ï\]Y]\Œàù[Xô\ä›‹ôYÀôõ€\ì‹ô\ï\]Y]\ Hàõ€\ì‹ô\ï\]Y]öXŸSò[YNà›ö[ô ›‹ôYÀôõ€\ì‹ô\ï\]Y]öXŸSò[YHàäKà]öXŸSò[YNà›ö[ô ›‹ôYÀô]öXŸSò[YHàäBàN¬àBàù[ò›[€àõ‹õX[^ôTﬁ[ò‘^[ÿY⁄\J^[ÿY
+H¬à€€ú›Xÿ€›[ù»H\úò^Kö\–\úò^J^[ÿYÀòXÿ€›[ù H»^[ÿYòXÿ€›[ùÀõX\
+õ‹õX[^ôPXÿ€›[ù⁄\JHà◊N¬à€€ú›ò]‘\‹⁄Ÿ^\»H\úò^Kö\–\úò^J^[ÿYÀú\‹⁄Ÿ^\ H»^[ÿYú\‹⁄Ÿ^\ÀõX\
+õ‹õX[^ôT\‹⁄Ÿ^T⁄\JHà◊N¬à€€ú›õ€\ú»H\úò^Kö\–\úò^J^[ÿYÀôõ€\ú H»^[ÿYôõ€\úÀõX\
+õ‹õX[^ôQõ€\î⁄\JHà◊N¬àô]\õà¬àXÿ€›[ùÀà\‹⁄Ÿ^\ŒàùZ[[öYöYY\‹⁄Ÿ^\ Xÿ€›[ùÀò]‘\‹⁄Ÿ^\ Kàõ€\úÀà[ôY›[\êXÿ€›[ùYŒà\úò^Kö\–\úò^J^[ÿYÀò[ôY›[\êXÿ€›[ùY H»^[ÿYò[ôY›[\êXÿ€›[ùYÀõX\
+›ö[ô Kôö[\äõ€€X[äHà◊Kà[ôY›[\ì‹ô\ï\]Y]\Œàù[Xô\ä^[ÿYÀò[ôY›[\ì‹ô\ï\]Y]\ Hà[ôY›[\ì‹ô\ï\]Y]öXŸSò[YNà›ö[ô ^[ÿYÀò[ôY›[\ì‹ô\ï\]Y]öXŸSò[YHàäKàõ€\ì‹ô\íYŒà\úò^Kö\–\úò^J^[ÿYÀôõ€\ì‹ô\íY H»^[ÿYôõ€\ì‹ô\íYÀõX\
+›ö[ô Kôö[\äõ€€X[äHà◊Kàõ€\ì‹ô\ï\]Y]\Œàù[Xô\ä^[ÿYÀôõ€\ì‹ô\ï\]Y]\ Hàõ€\ì‹ô\ï\]Y]öXŸSò[YNà›ö[ô ^[ÿYÀôõ€\ì‹ô\ï\]Y]öXŸSò[YHàäKà]öXŸSò[YNà›ö[ô ^[ÿYÀô]öXŸSò[YHàäBàN¬àBàù[ò›[€àö\⁄XõTﬁ[ò–€›[ù
+ò[Y\ H¬àô]\õà
+\úò^Kö\–\úò^Jò[Y\ H»ò[Y\»à◊JKôö[\ä
+][JHOà][OÀö\‘\õX[ô[ùQ[]YOOHùYJKõ[ô›¬àBàù[ò›[€àﬁ[ò‘^[ÿY\]X[ Àö H¬àô]\õàî””ãú›ö[ô⁄YûJ€‹ùﬁ[ò‘^[ÿY€€X›[€ú õ‹õX[^ôTﬁ[ò‘^[ÿY⁄\J JJHOOHî””ãú›ö[ô⁄YûJ€‹ùﬁ[ò‘^[ÿY€€X›[€ú õ‹õX[^ôTﬁ[ò‘^[ÿY⁄\Jö JJN¬àBàù[ò›[€à€‹ùﬁ[ò‘^[ÿY€€X›[€ú ^[ÿY
+H¬à€€ú›€€\\ôHH
+ÀöÀŸ^\ HOà¬àõ‹à
+€€ú›Ÿ^HŸàŸ^\ H¬à€€ú›YùH›ö[ô œÀñ⁄Ÿ^WHàäKùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬à€€ú›öY⁄H›ö[ô öœÀñ⁄Ÿ^WHàäKùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬àYà
+YùöY⁄
+Hô]\õàLN¬àYà
+YùàöY⁄
+Hô]\õàN¬àBàô]\õà¬àN¬àô]\õà¬àããú^[ÿYàXÿ€›[ùŒàÀããú^[ÿYÀòXÿ€›[ù»◊WKú€‹ù
+
+Àö HOà€€\\ôJÀöÀ»úôX€‹ôYãòXÿ€›[ùYóJJKà\‹⁄Ÿ^\ŒàÀããú^[ÿYÀú\‹⁄Ÿ^\»◊WKú€‹ù
+
+Àö HOà€€\\ôJÀöÀ»ò‹ôY[ùX[YççHóJJKàõ€\úŒàÀããú^[ÿYÀôõ€\ú»◊WKú€‹ù
+
+Àö HOà€€\\ôJÀöÀ»öYóJJBàN¬àBàù[ò›[€à€›[ùﬁ[ò–Xÿ€›[ù€€ôõX› ÿÿ[Xÿ€›[ùÀô[[›PXÿ€›[ù H¬à€€ú›ÿÿ[ûRŸ^HH à◊‘TëW◊»
+ã»ô]»X\
+
+N¬àõ‹à
+€€ú›Xÿ€›[ùŸàÿÿ[Xÿ€›[ù»◊JH¬à€€ú›Ÿ^HH›ö[ô Xÿ€›[ùÀúôX€‹ôYXÿ€›[ùÀöYXÿ€›[ùÀòXÿ€›[ùYàäKùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬àYà
+Ÿ^JHÿÿ[ûRŸ^KúŸ]
+Ÿ^KXÿ€›[ù
+N¬àBà€€ú›öY[»H»ù\Ÿ\õò[YHãú\‹›€‹ôãù›ŸX‹ô]ãúôX€›ô\ûP€Ÿ\»ãõõ›Hãö\—[]YóN¬à]€›[ùH¬àõ‹à
+€€ú›ô[[›HŸàô[[›PXÿ€›[ù»◊JH¬à€€ú›Ÿ^HH›ö[ô ô[[›OÀúôX€‹ôYô[[›OÀöYô[[›OÀòXÿ€›[ùYàäKùö[J
+Kù”›Ÿ\êÿ\ŸJ
+N¬à€€ú›ÿÿ[Hÿÿ[ûRŸ^KôŸ]
+Ÿ^JN¬àYà
+[ÿÿ[
+H€€ù[ùYN¬à€›[ù
+œHöY[Àôö[\ä
+öY[
+HOà›ö[ô ÿÿ[ŸöY[Hœ»àäHOOH›ö[ô ô[[›VŸöY[Hœ»àäJKõ[ô›¬àBàô]\õà€›[ù¬àBà\ﬁ[ò»ù[ò›[€à‹ö]Pù\⁄[ô\‹—]U‘›‹ôJ^[ÿYHﬂJH¬à€€ú››\úô[ù^[ÿYHõ‹õX[^ôTﬁ[ò‘^[ÿY⁄\J]ÿZ]ôXYù\⁄[ô\‹—]Qúõ€T›‹ôJ
+JN¬à€€ú›ô^^[ÿYHõ‹õX[^ôTﬁ[ò‘^[ÿY⁄\J»ããò›\úô[ù^[ÿYããú^[ÿYﬂHJN¬àYà
+ﬁ[ò‘^[ÿY\]X[ ›\úô[ù^[ÿYô^^[ÿY
+JH¬àô]\õàò[ŸN¬àBà]ÿZ]Ÿ][]Jô^^[ÿY
+N¬àô]\õàùYN¬àBà\ﬁ[ò»ù[ò›[€àÿY\›‹ûJ
+H¬à€€ú›ò]»H]ÿZ]Ÿ]\›‹ûJ
+N¬à\›‹ûQ[ùöY\»H
+\úò^Kö\–\úò^Jò] H»ò]»à◊JKõX\
+
+][JHOà
+¬àYà›ö[ô ][OÀöYàäKà[Y\›[\\Œàù[Xô\ä][OÀù[Y\›[\\»
+KàX›[€éà›ö[ô ][OÀòX›[€ààäKùö[J
+BàJJKôö[\ä
+][JHOà][Kù[Y\›[\\»à	âà][KòX›[€ãõ[ô›à
+Kú€‹ù
+
+Àö HOà¬àYà
+Àù[Y\›[\\»OOHöÀù[Y\›[\\ Hô]\õàöÀù[Y\›[\\»HÀù[Y\›[\\Œ¬àô]\õàÀöYõÿÿ[P€€\\ôJöÀöY
+N¬àJN¬àBà\ﬁ[ò»ù[ò›[€à\[ô\›‹ûJX›[€ã[Y\›[\\»H]Kõõ› 
+JH¬à€€ú›õ‹õX[^ôYX›[€àH›ö[ô X›[€ààäKùö[J
+N¬àYà
+[õ‹õX[^ôYX›[€äHô]\õé¬à]ÿZ]\[ô\›‹ûQ[ùûJ»X›[€éàõ‹õX[^ôYX›[€ã[Y\›[\\»JN¬àYà
+Y€Kö\›‹ûS[Ÿ[ò€\‹”\›ò€€ùZ[ú öY[àäJH¬à]ÿZ]ÿY\›‹ûJ
+N¬àô[ô\í\›‹ûS[Ÿ[\›
+
+N¬àBàBàù[ò›[€à\›‹ûUò[YT€ö\]
+[ú]X^[ô›H
+H¬à€€ú›õ‹õX[^ôYH›ö[ô [ú]àäKúô\XŸJ◊óãŸÀóàäKúô\XŸJ◊ãŸÀóàäKùö[J
+N¬àYà
+[õ‹õX[^ôY
+Hô]\õàäM–M–JHé¬àYà
+õ‹õX[^ôYõ[ô›HX^[ô›
+Hô]\õàõ‹õX[^ôY¬àô]\õà	€õ‹õX[^ôYú€XŸJX^[ô›
+_Kããò¬àBà\ﬁ[ò»ù[ò›[€àÿYﬁ[ò‘Ÿ][ô‹ 
+H¬à€€ú›ô\›[H]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[ôŸ]
+¬à’‘êQ—W“—VW‘÷Sê◊—SêPìW’—PëUãà’‘êQ—W“—VW‘÷Sê◊—SêPìW‘—Só“‘’Q‘—TïëTãà’‘êQ—W“—VW‘÷Sê◊’—PëUó–êT—W’Tìà’‘êQ—W“—VW‘÷Sê◊’—PëUó‘Uà’‘êQ—W“—VW‘÷Sê◊’—PëUó’T—TìêSQKà’‘êQ—W“—VW‘÷Sê◊‘—TïëTó–êT—W’Tìà’‘êQ—W“—VW‘÷Sê◊‘íSPTñW‘”’Tê—Kà’‘êQ—W“—VW‘÷Sê◊–UU◊“SïTïêS”RSïUT¬àJN¬à]ŸX‹ô]Œ¬àûH¬àŸX‹ô]»H]ÿZ]ZY‹ò]SYÿXﬁTﬁ[ò‘ŸX‹ô] 
+N¬àHÿ]⁄
+\úõ‹äH¬àYà
+\úõ‹èÀò€ŸHOOHî÷Sê◊‘—P‘ëU◊’SîëPQPìHäHõ›»\úõ‹é¬àŸX‹ô]»H»ŸXô]î\‹›€‹ôààãŸ\ùô\ï⁄Ÿ[éààã[ò‹û\[€íŸ^NàààN¬à€Kú›‹òYŸQXY€õ‹›X‹‘›]\Àù^€€ù[ùHóMM◊MêççWMLQQMåÕëWNMêÕóMMMçQLMê—WNQL◊MPêÕóQëå◊MLŒQóMçMÃMåÕëWMçÃêWNNóMÕëóQëåPóNëç◊MLMMPëê◊MLQêWNê–WMçPQMååMóNLP—MçPåNLMM—çëWMM◊MêççWMLQQMåÕëHé¬àBà€€ú›\—[òXõUŸXô]àH\[Ÿàô\›[‘’‘êQ—W“—VW‘÷Sê◊—SêPìW’—PëUóHOOHòõ€€X[àé¬à€€ú›\—[òXõTŸ\ùô\àH\[Ÿàô\›[‘’‘êQ—W“—VW‘÷Sê◊—SêPìW‘—Só“‘’Q‘—TïëTóHOOHòõ€€X[àé¬à€€ú›[òXõUŸXô]àH\—[òXõUŸXô]à»õ€€X[äô\›[‘’‘êQ—W“—VW‘÷Sê◊—SêPìW’—PëUóJHàò[ŸN¬à€€ú›[òXõTŸ\ùô\àH\—[òXõTŸ\ùô\à»õ€€X[äô\›[‘’‘êQ—W“—VW‘÷Sê◊—SêPìW‘—Só“‘’Q‘—TïëTóJHàò[ŸN¬à€Kúﬁ[ò—[òXõUŸXô]ãò⁄X⁄ŸYH[òXõUŸXô]é¬à€Kúﬁ[ò—[òXõTŸ\ùô\ãò⁄X⁄ŸYH[òXõTŸ\ùô\é¬à€Kúﬁ[ò‘ö[X\ûT€›\òŸKùò[YHHõ‹õX[^ôTﬁ[ò‘ö[X\ûT€›\òŸJô\›[‘’‘êQ—W“—VW‘÷Sê◊‘íSPTñW‘”’Tê—WJN¬à€Kúﬁ[ò’ŸXô]êò\ŸU\õùò[YHH›ö[ô ô\›[‘’‘êQ—W“—VW‘÷Sê◊’—PëUó–êT—W’TìHàäN¬à€Kúﬁ[ò’ŸXô]î]ùò[YHH›ö[ô ô\›[‘’‘êQ—W“—VW‘÷Sê◊’—PëUó‘UHú\‹À\ﬁ[òÀXù[ôK]åãöú€€àäN¬à€Kúﬁ[ò’ŸXô]ï\Ÿ\õò[YKùò[YHH›ö[ô ô\›[‘’‘êQ—W“—VW‘÷Sê◊’—PëUó’T—TìêSQWHàäN¬à€Kúﬁ[ò’ŸXô]î\‹›€‹ôùò[YHHŸX‹ô]ÀùŸXô]î\‹›€‹ô¬à€€ú›õ‹õX[^ôYŸ\ùô\êò\ŸU\õHõ‹õX[^ôSYÿXﬁTŸ[í‹›YŸ\ùô\êò\ŸU\õ
+àô\›[‘’‘êQ—W“—VW‘÷Sê◊‘—TïëTó–êT—W’TìHQêUS‘—Só“‘’Q‘—TïëTó–êT—W’Tìà
+N¬à€Kúﬁ[ò‘Ÿ\ùô\êò\ŸU\õùò[YHHõ‹õX[^ôYŸ\ùô\êò\ŸU\õ¬àYà
+õ‹õX[^ôYŸ\ùô\êò\ŸU\õOOH›ö[ô ô\›[‘’‘êQ—W“—VW‘÷Sê◊‘—TïëTó–êT—W’TìHàäKùö[J
+JH¬à]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[úŸ]
+»‘’‘êQ—W“—VW‘÷Sê◊‘—TïëTó–êT—W’TìNàõ‹õX[^ôYŸ\ùô\êò\ŸU\õJN¬àBà€Kúﬁ[ò‘Ÿ\ùô\ï⁄Ÿ[ãùò[YHHŸX‹ô]ÀúŸ\ùô\ï⁄Ÿ[é¬à€€ú›ﬁ[ò—[ò‹û\[€íŸ^HHõ‹õX[^ôTﬁ[ò—[ò‹û\[€íŸ^JŸX‹ô]Àô[ò‹û\[€íŸ^JN¬à€Kúﬁ[ò—[ò‹û\[€íŸ^Kùò[YHHﬁ[ò—[ò‹û\[€íŸ^N¬à€Kúﬁ[ò‘ô]ö[›\—[ò‹û\[€íŸ^Kùò[YHHõ‹õX[^ôTﬁ[ò—[ò‹û\[€íŸ^JŸX‹ô]Àúô]ö[›\—[ò‹û\[€íŸ^JN¬à]ÿZ]ôYúô\⁄ﬁ[ò—[ò‹û\[€íŸ^RY›]\ 
+N¬àYà
+ﬁ[ò—[ò‹û\[€íŸ^HOOHŸX‹ô]Àô[ò‹û\[€íŸ^JH¬à]ÿZ]Ÿ]ﬁ[ò‘ŸX‹ô] »ããúŸX‹ô]À[ò‹û\[€íŸ^Nàﬁ[ò—[ò‹û\[€íŸ^HJN¬àBà€Kúﬁ[ò–]]“[ù\ùò[ùò[YHHõ‹õX[^ôP]]‘ﬁ[ò“[ù\ùò[Z[ù]\ ô\›[‘’‘êQ—W“—VW‘÷Sê◊–UU◊“SïTïêS”RSïUT◊JN¬àYà
+õ‹õX[^ôYŸ\ùô\êò\ŸU\õOOH›ö[ô ô\›[‘’‘êQ—W“—VW‘÷Sê◊‘—TïëTó–êT—W’TìHàäJH¬à]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[úŸ]
+»‘’‘êQ—W“—VW‘÷Sê◊‘—TïëTó–êT—W’TìNàõ‹õX[^ôYŸ\ùô\êò\ŸU\õJN¬àBàô[ô\îﬁ[ò–òX⁄Ÿ[ôöY[ 
+N¬àBàù[ò›[€àô[ô\îﬁ[ò–òX⁄Ÿ[ôöY[ 
+H¬à€Kúﬁ[ò’ŸXô]ëöY[Àò€\‹”\›ùŸŸ€JöY[àãY€Kúﬁ[ò—[òXõUŸXô]ãò⁄X⁄ŸY
+N¬à€Kúﬁ[ò‘Ÿ\ùô\ëöY[Àò€\‹”\›ùŸŸ€JöY[àãY€Kúﬁ[ò—[òXõTŸ\ùô\ãò⁄X⁄ŸY
+N¬àô[ô\ê]]‘ﬁ[ò‘›]\ 
+N¬àBàù[ò›[€àõ‹õX[^ôP]]‘ﬁ[ò“[ù\ùò[Z[ù]\ ò[YJH¬à€€ú›õ‹õX[^ôYH›ö[ô ò[YHœ»åäKùö[J
+N¬àô]\õàUU◊‘÷Sê◊“SïTïêS”‘S”îÀö\ õ‹õX[^ôY
+H»õ‹õX[^ôYàåé¬àBàù[ò›[€àõ‹õX[^ôTﬁ[ò‘ö[X\ûT€›\òŸJò[YJH¬àô]\õà›ö[ô ò[YHàäKùö[J
+HOOH÷Sê◊‘íSPTñW’—PëUà»÷Sê◊‘íSPTñW’—PëUàà÷Sê◊‘íSPTñW‘—TïëTé¬àBàù[ò›[€à€€ôö\õTZ[ù^ﬁ[ò [ò‹û\[€íŸ^JH¬àYà
+›ö[ô [ò‹û\[€íŸ^HàäKùö[J
+JHô]\õàùYN¬àô]\õà⁄[ô›Àò€€ôö\õJàóMQçL◊MLçMçÃêWNLMM—çëWMM◊MêççWMLêLMPêÕóMPêÕóNMMWQëå◊MPÃóMç—óMÕLéMçåWMçN◊MM◊MêççWMLÃWQëåML—QóNëMLÃWMMêóMPêÕóMŒWLÃU’LÃWMNL◊Mê—NQëåWLÃóóóMPÕWMQQêWNêQWMMÃéML—QóMëLWM—çLWM—QÀ◊NQPWMQQêWMÃ–QóMN◊MLÕMçQçóMç—óMÕLéLÃóMŒëWMPéPWM—QM◊M—QQQëåQàÇà
+N¬àBàù[ò›[€à€€ôö\õS›ô\ù‹ö]Tﬁ[ò [ŸJH¬àYà
+[ŸHOOHõY\ôŸHà[ŸHOOH÷Sê◊”S—W”QTë—JHô]\õàùYN¬à€€ú›Xô[H[ŸHOOH÷Sê◊”S—W‘ëSS’W”’ëTï‘íUW”––S[ŸHOOHúô[[›S›ô\ù‹ö]Sÿÿ[à»óMNLWM–QQóNNóMÕëóMçÃê◊MMÃÃààóMçÃê◊MMÃÃNNóMÕëóMNLWM–QQàé¬àô]\õà⁄[ô›Àò€€ôö\õJà	€Xô[WMåPWMLåóMQå◊MLMêM◊MÕéMÃëP◊MçÃWMëQWMçLŒWQëå◊MLMMLML—QóNLPWNêÕ◊LåP◊MMMQMÕóLåQNQPWMLêNMååóMNLLÃÇÇóNëç◊MLMNNNPŒMQQWMQåóLÃóMŒëWMPéPWM—QM◊M—QQMåçç◊N…€Xô[WQëåQòà
+N¬àBàù[ò›[€àö[X\ûT€›\òŸSXô[
+ò[YJH¬àô]\õàõ‹õX[^ôTﬁ[ò‘ö[X\ûT€›\òŸJò[YJHOOH÷Sê◊‘íSPTñW’—PëUà»ïŸXëUàààóMçÃMLêLWMMçéé¬àBàù[ò›[€àô[ô\ê]]‘ﬁ[ò‘›]\ 
+H¬à€€ú›[ù\ùò[Hõ‹õX[^ôP]]‘ﬁ[ò“[ù\ùò[Z[ù]\ €Kúﬁ[ò–]]“[ù\ùò[ùò[YJN¬à€€ú›[òXõYXô[»H◊N¬àYà
+€Kúﬁ[ò—[òXõUŸXô]ãò⁄X⁄ŸY
+H[òXõYXô[Àú\⁄
+ïŸXëUàäN¬àYà
+€Kúﬁ[ò—[òXõTŸ\ùô\ãò⁄X⁄ŸY
+H[òXõYXô[Àú\⁄
+óMçÃMLêLWMMçéäN¬àYà
+[ù\ùò[OOHåäH¬à€Kúﬁ[ò–]]‘›]\Àù^€€ù[ùHóNQPWMLêNMM◊MêççWMQåóMLMÃ◊NMQQé¬àô]\õé¬àBàYà
+[òXõYXô[Àõ[ô›OOH
+H¬à€Kúﬁ[ò–]]‘›]\Àù^€€ù[ùHóNQPWMLêNMM◊MêççWMQåóMQåMMëóQëå◊MçóMQçL◊MLçMê–LWMçÃWML—QóMÕLéNë◊M–QQóMM◊MêççWMëNLé¬àô]\õé¬àBà€Kúﬁ[ò–]]‘›]\Àù^€€ù[ùHNQPWMLêNMåÃWLåP◊MMMQMÕóLåQMêLåWMQåóMåçç◊N◊Qëå◊Mêê—à	⁄[ù\ùò[HMLåóNMQóMM◊MêççWMLMêååWQëå	Ÿ[òXõYXô[Àöõ⁄[äà
+»ä_WQëåX¬àBà\ﬁ[ò»ù[ò›[€àôYúô\⁄ﬁ[ò—[ò‹û\[€íŸ^RY›]\ 
+H¬à€€ú›Ÿ^HHõ‹õX[^ôTﬁ[ò—[ò‹û\[€íŸ^J€Kúﬁ[ò—[ò‹û\[€íŸ^Kùò[YJN¬à€Kúﬁ[ò—[ò‹û\[€íŸ^RY›]\Àù^€€ù[ùHŸ^H»MQçL◊MLçMM◊MêççWMPêÕóNMMHQQëåPIÿ]ÿZ]ﬁ[ò—[ò‹û\[€íŸ^RY
+Ÿ^J_WLÃóNLMMPëéWLÃWNçëWMåÕåóMååMóMåŒLóMç—MWMPêÕóNMMWMLMLÃŒWNLMMçQçóNëç◊MéŒMPëéWMêççMé◊NêÕóLÃòàóMQçL◊MLçMçÃêWNLMM—çëWMM◊MêççWMPêÕóNMMWQëå◊MPÃóMç—óMÕLéMçåWMçN◊MM◊MêççWMLÃWQëåPóNëç◊MŒëWNêMMM◊MêççWMçÃMLêLWMMçéMLMWNêéMçåWMçN◊LÃàé¬àBà\ﬁ[ò»ù[ò›[€àôYúô\⁄ﬁ[ò”›]õﬁ›]\ 
+H¬àYà
+Y€Kúﬁ[ò”›]õﬁ›]\ Hô]\õé¬àûH¬à€€ú›][\»H]ÿZ]Ÿ]ﬁ[ò”›]õﬁ
+
+N¬à€Kúﬁ[ò‘ô]ûS›]õﬁùãô\ÿXõYH][\Àõ[ô›OOH¬àYà
+Z][\Àõ[ô›
+H¬à€Kúﬁ[ò”›]õﬁ›]\Àù^€€ù[ùHóMM◊MêççWNçWML—óNMåQóMLåM◊ML–WM–M–Hé¬àô]\õé¬àBà€€ú›õ›»H]Kõõ› 
+N¬à€€ú›ÿZ][ô»H][\Àôö[\ä
+][JHOà][Kú›]\»OOHú]\ŸYà	âàù[Xô\ä][Kõô^ô]ûP]\»
+Hàõ› Kõ[ô›¬à€€ú›]\ŸYH][\Àôö[\ä
+][JHOà][Kú›]\»OOHú]\ŸYäKõ[ô›¬à€€ú›]Z[»H][\ÀõX\
+
+][JHOà¬à€€ú›⁄⁄[ôããù\ôŸ]\ù◊HH›ö[ô ][Kù\ôŸ]Ÿ^HàäKú‹]
+üäN¬à€€ú›\ôŸ]H\ôŸ]\ùÀöõ⁄[äüäN¬à]‹›H\ôŸ]¬àûH¬à‹›Hô]»Tì
+\ôŸ]
+Kö‹›\ôŸ]¬àHÿ]⁄¬àBà€€ú›Xô[H⁄[ôOOHúŸ\ùô\àà»óMçÃMLêLWMMçéàà⁄[ôOOHùŸXô]àà»ïŸXëUààà⁄[ô¬à€€ú›ô]ûP]Hù[Xô\ä][Kõô^ô]ûP]\»
+N¬à€€ú›ô]ûHH][Kú›]\»OOHú]\ŸYà»óMQåóMçéóMLP◊Qëå◊MÃéWMLQêóM–P–óMLÕÃ◊NLP—NëWNçWML—óMQêóMLêLWMååóMNLààô]ûP]àõ›»»MLóMêååH	€ô]»]Jô]ûP]
+Kù”ÿÿ[U[YT›ö[ô 
+_XàóML—QóM–P–óMLÕÃ◊NLP—NëHé¬à€€ú›\úõ‹àH›ö[ô ][Kõ\›\úõ‹ààäKùö[J
+N¬àô]\õà	€Xô[H	⁄‹›WQëåPWMNLÃWNçH	”ù[Xô\ä][Kò][\»
+_HMêååWQëå…‹ô]û_IŸ\úõ‹à»Qëå…Ÿ\úõ‹üXààüX¬àJN¬à€Kúﬁ[ò”›]õﬁ›]\Àù^€€ù[ùHNçWML—óMQêóMLêLH	⁄][\Àõ[ô›HMLêWQëåM–çWMQéH	›ÿZ][ôﬂHMLêI‹]\ŸYà»Qëå◊MQåóMçéóMLP»	‹]\ŸYHMLêXààüWQëåWQëåPIŸ]Z[Àöõ⁄[äóQëåPàä_X¬à€Kúﬁ[ò”›]õﬁ›]\Àù]HH]Z[Àöõ⁄[äóàäN¬àHÿ]⁄
+\úõ‹äH¬à€Kúﬁ[ò”›]õﬁ›]\Àù^€€ù[ùHMM◊MêççWNçWML—óNMåQóMLåM◊NëêóML—óMNLÃWNçWQëåPIŸ\úõ‹ãõY\‹ÿYŸ_X¬àBàBà\ﬁ[ò»ù[ò›[€à€X\ì‹ú[ôYﬁ[ò”›]õﬁ
+
+H¬àûH¬à€€ú›][\»H]ÿZ]Ÿ]ﬁ[ò”›]õﬁ
+
+N¬à€€ú›\ôŸ]»HùZ[ô[[›Tﬁ[ò’\ôŸ]—úõ€Q€J
+H◊N¬à€€ú›X›]ôRŸ^\»Hô]»Ÿ]
+\ôŸ]ÀõX\
+ﬁ[ò’\ôŸ]Ÿ^JJN¬à€€ú›ô^Hô[[›ôS‹ú[ôYﬁ[ò”›]õﬁ
+][\ÀX›]ôRŸ^\ N¬à€€ú›ô[[›ôYH][\Àõ[ô›Hô^õ[ô›¬àYà
+ô[[›ôYà
+H]ÿZ]Ÿ]ﬁ[ò”›]õﬁ
+ô^
+N¬à]ÿZ]ôYúô\⁄ﬁ[ò”›]õﬁ›]\ 
+N¬àŸ]›]\ ô[[›ôYà»MQåóMëLWMÕà	‹ô[[›ôYHMLêWMNLÃWMçMMM◊MêççWMÕëQWMé◊MQêóMLêLXàóMê–LWMçÃWMNLÃWMçMMM◊MêççWMÕëQWMé◊MQêóMLêLHäN¬àHÿ]⁄
+\úõ‹äH¬àŸ]›]\ MëLWMÕóMM◊MêççWNçWML—óMQêóMLêLWMNLÃWNçWQëåPIŸ\úõ‹ãõY\‹ÿYŸ_X
+N¬àBàBà\ﬁ[ò»ù[ò›[€àôX€‹ôﬁ[ò”›]õﬁòZ[\ôJ\ôŸ]^[ÿY\úõ‹ãõ‹òŸTô\›[YHHò[ŸJH¬à€€ú›\ôŸ]Ÿ^HHﬁ[ò’\ôŸ]Ÿ^J\ôŸ]
+N¬à€€ú›][\»H]ÿZ]Ÿ]ﬁ[ò”›]õﬁ
+
+N¬à€€ú›^[ÿY⁄LçMàH]ÿZ]ﬁ[ò‘^[ÿY⁄LçMä^[ÿY
+N¬à]ÿZ]Ÿ]ﬁ[ò”›]õﬁ
+\Ÿ\ùﬁ[ò”›]õﬁ
+][\À¬à\ôŸ]Ÿ^Kà^[ÿYàõ‹õX[^ôTﬁ[ò‘^[ÿY⁄\J^[ÿY
+Kà\úõ‹ãà^[ÿY⁄LçMãà^X›Y]YŒà\úõ‹èÀô^X›Y]Y»\ôŸ]úô[[›Q]Y»àãà^X›Yô]ö\⁄[€éà\úõ‹èÀô^X›Yô]ö\⁄[€à\ôŸ]úô[[›Tô]ö\⁄[€ààY[\›[òﬁRŸ^Nà\úõ‹èÀöY[\›[òﬁRŸ^Hàãàﬁ[ò‘Ÿ\‹⁄[€íYà\úõ‹èÀúﬁ[ò‘Ÿ\‹⁄[€íYàãà‹\ò][€íYà\úõ‹èÀõ‹\ò][€íYàãà€›\òŸU\Nà\ôŸ]ö⁄[ôàÿ€‹Nà\úõ‹èÀúÿ€‹Hàãàõ‹òŸTô\›[YBàJJN¬àBà\ﬁ[ò»ù[ò›[€à€X\îﬁ[ò”›]õﬁ
+\ôŸ]
+H¬à€€ú›\ôŸ]Ÿ^HHﬁ[ò’\ôŸ]Ÿ^J\ôŸ]
+N¬à€€ú›][\»H]ÿZ]Ÿ]ﬁ[ò”›]õﬁ
+
+N¬àYà
+Z][\Àú€€YJ
+][JHOà][Kù\ôŸ]Ÿ^HOOH\ôŸ]Ÿ^JJHô]\õé¬à]ÿZ]Ÿ]ﬁ[ò”›]õﬁ
+][\Àôö[\ä
+][JHOà][Kù\ôŸ]Ÿ^HOOH\ôŸ]Ÿ^JJN¬àBà\ﬁ[ò»ù[ò›[€àÿYÿ⁄‘Ÿ][ô‹ 
+H¬à€€ú›ô\›[H]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[ôŸ]
+¬à’‘êQ—W“—VW”–“◊—SêPìQà’‘êQ—W“—VW”–“◊‘”P÷Kà’‘êQ—W“—VW”–“◊“QW”RSïUTÀà’‘êQ—W“—VW”–“◊”PT’Tó–‘ëQSïPSàJN¬à€€ú›‹ôY[ùX[Hõ‹õX[^ôSÿ⁄”X\›\ê‹ôY[ùX[
+ô\›[‘’‘êQ—W“—VW”–“◊”PT’Tó–‘ëQSïPSJN¬àÿ⁄–‹ôY[ùX[^\›»Hõ€€X[ä‹ôY[ùX[
+N¬à€€ú›[òXõYHõ€€X[äô\›[‘’‘êQ—W“—VW”–“◊—SêPìQJH	âàÿ⁄–‹ôY[ùX[^\›Œ¬à€€ú›€XﬁHHõ‹õX[^ôSÿ⁄‘€XﬁJô\›[‘’‘êQ—W“—VW”–“◊‘”P÷WJN¬à€€ú›YSZ[ù]\»H€[\ÿ⁄“YSZ[ù]\ ô\›[‘’‘êQ—W“—VW”–“◊“QW”RSïUT◊JN¬à€Kõÿ⁄—[òXõYò⁄X⁄ŸYH[òXõY¬àŸ]ÿ⁄‘€XﬁTŸ[X›[€ä€XﬁJN¬à€Kõÿ⁄“YSZ[ù]\Àùò[YHH›ö[ô YSZ[ù]\ N¬à€Kõÿ⁄”X\›\î\‹›€‹ôùò[YHHàé¬à€Kõÿ⁄”X\›\î\‹›€‹ô€€ôö\õKùò[YHHàé¬à€Kõÿ⁄–‹ôY[ùX[[ùù^€€ù[ùHÿ⁄–‹ôY[ùX[^\›»»óMQåóNêëWM—çëWML–óMPêÕóMŒHàààé¬àô[ô\ìÿ⁄‘Ÿ][ô‹—öY[ 
+N¬àYà
+õ€€X[äô\›[‘’‘êQ—W“—VW”–“◊—SêPìQJH	âà[ÿ⁄–‹ôY[ùX[^\› H¬à]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[úŸ]
+»‘’‘êQ—W“—VW”–“◊—SêPìQNàò[ŸHJN¬àBàBàù[ò›[€àô[ô\ìÿ⁄‘Ÿ][ô‹—öY[ 
+H¬à€€ú›ÿ⁄—[òXõYHõ€€X[ä€Kõÿ⁄—[òXõYò⁄X⁄ŸY
+N¬à€Kõÿ⁄–Yò[òŸYöY[Àò€\‹”\›ùŸŸ€JöY[àã[ÿ⁄—[òXõY
+N¬à€€ú›YU[Y[›]HŸ]Ÿ[X›Yÿ⁄‘€XﬁJ
+HOOH–“◊‘”P÷W“QW’SQS’U¬à€Kõÿ⁄“YSZ[ù]\‘õ›Àò€\‹”\›ùŸŸ€JöY[àã[ÿ⁄—[òXõYZYU[Y[›]
+N¬àBàù[ò›[€àŸ]Ÿ[X›Yÿ⁄‘€XﬁJ
+H¬àYà
+€Kõÿ⁄‘€XﬁRYTòY[Àò⁄X⁄ŸY
+Hô]\õà–“◊‘”P÷W“QW’SQS’U¬àYà
+€Kõÿ⁄‘€XﬁPòX⁄Ÿ‹õ›[ôòY[Àò⁄X⁄ŸY
+Hô]\õà–“◊‘”P÷W””ó–êP“—‘ì’Së¬àô]\õà–“◊‘”P÷W””ê—W’SïS‘URU¬àBàù[ò›[€àŸ]ÿ⁄‘€XﬁTŸ[X›[€ä€XﬁJH¬à€€ú›õ‹õX[^ôYHõ‹õX[^ôSÿ⁄‘€XﬁJ€XﬁJN¬à€Kõÿ⁄‘€XﬁS€òŸTòY[Àò⁄X⁄ŸYHõ‹õX[^ôYOOH–“◊‘”P÷W””ê—W’SïS‘URU¬à€Kõÿ⁄‘€XﬁRYTòY[Àò⁄X⁄ŸYHõ‹õX[^ôYOOH–“◊‘”P÷W“QW’SQS’U¬à€Kõÿ⁄‘€XﬁPòX⁄Ÿ‹õ›[ôòY[Àò⁄X⁄ŸYHõ‹õX[^ôYOOH–“◊‘”P÷W””ó–êP“—‘ì’Së¬àBà\ﬁ[ò»ù[ò›[€àÿ]ôSÿ⁄‘Ÿ][ô‹ »⁄›‘›]\»HùYHHHﬂJH¬à€€ú›ÿ⁄—[òXõYHõ€€X[ä€Kõÿ⁄—[òXõYò⁄X⁄ŸY
+N¬à€€ú›€XﬁHHŸ]Ÿ[X›Yÿ⁄‘€XﬁJ
+N¬à€€ú›YSZ[ù]\»H€[\ÿ⁄“YSZ[ù]\ €Kõÿ⁄“YSZ[ù]\Àùò[YJN¬à€€ú›\‹›€‹ôH›ö[ô €Kõÿ⁄”X\›\î\‹›€‹ôùò[YHàäN¬à€€ú›€€ôö\õHH›ö[ô €Kõÿ⁄”X\›\î\‹›€‹ô€€ôö\õKùò[YHàäN¬à€€ú›ô\›[H]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[ôŸ]
+¬à’‘êQ—W“—VW”–“◊—SêPìQà’‘êQ—W“—VW”–“◊”PT’Tó–‘ëQSïPSàJN¬à€€ú›^\›[ô–‹ôY[ùX[Hõ‹õX[^ôSÿ⁄”X\›\ê‹ôY[ùX[
+ô\›[‘’‘êQ—W“—VW”–“◊”PT’Tó–‘ëQSïPSJN¬à€€ú›ÿ\”ÿ⁄—[òXõYHõ€€X[äô\›[‘’‘êQ—W“—VW”–“◊—SêPìQJH	âàõ€€X[ä^\›[ô–‹ôY[ùX[
+N¬à]ô^‹ôY[ùX[H^\›[ô–‹ôY[ùX[¬à]›\úô[ù\‹›€‹ôõ‹îô]‹ò\Hàé¬àYà
+ÿ⁄—[òXõY
+H¬à€€ú›⁄›[Ÿ]‹ï\]T\‹›€‹ôHY^\›[ô–‹ôY[ùX[\‹›€‹ô€€ôö\õN¬àYà
+⁄›[Ÿ]‹ï\]T\‹›€‹ô
+H¬àYà
+\\‹›€‹ô
+H¬àYà
+⁄›‘›]\ H¬àŸ]]öXŸT›]\ óML–óMPêÕóMŒWMLNëML–WM–M–HäN¬àBàô]\õé¬àBàYà
+\‹›€‹ôOOH€€ôö\õJH¬àYà
+⁄›‘›]\ H¬àŸ]]öXŸT›]\ óMLçMêååWNéL◊MLMçWMÕéML–óMPêÕóMŒWMLMLNQçäN¬àBàô]\õé¬àBàYà
+^\›[ô–‹ôY[ùX[
+H¬à€€ú›õ€\ô\›[H⁄[ô›Àúõ€\
+óNëç◊NéL◊MLMçWMQçL◊MLçML–óMPêÕóMŒWMQMWMçëçMçPåML–óMPêÕóMŒHãàäN¬à›\úô[ù\‹›€‹ôõ‹îô]‹ò\H›ö[ô õ€\ô\›[àäN¬àYà
+X›\úô[ù\‹›€‹ôõ‹îô]‹ò\
+H¬àYà
+⁄›‘›]\ HŸ]]öXŸT›]\ óMçÃêWNéL◊MLMçWMQçL◊MLçML–óMPêÕóMŒWQëå◊MQåóML—óMëMçëçMçPåäN¬àô]\õé¬àBàBàô^‹ôY[ùX[H]ÿZ]‹ôX]Sÿ⁄”X\›\ê‹ôY[ùX[
+\‹›€‹ô
+N¬àBàYà
+[ô^‹ôY[ùX[
+H¬àYà
+⁄›‘›]\ H¬àŸ]]öXŸT›]\ óM—å–WMPÃLWML–óMPêÕóMŒWQëå◊MçQLMê—WMMëóMÕLéNQL◊NMLHäN¬àBàô]\õé¬àBàH[ŸHYà
+^\›[ô–‹ôY[ùX[
+H¬à]\ÿXõT\‹›€‹ôH\‹›€‹ô¬àYà
+Y\ÿXõT\‹›€‹ô
+H¬à€€ú›õ€\ô\›[H⁄[ô›Àúõ€\
+óNëç◊NéL◊MLMçWMQçL◊MLçML–óMPêÕóMŒWMQMWMLMÃ◊NMQQML–óMPêÕóMŒWNMLHãàäN¬à\ÿXõT\‹›€‹ôH›ö[ô õ€\ô\›[àäN¬àBàYà
+Y\ÿXõT\‹›€‹ô
+H¬à€Kõÿ⁄—[òXõYò⁄X⁄ŸYHùYN¬àô[ô\ìÿ⁄‘Ÿ][ô‹—öY[ 
+N¬àYà
+⁄›‘›]\ H¬àŸ]]öXŸT›]\ óMçÃêWNéL◊MLMçWMQçL◊MLçML–óMPêÕóMŒWQëå◊MQåóML—óMëMLMÃ◊NMQQäN¬àBàô]\õé¬àBà€€ú›ô\öYöYYH]ÿZ]ô\öYûSÿ⁄”X\›\î\‹›€‹ô
+^\›[ô–‹ôY[ùX[\ÿXõT\‹›€‹ô
+N¬àYà
+]ô\öYöYY
+H¬à€Kõÿ⁄—[òXõYò⁄X⁄ŸYHùYN¬àô[ô\ìÿ⁄‘Ÿ][ô‹—öY[ 
+N¬àYà
+⁄›‘›]\ H¬àŸ]]öXŸT›]\ óMQçL◊MLçML–óMPêÕóMŒWNMLNWNëQóQëå◊MçQLMê—WMLMÃ◊NMQQNQL◊NMLHäN¬àBàô]\õé¬àBà€€ú›\ÿXõTô\›[H]ÿZ]⁄õ€YKúù[ù[YKúŸ[ôY\‹ÿYŸJ¬à\NàîT‘◊”–“◊—T–PìW—UHãà^[ÿYà»\‹›€‹ôà\ÿXõT\‹›€‹ôBàJN¬àYà
+Y\ÿXõTô\›[Àõ⁄ H¬à€Kõÿ⁄—[òXõYò⁄X⁄ŸYHùYN¬àô[ô\ìÿ⁄‘Ÿ][ô‹—öY[ 
+N¬àYà
+⁄›‘›]\ HŸ]]öXŸT›]\ \ÿXõTô\›[Àô\úõ‹àóMçQLMê—WMLMÃ◊NMQQMçÃê◊MMÃÃMçMÃMåÕëWMëMåêMäN¬àô]\õé¬àBàBàYà
+ÿ⁄—[òXõY	âàY^\›[ô–‹ôY[ùX[
+H¬à]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[úŸ]
+»‘’‘êQ—W“—VW”–“◊”PT’Tó–‘ëQSïPSNàô^‹ôY[ùX[JN¬à€€ú›€€ôöY›\ôTô\›[H]ÿZ]⁄õ€YKúù[ù[YKúŸ[ôY\‹ÿYŸJ¬à\NàîT‘◊”–“◊–””ëíQ’TëW—UHãà^[ÿYà»\‹›€‹ôBàJN¬àYà
+X€€ôöY›\ôTô\›[Àõ⁄ H¬à]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[úô[[›ôJ’‘êQ—W“—VW”–“◊”PT’Tó–‘ëQSïPS
+N¬àYà
+⁄›‘›]\ HŸ]]öXŸT›]\ €€ôöY›\ôTô\›[Àô\úõ‹àóMçQLMê—WMëMåêMMçÃê◊MMÃÃMçMÃMåÕëHäN¬àô]\õé¬àBàô^‹ôY[ùX[Hõ‹õX[^ôSÿ⁄”X\›\ê‹ôY[ùX[
+€€ôöY›\ôTô\›[ò‹ôY[ùX[
+Hô^‹ôY[ùX[¬àBàYà
+ÿ⁄—[òXõY	âà^\›[ô–‹ôY[ùX[	âà]ÿ\”ÿ⁄—[òXõY	âàJ\‹›€‹ô€€ôö\õJJH¬à€€ú›õ€\ô\›[H⁄[ô›Àúõ€\
+óNëç◊NéL◊MLMçWMQçL◊MLçML–óMPêÕóMŒWMQMWMMëóMÕLéMçÃê◊MMÃÃMçMÃMåÕëWMëMåêMãàäN¬à€€ú››\úô[ù\‹›€‹ôH›ö[ô õ€\ô\›[àäN¬àYà
+X›\úô[ù\‹›€‹ô
+H¬à€Kõÿ⁄—[òXõYò⁄X⁄ŸYHò[ŸN¬àô[ô\ìÿ⁄‘Ÿ][ô‹—öY[ 
+N¬àYà
+⁄›‘›]\ HŸ]]öXŸT›]\ óMçÃêWNéL◊MLMçWMQçL◊MLçML–óMPêÕóMŒWQëå◊MQåóML—óMëMMëóMÕLéäN¬àô]\õé¬àBà€€ú›€€ôöY›\ôTô\›[H]ÿZ]⁄õ€YKúù[ù[YKúŸ[ôY\‹ÿYŸJ¬à\NàîT‘◊”–“◊–””ëíQ’TëW—UHãà^[ÿYà»\‹›€‹ôà›\úô[ù\‹›€‹ôBàJN¬àYà
+X€€ôöY›\ôTô\›[Àõ⁄ H¬à€Kõÿ⁄—[òXõYò⁄X⁄ŸYHò[ŸN¬àô[ô\ìÿ⁄‘Ÿ][ô‹—öY[ 
+N¬àYà
+⁄›‘›]\ HŸ]]öXŸT›]\ €€ôöY›\ôTô\›[Àô\úõ‹àóMçQLMê—WMëMåêMMçÃê◊MMÃÃMçMÃMåÕëHäN¬àô]\õé¬àBàô^‹ôY[ùX[Hõ‹õX[^ôSÿ⁄”X\›\ê‹ôY[ùX[
+€€ôöY›\ôTô\›[ò‹ôY[ùX[
+Hô^‹ôY[ùX[¬àBàYà
+ÿ⁄—[òXõY	âà^\›[ô–‹ôY[ùX[	âà
+\‹›€‹ô€€ôö\õJJH¬à€€ú›ô]‹ò\ô\›[H]ÿZ]⁄õ€YKúù[ù[YKúŸ[ôY\‹ÿYŸJ¬à\NàîT‘◊”–“◊‘ëU‘êT—UHãà^[ÿYà¬à›\úô[ù\‹›€‹ôà›\úô[ù\‹›€‹ôõ‹îô]‹ò\àô^\‹›€‹ôà\‹›€‹ôàô^‹ôY[ùX[àBàJN¬àYà
+\ô]‹ò\ô\›[Àõ⁄ H¬àYà
+⁄›‘›]\ HŸ]]öXŸT›]\ ô]‹ò\ô\›[Àô\úõ‹àóMçQLMê—WMçëçMçPåMçÃê◊MMÃÃMçMÃMåÕëWMëMåêMäN¬àô]\õé¬àBàBà€€ú›\]\»H¬à‘’‘êQ—W“—VW”–“◊—SêPìQNàÿ⁄—[òXõY	âàõ€€X[äô^‹ôY[ùX[
+Kà‘’‘êQ—W“—VW”–“◊‘”P÷WNà€XﬁKà‘’‘êQ—W“—VW”–“◊“QW”RSïUT◊NàYSZ[ù]\Àà‘’‘êQ—W“—VW”–“◊”PT’Tó–‘ëQSïPSNàô^‹ôY[ùX[àN¬à]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[úŸ]
+\]\ N¬à]ÿZ]⁄õ€YKúù[ù[YKúŸ[ôY\‹ÿYŸJ»\NàîT‘◊”–“◊”ì’»àJN¬àÿ⁄–‹ôY[ùX[^\›»Hõ€€X[äô^‹ôY[ùX[
+N¬à€Kõÿ⁄”X\›\î\‹›€‹ôùò[YHHàé¬à€Kõÿ⁄”X\›\î\‹›€‹ô€€ôö\õKùò[YHHàé¬à€Kõÿ⁄–‹ôY[ùX[[ùù^€€ù[ùHÿ⁄–‹ôY[ùX[^\›»»óMQåóNêëWM—çëWML–óMPêÕóMŒHàààé¬àô[ô\ìÿ⁄‘Ÿ][ô‹—öY[ 
+N¬àYà
+\⁄›‘›]\ H¬àô]\õé¬àBàYà
+[ÿ⁄—[òXõY
+H¬àŸ]]öXŸT›]\ óML–óMPêÕóMŒWNMLWMQåóMLMÃ◊NMQQäN¬àô]\õé¬àBàYà
+Y^\›[ô–‹ôY[ùX[
+H¬àŸ]]öXŸT›]\ óML–óMPêÕóMŒWNMLWMQåóMMëóMÕLéäN¬àô]\õé¬àBàYà
+\‹›€‹ô€€ôö\õJH¬àŸ]]öXŸT›]\ óML–óMPêÕóMŒWMQåóMçëçMçPåQëå◊NQL◊NMLWM–çMóMÕMçWMQåóMëMPçNäN¬àô]\õé¬àBàŸ]]öXŸT›]\ óNQL◊NMLWM–çMóMÕMçWMQåóMëMPçNäN¬àBà\ﬁ[ò»ù[ò›[€à\ú⁄\›ﬁ[ò‘Ÿ][ô‹ »⁄›‘›]\»HùYHHHﬂJH¬à€€ú›[òXõUŸXô]àHõ€€X[ä€Kúﬁ[ò—[òXõUŸXô]ãò⁄X⁄ŸY
+N¬à€€ú›[òXõTŸ\ùô\àHõ€€X[ä€Kúﬁ[ò—[òXõTŸ\ùô\ãò⁄X⁄ŸY
+N¬à€€ú›ö[X\ûT€›\òŸHHõ‹õX[^ôTﬁ[ò‘ö[X\ûT€›\òŸJ€Kúﬁ[ò‘ö[X\ûT€›\òŸKùò[YJN¬à€€ú›]]‘ﬁ[ò“[ù\ùò[Z[ù]\»Hõ‹õX[^ôP]]‘ﬁ[ò“[ù\ùò[Z[ù]\ €Kúﬁ[ò–]]“[ù\ùò[ùò[YJN¬àYà
+[òXõUŸXô]à	âàZ\‘ŸX›\ôTﬁ[ò—[ô⁄[ùò[YJ€Kúﬁ[ò’ŸXô]êò\ŸU\õùò[YJJH¬àYà
+⁄›‘›]\ HŸ]›]\ ïŸXëUàMMÃÃMMÕMQêÕWNN–óMç—óMÕLé◊QëåMçÃê◊MçÃ–WMMëWMÃ–QóMMÃÃMMÕML—QóMç—óMÕLéQëåHäN¬àô]\õàò[ŸN¬àBàYà
+[òXõTŸ\ùô\à	âà[õ‹õX[^ôSYÿXﬁTŸ[í‹›YŸ\ùô\êò\ŸU\õ
+€Kúﬁ[ò‘Ÿ\ùô\êò\ŸU\õùò[YHàäJH¬àYà
+⁄›‘›]\ HŸ]›]\ óMçÃMLêLWMMçéMMÃÃMMÕMQêÕWNN–óMç—óMÕLé◊QëåMçÃê◊MçÃ–WMMëWMÃ–QóMMÃÃMMÕML—QóMç—óMÕLéQëåHäN¬àô]\õàò[ŸN¬àBà€€ú›ô^Ÿ][ô‹»H¬à‘’‘êQ—W“—VW‘÷Sê◊—SêPìW’—PëUóNà[òXõUŸXô]ãà‘’‘êQ—W“—VW‘÷Sê◊—SêPìW‘—Só“‘’Q‘—TïëTóNà[òXõTŸ\ùô\ãà‘’‘êQ—W“—VW‘÷Sê◊‘íSPTñW‘”’Tê—WNàö[X\ûT€›\òŸKà‘’‘êQ—W“—VW‘÷Sê◊’—PëUó–êT—W’TìNà›ö[ô €Kúﬁ[ò’ŸXô]êò\ŸU\õùò[YHàäKùö[J
+Kà‘’‘êQ—W“—VW‘÷Sê◊’—PëUó‘UNà›ö[ô €Kúﬁ[ò’ŸXô]î]ùò[YHàäKùö[J
+Hú\‹À\ﬁ[òÀXù[ôK]åãöú€€àãà‘’‘êQ—W“—VW‘÷Sê◊’—PëUó’T—TìêSQWNà›ö[ô €Kúﬁ[ò’ŸXô]ï\Ÿ\õò[YKùò[YHàäKùö[J
+Kà‘’‘êQ—W“—VW‘÷Sê◊‘—TïëTó–êT—W’TìNàõ‹õX[^ôSYÿXﬁTŸ[í‹›YŸ\ùô\êò\ŸU\õ
+€Kúﬁ[ò‘Ÿ\ùô\êò\ŸU\õùò[YHàäKà‘’‘êQ—W“—VW‘÷Sê◊–UU◊“SïTïêS”RSïUT◊Nàù[Xô\ä]]‘ﬁ[ò“[ù\ùò[Z[ù]\ BàN¬à€€ú›ô^ŸX‹ô]»H¬àŸXô]î\‹›€‹ôà›ö[ô €Kúﬁ[ò’ŸXô]î\‹›€‹ôùò[YHàäKàŸ\ùô\ï⁄Ÿ[éà›ö[ô €Kúﬁ[ò‘Ÿ\ùô\ï⁄Ÿ[ãùò[YHàäKùö[J
+Kà[ò‹û\[€íŸ^Nàõ‹õX[^ôTﬁ[ò—[ò‹û\[€íŸ^J€Kúﬁ[ò—[ò‹û\[€íŸ^Kùò[YJKàô]ö[›\—[ò‹û\[€íŸ^Nàõ‹õX[^ôTﬁ[ò—[ò‹û\[€íŸ^J€Kúﬁ[ò‘ô]ö[›\—[ò‹û\[€íŸ^Kùò[YJBàN¬àYà
+€Kúﬁ[ò—[ò‹û\[€íŸ^Kùò[YKùö[J
+H	âà[ô^ŸX‹ô]Àô[ò‹û\[€íŸ^JH¬àYà
+⁄›‘›]\ HŸ]›]\ óMM◊MêççWMLêLMPêÕóMPêÕóNMMWMçQLMçMQëå◊MQêÕWNN–óMçåëàçMàMçMPêÕóNMMWQëåPóMÕMNWM–M–WNéMŒL–WMç—óMÕLéMçåWMçN◊MM◊MêççWMLÃHäN¬àô]\õàò[ŸN¬àBàYà
+€Kúﬁ[ò‘ô]ö[›\—[ò‹û\[€íŸ^Kùò[YKùö[J
+H	âà[ô^ŸX‹ô]Àúô]ö[›\—[ò‹û\[€íŸ^JH¬àYà
+⁄›‘›]\ HŸ]›]\ óNçëWMåÕåóMLçMM◊MêççWMPêÕóNMMWMçQLMçMQëå◊MQêÕWNN–óMçåëàçMàMçMPêÕóNMMHäN¬àô]\õàò[ŸN¬àBàYà
+ô^ŸX‹ô]Àúô]ö[›\—[ò‹û\[€íŸ^H	âàô^ŸX‹ô]Àúô]ö[›\—[ò‹û\[€íŸ^HOOHô^ŸX‹ô]Àô[ò‹û\[€íŸ^JH¬àô^ŸX‹ô]Àúô]ö[›\—[ò‹û\[€íŸ^HHàé¬àBà]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[úŸ]
+ô^Ÿ][ô‹ N¬à]ÿZ]Ÿ]ﬁ[ò‘ŸX‹ô] ô^ŸX‹ô] N¬à]ÿZ]ôYúô\⁄ﬁ[ò—[ò‹û\[€íŸ^RY›]\ 
+N¬à€€ú›\ú⁄\›YH]ÿZ]⁄õ€YKú›‹òYŸKõÿÿ[ôŸ]
+¬à’‘êQ—W“—VW‘÷Sê◊‘—TïëTó–êT—W’Tìà’‘êQ—W“—VW‘÷Sê◊–UU◊“SïTïêS”RSïUT¬àJN¬à€Kúﬁ[ò‘Ÿ\ùô\êò\ŸU\õùò[YHH›ö[ô à\ú⁄\›Y‘’‘êQ—W“—VW‘÷Sê◊‘—TïëTó–êT—W’TìHô^Ÿ][ô‹÷‘’‘êQ—W“—VW‘÷Sê◊‘—TïëTó–êT—W’TìHQêUS‘—Só“‘’Q‘—TïëTó–êT—W’Tìà
+N¬à€Kúﬁ[ò‘Ÿ\ùô\ï⁄Ÿ[ãùò[YHHô^ŸX‹ô]ÀúŸ\ùô\ï⁄Ÿ[é¬à€Kúﬁ[ò‘ö[X\ûT€›\òŸKùò[YHHö[X\ûT€›\òŸN¬à€Kúﬁ[ò–]]“[ù\ùò[ùò[YHHõ‹õX[^ôP]]‘ﬁ[ò“[ù\ùò[Z[ù]\ à\ú⁄\›Y‘’‘êQ—W“—VW‘÷Sê◊–UU◊“SïTïêS”RSïUT◊Hœ»ô^Ÿ][ô‹÷‘’‘êQ—W“—VW‘÷Sê◊–UU◊“SïTïêS”RSïUT◊Bà
+N¬àô[ô\îﬁ[ò–òX⁄Ÿ[ôöY[ 
+N¬àYà
+\⁄›‘›]\ Hô]\õé¬à€€ú›[òXõYXô[»H◊N¬àYà
+[òXõUŸXô]äH[òXõYXô[Àú\⁄
+ïŸXëUàäN¬àYà
+[òXõTŸ\ùô\äH[òXõYXô[Àú\⁄
+óMçÃMLêLWMMçéäN¬à€€ú›]]‘ﬁ[ò”Xô[H]]‘ﬁ[ò“[ù\ùò[Z[ù]\»OOHåà»óNQPWMLêNMM◊MêççWMLMÃ◊NMQQààNQPWMLêNMM◊MêççWMêê—à	ÿ]]‘ﬁ[ò“[ù\ùò[Z[ù]\ﬂHMLåóNMQò¬àŸ]]öXŸT›]\ à[òXõYXô[Àõ[ô›à»MM◊MêççWMëNLNLMM—çëWMQåóMëMPçNQëåML–óMëNLQëåPI‹ö[X\ûT€›\òŸSXô[
+ö[X\ûT€›\òŸJ_WQëåPóMQåóMMëóMÕLéQëåPIŸ[òXõYXô[Àöõ⁄[äà
+»ä_WQëåPâÿ]]‘ﬁ[ò”Xô[WQëåXàMM◊MêççWMëNLNLMM—çëWMQåóMëMPçNQëåMQçL◊MLçMçÃêWMMëóMÕLéMQêóMçMWNë◊M–QQóMëNLQëåPâÿ]]‘ﬁ[ò”Xô[WQëåXà
+N¬àô]\õàùYN¬àBà\ﬁ[ò»ù[ò›[€àÿ]ôTﬁ[ò‘Ÿ][ô‹ 
+H¬àô]\õà\ú⁄\›ﬁ[ò‘Ÿ][ô‹ »⁄›‘›]\ŒàùYHJN¬àBà\ﬁ[ò»ù[ò›[€àôYúô\⁄
+»⁄[[ùHò[ŸHHHﬂJH¬à€€ú›»Xÿ€›[ùÀ\‹⁄Ÿ^\Àõ€\ú»HH]ÿZ]ôXYù\⁄[ô\‹—]Qúõ€T›‹ôJ
+N¬à]ÿZ]ÿY\›‹ûJ
+N¬àXÿ€›[ù‘ò]»H€€ôPXÿ€›[ù Xÿ€›[ù N¬à\‹⁄Ÿ^\‘ò]»H\‹⁄Ÿ^\ÀõX\
+õ‹õX[^ôT\‹⁄Ÿ^T⁄\JN¬àõ€\ú‘ò]»H€‹ùõ€\ú—õ‹ë\‹^J⁄]ö^Yõ€\äàõ€\úÀôö[\ä
+õ€\äHOàYõ€\èÀö\—[]Y
+KõX\
+õ‹õX[^ô}Ûn-¢Gß≤⁄Óù∆≠y◊&‘∆ˆ6ƒ˜fW'w&óFU&V÷˜FTñdÊVVFVBÇí∞¢6ˆÁ7B∆ˆ6≈7F˜&VB“vóB&VD'W6ñÊW74FFg&ˆ’7F˜&RÇì∞¢6ˆÁ7B∆ˆ6ƒ66˜VÁG2“'&íÊó4'&íÜ∆ˆ6≈7F˜&VBÊ66˜VÁG2íÚ∆ˆ6≈7F˜&VBÊ66˜VÁG2¢µ”∞¢6ˆÁ7B∆ˆ6≈76∂Wó2“'&íÊó4'&íÜ∆ˆ6≈7F˜&VBÁ76∂Wó2íÚ∆ˆ6≈7F˜&VBÁ76∂Wó2¢µ”∞¢6ˆÁ7B∆ˆ6ƒfˆ∆FW'2“'&íÊó4'&íÜ∆ˆ6≈7F˜&VBÊfˆ∆FW'2íÚ∆ˆ6≈7F˜&VBÊfˆ∆FW'2¢µ”∞¢6ˆÁ7Bó4V◊Gí“fó6ñ&∆U7ñÊ46˜VÁBÜ∆ˆ6ƒ66˜VÁG2í””“bbfó6ñ&∆U7ñÊ46˜VÁBÜ∆ˆ6≈76∂Wó2í””“bbfó6ñ&∆U7ñÊ46˜VÁBÜ∆ˆ6ƒfˆ∆FW'2í””“∞¢ñbÇó4V◊Gíí∞¢&WGW&‚G'VS∞¢–¢&WGW&‚vñÊF˜rÊ6ˆÊfó&“Ç%«Scs$5«SSs3«ScSs«Sc3dU«STcS5«SS#DE«SDS4«Stt«S3%∆Â∆Â«StTSu«StTTE«Sc#cu«SÉÉD5«S#5«Scs$5«SSs3«SÉìÉe«SsdCe«SDSì«StTe«S#E«SDc«Sc#Ñ«Sc#C«Scsï«STDc%«SSC$e«SsS#Ö«SÑdD5«StTe«SSC5«Sd#cU«SdSì«SÉìÉe«SsdCe«Sc#«Stt«ScSs«Sc3dU«S3%∆Â∆Â«SsÉdU«ST#î«StTSu«StTTE«SSCu«Tdcb"ì∞¢–¢gVÊ7Fñˆ‚'Vñ∆E&V÷˜FU7ñÊ5F&vWG4g&ˆ‘Fˆ“Çí∞¢6ˆÁ7BF&vWG2“µ”∞¢6ˆÁ7B&ñ÷'ï6˜W&6R“Ê˜&÷∆ó¶U7ñÊ5&ñ÷'ï6˜W&6RÜFˆ“Á7ñÊ5&ñ÷'ï6˜W&6RÁf«VRì∞¢ñbÜFˆ“Á7ñÊ4VÊ&∆UvV&FbÊ6ÜV6∂VBí∞¢6ˆÁ7B&6UW&¬“7G&ñÊrÜFˆ“Á7ñÊ5vV&Fd&6UW&¬Áf«VR«¬""íÁG&ñ“Çì∞¢6ˆÁ7B&V÷˜FUFÇ“Ê˜&÷∆ó¶UvV&Fe&V÷˜FUFÇÖ7G&ñÊrÜFˆ“Á7ñÊ5vV&FeFÇÁf«VR«¬""íÁG&ñ“Çí«¬'72◊7ñÊ2÷'VÊF∆R◊c"Êß6ˆ‚"ì∞¢ñbÇ&6UW&¬«¬&V÷˜FUFÇí∞¢6WE7FGW2Ç%vV$Db«SìDE«StcdU«SDSE«ST#Ñ5«ScSsE«Tdc«SÑ$cu«SSÉd%«SSìï«SSs3«SSsC«SSCÑ5«SÑdD5«StTe«SÑDTe«STcÉB"ì∞¢&WGW&‚ÁV∆√∞¢–¢∆WBW&√∞¢G'í∞¢6ˆÁ7BÊ˜&÷∆ó¶VD&6S"“&6UW&¬ÊVÊG5vóFÇÇ"Ú"íÚ&6UW&¬¢G∂&6UW&«“ˆ∞¢6ˆÁ7B&6R“ÊWrU$¬ÜÊ˜&÷∆ó¶VD&6S"ì∞¢ñbÜ&6RÁW6W&Ê÷R«¬&6RÁ77v˜&B«¬&6RÁ6V&6Ç«¬&6RÊÜ6ÇíFá&˜rÊWrW'&˜"Ç%vV$Db«SSs3«SSsC«SDSE«SÉdE«SS3U«SSC$%«SÑC#e«SS4cu«S3«SctSU«SÑ$S%«SDS3%«Sc#e«SìS«Ss#í"ì∞¢W&¬“ÊWrU$¬á&V÷˜FUFÇ¬Ê˜&÷∆ó¶VD&6S"íÁFı7G&ñÊrÇì∞¢“6F6Ç∞¢6WE7FGW2Ç%vV$Db«SSs3«SSsC«ScÉ45«STce«SDSE«Sd#c5«SsÉdR"ì∞¢&WGW&‚ÁV∆√∞¢–¢6ˆÁ7BW6W&Ê÷R“7G&ñÊrÜFˆ“Á7ñÊ5vV&FeW6W&Ê÷RÁf«VR«¬""ì∞¢6ˆÁ7B77v˜&B“7G&ñÊrÜFˆ“Á7ñÊ5vV&Fe77v˜&BÁf«VR«¬""ì∞¢∆WBWFÑÜVFW"“ÁV∆√∞¢ñbáW6W&Ê÷R«¬77v˜&Bí∞¢WFÑÜVFW"“&6ñ2G∂&6ScDVÊ6ˆFUWFcÇÜG∑W6W&Ê÷W”¢G∑77v˜&G÷ó÷∞¢–¢F&vWG2ÁW6Çá≤∆&V√¢%vV$Db"¬∂ñÊC¢'vV&Fb"¬W&¬¬WFÑÜVFW"¬7W˜'G4WFs¢f«6R¬&V÷˜FTWFs¢ÁV∆¬¬&V÷˜FTVÊ7'óFVC¢f«6R¬ó5&ñ÷'ì¢&ñ÷'ï6˜W&6R””“5î‰5ı$î‘%ïıtT$Db“ì∞¢–¢ñbÜFˆ“Á7ñÊ4VÊ&∆U6W'fW"Ê6ÜV6∂VBí∞¢6ˆÁ7B6W'fW$&6UW&¬“7G&ñÊrÜFˆ“Á7ñÊ56W'fW$&6UW&¬Áf«VR«¬""íÁG&ñ“Çì∞¢ñbÇ6W'fW$&6UW&¬í∞¢6WE7FGW2Ç%«ScsE«SS$«SSccÖ«SìDE«StcdU«SDSE«ST#Ñ5«ScSsE«Tdc«SÑ$cu«SSÉd%«SSìï«ScsE«SS$«SSs3«SSsC"ì∞¢&WGW&‚ÁV∆√∞¢–¢∆WBW&√∞¢G'í∞¢6ˆÁ7BÊ˜&÷∆ó¶VD&6S"“6W'fW$&6UW&¬ÊVÊG5vóFÇÇ"Ú"íÚ6W'fW$&6UW&¬¢G∑6W'fW$&6UW&«“ˆ∞¢W&¬“ÊWrU$¬Ç'c"˜7ñÊ2˜7FFR"¬Ê˜&÷∆ó¶VD&6S"íÁFı7G&ñÊrÇì∞¢“6F6Ç∞¢6WE7FGW2Ç%«ScsE«SS$«SSccÖ«SSs3«SSsC«ScÉ45«STce«SDSE«Sd#c5«SsÉdR"ì∞¢&WGW&‚ÁV∆√∞¢–¢6ˆÁ7BFˆ∂V‚“7G&ñÊrÜFˆ“Á7ñÊ56W'fW%Fˆ∂V‚Áf«VR«¬""íÁG&ñ“Çì∞¢6ˆÁ7BWFÑÜVFW"“Fˆ∂V‚Ú&V&W"G∑Fˆ∂VÁ÷¢ÁV∆√∞¢F&vWG2ÁW6Çá∞¢∆&V√¢%«ScsE«SS$«SSccÇ"¿¢∂ñÊC¢'6W'fW""¿¢W&¬¿¢fW'6ñˆÁ5W&√¢ÊWrU$¬Ç'c"˜7ñÊ2˜fW'6ñˆÁ2"¬Ê˜&÷∆ó¶VD&6RíÁFı7G&ñÊrÇí¿¢WFÑÜVFW"¿¢7W˜'G4WFs¢G'VR¿¢&V÷˜FTWFs¢ÁV∆¬¿¢&V÷˜FTVÊ7'óFVC¢f«6R¿¢ó5&ñ÷'ì¢&ñ÷'ï6˜W&6R””“5î‰5ı$î‘%ïı4U%dU ¢“ì∞¢–¢ñbáF&vWG2Ê∆VÊwFÇ””“í∞¢6WE7FGW2Ç%«SÑ$cu«SÉc5«ST3«SSC$e«SsS#Ö«SDS«SDS$«SÑdD5«StTe«SSC5«Sd#cU«SdSì«TdcÖvV$Db«Sc#b«SÉT«STTd«ScsE«SS$«SSccÖ«Tdcí"ì∞¢&WGW&‚ÁV∆√∞¢–¢6ˆÁ7B&ñ÷'ïF&vWB“F&vWG2ÊfñÊBÇáF&vWBí”‚F&vWBÊ∂ñÊB””“&ñ÷'ï6˜W&6Rí«¬F&vWG2ÊfñÊBÇáF&vWBí”‚F&vWBÊ∂ñÊB””“5î‰5ı$î‘%ïı4U%dU"í«¬F&vWG5≥”∞¢f˜"Ü6ˆÁ7BF&vWBˆbF&vWG2íF&vWBÊó5&ñ÷'í“F&vWB””“&ñ÷'ïF&vWC∞¢&WGW&‚F&vWG3∞¢–¢7ñÊ2gVÊ7Fñˆ‚V∆≈&V÷˜FUñ∆ˆBáF&vWBí∞¢6ˆÁ7BÜVFW'2“∞¢66WC¢&∆ñ6Fñˆ‚ˆß6ˆ‚ ¢”∞¢ñbáF&vWBÊWFÑÜVFW"í∞¢ÜVFW'2‰WFÜ˜&ó¶Fñˆ‚“F&vWBÊWFÑÜVFW#∞¢–¢6ˆÁ7B&W7ˆÁ6R“vóBfWF6ÖvóFÖ7ñÊ5Fñ÷V˜WBáF&vWBÁW&¬¬∞¢÷WFÜˆC¢$tUB"¿¢ÜVFW'2¿¢66ÜS¢&ÊÚ◊7F˜&R ¢“ì∞¢6ˆÁ7B&Wfó6ñˆ‚“ÁV÷&W"á&W7ˆÁ6RÊÜVFW'2ÊvWBÇ%Ç’7ñÊ2’&Wfó6ñˆ‚"íí«¬∞¢F&vWBÁ&V÷˜FU&Wfó6ñˆ‚“&Wfó6ñˆ„∞¢ñbá&W7ˆÁ6RÁ7FGW2””“CBí∞¢&WGW&‚≤ñ∆ˆC¢ÁV∆¬¬WFs¢ÁV∆¬¬VÊ7'óFVC¢f«6R¬&Wfó6ñˆ„¢”∞¢–¢ñbÇ&W7ˆÁ6RÊˆ≤í∞¢Fá&˜rÊWrW'&˜"ÜÖEEG∑&W7ˆÁ6RÁ7FGW7÷ì∞¢–¢6ˆÁ7BFWáB“vóB&W7ˆÁ6RÁFWáBÇì∞¢ñbÇ7G&ñÊráFWáB«¬""íÁG&ñ“Çíí∞¢&WGW&‚∞¢ñ∆ˆC¢ÁV∆¬¿¢WFs¢&W7ˆÁ6RÊÜVFW'2ÊvWBÇ$UFr"í¿¢VÊ7'óFVC¢f«6R¿¢&Wfó6ñˆ‡¢”∞¢–¢∆WB'6VC∞¢G'í∞¢6ˆÁ7BVÁfV∆˜R“•4Ù‚Á'6RáFWáBì∞¢6ˆÁ7BVÊ7'óFVB“7G&ñÊrÜVÁfV∆˜SÚÁ66ÜV÷«¬""í””“'72Á7ñÊ2ÊVÊ7'óFVBÁc#∞¢'6VB“vóBFV7'óE7ñÊ4'VÊF∆TFˆ7V÷VÁBÜVÁfV∆˜R¬Fˆ“Á7ñÊ4VÊ7'óFñˆ‰∂WíÁf«VR¬∂Fˆ“Á7ñÊ5&Wfñ˜W4VÊ7'óFñˆ‰∂WíÁf«VU“ì∞¢6ˆÁ7Bñ∆ˆB“'6U7ñÊ4'VÊF∆Uñ∆ˆBá'6VB¬≤&WVó&T'VÊF∆U66ÜV÷¢G'VR“ì∞¢ñbÇñ∆ˆBí∞¢Fá&˜rÊWrW'&˜"Ç%«SÑdD5«StTe«ScSs«Sc3dU«ScÉ45«STce«SìSï«SÑ$Te«Tdc5«SDT3U«ScS$e«Sc372Á7ñÊ2Ê'VÊF∆RÁc""ì∞¢–¢&WGW&‚∞¢ñ∆ˆB¿¢WFs¢&W7ˆÁ6RÊÜVFW'2ÊvWBÇ$UFr"í¿¢VÊ7'óFVB¿¢&Wfó6ñˆ‡¢”∞¢“6F6ÇÜW'&˜"í∞¢Fá&˜rÊWrW'&˜"Ü«SÑdD5«StTb•4Ù‚«SÉîS5«Scsì«SSì3«SÑC#S¢G∂W'&˜"Ê÷W76vW÷ì∞¢–¢–¢7ñÊ2gVÊ7Fñˆ‚∆ˆE6W'fW%7ñÊ5fW'6ñˆÁ2Çí∞¢Fˆ“Á7ñÊ5fW'6ñˆÁ57FGW2ÁFWáD6ˆÁFVÁB“%«Sd#c5«SSs#Ö«SÑ$d%«SS4Ce«S##b#∞¢Fˆ“Á7ñÊ5fW'6ñˆÁ4∆ó7BÁ&W∆6T6Üñ∆G&V‚Çì∞¢G'í∞¢ñbÇvóB6fU7ñÊ56WGFñÊw2ÇííFá&˜rÊWrW'&˜"Ç%«SSC5«Sd#cU«ScsE«SS$«SSccÖ«SìDE«StcdU«ScTS«ScSCÇ"ì∞¢6ˆÁ7BF&vWG2“'Vñ∆E&V÷˜FU7ñÊ5F&vWG4g&ˆ‘Fˆ“Çì∞¢6ˆÁ7BF&vWB“F&vWG3ÚÊfñÊBÇÜóFV“í”‚óFV“Ê∂ñÊB””“'6W'fW""ì∞¢ñbÇF&vWBíFá&˜rÊWrW'&˜"Ç%«SÑ$cu«SSCÖ«SSC$e«SsS#Ö«STSse«SìDE«StcdU«SÉT«STTd«ScsE«SS$«SSccÇ"ì∞¢6ˆÁ7BÜVFW'2“≤66WC¢&∆ñ6Fñˆ‚ˆß6ˆ‚"”∞¢ñbáF&vWBÊWFÑÜVFW"íÜVFW'2‰WFÜ˜&ó¶Fñˆ‚“F&vWBÊWFÑÜVFW#∞¢6ˆÁ7B&W7ˆÁ6R“vóBfWF6ÖvóFÖ7ñÊ5Fñ÷V˜WBáF&vWBÁfW'6ñˆÁ5W&¬¬≤÷WFÜˆC¢$tUB"¬ÜVFW'2¬66ÜS¢&ÊÚ◊7F˜&R"“¬%«SÑ$d%«SS4Ce«ScsE«SS$«SSccÖ«STdT%«Sscr"ì∞¢ñbÇ&W7ˆÁ6RÊˆ≤íFá&˜rÊWrW'&˜"ÜÖEEG∑&W7ˆÁ6RÁ7FGW7÷ì∞¢6ˆÁ7B'6VB“vóB&W7ˆÁ6RÊß6ˆ‚Çì∞¢6ˆÁ7BfW'6ñˆÁ2“'&íÊó4'&íá'6VCÚÁfW'6ñˆÁ2íÚ'6VBÁfW'6ñˆÁ2¢µ”∞¢&VÊFW%6W'fW%7ñÊ5fW'6ñˆÁ2áF&vWB¬fW'6ñˆÁ2ì∞¢Fˆ“Á7ñÊ5fW'6ñˆÁ57FGW2ÁFWáD6ˆÁFVÁB“«SSsG∑fW'6ñˆÁ2Ê∆VÊwFá“«SDS$«STdT%«Sscv∞¢“6F6ÇÜW'&˜"í∞¢Fˆ“Á7ñÊ5fW'6ñˆÁ57FGW2ÁFWáD6ˆÁFVÁB“«SÑ$d%«SS4Ce«SSì3«SÑC#U«TdcG∂W'&˜"Ê÷W76vW÷∞¢–¢–¢gVÊ7Fñˆ‚&VÊFW%6W'fW%7ñÊ5fW'6ñˆÁ2áF&vWB¬fW'6ñˆÁ2í∞¢Fˆ“Á7ñÊ5fW'6ñˆÁ4∆ó7BÁ&W∆6T6Üñ∆G&V‚Çì∞¢ñbáfW'6ñˆÁ2Ê∆VÊwFÇ””“í∞¢Fˆ“Á7ñÊ5fW'6ñˆÁ4∆ó7BÁFWáD6ˆÁFVÁB“%«ScsE«SS$«SSccÖ«SccÉ%«ScTS«SS4Te«Scc%«SSìE«STdT%«Sscr#∞¢&WGW&„∞¢–¢f˜"Ü6ˆÁ7BfW'6ñˆ‚ˆbfW'6ñˆÁ2í∞¢6ˆÁ7B&˜r“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢&˜rÊ6∆74Ê÷R“'7ñÊ2◊fW'6ñˆ‚◊&˜r#∞¢6ˆÁ7B7V÷÷'í“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ'7‚"ì∞¢7V÷÷'íÁFWáD6ˆÁFVÁB“«Ss#CÖ«Scs$2G∑fW'6ñˆ‚ÁfW'6ñˆ‰ñG“«Ñ#r«ST$d5«SSdG∂f˜&÷EFñ÷RáfW'6ñˆ‚ÊWá˜'FVDD◊2ó“«Ñ#r«SDdDE«ST#SÇG∂f˜&÷EFñ÷RáfW'6ñˆ‚Á6fVDD◊2ó“«Ñ#rGµ7G&ñÊráfW'6ñˆ‚Áñ∆ˆE6Ü#Sb«¬""íÁ6∆ñ6RÉ¬"ó÷∞¢6ˆÁ7B&W7F˜&T'WGFˆ‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&'WGFˆ‚"ì∞¢&W7F˜&T'WGFˆ‚ÁGóR“&'WGFˆ‚#∞¢&W7F˜&T'WGFˆ‚ÁFWáD6ˆÁFVÁB“%«Scc%«SSìE«Sd#cE«Ss#CÖ«Scs$2#∞¢&W7F˜&T'WGFˆ‚ÊFDWfVÁD∆ó7FVÊW"Ç&6∆ñ6≤"¬Çí”‚fˆñB&W7F˜&U6W'fW%7ñÊ5fW'6ñˆ‚áF&vWB¬fW'6ñˆ‚íì∞¢&˜rÊVÊBá7V÷÷'í¬&W7F˜&T'WGFˆ‚ì∞¢Fˆ“Á7ñÊ5fW'6ñˆÁ4∆ó7BÊVÊBá&˜rì∞¢–¢–¢7ñÊ2gVÊ7Fñˆ‚6fT∆ˆ6≈6fWGï6Ê6Ü˜Bá&V6ˆ‚¬ñ∆ˆD˜fW'&ñFR“ÁV∆¬í∞¢6ˆÁ7Bñ∆ˆB“Ê˜&÷∆ó¶U7ñÊ5ñ∆ˆE6ÜRáñ∆ˆD˜fW'&ñFR«¬vóB&VD'W6ñÊW74FFg&ˆ’7F˜&RÇíì∞¢6ˆÁ7B6Ê6Ü˜G2“vóBvWE6fWGï6Ê6Ü˜G2Çì∞¢6Ê6Ü˜G2ÁVÁ6ÜñgBá∞¢7&VFVDD◊3¢FFRÊÊ˜rÇí¿¢&V6ˆ„¢7G&ñÊrá&V6ˆ‚«¬%«SSC5«Sd#cU«SS#DE«SSìu«SDTdB"í¿¢ñ∆ˆ@¢“ì∞¢vóB6WE6fWGï6Ê6Ü˜G2á6Ê6Ü˜G2ì∞¢–¢7ñÊ2gVÊ7Fñˆ‚'VÂ7F˜&vU6V∆d6ÜV6≤Çí∞¢Fˆ“Á7F˜&vTFñvÊ˜7Fñ757FGW2ÁFWáD6ˆÁFVÁB“%«Sd#c5«SSs#Ö«ScÑ3«SctSU«S##b#∞¢G'í∞¢6ˆÁ7BFF“vóB&VD'W6ñÊW74FFg&ˆ’7F˜&RÇì∞¢6ˆÁ7B6V7&WG2“vóB÷ñw&FT∆Vv7ï7ñÊ56V7&WG2Çì∞¢6ˆÁ7B6Ê6Ü˜G2“vóBvWE6fWGï6Ê6Ü˜G2Çì∞¢6ˆÁ7BñÁf∆ñE6Ê6Ü˜G2“6Ê6Ü˜G2Êfñ«FW"ÇÜóFV“í”‚óFV“«¬óFV“Áñ∆ˆB«¬ÁV÷&W"ÜóFV“Ê7&VFVDD◊2íì∞¢ñbÜñÁf∆ñE6Ê6Ü˜G2Ê∆VÊwFÇ‚íFá&˜rÊWrW'&˜"Ü«SS4C«Ss4#G∂ñÁf∆ñE6Ê6Ü˜G2Ê∆VÊwFá“«SDS$«Sc3Te«SSsDe«Scs$5«SSs3«STdT%«Sscvì∞¢Fˆ“Á7F˜&vTFñvÊ˜7Fñ757FGW2ÁFWáD6ˆÁFVÁB“«SÉT«ScÑ3«Sì«SÑd3u«Tdc«SÑC#e«SS4crG∑fó6ñ&∆U7ñÊ46˜VÁBÜFFÊ66˜VÁG2ó’«S3«Sì«SÉÉD5«ST$3e«SìDRG∑fó6ñ&∆U7ñÊ46˜VÁBÜFFÁ76∂Wó2ó’«S3«ScSÉu«SDTce«SSì3íG∑fó6ñ&∆U7ñÊ46˜VÁBÜFFÊfˆ∆FW'2ó’«S3«STdT%«SscrG∑6Ê6Ü˜G2Ê∆VÊwFá’«S3«SSC5«Sd#cU«ST$3e«SìDRG∑6V7&WG2ÊVÊ7'óFñˆ‰∂WíÚ%«STDc%«SìDE«StcdR"¢%«Scs$«SìDE«StcdR'÷∞¢“6F6ÇÜW'&˜"í∞¢Fˆ“Á7F˜&vTFñvÊ˜7Fñ757FGW2ÁFWáD6ˆÁFVÁB“«SÉT«ScÑ3«SSì3«SÑC#RG∂W'&˜"Ê6ˆFRÚ«TdcÇG∂W'&˜"Ê6ˆFW’«Tdcñ¢"'’«TdcG∂W'&˜"Ê÷W76vW’«Tdc%«Scs$«SDdTU«ScS3ï«ScSs«Sc3dV∞¢–¢–¢7ñÊ2gVÊ7Fñˆ‚Wá˜'E7F˜&vTFñvÊ˜7Fñ72Çí∞¢G'í∞¢6ˆÁ7BFF“vóB&VD'W6ñÊW74FFg&ˆ’7F˜&RÇì∞¢6ˆÁ7B&W7V«B“vóB6á&ˆ÷RÁ7F˜&vRÊ∆ˆ6¬ÊvWBÖµ5Dı$tUÙ¥Uïı5î‰5ÙDUdî4UÙîE“ì∞¢6ˆÁ7B6Ê6Ü˜G2“vóBvWE6fWGï6Ê6Ü˜G2Çì∞¢6ˆÁ7Bñ∆ˆB“∞¢Wá˜'FVDD◊3¢FFRÊÊ˜rÇí¿¢FWfñ6TñC¢7G&ñÊrá&W7V«Eµ5Dı$tUÙ¥Uïı5î‰5ÙDUdî4UÙîE“«¬""í¿¢6˜VÁG3¢∞¢66˜VÁG3¢fó6ñ&∆U7ñÊ46˜VÁBÜFFÊ66˜VÁG2í¿¢76∂Wó3¢fó6ñ&∆U7ñÊ46˜VÁBÜFFÁ76∂Wó2í¿¢fˆ∆FW'3¢fó6ñ&∆U7ñÊ46˜VÁBÜFFÊfˆ∆FW'2ê¢“¿¢6Ê6Ü˜D6˜VÁC¢6Ê6Ü˜G2Ê∆VÊwFÇ¿¢Ê˜FS¢%«SÑ$4«ScTE«ST$d5«SSd«SDSE«SS3U«SSC$%«ST$3e«SsÉ«ST#Su«Sd$#U«S3«SSC5«Sd#cU«SDTSE«Ss#D5«Sc#e«SSC5«Sd#cU«SS$«ST$3e«ST$3e«SìDR ¢”∞¢vóBF˜vÊ∆ˆEFWáDfñ∆RÜ72÷FñvÊ˜7Fñ72“G∂f˜&÷Dfñ∆UFñ÷W7F◊áñ∆ˆBÊWá˜'FVDD◊2ó“Êß6ˆÊ¬•4Ù‚Á7G&ñÊvñgíáñ∆ˆB¬ÁV∆¬¬"í¬&∆ñ6Fñˆ‚ˆß6ˆ‚"ì∞¢Fˆ“Á7F˜&vTFñvÊ˜7Fñ757FGW2ÁFWáD6ˆÁFVÁB“%«SÑ$4«ScTE«ScSÉu«SDTce«STDc%«ST$d5«SSd«TdcÖ«SDSE«SSC$%«ScSDe«Sce«ST#Su«Sd$#U«Tdcí#∞¢“6F6ÇÜW'&˜"í∞¢Fˆ“Á7F˜&vTFñvÊ˜7Fñ757FGW2ÁFWáD6ˆÁFVÁB“«ST$d5«SSd«SSì3«SÑC#U«TdcG∂W'&˜"Ê÷W76vW÷∞¢–¢–¢7ñÊ2gVÊ7Fñˆ‚&W7F˜&T∆FW7E6fWGï6Ê6Ü˜BÇí∞¢∆WB6Ê6Ü˜G3∞¢G'í∞¢6Ê6Ü˜G2“vóBvWE6fWGï6Ê6Ü˜G2Çì∞¢“6F6ÇÜW'&˜"í∞¢Fˆ“Á7F˜&vTFñvÊ˜7Fñ757FGW2ÁFWáD6ˆÁFVÁB“«SÑ$d%«SS4Ce«Scs$5«SSs3«ST#Éï«SScÖ«STdT%«Sscu«SSì3«SÑC#U«TdcG∂W'&˜"Ê÷W76vW÷∞¢&WGW&„∞¢–¢6ˆÁ7B∆FW7B“6Ê6Ü˜G5≥”∞¢ñbÇ∆FW7CÚÁñ∆ˆBí∞¢Fˆ“Á7F˜&vTFñvÊ˜7Fñ757FGW2ÁFWáD6ˆÁFVÁB“%«Sd4«Scsï«SS4Te«Scc%«SSìE«SscÉE«Scs$5«SSs3«ST#Éï«SScÖ«STdT%«Sscr#∞¢&WGW&„∞¢–¢ñbÇvñÊF˜rÊ6ˆÊfó&“Ü«Scc%«SSìE«Scs«SÑdC«STdT%«Sscu«TdcÇG∂∆FW7BÁ&V6ˆ‚«¬%«SSC5«Sd#cU«SS#DE«SSìu«SDTdB'’«Tdcï«Tdce«Scc%«SSìE«SS#DE«SDc«SSÑE«SDdDE«ST#SÖ«STcS5«SS#DE«ScSs«Sc3dU«S3&íí&WGW&„∞¢G'í∞¢vóB6fT∆ˆ6≈6fWGï6Ê6Ü˜BÇ%«Scc%«SSìE«Scs«SÑdC«STdT%«Sscu«SS#DB"ì∞¢vóBw&óFT'W6ñÊW74FFFı7F˜&RÜ∆FW7BÁñ∆ˆBì∞¢vóBVÊDÜó7F˜'íÜ«Scc%«SSìE«Scs«SÑdC«Scs$5«SSs3«ST#Éï«SScÖ«STdT%«Sscu«Tdc«SÑC#e«SS4crG∑fó6ñ&∆U7ñÊ46˜VÁBÜ∆FW7BÁñ∆ˆBÊ66˜VÁG2ó÷ì∞¢vóB&Vg&W6Çá≤6ñ∆VÁC¢G'VR“ì∞¢Fˆ“Á7F˜&vTFñvÊ˜7Fñ757FGW2ÁFWáD6ˆÁFVÁB“«STDc%«Scc%«SSìE«STdT%«Sscu«Tdc«SÑC#e«SS4crG∑fó6ñ&∆U7ñÊ46˜VÁBÜ∆FW7BÁñ∆ˆBÊ66˜VÁG2ó’«S3«Sì«SÉÉD5«ST$3e«SìDRG∑fó6ñ&∆U7ñÊ46˜VÁBÜ∆FW7BÁñ∆ˆBÁ76∂Wó2ó÷∞¢“6F6ÇÜW'&˜"í∞¢Fˆ“Á7F˜&vTFñvÊ˜7Fñ757FGW2ÁFWáD6ˆÁFVÁB“«Scc%«SSìE«SSì3«SÑC#U«TdcG∂W'&˜"Ê÷W76vW÷∞¢–¢–¢7ñÊ2gVÊ7Fñˆ‚&W7F˜&U6W'fW%7ñÊ5fW'6ñˆ‚áF&vWB¬fW'6ñˆ‚í∞¢6ˆÁ7BfW'6ñˆ‰ñB“ÁV÷&W"áfW'6ñˆ„ÚÁfW'6ñˆ‰ñBì∞¢ñbÇÁV÷&W"Êó4ñÁFVvW"áfW'6ñˆ‰ñBí«¬fW'6ñˆ‰ñB√“í&WGW&„∞¢6ˆÁ7B6ˆÊfó&÷VB“vñÊF˜rÊ6ˆÊfó&“Ä¢«SsÉdU«ST#î«Scc%«SSìE«ScsE«SS$«SSccÖ«STdT%«Sscu«Ss#CÖ«Scs$2G∑fW'6ñˆ‰ñG“«SSCu«Tdc`†•«Scc%«SSìE«SS#DE«SDc«SDdDE«ST#SÖ«STcS5«SS#DE«Scs$5«Scs4«ScSs«Sc3dU«Tdc%«Scc%«SSìE«SSCU«Scs$5«Scs4«ScSs«Sc3dU«ST3e«Scdde«Sc3c%«SDS4«SÑ$SU«STdT%«Sscu«SSÉU«ST$#ï«S3& ¢ì∞¢ñbÇ6ˆÊfó&÷VBí&WGW&„∞¢Fˆ“Á7ñÊ5fW'6ñˆÁ57FGW2ÁFWáD6ˆÁFVÁB“«Sd#c5«SSs#Ö«Scc%«SSìE«Ss#CÖ«Scs$2G∑fW'6ñˆ‰ñG’«S##f∞¢G'í∞¢vóB6fT∆ˆ6≈6fWGï6Ê6Ü˜BÜ«Scc%«SSìE«ScsE«SS$«SSccÖ«STdT%«Sscu«Ss#CÖ«Scs$2G∑fW'6ñˆ‰ñG“«SS#DFì∞¢6ˆÁ7B7W'&VÁE&W7ˆÁ6R“vóBV∆≈&V÷˜FUñ∆ˆBáF&vWBì∞¢ñbÇ7W'&VÁE&W7ˆÁ6RÁñ∆ˆB«¬7W'&VÁE&W7ˆÁ6RÊWFrí∞¢Fá&˜rÊWrW'&˜"Ç%«ScsE«SS$«SSccÖ«STcS5«SS#DE«Sd4«Scsï«SS4Te«SsS#Ö«SDSÑU«STSse«SS4C«SDdDE«Sc$E«SscÉBUFr"ì∞¢–¢6ˆÁ7BÜVFW'2“≤66WC¢&∆ñ6Fñˆ‚ˆß6ˆ‚"¬$ñb‘÷F6Ç#¢7W'&VÁE&W7ˆÁ6RÊWFr”∞¢ñbáF&vWBÊWFÑÜVFW"íÜVFW'2‰WFÜ˜&ó¶Fñˆ‚“F&vWBÊWFÑÜVFW#∞¢6ˆÁ7B&W7F˜&UW&¬“G∑F&vWBÁfW'6ñˆÁ5W&«“ÚG∂VÊ6ˆFUU$î6ˆ◊ˆÊVÁBáfW'6ñˆ‰ñBó“˜&W7F˜&V∞¢6ˆÁ7BñFV◊˜FVÊ7î∂Wí“7&VFU7ñÊ4ñFV◊˜FVÊ7î∂WíÇì∞¢ÜVFW'5≤$ñFV◊˜FVÊ7í‘∂Wí%““ñFV◊˜FVÊ7î∂Wì∞¢6ˆÁ7B&W7ˆÁ6R“vóBfWF6ÖvóFÖ7ñÊ5Fñ÷V˜WBá&W7F˜&UW&¬¬≤÷WFÜˆC¢%ı5B"¬ÜVFW'2¬66ÜS¢&ÊÚ◊7F˜&R"“¬%«Scc%«SSìE«ScsE«SS$«SSccÖ«STdT%«Sscr"ì∞¢ñbÇ&W7ˆÁ6RÊˆ≤íFá&˜rÊWrW'&˜"ÜÖEEG∑&W7ˆÁ6RÁ7FGW7÷ì∞¢vóBfW&ñgï6V∆dÜ˜7FVEw&óFU&V6VóBá&W7ˆÁ6R¬ñFV◊˜FVÊ7î∂Wíì∞¢6ˆÁ7B&W7F˜&VE&V÷˜FR“vóBV∆≈&V÷˜FUñ∆ˆBáF&vWBì∞¢ñbÇ&W7F˜&VE&V÷˜FRÁñ∆ˆBíFá&˜rÊWrW'&˜"Ç%«Scc%«SSìE«SSCU«ScsE«SS$«SSccÖ«Sd4«Scsï«SÑdCE«SSdDU«Scsï«ScSCÖ«ScSs«Sc3dR"ì∞¢6ˆÁ7B&Vf˜&R“vóB&VD'W6ñÊW74FFg&ˆ’7F˜&RÇì∞¢vóBw&óFT'W6ñÊW74FFFı7F˜&Rá&W7F˜&VE&V÷˜FRÁñ∆ˆBì∞¢vóBVÊDÜó7F˜'íÄ¢«Scc%«SSìE«ScsE«SS$«SSccÖ«STdT%«Sscu«Ss#CÖ«Scs$2G∑fW'6ñˆ‰ñG’«Tdc«SÑC#e«SS4crG∑fó6ñ&∆U7ñÊ46˜VÁBÜ&Vf˜&RÊ66˜VÁG2ó“”‚G∑fó6ñ&∆U7ñÊ46˜VÁBá&W7F˜&VE&V÷˜FRÁñ∆ˆBÊ66˜VÁG2ó’«Tdc5«Sì«SÉÉD5«ST$3e«SìDRG∑fó6ñ&∆U7ñÊ46˜VÁBÜ&Vf˜&RÁ76∂Wó2ó“”‚G∑fó6ñ&∆U7ñÊ46˜VÁBá&W7F˜&VE&V÷˜FRÁñ∆ˆBÁ76∂Wó2ó÷ ¢ì∞¢vóB&Vg&W6Çá≤6ñ∆VÁC¢G'VR“ì∞¢Fˆ“Á7ñÊ5fW'6ñˆÁ57FGW2ÁFWáD6ˆÁFVÁB“«Ss#CÖ«Scs$2G∑fW'6ñˆ‰ñG“«Scc%«SSìE«ST#Ñ5«Sc#∞¢“6F6ÇÜW'&˜"í∞¢Fˆ“Á7ñÊ5fW'6ñˆÁ57FGW2ÁFWáD6ˆÁFVÁB“«Scc%«SSìE«SSì3«SÑC#U«TdcG∂W'&˜"Ê÷W76vW÷∞¢–¢–¢gVÊ7Fñˆ‚WFFU&V÷˜FT6ˆÊ7W'&VÊ7ï7FFRáF&vWB¬WFrí∞¢6ˆÁ7BÊ˜&÷∆ó¶VDWFr“GóVˆbWFr””“'7G&ñÊr"bbWFrÁG&ñ“ÇíÚWFr¢ÁV∆√∞¢F&vWBÁ&V÷˜FTWFr“Ê˜&÷∆ó¶VDWFs∞¢ñbáF&vWBÊ∂ñÊB””“'vV&Fb"í∞¢F&vWBÁ7W˜'G4WFr“&ˆˆ∆V‚ÜÊ˜&÷∆ó¶VDWFrì∞¢–¢–¢7ñÊ2gVÊ7Fñˆ‚fW&ñgï6V∆dÜ˜7FVEw&óFU&V6VóBá&W7ˆÁ6R¬ñFV◊˜FVÊ7î∂Wíí∞¢6ˆÁ7B66˜R“&W7ˆÁ6RÊÜVFW'2ÊvWBÇ%Ç’7ñÊ2’66˜R"ì∞¢6ˆÁ7BWFr“&W7ˆÁ6RÊÜVFW'2ÊvWBÇ$UFr"ì∞¢6ˆÁ7Bñ∆ˆE6Ü#Sb“&W7ˆÁ6RÊÜVFW'2ÊvWBÇ%Ç’ñ∆ˆB’6Ü#Sb"ì∞¢6ˆÁ7B&Wfó6ñˆ‰ÜVFW"“ÁV÷&W"á&W7ˆÁ6RÊÜVFW'2ÊvWBÇ%Ç’7ñÊ2’&Wfó6ñˆ‚"íì∞¢6ˆÁ7BñFV◊˜FVÊ7îÜVFW"“&W7ˆÁ6RÊÜVFW'2ÊvWBÇ%Ç’7ñÊ2‘ñFV◊˜FVÊ7í‘∂Wí"ì∞¢ñbÇ66˜R«¬WFr«¬ñ∆ˆE6Ü#Sbí∞¢Fá&˜rÊWrW'&˜"Ç%«ScsE«SS$«SSccÖ«Scs$«SÑdCE«SSdDU«SS4Te«SîÑ5«SÑ$3«SscÉE«SSC5«Sd#cU«Sc4C«SDTE«SSdDU«Sc#cr"ì∞¢–¢∆WB&V6VóC∞¢G'í∞¢&V6VóB“vóB&W7ˆÁ6RÊß6ˆ‚Çì∞¢“6F6Ç∞¢Fá&˜rÊWrW'&˜"Ç%«ScsE«SS$«SSccÖ«Sc4C«SDTE«SSdDU«Sc#cu«SDSE«Scc$e«Scsï«ScSCÇ•4Ù‚"ì∞¢–¢ñbÇ&V6VóCÚÊˆ≤«¬&V6VóCÚÊ6ˆ÷÷óGFVB«¬&V6VóBÁ66˜R”“66˜R«¬&V6VóBÊWFr”“WFr«¬&V6VóBÁñ∆ˆE6Ü#Sb”“ñ∆ˆE6Ü#Sb«¬ÁV÷&W"Êó4ñÁFVvW"á&V6VóBÁ&Wfó6ñˆ‚í«¬&V6VóBÁ&Wfó6ñˆ‚¬«¬&V6VóBÁ&Wfó6ñˆ‚”“&Wfó6ñˆ‰ÜVFW"«¬ñFV◊˜FVÊ7î∂WíbbñFV◊˜FVÊ7îÜVFW"”“ñFV◊˜FVÊ7î∂Wí«¬ñFV◊˜FVÊ7î∂Wíbb&V6VóBÊñFV◊˜FVÊ7î∂Wí”“ñFV◊˜FVÊ7î∂Wíí∞¢Fá&˜rÊWrW'&˜"Ç%«ScsE«SS$«SSccÖ«Sc4C«SDTE«SSdDU«Sc#cu«ScÉ#«SîÑ5«SSì3«SÑC#R"ì∞¢–¢&WGW&‚WFs∞¢–¢7ñÊ2gVÊ7Fñˆ‚W6Ö&V÷˜FUñ∆ˆBáF&vWB¬ñ∆ˆB¬ñd÷F6Ç“ÁV∆¬¬ñFV◊˜FVÊ7î∂Wí“ÁV∆¬í∞¢ñbáF&vWBÁ&V÷˜FTVÊ7'óFVBbbF&vWBÁ&V÷˜FUñ∆ˆBbb7ñÊ5ñ∆ˆDWV«2áF&vWBÁ&V÷˜FUñ∆ˆB¬ñ∆ˆBíí∞¢&WGW&‚≤WFs¢F&vWBÁ&V÷˜FTWFr¬6∂óVC¢G'VR”∞¢–¢6ˆÁ7B'VÊF∆R“vóB'Vñ∆E7ñÊ4'VÊF∆Tg&ˆ’ñ∆ˆBáñ∆ˆBì∞¢6ˆÁ7BVÊ7'óFVD'VÊF∆R“vóBVÊ7'óE7ñÊ4'VÊF∆TFˆ7V÷VÁBÜ'VÊF∆R¬Fˆ“Á7ñÊ4VÊ7'óFñˆ‰∂WíÁf«VRì∞¢6ˆÁ7BÜVFW'2“∞¢$6ˆÁFVÁB’GóR#¢&∆ñ6Fñˆ‚ˆß6ˆ‚"¿¢66WC¢&∆ñ6Fñˆ‚ˆß6ˆ‚ ¢”∞¢ñbáF&vWBÊWFÑÜVFW"í∞¢ÜVFW'2‰WFÜ˜&ó¶Fñˆ‚“F&vWBÊWFÑÜVFW#∞¢–¢ñbÜñd÷F6Çí∞¢ÜVFW'5≤$ñb‘÷F6Ç%““ñd÷F6É∞¢“V«6RñbáF&vWBÊ∂ñÊB””“'vV&Fb"í∞¢ÜVFW'5≤$ñb‘ÊˆÊR‘÷F6Ç%““"¢#∞¢–¢ñbÜñFV◊˜FVÊ7î∂WííÜVFW'5≤$ñFV◊˜FVÊ7í‘∂Wí%““ñFV◊˜FVÊ7î∂Wì∞¢ñbáF&vWBÁ7ñÊ56W76ñˆ‰ñBíÜVFW'5≤%Ç’7ñÊ2’6W76ñˆ‚‘ñB%““F&vWBÁ7ñÊ56W76ñˆ‰ñC∞¢ñbáF&vWBÊ˜W&Fñˆ‰ñBíÜVFW'5≤%Ç’7ñÊ2‘˜W&Fñˆ‚‘ñB%““F&vWBÊ˜W&Fñˆ‰ñC∞¢ÜVFW'5≤%Ç’7ñÊ2‘6∆ñVÁB’fW'6ñˆ‚%““55ÙUÖDTÂ4îÙÂıdU%4îÙ„∞¢6ˆÁ7B&W7ˆÁ6R“vóBfWF6ÖvóFÖ7ñÊ5Fñ÷V˜WBáF&vWBÁW&¬¬∞¢÷WFÜˆC¢%UB"¿¢ÜVFW'2¿¢&ˆGì¢•4Ù‚Á7G&ñÊvñgíÜVÊ7'óFVD'VÊF∆R¬ÁV∆¬¬"ê¢“ì∞¢ñbÇ&W7ˆÁ6RÊˆ≤í∞¢6ˆÁ7BW'&˜"“ÊWrW'&˜"ÜÖEEG∑&W7ˆÁ6RÁ7FGW7÷ì∞¢W'&˜"Á7FGW2“&W7ˆÁ6RÁ7FGW3∞¢Fá&˜rW'&˜#∞¢–¢6ˆÁ7B6ˆÊfó&÷VDWFr“F&vWBÊ∂ñÊB””“'6W'fW""ÚvóBfW&ñgï6V∆dÜ˜7FVEw&óFU&V6VóBá&W7ˆÁ6R¬ñFV◊˜FVÊ7î∂Wíí¢&W7ˆÁ6RÊÜVFW'2ÊvWBÇ$UFr"ì∞¢F&vWBÁ&V÷˜FUñ∆ˆB“ñ∆ˆC∞¢F&vWBÁ&V÷˜FTVÊ7'óFVB“G'VS∞¢&WGW&‚∞¢WFs¢6ˆÊfó&÷VDWFp¢”∞¢–¢gVÊ7Fñˆ‚ÊÊ˜FFU7ñÊ5&WG'îW'&˜"ÜW'&˜"¬F&vWB¬6ˆÁFWáBí∞¢6ˆÁ7BÊÊ˜FFVB“W'&˜"ñÁ7FÊ6VˆbW'&˜"ÚW'&˜"¢ÊWrW'&˜"Ö7G&ñÊrÜW'&˜"«¬%«SSC5«Sd#cU«SSì3«SÑC#R"íì∞¢ÊÊ˜FFVBÊñFV◊˜FVÊ7î∂Wí“6ˆÁFWáBÊñFV◊˜FVÊ7î∂Wì∞¢ÊÊ˜FFVBÁ7ñÊ56W76ñˆ‰ñB“6ˆÁFWáBÁ7ñÊ56W76ñˆ‰ñC∞¢ÊÊ˜FFVBÊ˜W&Fñˆ‰ñB“6ˆÁFWáBÊ˜W&Fñˆ‰ñC∞¢ÊÊ˜FFVBÊWáV7FVDWFr“F&vWBÁ&V÷˜FTWFr«¬"#∞¢ÊÊ˜FFVBÊWáV7FVE&Wfó6ñˆ‚“F&vWBÁ&V÷˜FU&Wfó6ñˆ‚«¬∞¢&WGW&‚ÊÊ˜FFVC∞¢–¢gVÊ7Fñˆ‚7&VFU7ñÊ4˜W&Fñˆ‰6ˆÁFWáBÜ6ˆÁFWáB“∑“í∞¢&WGW&‚∞¢7ñÊ56W76ñˆ‰ñC¢7G&ñÊrÜ6ˆÁFWáBÁ7ñÊ56W76ñˆ‰ñB«¬7&VFU7ñÊ4ñFV◊˜FVÊ7î∂WíÇíí¿¢˜W&Fñˆ‰ñC¢7G&ñÊrÜ6ˆÁFWáBÊ˜W&Fñˆ‰ñB«¬7&VFU7ñÊ4ñFV◊˜FVÊ7î∂WíÇíí¿¢ñFV◊˜FVÊ7î∂Wì¢7G&ñÊrÜ6ˆÁFWáBÊñFV◊˜FVÊ7î∂Wí«¬7&VFU7ñÊ4ñFV◊˜FVÊ7î∂WíÇíê¢”∞¢–¢7ñÊ2gVÊ7Fñˆ‚W6Ö&V÷˜FUñ∆ˆEvóFÖ&WG'íáF&vWB¬ñ∆ˆB¬6ˆÁFWáB“∑“í∞¢∆WB6ÊFñFFR“ñ∆ˆC∞¢6ˆÁ7B˜W&Fñˆ‚“7&VFU7ñÊ4˜W&Fñˆ‰6ˆÁFWáBÜ6ˆÁFWáBì∞¢F&vWBÁ7ñÊ56W76ñˆ‰ñB“˜W&Fñˆ‚Á7ñÊ56W76ñˆ‰ñC∞¢F&vWBÊ˜W&Fñˆ‰ñB“˜W&Fñˆ‚Ê˜W&Fñˆ‰ñC∞¢6ˆÁ7B≤ñFV◊˜FVÊ7î∂Wí““˜W&Fñˆ„∞¢f˜"Ü∆WBGFV◊B“≤GFV◊B¬5î‰5ıU4ÖÙ4Ù‰dƒî5EÙ‘ÖÙEDT’E3≤GFV◊B≥“í∞¢G'í∞¢6ˆÁ7BW6Ö&W7V«B“vóBW6Ö&V÷˜FUñ∆ˆBáF&vWB¬6ÊFñFFR¬F&vWBÁ&V÷˜FTWFr¬ñFV◊˜FVÊ7î∂Wíì∞¢WFFU&V÷˜FT6ˆÊ7W'&VÊ7ï7FFRáF&vWB¬W6Ö&W7V«BÊWFrì∞¢F&vWBÁ&V÷˜FUñ∆ˆB“6ÊFñFFS∞¢F&vWBÁ&V÷˜FTVÊ7'óFVB“G'VS∞¢&WGW&‚≤ñ∆ˆC¢6ÊFñFFR”∞¢“6F6ÇÜW'&˜"í∞¢ñbÜW'&˜#ÚÁ7FGW2”“C"bbW'&˜#ÚÁ7FGW2”“C#Çí∞¢G'í∞¢6ˆÁ7B&ˆ&R“vóBV∆≈&V÷˜FUñ∆ˆBáF&vWBì∞¢ñbá&ˆ&RÁñ∆ˆBbb7ñÊ5ñ∆ˆDWV«2á&ˆ&RÁñ∆ˆB¬6ÊFñFFRíí∞¢WFFU&V÷˜FT6ˆÊ7W'&VÊ7ï7FFRáF&vWB¬&ˆ&RÊWFrì∞¢F&vWBÁ&V÷˜FUñ∆ˆB“6ÊFñFFS∞¢F&vWBÁ&V÷˜FTVÊ7'óFVB“G'VS∞¢&WGW&‚≤ñ∆ˆC¢6ÊFñFFR”∞¢–¢“6F6ÇÖÚí∞¢–¢Fá&˜rÊÊ˜FFU7ñÊ5&WG'îW'&˜"ÜW'&˜"¬F&vWB¬˜W&Fñˆ‚ì∞¢–¢ñbÜGFV◊B””“5î‰5ıU4ÖÙ4Ù‰dƒî5EÙ‘ÖÙEDT’E2“í∞¢Fá&˜rÊÊ˜FFU7ñÊ5&WG'îW'&˜"ÜW'&˜"¬F&vWB¬˜W&Fñˆ‚ì∞¢–¢–¢6ˆÁ7B∆FW7E&W7ˆÁ6R“vóBV∆≈&V÷˜FUñ∆ˆBáF&vWBì∞¢WFFU&V÷˜FT6ˆÊ7W'&VÊ7ï7FFRáF&vWB¬∆FW7E&W7ˆÁ6RÊWFrì∞¢F&vWBÁ&V÷˜FUñ∆ˆB“∆FW7E&W7ˆÁ6RÁñ∆ˆC∞¢F&vWBÁ&V÷˜FTVÊ7'óFVB“∆FW7E&W7ˆÁ6RÊVÊ7'óFVC∞¢ñbáF&vWBÊó5&ñ÷'í””“f«6Rí∞¢6ˆÁFñÁVS∞¢–¢6ˆÁ7B&V÷˜FUñ∆ˆB“∆FW7E&W7ˆÁ6RÁñ∆ˆB«¬≤66˜VÁG3¢µ“¬76∂Wó3¢µ“¬fˆ∆FW'3¢µ“”∞¢6ˆÁ7B7W'&VÁD∆ˆ6≈ñ∆ˆB“Ê˜&÷∆ó¶U7ñÊ5ñ∆ˆE6ÜRÜvóB&VD'W6ñÊW74FFg&ˆ’7F˜&RÇíì∞¢ñbÇ7ñÊ5ñ∆ˆDWV«2Ü7W'&VÁD∆ˆ6≈ñ∆ˆB¬6ÊFñFFRíí∞¢Fá&˜rÊÊ˜FFU7ñÊ5&WG'îW'&˜"ÜÊWrW'&˜"Ç%«Scs$5«SSs3«ScSs«Sc3dU«SSs#Ö«SÑdD5«StTe«SS#%«StÉ«Sì4E«SÑ$CU«Scse«SìTcE«SS4C«SsSe«SS4CÖ«SS3e«Tdc5«STDc%«SST5«Sd#c%«SSìï«SScU«Tdc5«SÑ$cu«Sì4E«ScT#«SSC5«Sd#cR"í¬F&vWB¬˜W&Fñˆ‚ì∞¢–¢6ˆÁ7B∆ˆ6ƒ66˜VÁG2“'&íÊó4'&íÜ6ÊFñFFRÊ66˜VÁG2íÚ6ÊFñFFRÊ66˜VÁG2Ê÷ÜÊ˜&÷∆ó¶T66˜VÁE6ÜRí¢µ”∞¢6ˆÁ7B∆ˆ6≈76∂Wó2“'Vñ∆EVÊñfñVE76∂Wó2Ä¢∆ˆ6ƒ66˜VÁG2¿¢'&íÊó4'&íÜ6ÊFñFFRÁ76∂Wó2íÚ6ÊFñFFRÁ76∂Wó2Ê÷ÜÊ˜&÷∆ó¶U76∂Wï6ÜRí¢µ–¢ì∞¢6ˆÁ7B∆ˆ6ƒfˆ∆FW'2“'&íÊó4'&íÜ6ÊFñFFRÊfˆ∆FW'2íÚ6ÊFñFFRÊfˆ∆FW'2Ê÷ÜÊ˜&÷∆ó¶Tfˆ∆FW%6ÜRí¢µ”∞¢6ˆÁ7B∆ˆ6ƒ&Vf˜&T÷W&vR“∞¢‚‚Ê6ÊFñFFR¿¢66˜VÁG3¢∆ˆ6ƒ66˜VÁG2¿¢76∂Wó3¢∆ˆ6≈76∂Wó2¿¢fˆ∆FW'3¢∆ˆ6ƒfˆ∆FW'0¢”∞¢ñbáF&vWBÊó5&ñ÷'í”“f«6Rí∞¢6ÊFñFFR“÷W&vU7ñÊ5ñ∆ˆG3"Ü∆ˆ6ƒ&Vf˜&T÷W&vR¬&V÷˜FUñ∆ˆBì∞¢–¢6ˆÁ7B6fWGí“f∆ñFFU7ñÊ56fWGíÄ¢∆ˆ6ƒ&Vf˜&T÷W&vR¿¢&V÷˜FUñ∆ˆB¿¢6ÊFñFFR¿¢5î‰5Ù‘ÙDUÙ‘U$tP¢ì∞¢ñbÇ6fWGíÁ6fRí∞¢Fá&˜rÊÊ˜FFU7ñÊ5&WG'îW'&˜"ÜÊWrW'&˜"Ü«STSse«SS4C«Sì4E«SÑ$CU«SSCÖ«STSse«SÉÑ%«ST#Éï«SScÖ«ScÑ3«SctSU«Sìc4%«Sd#c%«TdcG∑6fWGíÁ&V6ˆÁ2Ê¶ˆñ‚Ç%«S3"ó÷í¬F&vWB¬˜W&Fñˆ‚ì∞¢–¢ñbáF&vWBÊó5&ñ÷'í”“f«6Rí∞¢vóBw&óFT'W6ñÊW74FFFı7F˜&RÜ6ÊFñFFRì∞¢–¢–¢Fá&˜rÊÊ˜FFU7ñÊ5&WG'îW'&˜"ÜÊWrW'&˜"Ç%«SÑdD5«StTe«STSse«SS4C«SS#%«StÉ«Sì4E«SÑ$CU«Sd##«ScSs«STDc%«SsS#Ö«ST34B"í¬F&vWB¬˜W&Fñˆ‚ì∞¢–¢7ñÊ2gVÊ7Fñˆ‚W6Ö&V÷˜FUñ∆ˆE&V÷˜FU&VfW'&VBáF&vWB¬ñ∆ˆB¬6ˆÁFWáB“∑“í∞¢∆WB6ÊFñFFR“ñ∆ˆC∞¢6ˆÁ7B˜W&Fñˆ‚“7&VFU7ñÊ4˜W&Fñˆ‰6ˆÁFWáBÜ6ˆÁFWáBì∞¢F&vWBÁ7ñÊ56W76ñˆ‰ñB“˜W&Fñˆ‚Á7ñÊ56W76ñˆ‰ñC∞¢F&vWBÊ˜W&Fñˆ‰ñB“˜W&Fñˆ‚Ê˜W&Fñˆ‰ñC∞¢6ˆÁ7B≤ñFV◊˜FVÊ7î∂Wí““˜W&Fñˆ„∞¢f˜"Ü∆WBGFV◊B“≤GFV◊B¬5î‰5ıU4ÖÙ4Ù‰dƒî5EÙ‘ÖÙEDT’E3≤GFV◊B≥“í∞¢G'í∞¢6ˆÁ7BW6Ö&W7V«B“vóBW6Ö&V÷˜FUñ∆ˆBáF&vWB¬6ÊFñFFR¬F&vWBÁ&V÷˜FTWFr¬ñFV◊˜FVÊ7î∂Wíì∞¢WFFU&V÷˜FT6ˆÊ7W'&VÊ7ï7FFRáF&vWB¬W6Ö&W7V«BÊWFrì∞¢F&vWBÁ&V÷˜FUñ∆ˆB“6ÊFñFFS∞¢&WGW&‚≤ñ∆ˆC¢6ÊFñFFR”∞¢“6F6ÇÜW'&˜"í∞¢ñbÜW'&˜#ÚÁ7FGW2”“C"bbW'&˜#ÚÁ7FGW2”“C#Çí∞¢G'í∞¢6ˆÁ7B&ˆ&R“vóBV∆≈&V÷˜FUñ∆ˆBáF&vWBì∞¢ñbá&ˆ&RÁñ∆ˆBbb7ñÊ5ñ∆ˆDWV«2á&ˆ&RÁñ∆ˆB¬6ÊFñFFRíí∞¢WFFU&V÷˜FT6ˆÊ7W'&VÊ7ï7FFRáF&vWB¬&ˆ&RÊWFrì∞¢F&vWBÁ&V÷˜FUñ∆ˆB“6ÊFñFFS∞¢F&vWBÁ&V÷˜FTVÊ7'óFVB“G'VS∞¢&WGW&‚≤ñ∆ˆC¢6ÊFñFFR”∞¢–¢“6F6ÇÖÚí∞¢–¢Fá&˜rÊÊ˜FFU7ñÊ5&WG'îW'&˜"ÜW'&˜"¬F&vWB¬˜W&Fñˆ‚ì∞¢–¢ñbÜGFV◊B””“5î‰5ıU4ÖÙ4Ù‰dƒî5EÙ‘ÖÙEDT’E2“í∞¢Fá&˜rÊÊ˜FFU7ñÊ5&WG'îW'&˜"ÜW'&˜"¬F&vWB¬˜W&Fñˆ‚ì∞¢–¢–¢6ˆÁ7B∆FW7E&W7ˆÁ6R“vóBV∆≈&V÷˜FUñ∆ˆBáF&vWBì∞¢WFFU&V÷˜FT6ˆÊ7W'&VÊ7ï7FFRáF&vWB¬∆FW7E&W7ˆÁ6RÊWFrì∞¢ñbáF&vWBÊó5&ñ÷'í””“f«6Rí∞¢F&vWBÁ&V÷˜FUñ∆ˆB“∆FW7E&W7ˆÁ6RÁñ∆ˆC∞¢F&vWBÁ&V÷˜FTVÊ7'óFVB“∆FW7E&W7ˆÁ6RÊVÊ7'óFVC∞¢6ˆÁFñÁVS∞¢–¢6ˆÁ7B∆FW7Eñ∆ˆB“∆FW7E&W7ˆÁ6RÁñ∆ˆB«¬≤66˜VÁG3¢µ“¬76∂Wó3¢µ“¬fˆ∆FW'3¢µ“”∞¢6ˆÁ7B7W'&VÁD∆ˆ6≈ñ∆ˆB“Ê˜&÷∆ó¶U7ñÊ5ñ∆ˆE6ÜRÜvóB&VD'W6ñÊW74FFg&ˆ’7F˜&RÇíì∞¢ñbÇ7ñÊ5ñ∆ˆDWV«2Ü7W'&VÁD∆ˆ6≈ñ∆ˆB¬6ÊFñFFRíí∞¢Fá&˜rÊÊ˜FFU7ñÊ5&WG'îW'&˜"ÜÊWrW'&˜"Ç%«Scs$5«SSs3«ScSs«Sc3dU«SSs#Ö«SÑdD5«StTe«SS#%«StÉ«Sì4E«SÑ$CU«Scse«SìTcE«SS4C«SsSe«SS4CÖ«SS3e«Tdc5«STDc%«SST5«Sd#c%«SSìï«SScU«Tdc5«SÑ$cu«Sì4E«ScT#«SSC5«Sd#cR"í¬F&vWB¬˜W&Fñˆ‚ì∞¢–¢6ˆÁ7B6fWGí“f∆ñFFU7ñÊ56fWGíÄ¢6ÊFñFFR¿¢∆FW7Eñ∆ˆB¿¢∆FW7Eñ∆ˆB¿¢5î‰5Ù‘ÙDUı$T‘ıDUÙıdU%u$ïDUÙƒÙ4¿¢ì∞¢ñbÇ6fWGíÁ6fRí∞¢Fá&˜rÊÊ˜FFU7ñÊ5&WG'îW'&˜"ÜÊWrW'&˜"Ü«STSse«SS4C«Sì4E«SÑ$CU«SscÉE«SDSì«StTe«SÉìÉe«SsdCe«SÉÑ%«ST#Éï«SScÖ«ScÑ3«SctSU«Sìc4%«Sd#c#¢G∑6fWGíÁ&V6ˆÁ2Ê¶ˆñ‚Ç"¬"ó÷í¬F&vWB¬˜W&Fñˆ‚ì∞¢–¢ñbáF&vWBÊó5&ñ÷'í”“f«6Rí∞¢6ÊFñFFR“∆FW7Eñ∆ˆC∞¢–¢F&vWBÁ&V÷˜FUñ∆ˆB“6ÊFñFFS∞¢F&vWBÁ&V÷˜FTVÊ7'óFVB“G'VS∞¢ñbáF&vWBÊó5&ñ÷'í”“f«6Rí∞¢vóBw&óFT'W6ñÊW74FFFı7F˜&RÜ6ÊFñFFRì∞¢–¢–¢Fá&˜rÊÊ˜FFU7ñÊ5&WG'îW'&˜"ÜÊWrW'&˜"Ç%«SÑdD5«StTe«STSse«SS4C«SS#%«StÉ«Sì4E«SÑ$CU«Sd##«ScSs«STDc%«SsS#Ö«ST34B"í¬F&vWB¬˜W&Fñˆ‚ì∞¢–¢7ñÊ2gVÊ7Fñˆ‚W6Ö&V÷˜FUñ∆ˆEvóFÑ÷ˆFRáF&vWB¬ñ∆ˆB¬7ñÊ4÷ˆFR¬6ˆÁFWáB“∑“í∞¢7vóF6Çá7ñÊ4÷ˆFRí∞¢66R5î‰5Ù‘ÙDUÙƒÙ4≈ÙıdU%u$ïDUı$T‘ıDS¢∞¢6ˆÁ7B˜W&Fñˆ‚“7&VFU7ñÊ4˜W&Fñˆ‰6ˆÁFWáBÜ6ˆÁFWáBì∞¢F&vWBÁ7ñÊ56W76ñˆ‰ñB“˜W&Fñˆ‚Á7ñÊ56W76ñˆ‰ñC∞¢F&vWBÊ˜W&Fñˆ‰ñB“˜W&Fñˆ‚Ê˜W&Fñˆ‰ñC∞¢G'í∞¢6ˆÁ7BW6Ö&W7V«B“vóBW6Ö&V÷˜FUñ∆ˆBáF&vWB¬ñ∆ˆB¬F&vWBÁ&V÷˜FTWFr¬˜W&Fñˆ‚ÊñFV◊˜FVÊ7î∂Wíì∞¢WFFU&V÷˜FT6ˆÊ7W'&VÊ7ï7FFRáF&vWB¬W6Ö&W7V«BÊWFrì∞¢&WGW&‚≤ñ∆ˆB”∞¢“6F6ÇÜW'&˜"í∞¢Fá&˜rÊÊ˜FFU7ñÊ5&WG'îW'&˜"ÜW'&˜"¬F&vWB¬˜W&Fñˆ‚ì∞¢–¢–¢66R5î‰5Ù‘ÙDUı$T‘ıDUÙıdU%u$ïDUÙƒÙ4√†¢&WGW&‚W6Ö&V÷˜FUñ∆ˆE&V÷˜FU&VfW'&VBáF&vWB¬ñ∆ˆB¬6ˆÁFWáBì∞¢66R5î‰5Ù‘ÙDUÙ‘U$tS†¢FVfV«C†¢&WGW&‚W6Ö&V÷˜FUñ∆ˆEvóFÖ&WG'íáF&vWB¬ñ∆ˆB¬6ˆÁFWáBì∞¢–¢–¢gVÊ7Fñˆ‚Ê˜&÷∆ó¶U7ñÊ4÷ˆFRáf«VRí∞¢7vóF6ÇÖ7G&ñÊráf«VR«¬""íÁG&ñ“Çíí∞¢66R5î‰5Ù‘ÙDUı$T‘ıDUÙıdU%u$ïDUÙƒÙ4√†¢&WGW&‚5î‰5Ù‘ÙDUı$T‘ıDUÙıdU%u$ïDUÙƒÙ4√∞¢66R5î‰5Ù‘ÙDUÙƒÙ4≈ÙıdU%u$ïDUı$T‘ıDS†¢&WGW&‚5î‰5Ù‘ÙDUÙƒÙ4≈ÙıdU%u$ïDUı$T‘ıDS∞¢66R5î‰5Ù‘ÙDUÙ‘U$tS†¢FVfV«C†¢&WGW&‚5î‰5Ù‘ÙDUÙ‘U$tS∞¢–¢–¢gVÊ7Fñˆ‚vWE7ñÊ4÷ˆFTÜó7F˜'î∆&V¬á7ñÊ4÷ˆFRí∞¢7vóF6Çá7ñÊ4÷ˆFRí∞¢66R5î‰5Ù‘ÙDUı$T‘ıDUÙıdU%u$ïDUÙƒÙ4√†¢&WGW&‚%«SDSì«StTe«SÉìÉe«SsdCe«Scs$5«SSs3#∞¢66R5î‰5Ù‘ÙDUÙƒÙ4≈ÙıdU%u$ïDUı$T‘ıDS†¢&WGW&‚%«Scs$5«SSs3«SÉìÉe«SsdCe«SDSì«StTb#∞¢66R5î‰5Ù‘ÙDUÙ‘U$tS†¢FVfV«C†¢&WGW&‚%«SÑdD5«StTe«SSC5«Sd#cU«SSCÖ«STSsb#∞¢–¢–¢gVÊ7Fñˆ‚vWE7ñÊ4÷ˆFU7FGW4∆&V¬á7ñÊ4÷ˆFRí∞¢7vóF6Çá7ñÊ4÷ˆFRí∞¢66R5î‰5Ù‘ÙDUı$T‘ıDUÙıdU%u$ïDUÙƒÙ4√†¢&WGW&‚%«SDSì«StTe«SÉìÉe«SsdCe«Scs$5«SSs3«ST#Ñ5«Sc##∞¢66R5î‰5Ù‘ÙDUÙƒÙ4≈ÙıdU%u$ïDUı$T‘ıDS†¢&WGW&‚%«Scs$5«SSs3«SÉìÉe«SsdCe«SDSì«StTe«ST#Ñ5«Sc##∞¢66R5î‰5Ù‘ÙDUÙ‘U$tS†¢FVfV«C†¢&WGW&‚%«SÑdD5«StTe«SSC5«Sd#cU«ST#Ñ5«Sc##∞¢–¢–¢7ñÊ2gVÊ7Fñˆ‚'Vñ∆E7ñÊ4'VÊF∆Tg&ˆ’ñ∆ˆBáñ∆ˆBí∞¢6ˆÁ7B∂FWfñ6TÊ÷R¬FWfñ6TñE““vóB&ˆ÷ó6RÊ∆¬Ö∂vWDFWfñ6TÊ÷RÇí¬vWD˜$7&VFU7ñÊ4FWfñ6TñBÇï“ì∞¢6ˆÁ7B66˜VÁG2“'&íÊó4'&íáñ∆ˆCÚÊ66˜VÁG2íÚñ∆ˆBÊ66˜VÁG2Ê÷ÜÊ˜&÷∆ó¶T66˜VÁE6ÜRí¢µ”∞¢6ˆÁ7B&u76∂Wó2“'&íÊó4'&íáñ∆ˆCÚÁ76∂Wó2íÚñ∆ˆBÁ76∂Wó2Ê÷ÜÊ˜&÷∆ó¶U76∂Wï6ÜRí¢µ”∞¢6ˆÁ7B76∂Wó2“'Vñ∆EVÊñfñVE76∂Wó2Ü66˜VÁG2¬&u76∂Wó2ì∞¢6ˆÁ7Bfˆ∆FW'2“'&íÊó4'&íáñ∆ˆCÚÊfˆ∆FW'2íÚñ∆ˆBÊfˆ∆FW'2Ê÷ÜÊ˜&÷∆ó¶Tfˆ∆FW%6ÜRí¢µ”∞¢&WGW&‚∞¢66ÜV÷¢5î‰5Ù%T‰DƒUı44ÑT‘ıc"¿¢Wá˜'FVDD◊3¢FFRÊÊ˜rÇí¿¢6˜W&6S¢∞¢¢'72÷WáFVÁ6ñˆ‚"¿¢∆Ff˜&”¢&6á&ˆ÷R÷WáFVÁ6ñˆ‚"¿¢FWfñ6TÊ÷R¿¢FWfñ6TñB¿¢∆ˆvñ6ƒ6∆ˆ6¥◊3¢FFRÊÊ˜rÇí¿¢f˜&÷EfW'6ñˆ„¢ ¢“¿¢ñ∆ˆC¢6˜'E7ñÊ5ñ∆ˆD6ˆ∆∆V7FñˆÁ2á∞¢‚‚ÊÊ˜&÷∆ó¶U7ñÊ5ñ∆ˆE6ÜRáñ∆ˆBí¿¢66˜VÁG2¿¢76∂Wó2¿¢fˆ∆FW'0¢“ê¢”∞¢–¢gVÊ7Fñˆ‚&6ScDVÊ6ˆFUWFcÇÜñÁWBí∞¢6ˆÁ7B'óFW2“ÊWrFWáDVÊ6ˆFW"ÇíÊVÊ6ˆFRÖ7G&ñÊrÜñÁWB«¬""íì∞¢∆WB&ñÊ'í“"#∞¢f˜"Ü6ˆÁ7Bf«VRˆb'óFW2í∞¢&ñÊ'í≥“7G&ñÊrÊg&ˆ‘6Ü$6ˆFRáf«VRì∞¢–¢&WGW&‚'FˆÜ&ñÊ'íì∞¢–¢7ñÊ2gVÊ7Fñˆ‚'Vñ∆E7ñÊ4'VÊF∆RÇí∞¢6ˆÁ7B∂FWfñ6TÊ÷R¬FWfñ6TñB¬7F˜&VE““vóB&ˆ÷ó6RÊ∆¬Ö∞¢vWDFWfñ6TÊ÷RÇí¿¢vWD˜$7&VFU7ñÊ4FWfñ6TñBÇí¿¢&VD'W6ñÊW74FFg&ˆ’7F˜&RÇê¢“ì∞¢6ˆÁ7B66˜VÁG2“'&íÊó4'&íá7F˜&VBÊ66˜VÁG2íÚ7F˜&VBÊ66˜VÁG2Ê÷ÜÊ˜&÷∆ó¶T66˜VÁE6ÜRí¢µ”∞¢6ˆÁ7B7F˜&VE76∂Wó2“'&íÊó4'&íá7F˜&VBÁ76∂Wó2íÚ7F˜&VBÁ76∂Wó2Ê÷ÜÊ˜&÷∆ó¶U76∂Wï6ÜRí¢µ”∞¢6ˆÁ7B76∂Wó2“'Vñ∆EVÊñfñVE76∂Wó2Ü66˜VÁG2¬7F˜&VE76∂Wó2ì∞¢6ˆÁ7Bfˆ∆FW'2“'&íÊó4'&íá7F˜&VBÊfˆ∆FW'2íÚ7F˜&VBÊfˆ∆FW'2Ê÷ÜÊ˜&÷∆ó¶Tfˆ∆FW%6ÜRí¢µ”∞¢&WGW&‚∞¢66ÜV÷¢5î‰5Ù%T‰DƒUı44ÑT‘ıc"¿¢Wá˜'FVDD◊3¢FFRÊÊ˜rÇí¿¢6˜W&6S¢∞¢¢'72÷WáFVÁ6ñˆ‚"¿¢∆Ff˜&”¢&6á&ˆ÷R÷WáFVÁ6ñˆ‚"¿¢FWfñ6TÊ÷R¿¢FWfñ6TñB¿¢∆ˆvñ6ƒ6∆ˆ6¥◊3¢FFRÊÊ˜rÇí¿¢f˜&÷EfW'6ñˆ„¢ ¢“¿¢ñ∆ˆC¢6˜'E7ñÊ5ñ∆ˆD6ˆ∆∆V7FñˆÁ2á∞¢‚‚ÊÊ˜&÷∆ó¶U7ñÊ5ñ∆ˆE6ÜRá7F˜&VBí¿¢66˜VÁG2¿¢76∂Wó2¿¢fˆ∆FW'0¢“ê¢”∞¢–¢gVÊ7Fñˆ‚'6U7ñÊ4'VÊF∆Uñ∆ˆBÜñÁWB¬≤&WVó&T'VÊF∆U66ÜV÷“f«6R““∑“í∞¢ñbÇñÁWB«¬GóVˆbñÁWB”“&ˆ&¶V7B"í&WGW&‚ÁV∆√∞¢6ˆÁ7B66ÜV÷“7G&ñÊrÜñÁWCÚÁ66ÜV÷«¬""ì∞¢6ˆÁ7BÜ566ÜV÷“66ÜV÷Ê∆VÊwFÇ‚∞¢ñbÜÜ566ÜV÷bb66ÜV÷”“5î‰5Ù%T‰DƒUı44ÑT‘ıc"í&WGW&‚ÁV∆√∞¢ñbá&WVó&T'VÊF∆U66ÜV÷bbÜ566ÜV÷í&WGW&‚ÁV∆√∞¢6ˆÁ7B&uñ∆ˆB“Ü566ÜV÷ÚñÁWBÁñ∆ˆB¢ñÁWC∞¢ñbÇ&uñ∆ˆB«¬GóVˆb&uñ∆ˆB”“&ˆ&¶V7B"í&WGW&‚ÁV∆√∞¢&WGW&‚∞¢66˜VÁG3¢'&íÊó4'&íá&uñ∆ˆBÊ66˜VÁG2íÚ&uñ∆ˆBÊ66˜VÁG2¢µ“¿¢76∂Wó3¢'&íÊó4'&íá&uñ∆ˆBÁ76∂Wó2íÚ&uñ∆ˆBÁ76∂Wó2¢µ“¿¢fˆ∆FW'3¢'&íÊó4'&íá&uñ∆ˆBÊfˆ∆FW'2íÚ&uñ∆ˆBÊfˆ∆FW'2¢µ“¿¢∆≈&VwV∆$66˜VÁDñG3¢'&íÊó4'&íá&uñ∆ˆBÊ∆≈&VwV∆$66˜VÁDñG2íÚ&uñ∆ˆBÊ∆≈&VwV∆$66˜VÁDñG2¢µ“¿¢∆≈&VwV∆$˜&FW%WFFVDD◊3¢ÁV÷&W"á&uñ∆ˆBÊ∆≈&VwV∆$˜&FW%WFFVDD◊2í«¬¿¢∆≈&VwV∆$˜&FW%WFFVDFWfñ6TÊ÷S¢7G&ñÊrá&uñ∆ˆBÊ∆≈&VwV∆$˜&FW%WFFVDFWfñ6TÊ÷R«¬""í¿¢fˆ∆FW$˜&FW$ñG3¢'&íÊó4'&íá&uñ∆ˆBÊfˆ∆FW$˜&FW$ñG2íÚ&uñ∆ˆBÊfˆ∆FW$˜&FW$ñG2¢µ“¿¢fˆ∆FW$˜&FW%WFFVDD◊3¢ÁV÷&W"á&uñ∆ˆBÊfˆ∆FW$˜&FW%WFFVDD◊2í«¬¿¢fˆ∆FW$˜&FW%WFFVDFWfñ6TÊ÷S¢7G&ñÊrá&uñ∆ˆBÊfˆ∆FW$˜&FW%WFFVDFWfñ6TÊ÷R«¬""í¿¢FWfñ6TÊ÷S¢7G&ñÊrá&uñ∆ˆBÊFWfñ6TÊ÷R«¬""ê¢”∞¢–¢gVÊ7Fñˆ‚ñ6¥ß6ˆ‰fñ∆RÇí∞¢&WGW&‚ÊWr&ˆ÷ó6RÇá&W6ˆ«fRí”‚∞¢6ˆÁ7BñÁWB“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&ñÁWB"ì∞¢ñÁWBÁGóR“&fñ∆R#∞¢ñÁWBÊ66WB“"Êß6ˆ‚∆∆ñ6Fñˆ‚ˆß6ˆ‚#∞¢ñÁWBÊFDWfVÁD∆ó7FVÊW"Ä¢&6ÜÊvR"¿¢Çí”‚∞¢&W6ˆ«fRÜñÁWBÊfñ∆W3ÚÂ≥“«¬ÁV∆¬ì∞¢“¿¢≤ˆÊ6S¢G'VR–¢ì∞¢ñÁWBÊ6∆ñ6≤Çì∞¢“ì∞¢–¢gVÊ7Fñˆ‚ñ6¥77dfñ∆RÇí∞¢&WGW&‚ÊWr&ˆ÷ó6RÇá&W6ˆ«fRí”‚∞¢6ˆÁ7BñÁWB“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&ñÁWB"ì∞¢ñÁWBÁGóR“&fñ∆R#∞¢ñÁWBÊ66WB“"Ê77b«FWáBˆ77b«FWáB˜∆ñ‚#∞¢ñÁWBÊˆÊ6ÜÊvR“Çí”‚&W6ˆ«fRÜñÁWBÊfñ∆W3ÚÂ≥“«¬ÁV∆¬ì∞¢ñÁWBÊ6∆ñ6≤Çì∞¢“ì∞¢–¢gVÊ7Fñˆ‚ñ6¥ñ÷vTfñ∆W2Çí∞¢&WGW&‚ÊWr&ˆ÷ó6RÇá&W6ˆ«fRí”‚∞¢6ˆÁ7BñÁWB“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&ñÁWB"ì∞¢ñÁWBÁGóR“&fñ∆R#∞¢ñÁWBÊ66WB“&ñ÷vR˜Êr∆ñ÷vRˆßVr∆ñ÷vR˜vV'∆ñ÷vRˆvñb∆ñ÷vRˆ&◊∆ñ÷vR˜Fñfb#∞¢ñÁWBÊ◊V«Fó∆R“G'VS∞¢ñÁWBÊˆÊ6ÜÊvR“Çí”‚&W6ˆ«fRÑ'&íÊg&ˆ“ÜñÁWBÊfñ∆W2«¬µ“íì∞¢ñÁWBÊ6∆ñ6≤Çì∞¢“ì∞¢–¢gVÊ7Fñˆ‚Ê˜&÷∆ó¶T'&˜w6W$Wá˜'Df˜&÷BÜf˜&÷Bí∞¢6ˆÁ7Bf«VR“7G&ñÊrÜf˜&÷B«¬""íÁG&ñ“ÇíÁFÙ∆˜vW$66RÇì∞¢ñbáf«VR””“&fó&Vf˜Ç"í&WGW&‚&fó&Vf˜Ç#∞¢ñbáf«VR””“'6f&í"í&WGW&‚'6f&í#∞¢&WGW&‚&6á&ˆ÷R#∞¢–¢gVÊ7Fñˆ‚'&˜w6W$Wá˜'D∆&V¬Üf˜&÷Bí∞¢6ˆÁ7B'&˜w6W"“Ê˜&÷∆ó¶T'&˜w6W$Wá˜'Df˜&÷BÜf˜&÷Bì∞¢ñbÜ'&˜w6W"””“&fó&Vf˜Ç"í&WGW&‚$fó&Vf˜Ç#∞¢ñbÜ'&˜w6W"””“'6f&í"í&WGW&‚%6f&í#∞¢&WGW&‚$6á&ˆ÷R#∞¢–¢gVÊ7Fñˆ‚6˜VÁD'&˜w6W%77v˜&E&˜w2Ü66˜VÁG2í∞¢&WGW&‚Ñ'&íÊó4'&íÜ66˜VÁG2íÚ66˜VÁG2¢µ“íÊfñ«FW"ÇÜ66˜VÁBí”‚66˜VÁCÚÊó4FV∆WFVBíÁ&VGV6RÇÜ6˜VÁB¬66˜VÁBí”‚6˜VÁB≤Ê˜&÷∆ó¶U6óFW2Ü66˜VÁCÚÁ6óFW2«¬µ“íÊ∆VÊwFÇ¬ì∞¢–¢gVÊ7Fñˆ‚'Vñ∆D'&˜w6W%77v˜&D77bÜ66˜VÁG2¬f˜&÷Bí∞¢6ˆÁ7B'&˜w6W"“Ê˜&÷∆ó¶T'&˜w6W$Wá˜'Df˜&÷BÜf˜&÷Bì∞¢6ˆÁ7BÜVFW'2“'&˜w6W"””“&fó&Vf˜Ç"Ú≤'W&¬"¬'W6W&Ê÷R"¬'77v˜&B%“¢≤&Ê÷R"¬'W&¬"¬'W6W&Ê÷R"¬'77v˜&B"¬&Ê˜FR%”∞¢6ˆÁ7B&˜w2“∂ÜVFW'2Ê÷Ü77dW66RíÊ¶ˆñ‚Ç"¬"ï”∞¢f˜"Ü6ˆÁ7B66˜VÁBˆb'&íÊó4'&íÜ66˜VÁG2íÚ66˜VÁG2¢µ“í∞¢ñbÜ66˜VÁCÚÊó4FV∆WFVBí6ˆÁFñÁVS∞¢6ˆÁ7B6óFW2“Ê˜&÷∆ó¶U6óFW2Ü66˜VÁCÚÁ6óFW2«¬µ“ì∞¢f˜"Ü6ˆÁ7B6óFRˆb6óFW2í∞¢6ˆÁ7BW&¬“áGG3¢ÚÚG∑6óFW÷∞¢6ˆÁ7BW6W&Ê÷R“7G&ñÊrÜ66˜VÁCÚÁW6W&Ê÷R«¬""ì∞¢6ˆÁ7B77v˜&B“7G&ñÊrÜ66˜VÁCÚÁ77v˜&B«¬""ì∞¢6ˆÁ7BÊ˜FR“7G&ñÊrÜ66˜VÁCÚÊÊ˜FR«¬""ì∞¢6ˆÁ7BÊ÷R“7G&ñÊrÜ66˜VÁCÚÊ6ÊˆÊñ6≈6óFR«¬""íÁG&ñ“Çí«¬6óFS∞¢6ˆÁ7B6ˆ«V÷Á2“'&˜w6W"””“&fó&Vf˜Ç"Ú∑W&¬¬W6W&Ê÷R¬77v˜&E“¢∂Ê÷R¬W&¬¬W6W&Ê÷R¬77v˜&B¬Ê˜FU”∞¢&˜w2ÁW6ÇÜ6ˆ«V÷Á2Ê÷Ü77dW66RíÊ¶ˆñ‚Ç"¬"íì∞¢–¢–¢&WGW&‚&˜w2Ê¶ˆñ‚Ç%∆‚"ì∞¢–¢gVÊ7Fñˆ‚77dW66Ráf«VRí∞¢∆WBFWáB“7G&ñÊráf«VR«¬""íÁ&W∆6T∆¬Ç%«""¬""íÁ&W∆6T∆¬Ç%∆‚"¬""ì∞¢ñbÇıÂ≥“µ¬‘«E“ÚÁFW7BáFWáBííFWáB“rG∑FWáG÷∞¢&WGW&‚"G∑FWáBÁ&W∆6T∆¬Çr"r¬r""ró“&∞¢–¢gVÊ7Fñˆ‚'6T'&˜w6W%77v˜&D77báFWáBí∞¢6ˆÁ7BÊ˜&÷∆ó¶VB“7G&ñÊráFWáB«¬""íÁ&W∆6RÇı«%∆‚ˆr¬%∆‚"íÁ&W∆6RÇı«"ˆr¬%∆‚"íÁG&ñ“Çì∞¢ñbÇÊ˜&÷∆ó¶VBí∞¢Fá&˜rÊWrW'&˜"Ç%«ScSÉu«SDTce«SSÉU«ST$#ï«SDS4«Stt"ì∞¢–¢6ˆÁ7B&˜w2“'6T77e&˜w2ÜÊ˜&÷∆ó¶VBì∞¢ñbÇ&˜w2Ê∆VÊwFÇ«¬&˜w5≥“Ê∆VÊwFÇí∞¢Fá&˜rÊWrW'&˜"Ç$55b«Stc4«ST3«SÉÉcÖ«SSì3B"ì∞¢–¢6ˆÁ7BÜVFW'2“&˜w5≥“Ê÷Çáf«VRí”‚Ê˜&÷∆ó¶T'&˜w6W$77dÜVFW"áf«VRíì∞¢6ˆÁ7Bf˜&÷B“FWFV7D'&˜w6W$77df˜&÷BÜÜVFW'2ì∞¢ñbÇf˜&÷Bí∞¢Fá&˜rÊWrW'&˜"Ç%«ScTS«Sd4CU«SÑ$3e«SS#$%«SDS46á&ˆ÷R«Sc#bfó&Vf˜Ç«ST$d5«SSd«SscÉE«ST$3e«SsÉ55b"ì∞¢–¢6ˆÁ7BVÁG&ñW2“µ”∞¢∆WB6∂óVE&˜t6˜VÁB“∞¢f˜"Ü6ˆÁ7B&˜rˆb&˜w2Á6∆ñ6RÉíí∞¢6ˆÁ7BVÁG'í“'6T'&˜w6W$77dVÁG'íÜÜVFW'2¬&˜rì∞¢ñbÜVÁG'íí∞¢VÁG&ñW2ÁW6ÇÜVÁG'íì∞¢“V«6Rñbá&˜rÊ¶ˆñ‚Ç""íÁG&ñ“Çíí∞¢6∂óVE&˜t6˜VÁB≥“∞¢–¢–¢&WGW&‚∞¢f˜&÷D∆&V√¢f˜&÷B¿¢VÁG&ñW2¿¢6∂óVE&˜t6˜VÁ@¢”∞¢–¢gVÊ7Fñˆ‚'6T77e&˜w2áFWáBí∞¢6ˆÁ7B&˜w2“µ”∞¢∆WB&˜r“µ”∞¢∆WBfñV∆B“"#∞¢∆WBñÂV˜FW2“f«6S∞¢f˜"Ü∆WBñÊFWÇ“≤ñÊFWÇ¬FWáBÊ∆VÊwFÉ≤ñÊFWÇ≥“í∞¢6ˆÁ7B6Ü"“FWáE∂ñÊFWÖ”∞¢ñbÜñÂV˜FW2í∞¢ñbÜ6Ü"””“r"rí∞¢ñbáFWáE∂ñÊFWÇ≤“””“r"rí∞¢fñV∆B≥“r"s∞¢ñÊFWÇ≥“∞¢“V«6R∞¢ñÂV˜FW2“f«6S∞¢–¢“V«6R∞¢fñV∆B≥“6Ü#∞¢–¢6ˆÁFñÁVS∞¢–¢ñbÜ6Ü"””“r"rí∞¢ñÂV˜FW2“G'VS∞¢“V«6RñbÜ6Ü"””“"¬"í∞¢&˜rÁW6ÇÜfñV∆Bì∞¢fñV∆B“"#∞¢“V«6RñbÜ6Ü"””“%∆‚"í∞¢&˜rÁW6ÇÜfñV∆Bì∞¢&˜w2ÁW6Çá&˜rì∞¢&˜r“µ”∞¢fñV∆B“"#∞¢“V«6R∞¢fñV∆B≥“6Ü#∞¢–¢–¢ñbÜfñV∆B«¬&˜rÊ∆VÊwFÇí∞¢&˜rÁW6ÇÜfñV∆Bì∞¢&˜w2ÁW6Çá&˜rì∞¢–¢&WGW&‚&˜w3∞¢–¢gVÊ7Fñˆ‚Ê˜&÷∆ó¶T'&˜w6W$77dÜVFW"áf«VRí∞¢&WGW&‚7G&ñÊráf«VR«¬""íÁG&ñ“ÇíÁFÙ∆˜vW$66RÇíÁ&W∆6RÇıÂ«VfVfbÚ¬""íÁ&W∆6RÇı«2≤ˆr¬""íÁ&W∆6RÇÚ“ˆr¬%Ú"ì∞¢–¢gVÊ7Fñˆ‚FWFV7D'&˜w6W$77df˜&÷BÜÜVFW'2í∞¢6ˆÁ7Bf«VW2“ÊWr6WBÜÜVFW'2ì∞¢ñbáf«VW2ÊÜ2Ç'W&¬"íbbf«VW2ÊÜ2Ç'W6W&Ê÷R"íbbf«VW2ÊÜ2Ç'77v˜&B"íí∞¢ñbáf«VW2ÊÜ2Ç&Ê÷R"í«¬f«VW2ÊÜ2Ç&Ê˜FR"í«¬f«VW2ÊÜ2Ç&Ê˜FW2"íí&WGW&‚$6á&ˆ÷R#∞¢ñbáf«VW2ÊÜ2Ç&áGG&V∆“"í«¬f«VW2ÊÜ2Ç&f˜&÷7FñˆÊ˜&ñvñ‚"í«¬f«VW2ÊÜ2Ç&wVñB"íí&WGW&‚$fó&Vf˜Ç#∞¢&WGW&‚%«SdCDe«SÉî3Ö«SSccÇ55b#∞¢–¢ñbáf«VW2ÊÜ2Ç&˜&ñvñ‚"íbbf«VW2ÊÜ2Ç'W6W&Ê÷R"íbbf«VW2ÊÜ2Ç'77v˜&B"íí&WGW&‚$6á&ˆ÷R#∞¢ñbáf«VW2ÊÜ2Ç'6ñvÊˆÂ˜&V∆“"íbbf«VW2ÊÜ2Ç'W6W&Ê÷R"íbbf«VW2ÊÜ2Ç'77v˜&B"íí&WGW&‚$6á&ˆ÷R#∞¢&WGW&‚"#∞¢–¢gVÊ7Fñˆ‚'6T'&˜w6W$77dVÁG'íÜÜVFW'2¬&˜rí∞¢6ˆÁ7Bf«VW2“∑”∞¢ÜVFW'2Êf˜$V6ÇÇÜÜVFW"¬ñÊFWÇí”‚∞¢f«VW5∂ÜVFW%““7G&ñÊrá&˜u∂ñÊFWÖ“«¬""íÁG&ñ“Çì∞¢“ì∞¢6ˆÁ7B6óFW2“WáG&7D'&˜w6W$77e6óFW2áf«VW2ì∞¢6ˆÁ7BW6W&Ê÷R“Ê˜&÷∆ó¶UW6W&Ê÷Ráf«VW2ÁW6W&Ê÷R«¬""ì∞¢6ˆÁ7B77v˜&B“7G&ñÊráf«VW2Á77v˜&B«¬""ì∞¢ñbÇ6óFW2Ê∆VÊwFÇ«¬W6W&Ê÷Rbb77v˜&Bí∞¢&WGW&‚ÁV∆√∞¢–¢6ˆÁ7BÊ˜FR“÷W&vTñ◊˜'FVD'&˜w6W$Ê˜FW2Ö∞¢f«VW2ÊÊ÷RÚ«ScscU«SdSì«SSCE«Ssîc«TdcG∑f«VW2ÊÊ÷W÷¢""¿¢f«VW2ÊÊ˜FRÚ«SSìu«Sd4SÖ«TdcG∑f«VW2ÊÊ˜FW÷¢""¿¢f«VW2ÊÊ˜FW2Ú«SSìu«Sd4SÖ«TdcG∑f«VW2ÊÊ˜FW7÷¢""¿¢f«VW2ÊáGG&V∆“ÚÖEE&V∆’«TdcG∑f«VW2ÊáGG&V∆◊÷¢" ¢“ì∞¢&WGW&‚≤6óFW2¬W6W&Ê÷R¬77v˜&B¬Ê˜FR”∞¢–¢gVÊ7Fñˆ‚WáG&7D'&˜w6W$77e6óFW2áf«VW2í∞¢6ˆÁ7B&t6ÊFñFFW2“∞¢f«VW2ÁW&¬¿¢f«VW2Ê˜&ñvñ‚¿¢f«VW2ÁvV'6óFR¿¢f«VW2ÊÜ˜7FÊ÷R¿¢f«VW2Á6ñvÊˆÂ˜&V∆“¿¢f«VW2Êf˜&÷7FñˆÊ˜&ñvñ‚¿¢f«VW2Ê7Fñˆ‡¢”∞¢&WGW&‚≤‚‚ÊÊWr6WBá&t6ÊFñFFW2Ê÷ÜÊ˜&÷∆ó¶T'&˜w6W$77e6óFRíÊfñ«FW"Ñ&ˆˆ∆V‚íï“Á6˜'BÇì∞¢–¢gVÊ7Fñˆ‚Ê˜&÷∆ó¶T'&˜w6W$77e6óFRáf«VRí∞¢6ˆÁ7B&r“7G&ñÊráf«VR«¬""íÁG&ñ“Çì∞¢ñbÇ&rí&WGW&‚"#∞¢ñbá&rÊñÊ6«VFW2Ç#¢ÚÚ"íí∞¢G'í∞¢&WGW&‚Ê˜&÷∆ó¶TFˆ÷ñ‚ÜÊWrU$¬á&ríÊÜ˜7FÊ÷Rì∞¢“6F6Ç∞¢&WGW&‚"#∞¢–¢–¢&WGW&‚Ê˜&÷∆ó¶TFˆ÷ñ‚á&rì∞¢–¢gVÊ7Fñˆ‚fñÊDñ◊˜'FVD'&˜w6W$66˜VÁDñÊFWÇÜ66˜VÁG2¬VÁG'íí∞¢6ˆÁ7BF&vWE6óFW2“ÊWr6WBÜÊ˜&÷∆ó¶U6óFW2ÜVÁG'íÁ6óFW2«¬µ“íì∞¢6ˆÁ7BF&vWD6ÊˆÊñ6≈6óFW2“ÊWr6WBÖ≤‚‚ÁF&vWE6óFW5“Ê÷Çá6óFRí”‚WF∆E«W4ˆÊRá6óFRííì∞¢6ˆÁ7BÊ˜&÷∆ó¶VEW6W&Ê÷R“Ê˜&÷∆ó¶UW6W&Ê÷RÜVÁG'íÁW6W&Ê÷R«¬""ì∞¢∆WB&W7DñÊFWÇ“”∞¢∆WB&W7E66˜&R“”∞¢66˜VÁG2Êf˜$V6ÇÇÜ66˜VÁB¬ñÊFWÇí”‚∞¢ñbÜ66˜VÁCÚÊó5W&÷ÊVÁF«îFV∆WFVBí&WGW&„∞¢6ˆÁ7B66˜VÁE6óFW2“ÊWr6WBÄ¢Ê˜&÷∆ó¶U6óFW2Ö∞¢‚‚‰'&íÊó4'&íÜ66˜VÁCÚÁ6óFW2íÚ66˜VÁBÁ6óFW2¢µ“¿¢66˜VÁCÚÊ6ÊˆÊñ6≈6óFR«¬" ¢“ê¢ì∞¢6ˆÁ7B66˜VÁD6ÊˆÊñ6≈6óFW2“ÊWr6WBÖ≤‚‚Ê66˜VÁE6óFW5“Ê÷Çá6óFRí”‚WF∆E«W4ˆÊRá6óFRííì∞¢66˜VÁD6ÊˆÊñ6≈6óFW2ÊFBÖ7G&ñÊrÜ66˜VÁCÚÊ6ÊˆÊñ6≈6óFR«¬""íì∞¢6ˆÁ7BW6W&Ê÷T÷F6ÜW2“Ê˜&÷∆ó¶VEW6W&Ê÷RÚÊ˜&÷∆ó¶UW6W&Ê÷RÜ66˜VÁCÚÁW6W&Ê÷R«¬""í””“Ê˜&÷∆ó¶VEW6W&Ê÷R«¬Ê˜&÷∆ó¶UW6W&Ê÷RÜ66˜VÁCÚÁW6W&Ê÷TD7&VFR«¬""í””“Ê˜&÷∆ó¶VEW6W&Ê÷R¢Ê˜&÷∆ó¶UW6W&Ê÷RÜ66˜VÁCÚÁW6W&Ê÷R«¬""ì∞¢6ˆÁ7B6óFT˜fW&∆2“≤‚‚ÁF&vWE6óFW5“Á6ˆ÷RÇá6óFRí”‚66˜VÁE6óFW2ÊÜ2á6óFRíì∞¢6ˆÁ7B6ÊˆÊñ6ƒ÷F6ÜW2“≤‚‚ÁF&vWD6ÊˆÊñ6≈6óFW5“Á6ˆ÷RÇá6óFRí”‚66˜VÁD6ÊˆÊñ6≈6óFW2ÊÜ2á6óFRíì∞¢6ˆÁ7B∆ñ4÷F6ÜW2“≤‚‚ÁF&vWE6óFW5“Á6ˆ÷RÄ¢áF&vWE6óFRí”‚≤‚‚Ê66˜VÁE6óFW5“Á6ˆ÷RÇÜ66˜VÁE6óFRí”‚Fˆ÷ñÁ4÷F6ÇáF&vWE6óFR¬66˜VÁE6óFRíê¢ì∞¢∆WB66˜&R“”∞¢ñbáW6W&Ê÷T÷F6ÜW2bb6óFT˜fW&∆2í66˜&R“66˜VÁCÚÊó4FV∆WFVBÚ3R¢C∞¢V«6RñbáW6W&Ê÷T÷F6ÜW2bb6ÊˆÊñ6ƒ÷F6ÜW2í66˜&R“66˜VÁCÚÊó4FV∆WFVBÚ#R¢3∞¢V«6RñbáW6W&Ê÷T÷F6ÜW2bb∆ñ4÷F6ÜW2í66˜&R“66˜VÁCÚÊó4FV∆WFVBÚR¢#∞¢V«6RñbÇÊ˜&÷∆ó¶VEW6W&Ê÷Rbb6óFT˜fW&∆2í66˜&R“66˜VÁCÚÊó4FV∆WFVBÚR¢#∞¢V«6RñbÇÊ˜&÷∆ó¶VEW6W&Ê÷Rbb6ÊˆÊñ6ƒ÷F6ÜW2í66˜&R“66˜VÁCÚÊó4FV∆WFVBÚR¢∞¢V«6RñbÇÊ˜&÷∆ó¶VEW6W&Ê÷Rbb∆ñ4÷F6ÜW2í66˜&R“66˜VÁCÚÊó4FV∆WFVBÚ¢S∞¢ñbá66˜&R‚&W7E66˜&Rí∞¢&W7E66˜&R“66˜&S∞¢&W7DñÊFWÇ“ñÊFWÉ∞¢–¢“ì∞¢&WGW&‚&W7DñÊFWÉ∞¢–¢gVÊ7Fñˆ‚«îñ◊˜'FVD'&˜w6W$VÁG'ïFÙ66˜VÁBÜ66˜VÁB¬VÁG'í¬Ê˜t◊2í∞¢6ˆÁ7BÊWáB“Ê˜&÷∆ó¶T66˜VÁE6ÜRÜ66˜VÁBì∞¢ñbÜÊWáBÊó5W&÷ÊVÁF«îFV∆WFVBí&WGW&‚ÊWáC∞¢∆WB6ÜÊvVB“f«6S∞¢6ˆÁ7B÷W&vVE6óFW2“Ê˜&÷∆ó¶U6óFW2Ö≤‚‚ÊÊWáBÁ6óFW2«¬µ“¬‚‚ÊVÁG'íÁ6óFW2«¬µ’“ì∞¢ñbÑ•4Ù‚Á7G&ñÊvñgíÜ÷W&vVE6óFW2í”“•4Ù‚Á7G&ñÊvñgíÜÊWáBÁ6óFW2«¬µ“íí∞¢ÊWáBÁ6óFW2“÷W&vVE6óFW3∞¢6ÜÊvVB“G'VS∞¢–¢ñbÜVÁG'íÁW6W&Ê÷RbbVÁG'íÁW6W&Ê÷R”“ÊWáBÁW6W&Ê÷Rí∞¢ÊWáBÁW6W&Ê÷R“VÁG'íÁW6W&Ê÷S∞¢ÊWáBÁW6W&Ê÷UWFFVDD◊2“Ê˜t◊3∞¢6ÜÊvVB“G'VS∞¢–¢ñbÜVÁG'íÁ77v˜&BbbVÁG'íÁ77v˜&B”“ÊWáBÁ77v˜&Bí∞¢ÊWáBÁ77v˜&B“VÁG'íÁ77v˜&C∞¢ÊWáBÁ77v˜&EWFFVDD◊2“Ê˜t◊3∞¢6ÜÊvVB“G'VS∞¢–¢6ˆÁ7B÷W&vVDÊ˜FR“÷W&vTñ◊˜'FVD'&˜w6W$Ê˜FW2Ö∂ÊWáBÊÊ˜FR«¬""¬VÁG'íÊÊ˜FR«¬"%“ì∞¢ñbÜ÷W&vVDÊ˜FR”“7G&ñÊrÜÊWáBÊÊ˜FR«¬""íí∞¢ÊWáBÊÊ˜FR“÷W&vVDÊ˜FS∞¢ÊWáBÊÊ˜FUWFFVDD◊2“Ê˜t◊3∞¢6ÜÊvVB“G'VS∞¢–¢ñbÜÊWáBÊó4FV∆WFVBbbÊWáBÊó5W&÷ÊVÁF«îFV∆WFVBí∞¢ÊWáBÊó4FV∆WFVB“f«6S∞¢ÊWáBÊFV∆WFVDD◊2“ÁV∆√∞¢ÊWáBÊFV∆WFVDFWfñ6TÊ÷R“"#∞¢6ÜÊvVB“G'VS∞¢–¢ñbÜ6ÜÊvVBí∞¢ÊWáBÁWFFVDD◊2“Ê˜t◊3∞¢ÊWáBÊ∆7D˜W&FVDFWfñ6TÊ÷R“7W'&VÁDñ◊˜'DFWfñ6TÊ÷RÇì∞¢–¢&WGW&‚ÊWáC∞¢–¢gVÊ7Fñˆ‚÷W&vTñ◊˜'FVD'&˜w6W$Ê˜FW2á'G2í∞¢6ˆÁ7B&W7V«B“µ”∞¢6ˆÁ7B6VV‚“Ú¢ııU$UıÚ¢ÚÊWr6WBÇì∞¢f˜"Ü6ˆÁ7B&u'Bˆb'&íÊó4'&íá'G2íÚ'G2¢µ“í∞¢6ˆÁ7B'B“7G&ñÊrá&u'B«¬""íÁG&ñ“Çì∞¢ñbÇ'B«¬6VV‚ÊÜ2á'Bíí6ˆÁFñÁVS∞¢6VV‚ÊFBá'Bì∞¢&W7V«BÁW6Çá'Bì∞¢–¢&WGW&‚&W7V«BÊ¶ˆñ‚Ç%∆‚"ì∞¢–¢gVÊ7Fñˆ‚7W'&VÁDñ◊˜'DFWfñ6TÊ÷RÇí∞¢&WGW&‚Ê˜&÷∆ó¶TFWfñ6TÊ÷RÜFˆ“ÊFWfñ6TÊ÷SÚÁf«VRì∞¢–¢gVÊ7Fñˆ‚f˜&÷Dfñ∆UFñ÷W7F◊Ü◊2í∞¢6ˆÁ7BFFR“ÊWrFFRÑÁV÷&W"Ü◊2í«¬FFRÊÊ˜rÇíì∞¢6ˆÁ7Bóóóí“7G&ñÊrÜFFRÊvWDgV∆≈ñV"ÇííÁE7F'BÉB¬#"ì∞¢6ˆÁ7B÷ˆÁFÇ“7G&ñÊrÜFFRÊvWD÷ˆÁFÇÇí≤íÁE7F'BÉ"¬#"ì∞¢6ˆÁ7BFí“7G&ñÊrÜFFRÊvWDFFRÇííÁE7F'BÉ"¬#"ì∞¢6ˆÁ7BÜ˜W"“7G&ñÊrÜFFRÊvWDÜ˜W'2ÇííÁE7F'BÉ"¬#"ì∞¢6ˆÁ7B÷ñÁWFR“7G&ñÊrÜFFRÊvWD÷ñÁWFW2ÇííÁE7F'BÉ"¬#"ì∞¢6ˆÁ7B6V6ˆÊB“7G&ñÊrÜFFRÊvWE6V6ˆÊG2ÇííÁE7F'BÉ"¬#"ì∞¢&WGW&‚G∑óóóó“G∂÷ˆÁFá“G∂Fó““G∂Ü˜W'“G∂÷ñÁWFW“G∑6V6ˆÊG÷∞¢–¢7ñÊ2gVÊ7Fñˆ‚6∆V$7FófT66˜VÁG2Çí∞¢ñbÜ7FófT66˜VÁEfñWr””“'&V7ñ6∆R"í∞¢6WE7FGW2Ç%«STcS5«SS#DE«Scc$e«SSdDU«ScS3e«StCï«SÉî3e«SSddU«Tdc5«SÑ$cu«SDcte«SsS#Ö«S#5«SdSU«Stt«SSdDU«ScS3e«StCï«S#B"ì∞¢&WGW&„∞¢–¢6ˆÁ7Bfó6ñ&∆T66˜VÁG2“7W'&VÁEfó6ñ&∆T66˜VÁG2Ü66˜VÁG5&ríÊfñ«FW"ÇÜóFV“í”‚óFV“Êó4FV∆WFVBì∞¢6ˆÁ7BF&vWD66˜VÁDñG2“ÊWr6WBáfó6ñ&∆T66˜VÁG2Ê÷ÇÜóFV“í”‚7G&ñÊrÜóFV“Ê66˜VÁDñB«¬""ííì∞¢6ˆÁ7B7FófT6˜VÁB“F&vWD66˜VÁDñG2Á6ó¶S∞¢ñbÜ7FófT6˜VÁB””“í∞¢6WE7FGW2Ç%«STcS5«SS#DE«SìÉsU«Sìsc%«Sd4«Scsï«SS4Te«Ssîd%«SScU«SSdDU«ScS3e«StCï«SscÉE«SÑC#e«SS4cr"ì∞¢&WGW&„∞¢–¢6ˆÁ7B6ˆÊfó&÷VB“vñÊF˜rÊ6ˆÊfó&“Ä¢«ST3e«Sc#Ñ«STcS5«SS#DE«SìÉsU«Sìsc%«SDS$E«SscÉBG∂7FófT6˜VÁG“«Scsc«SÑ$#«STcSU«Ssîd%«SScU«SSdDU«ScS3e«StCï«Tdc5«Scc$e«SSC#e«StTSu«StTTE«Tdcf ¢ì∞¢ñbÇ6ˆÊfó&÷VBí∞¢&WGW&„∞¢–¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7BFWfñ6TÊ÷R“vóBvWDFWfñ6TÊ÷RÇì∞¢6ˆÁ7BÊWáB“6∆ˆÊT66˜VÁG2Ü66˜VÁG5&ríÊ÷ÇÜ66˜VÁBí”‚∞¢6ˆÁ7B66˜VÁDñB“7G&ñÊrÜ66˜VÁCÚÊ66˜VÁDñB«¬""ì∞¢ñbÜ66˜VÁBÊó4FV∆WFVB«¬F&vWD66˜VÁDñG2ÊÜ2Ü66˜VÁDñBíí&WGW&‚66˜VÁC∞¢&WGW&‚∞¢‚‚Ê66˜VÁB¿¢ó4FV∆WFVC¢G'VR¿¢FV∆WFVDD◊3¢Ê˜r¿¢WFFVDD◊3¢Ê˜r¿¢∆7D˜W&FVDFWfñ6TÊ÷S¢FWfñ6TÊ÷P¢”∞¢“ì∞¢VFóFñÊt66˜VÁDñB“ÁV∆√∞¢vóB6WD66˜VÁG2ÜÊWáBì∞¢vóBVÊDÜó7F˜'íÜ«Sc#sï«Sì4e«Ssîd%«SScU«SSdDU«ScS3e«StCï«TdcG∂7FófT6˜VÁG“«Scsc«SÑC#e«SS4cv¬Ê˜rì∞¢vóB&Vg&W6Çá≤6ñ∆VÁC¢G'VR“ì∞¢6WE7FGW2Ü«STDc%«ST3e«STcS5«SS#DE«SìÉsU«Sìsc"G∂7FófT6˜VÁG“«Scsc«SÑC#e«SS4cu«Ssîd%«SScU«SSdDU«ScS3e«StCñì∞¢–¢7ñÊ2gVÊ7Fñˆ‚6∆V%&V7ñ6∆T&ñ‚Çí∞¢6ˆÁ7BFV∆WFVD6˜VÁB“66˜VÁG5&rÊfñ«FW"ÇÜóFV“í”‚óFV“Êó4FV∆WFVBbbóFV“Êó5W&÷ÊVÁF«îFV∆WFVBíÊ∆VÊwFÉ∞¢ñbÜFV∆WFVD6˜VÁB””“í∞¢6WE7FGW2Ç%«SSdDU«ScS3e«StCï«SDS4«Stt«Tdc5«ScTS«Sìs«SdSU«Stt"ì∞¢&WGW&„∞¢–¢6ˆÁ7B6ˆÊfó&÷VB“vñÊF˜rÊ6ˆÊfó&“Ä¢«ST3e«Sd33Ö«SDSCU«SS##«SìccE«SSdDU«ScS3e«StCï«SDS$E«SscÉBG∂FV∆WFVD6˜VÁG“«Scsc«SÑ$#«STcSU«Tdc5«Sd#cE«ScD4E«SDcT5«SDSE«SS4Te«Scc%«SSìE«S3%«Scc$e«SSC#e«StTSu«StTTE«Tdcf ¢ì∞¢ñbÇ6ˆÊfó&÷VBí∞¢&WGW&„∞¢–¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7BFWfñ6TÊ÷R“vóBvWDFWfñ6TÊ÷RÇì∞¢6ˆÁ7BÊWáB“6∆ˆÊT66˜VÁG2Ü66˜VÁG5&ríÊ÷ÇÜ66˜VÁBí”‚66˜VÁBÊó4FV∆WFVBbb66˜VÁBÊó5W&÷ÊVÁF«îFV∆WFVBÚ∞¢‚‚Ê66˜VÁB¿¢ó4FV∆WFVC¢G'VR¿¢ó5W&÷ÊVÁF«îFV∆WFVC¢G'VR¿¢FV∆WFVDD◊3¢Ê˜r¿¢FV∆WFVDFWfñ6TÊ÷S¢FWfñ6TÊ÷R¿¢WFFVDD◊3¢Ê˜r¿¢∆7D˜W&FVDFWfñ6TÊ÷S¢FWfñ6TÊ÷P¢“¢66˜VÁBì∞¢VFóFñÊt66˜VÁDñB“ÁV∆√∞¢vóB6WD66˜VÁG2ÜÊWáBì∞¢vóBVÊDÜó7F˜'íÜ«SdSU«Stt«SSdDU«ScS3e«StCï«Tdc«Sd33Ö«SDSCU«SS##«SìccBG∂FV∆WFVD6˜VÁG“«Scsc«SÑC#e«SS4cvì∞¢vóB&Vg&W6Çá≤6ñ∆VÁC¢G'VR“ì∞¢6WE7FGW2Ü«STDc%«SdSU«Stt«SSdDU«ScS3e«StCï«Tdc5«Sd33Ö«SDSCU«SS##«SìccBG∂FV∆WFVD6˜VÁG“«Scsc«SÑ$#«STcSVì∞¢–¢7ñÊ2gVÊ7Fñˆ‚7&VFTfˆ∆FW$g&ˆ’&ˆ◊BÇí∞¢6ˆÁ7B&r“vñÊF˜rÁ&ˆ◊BÇ%«ScT#«STTd«ScSÉu«SDTce«SSì3ï∆Â«SÑ$cu«SÑcì5«SScU«ScSÉu«SDTce«SSì3ï«SSCE«Ssîc«Tdc"¬""ì∞¢ñbá&r”“ÁV∆¬í∞¢6WE7FGW2Ç%«STDc%«SS4Ce«SdCÉÖ«ScT#«STTd«ScSÉu«SDTce«SSì3í"ì∞¢&WGW&„∞¢–¢6ˆÁ7BÊ÷R“7G&ñÊrá&r«¬""íÁG&ñ“Çì∞¢ñbÇÊ÷Rí∞¢6WE7FGW2Ç%«ScSÉu«SDTce«SSì3ï«SSCE«Ssîc«SDSE«SÉdE«SDS4«Stt"ì∞¢&WGW&„∞¢–¢6ˆÁ7BWÜó7FVB“fˆ∆FW'5&rÁ6ˆ÷RÄ¢ÜóFV“í”‚7G&ñÊrÜóFV”ÚÊÊ÷R«¬""íÁG&ñ“ÇíÁFÙ∆˜vW$66RÇí””“Ê÷RÁFÙ∆˜vW$66RÇê¢ì∞¢ñbÜWÜó7FVBí∞¢6WE7FGW2Ü«ScSÉu«SDTce«SSì3ï«STDc%«ST#SÖ«SSs#É¢G∂Ê÷W÷ì∞¢&WGW&„∞¢–¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7BÊWáDfˆ∆FW$ñB“Üv∆ˆ&≈FÜó2Ê7'óFÛÚÁ&ÊFˆ’UTîCÚ‚Çí«¬7F&∆UWVñDg&ˆ’FWáBÜfˆ∆FW'¬G∂Ê÷W◊¬G∂Ê˜w÷ííÁFÙ∆˜vW$66RÇì∞¢6ˆÁ7B7F˜&VDFF“vóB&VD'W6ñÊW74FFg&ˆ’7F˜&RÇì∞¢6ˆÁ7B7F˜&VDfˆ∆FW'2“'&íÊó4'&íá7F˜&VDFFÊfˆ∆FW'2íÚ7F˜&VDFFÊfˆ∆FW'2¢µ”∞¢6ˆÁ7BÊWáDfˆ∆FW'2“6˜'Dfˆ∆FW'4f˜$Fó7∆íÖ∞¢‚‚Á7F˜&VDfˆ∆FW'2Ê÷ÜÊ˜&÷∆ó¶Tfˆ∆FW%6ÜRí¿¢Ê˜&÷∆ó¶Tfˆ∆FW%6ÜRá∞¢ñC¢ÊWáDfˆ∆FW$ñB¿¢Ê÷R¿¢7&VFVDD◊3¢Ê˜r¿¢WFFVDD◊3¢Ê˜p¢“ê¢“ì∞¢vóB6WDfˆ∆FW'2ÜÊWáDfˆ∆FW'2ì∞¢vóBVÊDÜó7F˜'íÜ«SS#%«STTd«ScSÉu«SDTce«SSì3ï«TdcG∂Ê÷W÷¬Ê˜rì∞¢vóB&Vg&W6Çá≤6ñ∆VÁC¢G'VR“ì∞¢6WE7FGW2Ü«STDc%«SS#%«STTd«ScSÉu«SDTce«SSì3ì¢G∂Ê÷W÷ì∞¢–¢gVÊ7Fñˆ‚&VÊFW$vˆˆv∆TWFÜVÁFñ6F˜$ñ◊˜'Dfˆ∆FW$˜FñˆÁ2Çí∞¢6ˆÁ7B6V∆V7B“Fˆ“Êñ◊˜'Dvˆˆv∆TWFÑfˆ∆FW%6V∆V7C∞¢ñbÇ6V∆V7Bí&WGW&„∞¢6ˆÁ7B&Wfñ˜W5f«VR“7G&ñÊrá6V∆V7BÁf«VR«¬""ì∞¢6V∆V7BÊñÊÊW$ÖD‘¬“"#∞¢6ˆÁ7BV◊Gí“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&˜Fñˆ‚"ì∞¢V◊GíÁf«VR“"#∞¢V◊GíÁFWáD6ˆÁFVÁB“%«SDSE«ScS4U«SScU«ScSÉu«SDTce«SSì3í#∞¢6V∆V7BÊVÊD6Üñ∆BÜV◊Gíì∞¢f˜"Ü6ˆÁ7Bfˆ∆FW"ˆbfˆ∆FW'5&rí∞¢6ˆÁ7B˜Fñˆ‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&˜Fñˆ‚"ì∞¢˜Fñˆ‚Áf«VR“Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜfˆ∆FW#ÚÊñBì∞¢˜Fñˆ‚ÁFWáD6ˆÁFVÁB“7G&ñÊrÜfˆ∆FW#ÚÊÊ÷R«¬%«Scs$«SSCtE«SSCE«ScSÉu«SDTce«SSì3í"ì∞¢6V∆V7BÊVÊD6Üñ∆BÜ˜Fñˆ‚ì∞¢–¢6ˆÁ7BÜ5&Wfñ˜W2“'&íÊg&ˆ“á6V∆V7BÊ˜FñˆÁ2íÁ6ˆ÷RÇÜ˜Fñˆ‚í”‚˜Fñˆ‚Áf«VR””“&Wfñ˜W5f«VRì∞¢6V∆V7BÁf«VR“Ü5&Wfñ˜W2Ú&Wfñ˜W5f«VR¢"#∞¢–¢gVÊ7Fñˆ‚'Vñ∆Dvˆˆv∆TWFÜVÁFñ6F˜$ñ◊˜'Dfˆ∆FW%∆‚Çí∞¢&WGW&‚∞¢6V∆V7FVDfˆ∆FW$ñC¢Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜFˆ“Êñ◊˜'Dvˆˆv∆TWFÑfˆ∆FW%6V∆V7CÚÁf«VR«¬""í¿¢ÊWtfˆ∆FW$Ê÷S¢7G&ñÊrÜFˆ“Êñ◊˜'Dvˆˆv∆TWFÑÊWtfˆ∆FW$Ê÷SÚÁf«VR«¬""íÁG&ñ“Çê¢”∞¢–¢gVÊ7Fñˆ‚&W6ˆ«fTvˆˆv∆TWFÜVÁFñ6F˜$ñ◊˜'Dfˆ∆FW"Üfˆ∆FW%∆‚¬fˆ∆FW'4ñÁWBí∞¢6ˆÁ7Bfˆ∆FW'2“'&íÊó4'&íÜfˆ∆FW'4ñÁWBíÚfˆ∆FW'4ñÁWBÊ÷ÜÊ˜&÷∆ó¶Tfˆ∆FW%6ÜRí¢µ”∞¢6ˆÁ7BÊWtfˆ∆FW$Ê÷R“7G&ñÊrÜfˆ∆FW%∆„ÚÊÊWtfˆ∆FW$Ê÷R«¬""íÁG&ñ“Çì∞¢ñbÜÊWtfˆ∆FW$Ê÷Rí∞¢6ˆÁ7BWÜó7FñÊs"“fˆ∆FW'2ÊfñÊBÇÜfˆ∆FW"í”‚7G&ñÊrÜfˆ∆FW#ÚÊÊ÷R«¬""íÁG&ñ“ÇíÁFÙ∆˜vW$66RÇí””“ÊWtfˆ∆FW$Ê÷RÁFÙ∆˜vW$66RÇíì∞¢ñbÜWÜó7FñÊs"í∞¢&WGW&‚∞¢fˆ∆FW$ñC¢Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜWÜó7FñÊs"ÊñBí¿¢fˆ∆FW$Ê÷S¢7G&ñÊrÜWÜó7FñÊs"ÊÊ÷R«¬""í¿¢7&VFVDfˆ∆FW$Ê÷S¢""¿¢fˆ∆FW'0¢”∞¢–¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7B7&VFVB“Ê˜&÷∆ó¶Tfˆ∆FW%6ÜRá∞¢ñC¢Üv∆ˆ&≈FÜó2Ê7'óFÛÚÁ&ÊFˆ’UTîCÚ‚Çí«¬7F&∆UWVñDg&ˆ’FWáBÜfˆ∆FW'¬G∂ÊWtfˆ∆FW$Ê÷W◊¬G∂Ê˜w÷ííÁFÙ∆˜vW$66RÇí¿¢Ê÷S¢ÊWtfˆ∆FW$Ê÷R¿¢7&VFVDD◊3¢Ê˜r¿¢WFFVDD◊3¢Ê˜p¢“ì∞¢&WGW&‚∞¢fˆ∆FW$ñC¢Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜ7&VFVBÊñBí¿¢fˆ∆FW$Ê÷S¢7G&ñÊrÜ7&VFVBÊÊ÷R«¬""í¿¢7&VFVDfˆ∆FW$Ê÷S¢7G&ñÊrÜ7&VFVBÊÊ÷R«¬""í¿¢fˆ∆FW'3¢6˜'Dfˆ∆FW'4f˜$Fó7∆íÖ≤‚‚Êfˆ∆FW'2¬7&VFVE“ê¢”∞¢–¢6ˆÁ7B6V∆V7FVDfˆ∆FW$ñB“Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜfˆ∆FW%∆„ÚÁ6V∆V7FVDfˆ∆FW$ñB«¬""ì∞¢ñbÇ6V∆V7FVDfˆ∆FW$ñBí∞¢&WGW&‚≤fˆ∆FW$ñC¢""¬fˆ∆FW$Ê÷S¢""¬7&VFVDfˆ∆FW$Ê÷S¢""¬fˆ∆FW'2”∞¢–¢6ˆÁ7BWÜó7FñÊr“fˆ∆FW'2ÊfñÊBÇÜfˆ∆FW"í”‚Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜfˆ∆FW#ÚÊñBí””“6V∆V7FVDfˆ∆FW$ñBì∞¢ñbÇWÜó7FñÊrí∞¢6WE7FGW2Ç%«SsdTU«ScÉu«ScSÉu«SDTce«SSì3ï«SDSE«ST#SÖ«SSs#Ç"ì∞¢&WGW&‚≤fˆ∆FW$ñC¢""¬fˆ∆FW$Ê÷S¢""¬7&VFVDfˆ∆FW$Ê÷S¢""¬fˆ∆FW'2”∞¢–¢&WGW&‚∞¢fˆ∆FW$ñC¢6V∆V7FVDfˆ∆FW$ñB¿¢fˆ∆FW$Ê÷S¢7G&ñÊrÜWÜó7FñÊrÊÊ÷R«¬""í¿¢7&VFVDfˆ∆FW$Ê÷S¢""¿¢fˆ∆FW'0¢”∞¢–¢7ñÊ2gVÊ7Fñˆ‚FV∆WFTfˆ∆FW"Üfˆ∆FW$ñBí∞¢6ˆÁ7BÊ˜&÷∆ó¶VDfˆ∆FW$ñB“Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜfˆ∆FW$ñBì∞¢ñbÇÊ˜&÷∆ó¶VDfˆ∆FW$ñBí∞¢6WE7FGW2Ç%«SsdTU«ScÉu«ScSÉu«SDTce«SSì3ï«SDSE«ST#SÖ«SSs#Ç"ì∞¢&WGW&„∞¢–¢ñbÜÊ˜&÷∆ó¶VDfˆ∆FW$ñB””“dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%ÙîBí∞¢6WE7FGW2Ç%«SSdd«ST#î«ScSÉu«SDTce«SSì3ï«SDSE«SS4Te«SS##«SìccB"ì∞¢&WGW&„∞¢–¢6ˆÁ7Bfˆ∆FW"“fˆ∆FW'5&rÊfñÊBÇÜóFV“í”‚Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜóFV”ÚÊñBí””“Ê˜&÷∆ó¶VDfˆ∆FW$ñBì∞¢ñbÇfˆ∆FW"í∞¢6WE7FGW2Ç%«SsdTU«ScÉu«ScSÉu«SDTce«SSì3ï«SDSE«ST#SÖ«SSs#Ç"ì∞¢&WGW&„∞¢–¢6ˆÁ7B6ˆÊfó&÷VB“vñÊF˜rÊ6ˆÊfó&“Ü«ST3e«SS##«SìccE«ScSÉu«SDTce«SSì3ï«TdcG∂fˆ∆FW"ÊÊ÷W–•«STSse«SDT4U«SsdcÖ«SSs5«SÑC#e«SS4cu«SDS$E«Ssîd%«SìccE«SÑ$SU«ScSÉu«SDTce«SSì3ï«S3%«Scc$e«SSC#e«StTSu«StTTE«Tdcfì∞¢ñbÇ6ˆÊfó&÷VBí&WGW&„∞¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7BFWfñ6TÊ÷R“vóBvWDFWfñ6TÊ÷RÇì∞¢6ˆÁ7B7F˜&VDFF“vóB&VD'W6ñÊW74FFg&ˆ’7F˜&RÇì∞¢6ˆÁ7B7F˜&VDfˆ∆FW'2“'&íÊó4'&íá7F˜&VDFFÊfˆ∆FW'2íÚ7F˜&VDFFÊfˆ∆FW'2¢µ”∞¢∆WB&V÷˜fVDg&ˆ‘66˜VÁD6˜VÁB“∞¢6ˆÁ7BÊWáD66˜VÁG2“6∆ˆÊT66˜VÁG2Ü66˜VÁG5&ríÊ÷ÇÜ66˜VÁBí”‚∞¢6ˆÁ7B7W'&VÁDfˆ∆FW$ñG2“Ê˜&÷∆ó¶Tfˆ∆FW$ñD∆ó7BÜWáG&7D66˜VÁDfˆ∆FW$ñG2Ü66˜VÁBíì∞¢ñbÇ7W'&VÁDfˆ∆FW$ñG2ÊñÊ6«VFW2ÜÊ˜&÷∆ó¶VDfˆ∆FW$ñBíí∞¢&WGW&‚66˜VÁC∞¢–¢6ˆÁ7BÊWáDfˆ∆FW$ñG2“7W'&VÁDfˆ∆FW$ñG2Êfñ«FW"ÇÜñBí”‚ñB”“Ê˜&÷∆ó¶VDfˆ∆FW$ñBì∞¢6ˆÁ7BÊWáD66˜VÁB“∞¢‚‚Ê66˜VÁB¿¢fˆ∆FW$ñC¢ÊWáDfˆ∆FW$ñG5≥“«¬ÁV∆¬¿¢fˆ∆FW$ñG3¢ÊWáDfˆ∆FW$ñG2¿¢fˆ∆FW$÷V÷&W'6Üó7FFW3¢∞¢‚‚Ê66˜VÁBÊfˆ∆FW$÷V÷&W'6Üó7FFW2«¬∑“¿¢∂Ê˜&÷∆ó¶VDfˆ∆FW$ñE”¢≤ó4FV∆WFVC¢G'VR¬WFFVDD◊3¢Ê˜r¬FWfñ6TÊ÷R–¢“¿¢WFFVDD◊3¢Ê˜r¿¢∆7D˜W&FVDFWfñ6TÊ÷S¢FWfñ6TÊ÷P¢”∞¢&V÷˜fVDg&ˆ‘66˜VÁD6˜VÁB≥“∞¢&WGW&‚ÊWáD66˜VÁC∞¢“ì∞¢6ˆÁ7BÊWáDfˆ∆FW'2“6˜'Dfˆ∆FW'4f˜$Fó7∆íÄ¢7F˜&VDfˆ∆FW'2Ê÷ÇÜóFV“í”‚∞¢6ˆÁ7BÊ˜&÷∆ó¶VB“Ê˜&÷∆ó¶Tfˆ∆FW%6ÜRÜóFV“ì∞¢ñbÜÊ˜&÷∆ó¶Tfˆ∆FW$ñBÜÊ˜&÷∆ó¶VBÊñBí”“Ê˜&÷∆ó¶VDfˆ∆FW$ñBí&WGW&‚Ê˜&÷∆ó¶VC∞¢&WGW&‚∞¢‚‚ÊÊ˜&÷∆ó¶VB¿¢ó4FV∆WFVC¢G'VR¿¢ó5W&÷ÊVÁF«îFV∆WFVC¢G'VR¿¢FV∆WFVDD◊3¢Ê˜r¿¢FV∆WFVDFWfñ6TÊ÷S¢FWfñ6TÊ÷R¿¢WFFVDD◊3¢Ê˜p¢”∞¢“ê¢ì∞¢vóBw&óFT'W6ñÊW74FFFı7F˜&Rá∞¢66˜VÁG3¢ÊWáD66˜VÁG2¿¢76∂Wó3¢76∂Wó5&r¿¢fˆ∆FW'3¢ÊWáDfˆ∆FW'0¢“ì∞¢vóBVÊDÜó7F˜'íÄ¢&V÷˜fVDg&ˆ‘66˜VÁD6˜VÁB‚Ú«SS##«SìccE«ScSÉu«SDTce«SSì3ï«TdcG∂fˆ∆FW"ÊÊ÷W’«Tdc5«STSse«SDT4RG∑&V÷˜fVDg&ˆ‘66˜VÁD6˜VÁG“«SDS$«SÑC#e«SS4cu«SDS$E«Ssîd%«SìccF¢«SS##«SìccE«ScSÉu«SDTce«SSì3ï«TdcG∂fˆ∆FW"ÊÊ÷W÷ ¢ì∞¢ñbÜ7FófT66˜VÁEfñWr””“fˆ∆FW#¢G∂Ê˜&÷∆ó¶VDfˆ∆FW$ñG÷í∞¢7FófT66˜VÁEfñWr“&∆¬#∞¢–¢vóB&Vg&W6Çá≤6ñ∆VÁC¢G'VR“ì∞¢ñbá&V÷˜fVDg&ˆ‘66˜VÁD6˜VÁB‚í∞¢6WE7FGW2Ü«STDc%«SS##«SìccE«ScSÉu«SDTce«SSì3ì¢G∂fˆ∆FW"ÊÊ÷W’«Tdc5«STSse«SDT4RG∑&V÷˜fVDg&ˆ‘66˜VÁD6˜VÁG“«SDS$«SÑC#e«SS4cu«SDS$E«Ssîd%«SìccFì∞¢“V«6R∞¢6WE7FGW2Ü«STDc%«SS##«SìccE«ScSÉu«SDTce«SSì3ì¢G∂fˆ∆FW"ÊÊ÷W÷ì∞¢–¢–¢7ñÊ2gVÊ7Fñˆ‚Fˆvv∆T66˜VÁDfˆ∆FW$÷V÷&W'6ÜóÜ66˜VÁDñB¬fˆ∆FW$ñBí∞¢6ˆÁ7BÊ˜&÷∆ó¶VDfˆ∆FW$ñB“Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜfˆ∆FW$ñBì∞¢ñbÇÊ˜&÷∆ó¶VDfˆ∆FW$ñBí&WGW&„∞¢ñbÇfˆ∆FW'5&rÁ6ˆ÷RÇÜóFV“í”‚Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜóFV”ÚÊñBí””“Ê˜&÷∆ó¶VDfˆ∆FW$ñBíí∞¢6WE7FGW2Ç%«SsdTU«ScÉu«ScSÉu«SDTce«SSì3ï«SDSE«ST#SÖ«SSs#Ç"ì∞¢&WGW&„∞¢–¢6ˆÁ7BÊWáB“6∆ˆÊT66˜VÁG2Ü66˜VÁG5&rì∞¢6ˆÁ7BF&vWB“ÊWáBÊfñÊBÇÜóFV“í”‚7G&ñÊrÜóFV”ÚÊ66˜VÁDñB«¬""í””“7G&ñÊrÜ66˜VÁDñBíì∞¢ñbÇF&vWBí∞¢6WE7FGW2Ç%«SsdTU«ScÉu«SÑC#e«SS4cu«SDSE«ST#SÖ«SSs#Ç"ì∞¢&WGW&„∞¢–¢ñbáF&vWBÊó4FV∆WFVBí∞¢6WE7FGW2Ç%«SSdDU«ScS3e«StCï«SÑC#e«SS4cu«SDSE«ScS$e«Sc3«ScS4U«SScU«ScSÉu«SDTce«SSì3í"ì∞¢&WGW&„∞¢–¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7BFWfñ6TÊ÷R“vóBvWDFWfñ6TÊ÷RÇì∞¢6ˆÁ7B7W'&VÁB“Ê˜&÷∆ó¶Tfˆ∆FW$ñD∆ó7BÜWáG&7D66˜VÁDfˆ∆FW$ñG2áF&vWBíì∞¢6ˆÁ7BWÜó7G2“7W'&VÁBÊñÊ6«VFW2ÜÊ˜&÷∆ó¶VDfˆ∆FW$ñBì∞¢6ˆÁ7BÊWáDfˆ∆FW$ñG2“WÜó7G2Ú7W'&VÁBÊfñ«FW"ÇÜñBí”‚ñB”“Ê˜&÷∆ó¶VDfˆ∆FW$ñBí¢Ê˜&÷∆ó¶Tfˆ∆FW$ñD∆ó7BÖ≤‚‚Ê7W'&VÁB¬Ê˜&÷∆ó¶VDfˆ∆FW$ñE“ì∞¢F&vWBÊfˆ∆FW$ñB“ÊWáDfˆ∆FW$ñG5≥“«¬ÁV∆√∞¢F&vWBÊfˆ∆FW$ñG2“ÊWáDfˆ∆FW$ñG3∞¢F&vWBÊfˆ∆FW$÷V÷&W'6Üó7FFW2“∞¢‚‚ÁF&vWBÊfˆ∆FW$÷V÷&W'6Üó7FFW2«¬∑“¿¢∂Ê˜&÷∆ó¶VDfˆ∆FW$ñE”¢≤ó4FV∆WFVC¢WÜó7G2¬WFFVDD◊3¢Ê˜r¬FWfñ6TÊ÷R–¢”∞¢F&vWBÁWFFVDD◊2“Ê˜s∞¢F&vWBÊ∆7D˜W&FVDFWfñ6TÊ÷R“FWfñ6TÊ÷S∞¢vóB6WD66˜VÁG2ÜÊWáBì∞¢6ˆÁ7Bfˆ∆FW$Ê÷R“fˆ∆FW$Fó7∆îÊ÷T'îñBÜÊ˜&÷∆ó¶VDfˆ∆FW$ñBì∞¢vóBVÊDÜó7F˜'íÄ¢WÜó7G2ÚG∑F&vWBÊ66˜VÁDñG’«Tdc«SDT4U«ScSÉu«SDTce«SSì3ï«Ssîd%«SìccBG∂fˆ∆FW$Ê÷W÷¢G∑F&vWBÊ66˜VÁDñG’«Tdc«ScS4U«SScU«ScSÉu«SDTce«SSì3íG∂fˆ∆FW$Ê÷W÷¿¢Ê˜p¢ì∞¢vóB&Vg&W6Çá≤6ñ∆VÁC¢G'VR“ì∞¢6WE7FGW2ÜWÜó7G2Ú«STDc%«SDT4U«ScSÉu«SDTce«SSì3ï«Ssîd%«SìccC¢G∂fˆ∆FW$Ê÷W÷¢«STDc%«ScS4U«SScU«ScSÉu«SDTce«SSì3ì¢G∂fˆ∆FW$Ê÷W÷ì∞¢–¢gVÊ7Fñˆ‚&VÊFW%6ñFV&"ÜñÁWD66˜VÁG2í∞¢6ˆÁ7B66˜VÁG2“Ñ'&íÊó4'&íÜñÁWD66˜VÁG2íÚñÁWD66˜VÁG2¢µ“íÊ÷ÜÊ˜&÷∆ó¶T66˜VÁE6ÜRì∞¢6ˆÁ7B7FófR“66˜VÁG2Êfñ«FW"ÇÜóFV“í”‚óFV“Êó4FV∆WFVBbbóFV“Êó5W&÷ÊVÁF«îFV∆WFVBì∞¢6ˆÁ7B&V7ñ6∆R“66˜VÁG2Êfñ«FW"ÇÜóFV“í”‚óFV“Êó4FV∆WFVBbbóFV“Êó5W&÷ÊVÁF«îFV∆WFVBì∞¢6ˆÁ7B76∂Wó2“7FófRÊfñ«FW"ÇÜóFV“í”‚ÜóFV“Á76∂Wî7&VFVÁFñƒñG2«¬µ“íÊ∆VÊwFÇ‚ì∞¢6ˆÁ7BF˜G“7FófRÊfñ«FW"ÇÜóFV“í”‚Ü5F˜G6V7&WBÜóFV“ÁF˜G6V7&WBíì∞¢Fˆ“Ê∆ƒ66˜VÁG46˜VÁBÁFWáD6ˆÁFVÁB“ÇG∂7FófRÊ∆VÊwFá“ñ∞¢Fˆ“Á76∂Wî66˜VÁG46˜VÁBÁFWáD6ˆÁFVÁB“ÇG∑76∂Wó2Ê∆VÊwFá“ñ∞¢Fˆ“ÁF˜G66˜VÁG46˜VÁBÁFWáD6ˆÁFVÁB“ÇG∑F˜GÊ∆VÊwFá“ñ∞¢Fˆ“Á&V7ñ6∆T66˜VÁG46˜VÁBÁFWáD6ˆÁFVÁB“ÇG∑&V7ñ6∆RÊ∆VÊwFá“ñ∞¢6ˆÁ7Bfˆ∆FW$6˜VÁD÷“Ú¢ııU$UıÚ¢ÚÊWr÷Çì∞¢f˜"Ü6ˆÁ7B66˜VÁBˆb7FófRí∞¢f˜"Ü6ˆÁ7BñBˆbWáG&7D66˜VÁDfˆ∆FW$ñG2Ü66˜VÁBíí∞¢6ˆÁ7B∂Wí“Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜñBì∞¢ñbÇ∂Wíí6ˆÁFñÁVS∞¢6ˆÁ7B&Wb“fˆ∆FW$6˜VÁD÷ÊvWBÜ∂Wíí«¬∞¢fˆ∆FW$6˜VÁD÷Á6WBÜ∂Wí¬&Wb≤ì∞¢–¢–¢6ˆÁ7Bfˆ∆FW$'îñB“ÊWr÷Üfˆ∆FW'5&rÊ÷ÇÜfˆ∆FW"í”‚∂Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜfˆ∆FW"ÊñBí¬fˆ∆FW%“íì∞¢ñbÇfˆ∆FW$'îñBÊÜ2ÑdïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%ÙîBíí∞¢fˆ∆FW$'îñBÁ6WBÑdïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%ÙîB¬Ê˜&÷∆ó¶Tfˆ∆FW%6ÜRá∞¢ñC¢dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%ÙîB¿¢Ê÷S¢dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%Ù‰‘R¿¢7&VFVDD◊3¢ ¢“íì∞¢–¢6ˆÁ7B∂Ê˜v‰fˆ∆FW'2“6˜'Dfˆ∆FW'4f˜$Fó7∆íÑ'&íÊg&ˆ“Üfˆ∆FW$'îñBÁf«VW2Çííì∞¢6ˆÁ7BVÊ∂Ê˜v‰fˆ∆FW$VÁG&ñW2“'&íÊg&ˆ“Üfˆ∆FW$6˜VÁD÷ÊVÁG&ñW2ÇííÊfñ«FW"ÇÖ∂ñE“í”‚fˆ∆FW$'îñBÊÜ2ÜñBííÊ÷ÇÖ∂ñB¬6˜VÁE“í”‚á∞¢ñB¿¢Ê÷S¢«Scs$«SSCtE«SSCE«ScSÉu«SDTce«SSì3íG∂ñBÁ6∆ñ6RÉ¬Çó÷¿¢7&VFVDD◊3¢¿¢6˜VÁ@¢“ííÁ6˜'BÇÜ¬"í”‚ÊñBÊ∆ˆ6∆T6ˆ◊&RÜ"ÊñBíì∞¢6ˆÁ7Bfˆ∆FW$VÁG&ñW2“∞¢‚‚Ê∂Ê˜v‰fˆ∆FW'2Ê÷ÇÜfˆ∆FW"í”‚á∞¢ñC¢Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜfˆ∆FW"ÊñBí¿¢Ê÷S¢7G&ñÊrÜfˆ∆FW"ÊÊ÷R«¬dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%Ù‰‘Rí¿¢7&VFVDD◊3¢ÁV÷&W"Üfˆ∆FW"Ê7&VFVDD◊2«¬í¿¢6˜VÁC¢fˆ∆FW$6˜VÁD÷ÊvWBÜÊ˜&÷∆ó¶Tfˆ∆FW$ñBÜfˆ∆FW"ÊñBíí«¬ ¢“íí¿¢‚‚ÁVÊ∂Ê˜v‰fˆ∆FW$VÁG&ñW0¢”∞¢Fˆ“Ê66˜VÁG4fˆ∆FW$∆ó7BÊñÊÊW$ÖD‘¬“"#∞¢f˜"Ü6ˆÁ7Bfˆ∆FW"ˆbfˆ∆FW$VÁG&ñW2í∞¢6ˆÁ7B'WGFˆ‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&'WGFˆ‚"ì∞¢'WGFˆ‚ÁGóR“&'WGFˆ‚#∞¢'WGFˆ‚Ê6∆74Ê÷R“&66˜VÁB◊fñWr◊F"#∞¢'WGFˆ‚ÊFF6WBÁfñWr“fˆ∆FW#¢G∂fˆ∆FW"ÊñG÷∞¢'WGFˆ‚ÊFF6WBÊfˆ∆FW$ñB“fˆ∆FW"ÊñC∞¢'WGFˆ‚ÁFWáD6ˆÁFVÁB“G∂fˆ∆FW"ÊÊ÷W“ÇG∂fˆ∆FW"Ê6˜VÁG“ñ∞¢'WGFˆ‚ÊFDWfVÁD∆ó7FVÊW"Ç&6∆ñ6≤"¬Çí”‚6WD66˜VÁEfñWrÜfˆ∆FW#¢G∂fˆ∆FW"ÊñG÷íì∞¢'WGFˆ‚ÊFDWfVÁD∆ó7FVÊW"Ç&6ˆÁFWáF÷VÁR"¬ÜWfVÁBí”‚∞¢WfVÁBÁ&WfVÁDFVfV«BÇì∞¢WfVÁBÁ7F˜&˜vFñˆ‚Çì∞¢˜V‰fˆ∆FW$6ˆÁFWáD÷VÁRá∞¢fˆ∆FW$ñC¢fˆ∆FW"ÊñB¿¢É¢WfVÁBÊ6∆ñVÁEÇ¿¢ì¢WfVÁBÊ6∆ñVÁEê¢“ì∞¢“ì∞¢Fˆ“Ê66˜VÁG4fˆ∆FW$∆ó7BÊVÊD6Üñ∆BÜ'WGFˆ‚ì∞¢–¢–¢gVÊ7Fñˆ‚7W'&VÁEfñWt66˜VÁG2ÜñÁWD66˜VÁG2í∞¢6ˆÁ7B66˜VÁG2“Ñ'&íÊó4'&íÜñÁWD66˜VÁG2íÚñÁWD66˜VÁG2¢µ“íÊ÷ÜÊ˜&÷∆ó¶T66˜VÁE6ÜRì∞¢6ˆÁ7B7FófR“66˜VÁG2Êfñ«FW"ÇÜóFV“í”‚óFV“Êó4FV∆WFVBbbóFV“Êó5W&÷ÊVÁF«îFV∆WFVBì∞¢6ˆÁ7B&V7ñ6∆R“66˜VÁG2Êfñ«FW"ÇÜóFV“í”‚óFV“Êó4FV∆WFVBbbóFV“Êó5W&÷ÊVÁF«îFV∆WFVBì∞¢ñbÜ7FófT66˜VÁEfñWr””“'&V7ñ6∆R"í∞¢&WGW&‚&V7ñ6∆S∞¢–¢ñbÜ7FófT66˜VÁEfñWr””“'76∂Wó2"í∞¢&WGW&‚7FófRÊfñ«FW"ÇÜóFV“í”‚ÜóFV“Á76∂Wî7&VFVÁFñƒñG2«¬µ“íÊ∆VÊwFÇ‚ì∞¢–¢ñbÜ7FófT66˜VÁEfñWr””“'F˜G"í∞¢&WGW&‚7FófRÊfñ«FW"ÇÜóFV“í”‚Ü5F˜G6V7&WBÜóFV“ÁF˜G6V7&WBíì∞¢–¢ñbÖ7G&ñÊrÜ7FófT66˜VÁEfñWríÁ7F'G5vóFÇÇ&fˆ∆FW#¢"íí∞¢6ˆÁ7Bfˆ∆FW$ñB“Ê˜&÷∆ó¶Tfˆ∆FW$ñBÖ7G&ñÊrÜ7FófT66˜VÁEfñWríÁ6∆ñ6RÇ&fˆ∆FW#¢"Ê∆VÊwFÇíì∞¢&WGW&‚7FófRÊfñ«FW"ÇÜóFV“í”‚∞¢6ˆÁ7BñG2“WáG&7D66˜VÁDfˆ∆FW$ñG2ÜóFV“íÊ÷ÜÊ˜&÷∆ó¶Tfˆ∆FW$ñBì∞¢&WGW&‚ñG2ÊñÊ6«VFW2Üfˆ∆FW$ñBì∞¢“ì∞¢–¢&WGW&‚7FófS∞¢–¢gVÊ7Fñˆ‚7W'&VÁEfó6ñ&∆T66˜VÁG2ÜñÁWD66˜VÁG2í∞¢∆WB66˜VÁG2“7W'&VÁEfñWt66˜VÁG2ÜñÁWD66˜VÁG2ì∞¢6ˆÁ7BVW'í“7G&ñÊrÜFˆ“Ê∆ƒ66˜VÁG56V&6ÇÁf«VR«¬""íÁG&ñ“ÇíÁFÙ∆˜vW$66RÇì∞¢ñbáVW'íí∞¢66˜VÁG2“66˜VÁG2Êfñ«FW"ÇÜ66˜VÁBí”‚ó466˜VÁD÷F6Ö6V&6ÇÜ66˜VÁB¬VW'ííì∞¢–¢&WGW&‚66˜VÁG3∞¢–¢gVÊ7Fñˆ‚ó56˜'D÷ˆF≈7W˜'FVEfñWrÇí∞¢&WGW&‚7FófT66˜VÁEfñWr”“'&V7ñ6∆R#∞¢–¢gVÊ7Fñˆ‚vWE6˜'F&∆T66˜VÁG4f˜$7W'&VÁEfñWrÇí∞¢ñbÇó56˜'D÷ˆF≈7W˜'FVEfñWrÇíí&WGW&‚µ”∞¢6ˆÁ7Bfó6ñ&∆R“7W'&VÁEfó6ñ&∆T66˜VÁG2Ü66˜VÁG5&ríÊfñ«FW"ÇÜ66˜VÁBí”‚66˜VÁBÊó4FV∆WFVBì∞¢&WGW&‚6˜'D66˜VÁG4f˜%66˜Ráfó6ñ&∆Rì∞¢–¢gVÊ7Fñˆ‚˜VÂ6˜'D÷ˆF¬Çí∞¢ñbÇó56˜'D÷ˆF≈7W˜'FVEfñWrÇíí∞¢6WE7FGW2Ç%«SSdDU«ScS3e«StCï«SDSE«ScS$e«Sc3«Sc3ì%«STSÑb"ì∞¢&WGW&„∞¢–¢6ˆÁ7Bfó6ñ&∆T66˜VÁG2“vWE6˜'F&∆T66˜VÁG4f˜$7W'&VÁEfñWrÇì∞¢ñbáfó6ñ&∆T66˜VÁG2Ê∆VÊwFÇ””“í∞¢6WE7FGW2Ç%«STcS5«SS#DE«SS#u«SÉÉcÖ«Sd4«Scsï«SS4Te«Sc3ì%«STSÑe«SÑC#e«SS4cr"ì∞¢&WGW&„∞¢–¢6˜'D÷ˆFƒ˜&FW$ñG2“fó6ñ&∆T66˜VÁG2Ê÷ÇÜ66˜VÁBí”‚7G&ñÊrÜ66˜VÁBÊ66˜VÁDñB«¬""íì∞¢6˜'D÷ˆFƒG&vvñÊt66˜VÁDñB“"#∞¢&VÊFW%6˜'D÷ˆFƒ∆ó7BÇì∞¢Fˆ“Á6˜'D÷ˆF¬Ê6∆74∆ó7BÁ&V÷˜fRÇ&ÜñFFV‚"ì∞¢Fˆ“Á6˜'D÷ˆF¬Á6WDGG&ñ'WFRÇ&&ñ÷ÜñFFV‚"¬&f«6R"ì∞¢–¢gVÊ7Fñˆ‚6∆˜6U6˜'D÷ˆF¬Çí∞¢6˜'D÷ˆFƒG&vvñÊt66˜VÁDñB“"#∞¢6˜'D÷ˆFƒ˜&FW$ñG2“µ”∞¢Fˆ“Á6˜'D÷ˆF¬Ê6∆74∆ó7BÊFBÇ&ÜñFFV‚"ì∞¢Fˆ“Á6˜'D÷ˆF¬Á6WDGG&ñ'WFRÇ&&ñ÷ÜñFFV‚"¬'G'VR"ì∞¢Fˆ“Á6˜'D÷ˆFƒ∆ó7BÊñÊÊW$ÖD‘¬“"#∞¢–¢7ñÊ2gVÊ7Fñˆ‚˜V‰Üó7F˜'î÷ˆF¬Çí∞¢vóB∆ˆDÜó7F˜'íÇì∞¢&VÊFW$Üó7F˜'î÷ˆFƒ∆ó7BÇì∞¢Fˆ“ÊÜó7F˜'î÷ˆF¬Ê6∆74∆ó7BÁ&V÷˜fRÇ&ÜñFFV‚"ì∞¢Fˆ“ÊÜó7F˜'î÷ˆF¬Á6WDGG&ñ'WFRÇ&&ñ÷ÜñFFV‚"¬&f«6R"ì∞¢–¢gVÊ7Fñˆ‚6∆˜6TÜó7F˜'î÷ˆF¬Çí∞¢Fˆ“ÊÜó7F˜'î÷ˆF¬Ê6∆74∆ó7BÊFBÇ&ÜñFFV‚"ì∞¢Fˆ“ÊÜó7F˜'î÷ˆF¬Á6WDGG&ñ'WFRÇ&&ñ÷ÜñFFV‚"¬'G'VR"ì∞¢Fˆ“ÊÜó7F˜'î÷ˆFƒ∆ó7BÊñÊÊW$ÖD‘¬“"#∞¢–¢gVÊ7Fñˆ‚&VÊFW$Üó7F˜'î÷ˆFƒ∆ó7BÇí∞¢Fˆ“ÊÜó7F˜'î÷ˆFƒ∆ó7BÊñÊÊW$ÖD‘¬“"#∞¢ñbÜÜó7F˜'îVÁG&ñW2Ê∆VÊwFÇ””“í∞¢6ˆÁ7BV◊Gí“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ'"ì∞¢V◊GíÊ6∆74Ê÷R“&V◊Gí#∞¢V◊GíÁFWáD6ˆÁFVÁB“%«SccÉ%«ScTS«SS3Ée«SS4c%«SÑ$#«STcSR#∞¢Fˆ“ÊÜó7F˜'î÷ˆFƒ∆ó7BÊVÊD6Üñ∆BÜV◊Gíì∞¢&WGW&„∞¢–¢f˜"Ü6ˆÁ7BVÁG'íˆbÜó7F˜'îVÁG&ñW2í∞¢6ˆÁ7BóFV““Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢óFV“Ê6∆74Ê÷R“&Üó7F˜'í÷÷ˆF¬÷óFV“#∞¢6ˆÁ7BFñ÷R“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢Fñ÷RÊ6∆74Ê÷R“&Üó7F˜'í÷÷ˆF¬÷óFV“◊Fñ÷R#∞¢Fñ÷RÁFWáD6ˆÁFVÁB“f˜&÷EFñ÷RÜVÁG'íÁFñ÷W7F◊◊2ì∞¢óFV“ÊVÊD6Üñ∆BáFñ÷Rì∞¢6ˆÁ7B7Fñˆ‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢7Fñˆ‚Ê6∆74Ê÷R“&Üó7F˜'í÷÷ˆF¬÷óFV“÷7Fñˆ‚#∞¢7Fñˆ‚ÁFWáD6ˆÁFVÁB“VÁG'íÊ7Fñˆ„∞¢óFV“ÊVÊD6Üñ∆BÜ7Fñˆ‚ì∞¢Fˆ“ÊÜó7F˜'î÷ˆFƒ∆ó7BÊVÊD6Üñ∆BÜóFV“ì∞¢–¢–¢gVÊ7Fñˆ‚&VÊFW%6˜'D÷ˆFƒ∆ó7BÇí∞¢Fˆ“Á6˜'D÷ˆFƒ∆ó7BÊñÊÊW$ÖD‘¬“"#∞¢6ˆÁ7B66˜VÁD'îñB“ÊWr÷Ä¢66˜VÁG5&rÊ÷ÜÊ˜&÷∆ó¶T66˜VÁE6ÜRíÊfñ«FW"ÇÜ66˜VÁBí”‚66˜VÁBÊó4FV∆WFVBíÊ÷ÇÜ66˜VÁBí”‚µ7G&ñÊrÜ66˜VÁBÊ66˜VÁDñB«¬""í¬66˜VÁE“ê¢ì∞¢6ˆÁ7BÊ˜&÷∆ó¶VD˜&FW"“6˜'D÷ˆFƒ˜&FW$ñG2Ê÷ÇÜ66˜VÁDñBí”‚7G&ñÊrÜ66˜VÁDñB«¬""ííÊfñ«FW"ÇÜ66˜VÁDñBí”‚66˜VÁD'îñBÊÜ2Ü66˜VÁDñBíì∞¢6˜'D÷ˆFƒ˜&FW$ñG2“Ê˜&÷∆ó¶VD˜&FW#∞¢ñbÜÊ˜&÷∆ó¶VD˜&FW"Ê∆VÊwFÇ””“í∞¢6ˆÁ7BV◊Gí“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ'"ì∞¢V◊GíÊ6∆74Ê÷R“&V◊Gí#∞¢V◊GíÁFWáD6ˆÁFVÁB“%«STcS5«SS#DE«SS#u«SÉÉcÖ«Sd4«Scsï«SS4Te«Sc3ì%«STSÑe«SÑC#e«SS4cr#∞¢Fˆ“Á6˜'D÷ˆFƒ∆ó7BÊVÊD6Üñ∆BÜV◊Gíì∞¢&WGW&„∞¢–¢f˜"Ü6ˆÁ7B66˜VÁDñBˆbÊ˜&÷∆ó¶VD˜&FW"í∞¢6ˆÁ7B66˜VÁB“66˜VÁD'îñBÊvWBÜ66˜VÁDñBì∞¢ñbÇ66˜VÁBí6ˆÁFñÁVS∞¢6ˆÁ7BóFV““Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢óFV“Ê6∆74Ê÷R“'6˜'B÷÷ˆF¬÷óFV“#∞¢óFV“ÊG&vv&∆R“G'VS∞¢óFV“ÊFF6WBÊ66˜VÁDñB“66˜VÁDñC∞¢6ˆÁ7B&˜r“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢&˜rÊ6∆74Ê÷R“'6˜'B÷÷ˆF¬÷óFV“◊&˜r#∞¢6ˆÁ7B∆&V¬“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ'7‚"ì∞¢∆&V¬Ê6∆74Ê÷R“'6˜'B÷÷ˆF¬÷óFV“÷∆&V¬#∞¢∆&V¬ÁFWáD6ˆÁFVÁB“f˜&÷E6˜'F&∆T66˜VÁD∆&V¬Ü66˜VÁBì∞¢&˜rÊVÊD6Üñ∆BÜ∆&V¬ì∞¢6ˆÁ7Bñ‰'F‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&'WGFˆ‚"ì∞¢ñ‰'F‚ÁGóR“&'WGFˆ‚#∞¢ñ‰'F‚Ê6∆74Ê÷R“'ñ‚÷'F‚6˜'B÷÷ˆF¬◊ñ‚÷'F‚#∞¢6ˆÁ7BñÊÊVB“ó5ñÊÊVD66˜VÁBÜ66˜VÁBì∞¢ñ‰'F‚ÁFWáD6ˆÁFVÁB“ñÊÊVBÚ%«SS4Ce«SdCÉÖ«StcdU«SìÉsb"¢%«StcdU«SìÉsb#∞¢ñ‰'F‚Ê6∆74∆ó7BÁFˆvv∆RÇ&ó2◊VÁñ‚"¬ñÊÊVBì∞¢ñ‰'F‚ÊFDWfVÁD∆ó7FVÊW"Ç&6∆ñ6≤"¬ÜWfVÁBí”‚∞¢WfVÁBÁ&WfVÁDFVfV«BÇì∞¢WfVÁBÁ7F˜&˜vFñˆ‚Çì∞¢fˆñBFˆvv∆Uñ‚Ü66˜VÁDñB¬≤g&ˆ’6˜'D÷ˆF√¢G'VR“ì∞¢“ì∞¢&˜rÊVÊD6Üñ∆Báñ‰'F‚ì∞¢óFV“ÊVÊD6Üñ∆Bá&˜rì∞¢óFV“ÊFDWfVÁD∆ó7FVÊW"Ç&G&w7F'B"¬ÜWfVÁBí”‚∞¢6˜'D÷ˆFƒG&vvñÊt66˜VÁDñB“66˜VÁDñC∞¢ñbÜWfVÁBÊFFG&Á6fW"í∞¢WfVÁBÊFFG&Á6fW"Á6WDFFÇ'FWáB˜∆ñ‚"¬66˜VÁDñBì∞¢WfVÁBÊFFG&Á6fW"ÊVffV7D∆∆˜vVB“&÷˜fR#∞¢–¢“ì∞¢óFV“ÊFDWfVÁD∆ó7FVÊW"Ç&G&v˜fW""¬ÜWfVÁBí”‚∞¢ñbÇ6˜'D÷ˆFƒG&vvñÊt66˜VÁDñB«¬6˜'D÷ˆFƒG&vvñÊt66˜VÁDñB””“66˜VÁDñBí&WGW&„∞¢ñbÇó56÷UñÊÊVDw&˜Wf˜%6˜'BÜ66˜VÁD'îñB¬6˜'D÷ˆFƒG&vvñÊt66˜VÁDñB¬66˜VÁDñBíí∞¢&WGW&„∞¢–¢WfVÁBÁ&WfVÁDFVfV«BÇì∞¢ñbÜWfVÁBÊFFG&Á6fW"í∞¢WfVÁBÊFFG&Á6fW"ÊG&˜VffV7B“&÷˜fR#∞¢–¢óFV“Ê6∆74∆ó7BÊFBÇ'6˜'B÷÷ˆF¬÷óFV“◊F&vWB"ì∞¢“ì∞¢óFV“ÊFDWfVÁD∆ó7FVÊW"Ç&G&v∆VfR"¬Çí”‚∞¢óFV“Ê6∆74∆ó7BÁ&V÷˜fRÇ'6˜'B÷÷ˆF¬÷óFV“◊F&vWB"ì∞¢“ì∞¢óFV“ÊFDWfVÁD∆ó7FVÊW"Ç&G&˜"¬ÜWfVÁBí”‚∞¢WfVÁBÁ&WfVÁDFVfV«BÇì∞¢óFV“Ê6∆74∆ó7BÁ&V÷˜fRÇ'6˜'B÷÷ˆF¬÷óFV“◊F&vWB"ì∞¢6ˆÁ7B6˜W&6TñB“6˜'D÷ˆFƒG&vvñÊt66˜VÁDñC∞¢6˜'D÷ˆFƒG&vvñÊt66˜VÁDñB“"#∞¢ñbÇ6˜W&6TñB«¬6˜W&6TñB””“66˜VÁDñBí&WGW&„∞¢ñbÇó56÷UñÊÊVDw&˜Wf˜%6˜'BÜ66˜VÁD'îñB¬6˜W&6TñB¬66˜VÁDñBíí∞¢6WE7FGW2Ç%«SDT3U«ScS$e«Sc3«StcdU«SìÉse«SìÉsï«SDSD%«SìTcE«S3«SìsTU«StcdU«SìÉse«SìÉsï«SDSD%«SìTcE«Sc3ì%«STSÑb"ì∞¢&WGW&„∞¢–¢6ˆÁ7Bg&ˆ““6˜'D÷ˆFƒ˜&FW$ñG2ÊñÊFWÑˆbá6˜W&6TñBì∞¢6ˆÁ7BFÚ“6˜'D÷ˆFƒ˜&FW$ñG2ÊñÊFWÑˆbÜ66˜VÁDñBì∞¢ñbÜg&ˆ“¬«¬FÚ¬í&WGW&„∞¢6˜'D÷ˆFƒ˜&FW$ñG2Á7∆ñ6RÜg&ˆ“¬ì∞¢6˜'D÷ˆFƒ˜&FW$ñG2Á7∆ñ6RáFÚ¬¬6˜W&6TñBì∞¢&VÊFW%6˜'D÷ˆFƒ∆ó7BÇì∞¢fˆñBW'6ó7E6˜'D˜&FW$g&ˆ‘÷ˆF¬á6˜'D÷ˆFƒ˜&FW$ñG2ì∞¢“ì∞¢óFV“ÊFDWfVÁD∆ó7FVÊW"Ç&G&vVÊB"¬Çí”‚∞¢6˜'D÷ˆFƒG&vvñÊt66˜VÁDñB“"#∞¢6ˆÁ7BÜñvÜ∆ñváFVB“Fˆ“Á6˜'D÷ˆFƒ∆ó7BÁVW'ï6V∆V7F˜$∆¬Ç"Á6˜'B÷÷ˆF¬÷óFV“◊F&vWB"ì∞¢ÜñvÜ∆ñváFVBÊf˜$V6ÇÇÜÊˆFRí”‚ÊˆFRÊ6∆74∆ó7BÁ&V÷˜fRÇ'6˜'B÷÷ˆF¬÷óFV“◊F&vWB"íì∞¢“ì∞¢Fˆ“Á6˜'D÷ˆFƒ∆ó7BÊVÊD6Üñ∆BÜóFV“ì∞¢–¢–¢gVÊ7Fñˆ‚ó56÷UñÊÊVDw&˜Wf˜%6˜'BÜ66˜VÁD'îñB¬6˜W&6TñB¬F&vWDñBí∞¢6ˆÁ7B6˜W&6R“66˜VÁD'îñBÊvWBÖ7G&ñÊrá6˜W&6TñB«¬""íì∞¢6ˆÁ7BF&vWB“66˜VÁD'îñBÊvWBÖ7G&ñÊráF&vWDñB«¬""íì∞¢ñbÇ6˜W&6R«¬F&vWBí&WGW&‚f«6S∞¢&WGW&‚ó5ñÊÊVDñ‰7W'&VÁE66˜Rá6˜W&6Rí””“ó5ñÊÊVDñ‰7W'&VÁE66˜RáF&vWBì∞¢–¢gVÊ7Fñˆ‚f˜&÷E6˜'F&∆T66˜VÁD∆&V¬Ü66˜VÁBí∞¢6ˆÁ7B6óFR“WF∆E«W4ˆÊRÜ66˜VÁCÚÊ6ÊˆÊñ6≈6óFR«¬66˜VÁCÚÁ6óFW3ÚÂ≥“«¬""í«¬"“#∞¢6ˆÁ7B7&VFVEFWáB“f˜&÷Eïî‘‘DDÑÜ÷◊72ÑÁV÷&W"Ü66˜VÁCÚÊ7&VFVDD◊2«¬íì∞¢6ˆÁ7BW6W&Ê÷R“7G&ñÊrÜ66˜VÁCÚÁW6W&Ê÷R«¬""ì∞¢&WGW&‚G∑6óFW““G∂7&VFVEFWáG““G∑W6W&Ê÷W÷∞¢–¢7ñÊ2gVÊ7Fñˆ‚W'6ó7E6˜'D˜&FW$g&ˆ‘÷ˆF¬Ü˜&FW&VDñG2í∞¢6ˆÁ7BÊ˜&÷∆ó¶VD˜&FW&VDñG2“≤‚‚ÊÊWr6WBÇÑ'&íÊó4'&íÜ˜&FW&VDñG2íÚ˜&FW&VDñG2¢µ“íÊ÷Çáf«VRí”‚7G&ñÊráf«VR«¬""ííÊfñ«FW"Ñ&ˆˆ∆V‚íï”∞¢ñbÜÊ˜&÷∆ó¶VD˜&FW&VDñG2Ê∆VÊwFÇ””“í&WGW&„∞¢6ˆÁ7BÊWáB“6∆ˆÊT66˜VÁG2Ü66˜VÁG5&ríÊ÷ÜÊ˜&÷∆ó¶T66˜VÁE6ÜRì∞¢6ˆÁ7B66˜T∂Wí“vWD7FófUñÂ66˜T∂WíÇì∞¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7BFWfñ6TÊ÷R“vóBvWDFWfñ6TÊ÷RÇì∞¢∆WB6ÜÊvVB“f«6S∞¢6ˆÁ7BñÊÊVE7V'6WB“µ”∞¢6ˆÁ7B&VwV∆%7V'6WB“µ”∞¢f˜"Ü6ˆÁ7B66˜VÁDñBˆbÊ˜&÷∆ó¶VD˜&FW&VDñG2í∞¢6ˆÁ7BF&vWB“ÊWáBÊfñÊBÇÜóFV“í”‚7G&ñÊrÜóFV“Ê66˜VÁDñB«¬""í””“66˜VÁDñBì∞¢ñbÇF&vWB«¬F&vWBÊó4FV∆WFVBí6ˆÁFñÁVS∞¢ñbÜvWEñÊÊVEfñWu7FFRáF&vWB¬66˜T∂WííÁñÊÊVBí∞¢ñÊÊVE7V'6WBÁW6ÇÜ66˜VÁDñBì∞¢“V«6R∞¢&VwV∆%7V'6WBÁW6ÇÜ66˜VÁDñBì∞¢–¢–¢6ˆÁ7Bfó6ñ&∆TñG2“ÊWr6WBÄ¢7W'&VÁEfó6ñ&∆T66˜VÁG2ÜÊWáBíÊfñ«FW"ÇÜóFV“í”‚óFV“Êó4FV∆WFVBíÊ÷ÇÜóFV“í”‚7G&ñÊrÜóFV“Ê66˜VÁDñB«¬""íê¢ì∞¢6ˆÁ7B∆≈ñÊÊVDñG2“6˜'D66˜VÁG4f˜%66˜RÄ¢ÊWáBÊfñ«FW"ÇÜóFV“í”‚óFV“Êó4FV∆WFVBbbfó6ñ&∆TñG2ÊÜ2Ö7G&ñÊrÜóFV“Ê66˜VÁDñB«¬""ííbbvWEñÊÊVEfñWu7FFRÜóFV“¬66˜T∂WííÁñÊÊVBí¿¢66˜T∂Wê¢íÊ÷ÇÜóFV“í”‚7G&ñÊrÜóFV“Ê66˜VÁDñB«¬""íì∞¢6ˆÁ7B∆≈&VwV∆$ñG2“6˜'D66˜VÁG4f˜%66˜RÄ¢ÊWáBÊfñ«FW"ÇÜóFV“í”‚óFV“Êó4FV∆WFVBbbfó6ñ&∆TñG2ÊÜ2Ö7G&ñÊrÜóFV“Ê66˜VÁDñB«¬""ííbbvWEñÊÊVEfñWu7FFRÜóFV“¬66˜T∂WííÁñÊÊVBí¿¢66˜T∂Wê¢íÊ÷ÇÜóFV“í”‚7G&ñÊrÜóFV“Ê66˜VÁDñB«¬""íì∞¢6ˆÁ7B÷W&vVEñÊÊVDñG2“'Vñ∆D÷W&vVD˜&FW$ñG2Ü∆≈ñÊÊVDñG2¬ñÊÊVE7V'6WBì∞¢6ˆÁ7B÷W&vVE&VwV∆$ñG2“'Vñ∆D÷W&vVD˜&FW$ñG2Ü∆≈&VwV∆$ñG2¬&VwV∆%7V'6WBì∞¢f˜"Ü∆WBí“≤í¬÷W&vVEñÊÊVDñG2Ê∆VÊwFÉ≤í≥“í∞¢6ˆÁ7BñB“÷W&vVEñÊÊVDñG5∂ï”∞¢6ˆÁ7BóFV““ÊWáBÊfñÊBÇÜVÁG'íí”‚7G&ñÊrÜVÁG'íÊ66˜VÁDñB«¬""í””“ñBì∞¢ñbÇóFV“í6ˆÁFñÁVS∞¢óFV“ÁñÊÊVEfñWw2“Ê˜&÷∆ó¶UñÊÊVEfñWw4÷ÜóFV“ÁñÊÊVEfñWw2¬óFV“ì∞¢6ˆÁ7B7W'&VÁE7FFR“vWEñÊÊVEfñWu7FFRÜóFV“¬66˜T∂Wíì∞¢6ˆÁ7B7W'&VÁD˜&FW"“7W'&VÁE7FFRÁñÊÊVE6˜'D˜&FW"”“ÁV∆¬ÚÁV∆¬¢ÁV÷&W"Ü7W'&VÁE7FFRÁñÊÊVE6˜'D˜&FW"ì∞¢ñbÜ7W'&VÁD˜&FW"””“íí6ˆÁFñÁVS∞¢óFV“ÁñÊÊVEfñWw5∑66˜T∂Wï““∞¢‚‚Ê7W'&VÁE7FFR¿¢ñÊÊVC¢G'VR¿¢ñÊÊVE6˜'D˜&FW#¢ê¢”∞¢óFV“ÁWFFVDD◊2“Ê˜s∞¢óFV“Ê∆7D˜W&FVDFWfñ6TÊ÷R“FWfñ6TÊ÷S∞¢6ÜÊvVB“G'VS∞¢–¢f˜"Ü∆WBí“≤í¬÷W&vVE&VwV∆$ñG2Ê∆VÊwFÉ≤í≥“í∞¢6ˆÁ7BñB“÷W&vVE&VwV∆$ñG5∂ï”∞¢6ˆÁ7BóFV““ÊWáBÊfñÊBÇÜVÁG'íí”‚7G&ñÊrÜVÁG'íÊ66˜VÁDñB«¬""í””“ñBì∞¢ñbÇóFV“í6ˆÁFñÁVS∞¢óFV“ÁñÊÊVEfñWw2“Ê˜&÷∆ó¶UñÊÊVEfñWw4÷ÜóFV“ÁñÊÊVEfñWw2¬óFV“ì∞¢6ˆÁ7B7W'&VÁE7FFR“vWEñÊÊVEfñWu7FFRÜóFV“¬66˜T∂Wíì∞¢6ˆÁ7B7W'&VÁD˜&FW"“7W'&VÁE7FFRÁ&VwV∆%6˜'D˜&FW"”“ÁV∆¬ÚÁV∆¬¢ÁV÷&W"Ü7W'&VÁE7FFRÁ&VwV∆%6˜'D˜&FW"ì∞¢ñbÜ7W'&VÁD˜&FW"””“íí6ˆÁFñÁVS∞¢óFV“ÁñÊÊVEfñWw5∑66˜T∂Wï““∞¢‚‚Ê7W'&VÁE7FFR¿¢&VwV∆%6˜'D˜&FW#¢ê¢”∞¢óFV“ÁWFFVDD◊2“Ê˜s∞¢óFV“Ê∆7D˜W&FVDFWfñ6TÊ÷R“FWfñ6TÊ÷S∞¢6ÜÊvVB“G'VS∞¢–¢ñbÇ6ÜÊvVBí&WGW&„∞¢66˜VÁG5&r“6∆ˆÊT66˜VÁG2ÜÊWáBì∞¢vóB6WD66˜VÁG2ÜÊWáBì∞¢&VÊFW%6ñFV&"Ü66˜VÁG5&rì∞¢&VÊFW$7W'&VÁEfñWrÜ66˜VÁG5&rì∞¢–¢gVÊ7Fñˆ‚'Vñ∆D÷W&vVD˜&FW$ñG2Ü∆ƒñG2¬7V'6WDñG2í∞¢6ˆÁ7BgV∆ƒ˜&FW"“Ñ'&íÊó4'&íÜ∆ƒñG2íÚ∆ƒñG2¢µ“íÊ÷Çáf«VRí”‚7G&ñÊráf«VR«¬""ííÊfñ«FW"Ñ&ˆˆ∆V‚ì∞¢6ˆÁ7BgV∆≈6WB“ÊWr6WBÜgV∆ƒ˜&FW"ì∞¢6ˆÁ7B&WVW7FVE7V'6WB“Ñ'&íÊó4'&íá7V'6WDñG2íÚ7V'6WDñG2¢µ“íÊ÷Çáf«VRí”‚7G&ñÊráf«VR«¬""ííÊfñ«FW"Çáf«VR¬ñÊFWÇ¬f«VW2í”‚&ˆˆ∆V‚áf«VRíbbf«VW2ÊñÊFWÑˆbáf«VRí””“ñÊFWÇíÊfñ«FW"Çáf«VRí”‚gV∆≈6WBÊÜ2áf«VRíì∞¢ñbá&WVW7FVE7V'6WBÊ∆VÊwFÇ””“í∞¢&WGW&‚gV∆ƒ˜&FW#∞¢–¢6ˆÁ7B7V'6WE6WB“ÊWr6WBá&WVW7FVE7V'6WBì∞¢6ˆÁ7B÷W&vVB“µ”∞¢∆WB7W'6˜"“∞¢f˜"Ü6ˆÁ7BñBˆbgV∆ƒ˜&FW"í∞¢ñbá7V'6WE6WBÊÜ2ÜñBíí∞¢÷W&vVBÁW6Çá&WVW7FVE7V'6WE∂7W'6˜%“ì∞¢7W'6˜"≥“∞¢“V«6R∞¢÷W&vVBÁW6ÇÜñBì∞¢–¢–¢&WGW&‚÷W&vVC∞¢–¢gVÊ7Fñˆ‚&VÊFW$7W'&VÁEfñWrÜñÁWD66˜VÁG2í∞¢∆WB66˜VÁG2“6˜'D66˜VÁG4f˜%66˜RÜ7W'&VÁEfó6ñ&∆T66˜VÁG2ÜñÁWD66˜VÁG2íì∞¢Fˆ“Ê∆ƒ66˜VÁG4∆ó7BÊñÊÊW$ÖD‘¬“"#∞¢ñbÜ66˜VÁG2Ê∆VÊwFÇ””“í∞¢6ˆÁ7BV◊Gí“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ'"ì∞¢V◊GíÊ6∆74Ê÷R“&V◊Gí#∞¢V◊GíÁFWáD6ˆÁFVÁB“%«SccÉ%«ScTS«SÑC#e«SS4cr#∞¢Fˆ“Ê∆ƒ66˜VÁG4∆ó7BÊVÊD6Üñ∆BÜV◊Gíì∞¢&WGW&„∞¢–¢6ˆÁ7Bó5&V7ñ6∆R“7FófT66˜VÁEfñWr””“'&V7ñ6∆R#∞¢f˜"Ü6ˆÁ7B66˜VÁBˆb66˜VÁG2í∞¢6ˆÁ7B6&B“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&'Fñ6∆R"ì∞¢6&BÊ6∆74Ê÷R“&66˜VÁB#∞¢ñbÇó5&V7ñ6∆Rbbó5ñÊÊVDñ‰7W'&VÁE66˜RÜ66˜VÁBíí∞¢6&BÊ6∆74∆ó7BÊFBÇ&66˜VÁB◊ñÊÊVB"ì∞¢–¢6&BÊFDWfVÁD∆ó7FVÊW"Ç&6ˆÁFWáF÷VÁR"¬ÜWfVÁBí”‚∞¢WfVÁBÁ&WfVÁDFVfV«BÇì∞¢WfVÁBÁ7F˜&˜vFñˆ‚Çì∞¢˜V‰66˜VÁD6ˆÁFWáD÷VÁRá∞¢66˜VÁB¿¢É¢WfVÁBÊ6∆ñVÁEÇ¿¢ì¢WfVÁBÊ6∆ñVÁEê¢“ì∞¢“ì∞¢6ˆÁ7BFóF∆U&˜r“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢FóF∆U&˜rÊ6∆74Ê÷R“&66˜VÁB◊FóF∆R◊&˜r#∞¢6ˆÁ7BFóF∆R“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ'7G&ˆÊr"ì∞¢FóF∆RÁFWáD6ˆÁFVÁB“66˜VÁBÊ66˜VÁDñC∞¢FóF∆U&˜rÊVÊD6Üñ∆BáFóF∆Rì∞¢6&BÊVÊD6Üñ∆BáFóF∆U&˜rì∞¢6ˆÁ7B÷WF“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢÷WFÊ6∆74Ê÷R“&÷WF#∞¢6ˆÁ7B6óFW4◊V«Fñ∆ñÊTáF÷¬“FÙ◊V«Fñ∆ñÊTáF÷¬Ü66˜VÁBÁ6óFW2Ê¶ˆñ‚Ç%∆‚"íì∞¢÷WFÊñÊÊW$ÖD‘¬“«SsS#Ö«Sc#3u«SSCC¢G∂W66TáF÷¬Ü66˜VÁBÁW6W&Ê÷R«¬"“"ó”∆'"ÛÂ«StCï«Ss#ï«SS#$%«SSCC£∆Fób6∆73“&÷WF÷◊V«Fñ∆ñÊR#‚G∑6óFW4◊V«Fñ∆ñÊTáF÷«”¬ˆFócÂ«Sì«SÉÉD5«ST$3e«SìDS¢G∂66˜VÁBÁ76∂Wî7&VFVÁFñƒñG2Ê∆VÊwFá“«SDS$∆'"ÛÊ∞¢6&BÊVÊD6Üñ∆BÜ÷WFì∞¢6ˆÁ7B7FñˆÁ2“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢7FñˆÁ2Ê6∆74Ê÷R“&66˜VÁB÷7FñˆÁ2#∞¢6ˆÁ7BF˜G6˜î'F‚“Ü5F˜G6V7&WBÜ66˜VÁBÁF˜G6V7&WBíÚ7&VFUF˜G6˜î'WGFˆ‚á∞¢66˜VÁDñC¢66˜VÁBÊ66˜VÁDñB¿¢W6W&Ê÷S¢66˜VÁBÁW6W&Ê÷R¿¢F˜G6V7&WC¢66˜VÁBÁF˜G6V7&W@¢“í¢ÁV∆√∞¢ñbÇó5&V7ñ6∆Rí∞¢6ˆÁ7BVFóD'F‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&'WGFˆ‚"ì∞¢VFóD'F‚ÁFWáD6ˆÁFVÁB“VFóFñÊt66˜VÁDñB””“66˜VÁBÊ66˜VÁDñBÚ%«ScS3e«SÑCsu«Stce«SÑcì"¢%«Stce«SÑcì#∞¢VFóD'F‚ÊFDWfVÁD∆ó7FVÊW"Ç&6∆ñ6≤"¬Çí”‚∞¢VFóFñÊt66˜VÁDñB“VFóFñÊt66˜VÁDñB””“66˜VÁBÊ66˜VÁDñBÚÁV∆¬¢66˜VÁBÊ66˜VÁDñC∞¢&VÊFW$7W'&VÁEfñWrÜ66˜VÁG5&rì∞¢“ì∞¢7FñˆÁ2ÊVÊD6Üñ∆BÜVFóD'F‚ì∞¢6ˆÁ7BFV∆WFT'F‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&'WGFˆ‚"ì∞¢FV∆WFT'F‚Ê6∆74Ê÷R“&'WGFˆ‚÷FÊvW"#∞¢FV∆WFT'F‚ÁFWáD6ˆÁFVÁB“%«SS##«SìccB#∞¢FV∆WFT'F‚ÊFDWfVÁD∆ó7FVÊW"Ç&6∆ñ6≤"¬7ñÊ2Çí”‚∞¢vóBFV∆WFT66˜VÁDg&ˆ‘∆¬Ü66˜VÁBÊ66˜VÁDñBì∞¢“ì∞¢7FñˆÁ2ÊVÊD6Üñ∆BÜFV∆WFT'F‚ì∞¢ñbáF˜G6˜î'F‚í7FñˆÁ2ÊVÊD6Üñ∆BáF˜G6˜î'F‚ì∞¢6&BÊVÊD6Üñ∆BÜ7FñˆÁ2ì∞¢ñbÜVFóFñÊt66˜VÁDñB””“66˜VÁBÊ66˜VÁDñBí∞¢6&BÊVÊD6Üñ∆BÜ'Vñ∆D66˜VÁDVFóF˜"Ü66˜VÁBíì∞¢–¢“V«6R∞¢6ˆÁ7B&W7F˜&T'F‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&'WGFˆ‚"ì∞¢&W7F˜&T'F‚ÁFWáD6ˆÁFVÁB“%«Scc%«SSìB#∞¢&W7F˜&T'F‚ÊFDWfVÁD∆ó7FVÊW"Ç&6∆ñ6≤"¬7ñÊ2Çí”‚∞¢vóB&W7F˜&TFV∆WFVD66˜VÁBÜ66˜VÁBÊ66˜VÁDñBì∞¢“ì∞¢7FñˆÁ2ÊVÊD6Üñ∆Bá&W7F˜&T'F‚ì∞¢6ˆÁ7BW&÷ÊVÁDFV∆WFT'F‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&'WGFˆ‚"ì∞¢W&÷ÊVÁDFV∆WFT'F‚Ê6∆74Ê÷R“&'WGFˆ‚÷FÊvW"#∞¢W&÷ÊVÁDFV∆WFT'F‚ÁFWáD6ˆÁFVÁB“%«Sd33Ö«SDSCU«SS##«SìccB#∞¢W&÷ÊVÁDFV∆WFT'F‚ÊFDWfVÁD∆ó7FVÊW"Ç&6∆ñ6≤"¬7ñÊ2Çí”‚∞¢vóBW&÷ÊVÁF«îFV∆WFT66˜VÁBÜ66˜VÁBÊ66˜VÁDñBì∞¢“ì∞¢7FñˆÁ2ÊVÊD6Üñ∆BáW&÷ÊVÁDFV∆WFT'F‚ì∞¢ñbáF˜G6˜î'F‚í7FñˆÁ2ÊVÊD6Üñ∆BáF˜G6˜î'F‚ì∞¢6&BÊVÊD6Üñ∆BÜ7FñˆÁ2ì∞¢–¢Fˆ“Ê∆ƒ66˜VÁG4∆ó7BÊVÊD6Üñ∆BÜ6&Bì∞¢–¢fˆñB&Vg&W6Öfó6ñ&∆UF˜G'WGFˆÁ2Çì∞¢–¢gVÊ7Fñˆ‚6WD66˜VÁEfñWrÜÊWáEfñWrí∞¢6∆˜6T6ˆÁFWáD÷VÁRÇì∞¢7FófT66˜VÁEfñWr“7G&ñÊrÜÊWáEfñWr«¬&∆¬"ì∞¢6ˆÁ7Bó5&V7ñ6∆R“7FófT66˜VÁEfñWr””“'&V7ñ6∆R#∞¢Fˆ“Ê66˜VÁG5F$∆¬Ê6∆74∆ó7BÁFˆvv∆RÇ&ó2÷7FófR"¬7FófT66˜VÁEfñWr””“&∆¬"ì∞¢Fˆ“Ê66˜VÁG5F%76∂WíÊ6∆74∆ó7BÁFˆvv∆RÇ&ó2÷7FófR"¬7FófT66˜VÁEfñWr””“'76∂Wó2"ì∞¢Fˆ“Ê66˜VÁG5F%F˜GÊ6∆74∆ó7BÁFˆvv∆RÇ&ó2÷7FófR"¬7FófT66˜VÁEfñWr””“'F˜G"ì∞¢Fˆ“Ê66˜VÁG5F%&V7ñ6∆RÊ6∆74∆ó7BÁFˆvv∆RÇ&ó2÷7FófR"¬ó5&V7ñ6∆Rì∞¢6ˆÁ7Bfˆ∆FW$'WGFˆÁ2“Fˆ“Ê66˜VÁG4fˆ∆FW$∆ó7BÁVW'ï6V∆V7F˜$∆¬Ç"Ê66˜VÁB◊fñWr◊F%∂FF◊fñWu“"ì∞¢fˆ∆FW$'WGFˆÁ2Êf˜$V6ÇÇÜ'WGFˆ‚í”‚∞¢6ˆÁ7B÷F6ÜVB“'WGFˆ‚ÊvWDGG&ñ'WFRÇ&FF◊fñWr"í””“7FófT66˜VÁEfñWs∞¢'WGFˆ‚Ê6∆74∆ó7BÁFˆvv∆RÇ&ó2÷7FófR"¬÷F6ÜVBì∞¢“ì∞¢Fˆ“Ê6∆V$7FófT66˜VÁG4'F‚Ê6∆74∆ó7BÁFˆvv∆RÇ&ÜñFFV‚"¬ó5&V7ñ6∆Rì∞¢Fˆ“Ê6∆V%&V7ñ6∆T&ñ‰'F‚Ê6∆74∆ó7BÁFˆvv∆RÇ&ÜñFFV‚"¬ó5&V7ñ6∆Rì∞¢Fˆ“Ê˜VÂ6˜'D÷ˆFƒ'F‚Ê6∆74∆ó7BÁFˆvv∆RÇ&ÜñFFV‚"¬ó5&V7ñ6∆Rì∞¢ñbÜó5&V7ñ6∆Rí∞¢6∆˜6T∆ƒ66˜VÁG56V&6ÑfñV∆G5ÊV¬Çì∞¢6∆˜6U6˜'D÷ˆF¬Çì∞¢–¢&VÊFW$7W'&VÁEfñWrÜ66˜VÁG5&rì∞¢–¢gVÊ7Fñˆ‚6∆˜6T6ˆÁFWáD÷VÁTñdÊVVFVBÜWfVÁBí∞¢ñbÇ6ˆÁFWáD÷VÁTV∆V÷VÁBí&WGW&„∞¢ñbÜ6ˆÁFWáD÷VÁTV∆V÷VÁBÊ6ˆÁFñÁ2ÜWfVÁBÁF&vWBíí&WGW&„∞¢6∆˜6T6ˆÁFWáD÷VÁRÇì∞¢–¢gVÊ7Fñˆ‚6∆˜6T6ˆÁFWáD÷VÁRÇí∞¢ñbÜ6ˆÁFWáD÷VÁTV∆V÷VÁBí∞¢6ˆÁFWáD÷VÁTV∆V÷VÁBÁ&V÷˜fRÇì∞¢6ˆÁFWáD÷VÁTV∆V÷VÁB“ÁV∆√∞¢–¢ñbÜ6ˆÁFWáD÷VÁT˜WG6ñFTÜÊF∆W"í∞¢vñÊF˜rÁ&V÷˜fTWfVÁD∆ó7FVÊW"Ç&÷˜W6VF˜v‚"¬6ˆÁFWáD÷VÁT˜WG6ñFTÜÊF∆W"¬G'VRì∞¢6ˆÁFWáD÷VÁT˜WG6ñFTÜÊF∆W"“ÁV∆√∞¢–¢ñbÜ6ˆÁFWáD÷VÁTW66TÜÊF∆W"í∞¢vñÊF˜rÁ&V÷˜fTWfVÁD∆ó7FVÊW"Ç&∂WñF˜v‚"¬6ˆÁFWáD÷VÁTW66TÜÊF∆W"¬G'VRì∞¢6ˆÁFWáD÷VÁTW66TÜÊF∆W"“ÁV∆√∞¢–¢–¢gVÊ7Fñˆ‚˜V‰6ˆÁFWáD÷VÁRá≤Ç¬í¬óFV◊2“í∞¢6∆˜6T6ˆÁFWáD÷VÁRÇì∞¢6ˆÁ7B÷VÁR“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢÷VÁRÊ6∆74Ê÷R“&6ˆÁFWáB÷÷VÁR#∞¢f˜"Ü6ˆÁ7BóFV“ˆbóFV◊2í∞¢ñbÜóFV“ÁGóR””“'6W&F˜""í∞¢6ˆÁ7B6W&F˜"“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢6W&F˜"Ê6∆74Ê÷R“&6ˆÁFWáB÷÷VÁR◊6W&F˜"#∞¢÷VÁRÊVÊD6Üñ∆Bá6W&F˜"ì∞¢6ˆÁFñÁVS∞¢–¢6ˆÁ7B'WGFˆ‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&'WGFˆ‚"ì∞¢'WGFˆ‚ÁGóR“&'WGFˆ‚#∞¢'WGFˆ‚Ê6∆74Ê÷R“&6ˆÁFWáB÷÷VÁR÷óFV“#∞¢ñbÜóFV“ÊFÊvW"í∞¢'WGFˆ‚Ê6∆74∆ó7BÊFBÇ&6ˆÁFWáB÷FÊvW""ì∞¢–¢'WGFˆ‚ÁFWáD6ˆÁFVÁB“óFV“Ê∆&V√∞¢'WGFˆ‚ÊFó6&∆VB“&ˆˆ∆V‚ÜóFV“ÊFó6&∆VBì∞¢'WGFˆ‚ÊFDWfVÁD∆ó7FVÊW"Ç&6∆ñ6≤"¬7ñÊ2ÜWfVÁBí”‚∞¢WfVÁBÁ7F˜&˜vFñˆ‚Çì∞¢ñbÜ'WGFˆ‚ÊFó6&∆VBí&WGW&„∞¢6∆˜6T6ˆÁFWáD÷VÁRÇì∞¢vóBóFV“ÊˆÂ6V∆V7CÚ‚Çì∞¢“ì∞¢÷VÁRÊVÊD6Üñ∆BÜ'WGFˆ‚ì∞¢–¢Fˆ7V÷VÁBÊ&ˆGíÊVÊD6Üñ∆BÜ÷VÁRì∞¢6ˆÁFWáD÷VÁTV∆V÷VÁB“÷VÁS∞¢6ˆÁ7BfñWw˜'EvñGFÇ“vñÊF˜rÊñÊÊW%vñGFÇ«¬Fˆ7V÷VÁBÊFˆ7V÷VÁDV∆V÷VÁBÊ6∆ñVÁEvñGFÉ∞¢6ˆÁ7BfñWw˜'DÜVñváB“vñÊF˜rÊñÊÊW$ÜVñváB«¬Fˆ7V÷VÁBÊFˆ7V÷VÁDV∆V÷VÁBÊ6∆ñVÁDÜVñváC∞¢6ˆÁ7B&V7B“÷VÁRÊvWD&˜VÊFñÊt6∆ñVÁE&V7BÇì∞¢6ˆÁ7B÷Ñ∆VgB“÷FÇÊ÷ÇÉÇ¬fñWw˜'EvñGFÇ“&V7BÁvñGFÇ“Çì∞¢6ˆÁ7B÷ÖF˜“÷FÇÊ÷ÇÉÇ¬fñWw˜'DÜVñváB“&V7BÊÜVñváB“Çì∞¢÷VÁRÁ7Gñ∆RÊ∆VgB“G¥÷FÇÊ÷ñ‚Ñ÷FÇÊ÷ÇÉÇ¬Çí¬÷Ñ∆VgBó◊Ü∞¢÷VÁRÁ7Gñ∆RÁF˜“G¥÷FÇÊ÷ñ‚Ñ÷FÇÊ÷ÇÉÇ¬íí¬÷ÖF˜ó◊Ü∞¢6ˆÁFWáD÷VÁT˜WG6ñFTÜÊF∆W"“ÜWfVÁBí”‚∞¢ñbÇ÷VÁRÊ6ˆÁFñÁ2ÜWfVÁBÁF&vWBíí∞¢6∆˜6T6ˆÁFWáD÷VÁRÇì∞¢–¢”∞¢6ˆÁFWáD÷VÁTW66TÜÊF∆W"“ÜWfVÁBí”‚∞¢ñbÜWfVÁBÊ∂Wí””“$W66R"í∞¢6∆˜6T6ˆÁFWáD÷VÁRÇì∞¢–¢”∞¢vñÊF˜rÊFDWfVÁD∆ó7FVÊW"Ç&÷˜W6VF˜v‚"¬6ˆÁFWáD÷VÁT˜WG6ñFTÜÊF∆W"¬G'VRì∞¢vñÊF˜rÊFDWfVÁD∆ó7FVÊW"Ç&∂WñF˜v‚"¬6ˆÁFWáD÷VÁTW66TÜÊF∆W"¬G'VRì∞¢–¢gVÊ7Fñˆ‚˜V‰66˜VÁD6ˆÁFWáD÷VÁRá≤66˜VÁB¬Ç¬í“í∞¢ñbÇ66˜VÁBí&WGW&„∞¢ñbÜ66˜VÁBÊó4FV∆WFVBí∞¢˜V‰6ˆÁFWáD÷VÁRá∞¢Ç¿¢í¿¢óFV◊3¢∞¢∞¢∆&V√¢%«Scc%«SSìE«SÑC#e«SS4cr"¿¢ˆÂ6V∆V7C¢7ñÊ2Çí”‚&W7F˜&TFV∆WFVD66˜VÁBÜ66˜VÁBÊ66˜VÁDñBê¢“¿¢∞¢∆&V√¢%«Sd33Ö«SDSCU«SS##«SìccB"¿¢FÊvW#¢G'VR¿¢ˆÂ6V∆V7C¢7ñÊ2Çí”‚W&÷ÊVÁF«îFV∆WFT66˜VÁBÜ66˜VÁBÊ66˜VÁDñBê¢–¢–¢“ì∞¢&WGW&„∞¢–¢˜V‰6ˆÁFWáD÷VÁRá∞¢Ç¿¢í¿¢óFV◊3¢∞¢∞¢∆&V√¢ó5ñÊÊVDñ‰7W'&VÁE66˜RÜ66˜VÁBíÚ%«SS4Ce«SdCÉÖ«StcdU«SìÉsb"¢%«StcdU«SìÉsb"¿¢ˆÂ6V∆V7C¢7ñÊ2Çí”‚Fˆvv∆Uñ‚Ü66˜VÁBÊ66˜VÁDñBê¢“¿¢≤GóS¢'6W&F˜""“¿¢∞¢∆&V√¢%«Stce«SÑcì"¿¢ˆÂ6V∆V7C¢7ñÊ2Çí”‚∞¢VFóFñÊt66˜VÁDñB“VFóFñÊt66˜VÁDñB””“66˜VÁBÊ66˜VÁDñBÚÁV∆¬¢66˜VÁBÊ66˜VÁDñC∞¢&VÊFW$7W'&VÁEfñWrÜ66˜VÁG5&rì∞¢–¢“¿¢≤GóS¢'6W&F˜""“¿¢∞¢∆&V√¢%«ScS4U«SScU«ScSÉu«SDTce«SSì3í"¿¢Fó6&∆VC¢fˆ∆FW'5&rÊ∆VÊwFÇ””“¿¢ˆÂ6V∆V7C¢7ñÊ2Çí”‚˜V‰66˜VÁDfˆ∆FW$6ˆÁFWáD÷VÁRÜ66˜VÁB¬≤É¢Ç≤b¬ì¢í≤"“ê¢“¿¢≤GóS¢'6W&F˜""“¿¢∞¢∆&V√¢%«SS##«SìccB"¿¢FÊvW#¢G'VR¿¢ˆÂ6V∆V7C¢7ñÊ2Çí”‚FV∆WFT66˜VÁDg&ˆ‘∆¬Ü66˜VÁBÊ66˜VÁDñBê¢–¢–¢“ì∞¢–¢gVÊ7Fñˆ‚˜V‰fˆ∆FW$6ˆÁFWáD÷VÁRá≤fˆ∆FW$ñB¬Ç¬í“í∞¢6ˆÁ7BÊ˜&÷∆ó¶VDfˆ∆FW$ñB“Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜfˆ∆FW$ñBì∞¢6ˆÁ7Bfˆ∆FW"“fˆ∆FW'5&rÊfñÊBÇÜóFV“í”‚Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜóFV”ÚÊñBí””“Ê˜&÷∆ó¶VDfˆ∆FW$ñBì∞¢ñbÇfˆ∆FW"í&WGW&„∞¢ñbÜÊ˜&÷∆ó¶VDfˆ∆FW$ñB””“dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%ÙîBí∞¢˜V‰6ˆÁFWáD÷VÁRá∞¢Ç¿¢í¿¢óFV◊3¢∞¢∞¢∆&V√¢%«Sc3u«ST#î«StcS«StCï«SScÖ«SìSÖ«SÑC#e«SS4cr"¿¢ˆÂ6V∆V7C¢7ñÊ2Çí”‚˜V‰FE6óFW5FÙfˆ∆FW$÷ˆF¬ÜÊ˜&÷∆ó¶VDfˆ∆FW$ñBê¢“¿¢≤GóS¢'6W&F˜""“¿¢∞¢∆&V√¢%«SSdd«ST#î«ScSÉu«SDTce«SSì3ï«SDSE«SS4Te«SS##«SìccB"¿¢Fó6&∆VC¢G'VR¿¢ˆÂ6V∆V7C¢7ñÊ2Çí”‚∞¢–¢–¢–¢“ì∞¢&WGW&„∞¢–¢˜V‰6ˆÁFWáD÷VÁRá∞¢Ç¿¢í¿¢óFV◊3¢∞¢∞¢∆&V√¢%«Sc3u«ST#î«StcS«StCï«SScÖ«SìSÖ«SÑC#e«SS4cr"¿¢ˆÂ6V∆V7C¢7ñÊ2Çí”‚˜V‰FE6óFW5FÙfˆ∆FW$÷ˆF¬ÜÊ˜&÷∆ó¶VDfˆ∆FW$ñBê¢“¿¢≤GóS¢'6W&F˜""“¿¢∞¢∆&V√¢%«SS##«SìccE«ScSÉu«SDTce«SSì3í"¿¢FÊvW#¢G'VR¿¢ˆÂ6V∆V7C¢7ñÊ2Çí”‚FV∆WFTfˆ∆FW"ÜÊ˜&÷∆ó¶VDfˆ∆FW$ñBê¢–¢–¢“ì∞¢–¢gVÊ7Fñˆ‚˜V‰FE6óFW5FÙfˆ∆FW$÷ˆF¬Üfˆ∆FW$ñBí∞¢FE6óFW5F&vWDfˆ∆FW$ñB“Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜfˆ∆FW$ñBì∞¢6ˆÁ7Bfˆ∆FW"“fˆ∆FW'5&rÊfñÊBÇÜóFV“í”‚Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜóFV”ÚÊñBí””“FE6óFW5F&vWDfˆ∆FW$ñBì∞¢Fˆ“ÊFE6óFW5FÙfˆ∆FW$ñÁWBÁf«VR“'&íÊó4'&íÜfˆ∆FW#ÚÊ÷F6ÜVE6óFW2íÚfˆ∆FW"Ê÷F6ÜVE6óFW2Ê¶ˆñ‚Ç%∆‚"í¢"#∞¢Fˆ“ÊFE6óFW5FÙfˆ∆FW$WFÙFBÊ6ÜV6∂VB“&ˆˆ∆V‚Üfˆ∆FW#ÚÊWFÙFD÷F6ÜñÊu6óFW2ì∞¢Fˆ“ÊFE6óFW5FÙfˆ∆FW$÷ˆF¬Ê6∆74∆ó7BÁ&V÷˜fRÇ&ÜñFFV‚"ì∞¢Fˆ“ÊFE6óFW5FÙfˆ∆FW$÷ˆF¬Á6WDGG&ñ'WFRÇ&&ñ÷ÜñFFV‚"¬&f«6R"ì∞¢6WEFñ÷V˜WBÇÇí”‚∞¢Fˆ“ÊFE6óFW5FÙfˆ∆FW$ñÁWBÊfˆ7W2Çì∞¢“¬ì∞¢–¢gVÊ7Fñˆ‚6∆˜6TFE6óFW5FÙfˆ∆FW$÷ˆF¬Çí∞¢FE6óFW5F&vWDfˆ∆FW$ñB“ÁV∆√∞¢Fˆ“ÊFE6óFW5FÙfˆ∆FW$ñÁWBÁf«VR“"#∞¢Fˆ“ÊFE6óFW5FÙfˆ∆FW$WFÙFBÊ6ÜV6∂VB“G'VS∞¢Fˆ“ÊFE6óFW5FÙfˆ∆FW$÷ˆF¬Ê6∆74∆ó7BÊFBÇ&ÜñFFV‚"ì∞¢Fˆ“ÊFE6óFW5FÙfˆ∆FW$÷ˆF¬Á6WDGG&ñ'WFRÇ&&ñ÷ÜñFFV‚"¬'G'VR"ì∞¢–¢7ñÊ2gVÊ7Fñˆ‚FD66˜VÁG4÷F6ÜñÊu6óFW5FÙfˆ∆FW$g&ˆ‘÷ˆF¬Çí∞¢6ˆÁ7Bfˆ∆FW$ñB“Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜFE6óFW5F&vWDfˆ∆FW$ñBì∞¢ñbÇfˆ∆FW$ñBí∞¢6∆˜6TFE6óFW5FÙfˆ∆FW$÷ˆF¬Çì∞¢6WE7FGW2Ç%«SsdTU«ScÉu«ScSÉu«SDTce«SSì3ï«SDSE«ST#SÖ«SSs#Ç"ì∞¢&WGW&„∞¢–¢6ˆÁ7B6óFW2“'6U6óFW2ÜFˆ“ÊFE6óFW5FÙfˆ∆FW$ñÁWBÁf«VR«¬""ì∞¢6ˆÁ7BWFÙFD÷F6ÜñÊu6óFW2“&ˆˆ∆V‚ÜFˆ“ÊFE6óFW5FÙfˆ∆FW$WFÙFBÊ6ÜV6∂VBì∞¢6ˆÁ7B7F˜&VDFF“vóB&VD'W6ñÊW74FFg&ˆ’7F˜&RÇì∞¢6ˆÁ7B7F˜&VDfˆ∆FW'2“'&íÊó4'&íá7F˜&VDFFÊfˆ∆FW'2íÚ7F˜&VDFFÊfˆ∆FW'2¢µ”∞¢6ˆÁ7BF&vWDñG2“66˜VÁG5&rÊ÷ÜÊ˜&÷∆ó¶T66˜VÁE6ÜRíÊfñ«FW"ÇÜ66˜VÁBí”‚66˜VÁBÊó4FV∆WFVBíÊfñ«FW"ÇÜ66˜VÁBí”‚∞¢6ˆÁ7B66˜VÁE6óFW2“Ê˜&÷∆ó¶U6óFW2Ö≤‚‚Ê66˜VÁBÁ6óFW2«¬µ“¬66˜VÁBÊ6ÊˆÊñ6≈6óFR«¬"%“ì∞¢&WGW&‚6óFW2Á6ˆ÷RÇá6óFRí”‚66˜VÁE6óFW2Á6ˆ÷RÇÜ66˜VÁE6óFRí”‚Fˆ÷ñÁ4÷F6Çá6óFR¬66˜VÁE6óFRííì∞¢“íÊ÷ÇÜ66˜VÁBí”‚66˜VÁBÊ66˜VÁDñBì∞¢6ˆÁ7BÊWáB“6∆ˆÊT66˜VÁG2Ü66˜VÁG5&ríÊ÷ÜÊ˜&÷∆ó¶T66˜VÁE6ÜRì∞¢6ˆÁ7BÊWáDfˆ∆FW'2“7F˜&VDfˆ∆FW'2Ê÷ÇÜóFV“í”‚∞¢6ˆÁ7Bfˆ∆FW"“Ê˜&÷∆ó¶Tfˆ∆FW%6ÜRÜóFV“ì∞¢ñbÜÊ˜&÷∆ó¶Tfˆ∆FW$ñBÜfˆ∆FW"ÊñBí”“fˆ∆FW$ñBí&WGW&‚fˆ∆FW#∞¢&WGW&‚∞¢‚‚Êfˆ∆FW"¿¢÷F6ÜVE6óFW3¢6óFW2¿¢WFÙFD÷F6ÜñÊu6óFW2¿¢WFFVDD◊3¢FFRÊÊ˜rÇê¢”∞¢“ì∞¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7BFWfñ6TÊ÷R“vóBvWDFWfñ6TÊ÷RÇì∞¢∆WB6ÜÊvVD6˜VÁB“∞¢f˜"Ü6ˆÁ7B66˜VÁDñBˆbF&vWDñG2í∞¢6ˆÁ7BF&vWB“ÊWáBÊfñÊBÇÜóFV“í”‚7G&ñÊrÜóFV“Ê66˜VÁDñB«¬""í””“7G&ñÊrÜ66˜VÁDñBíì∞¢ñbÇF&vWB«¬F&vWBÊó4FV∆WFVBí6ˆÁFñÁVS∞¢6ˆÁ7B7W'&VÁDfˆ∆FW$ñG2“Ê˜&÷∆ó¶Tfˆ∆FW$ñD∆ó7BÜWáG&7D66˜VÁDfˆ∆FW$ñG2áF&vWBíì∞¢ñbÜ7W'&VÁDfˆ∆FW$ñG2ÊñÊ6«VFW2Üfˆ∆FW$ñBíí6ˆÁFñÁVS∞¢6ˆÁ7BÊWáDfˆ∆FW$ñG2“Ê˜&÷∆ó¶Tfˆ∆FW$ñD∆ó7BÖ≤‚‚Ê7W'&VÁDfˆ∆FW$ñG2¬fˆ∆FW$ñE“ì∞¢F&vWBÊfˆ∆FW$ñB“ÊWáDfˆ∆FW$ñG5≥“«¬ÁV∆√∞¢F&vWBÊfˆ∆FW$ñG2“ÊWáDfˆ∆FW$ñG3∞¢F&vWBÁWFFVDD◊2“Ê˜s∞¢F&vWBÊ∆7D˜W&FVDFWfñ6TÊ÷R“FWfñ6TÊ÷S∞¢6ÜÊvVD6˜VÁB≥“∞¢–¢6∆˜6TFE6óFW5FÙfˆ∆FW$÷ˆF¬Çì∞¢66˜VÁG5&r“6∆ˆÊT66˜VÁG2ÜÊWáBì∞¢fˆ∆FW'5&r“6˜'Dfˆ∆FW'4f˜$Fó7∆íávóFÑfóÜVDfˆ∆FW"ÜÊWáDfˆ∆FW'2íì∞¢vóBw&óFT'W6ñÊW74FFFı7F˜&Rá≤66˜VÁG3¢ÊWáB¬76∂Wó3¢76∂Wó5&r¬fˆ∆FW'3¢ÊWáDfˆ∆FW'2“ì∞¢vóBVÊDÜó7F˜'íÄ¢«ScdcE«ScT#«ScSÉu«SDTce«SSì3ï«StCï«Ss#ï«SÉî3E«SS#ï«TdcG∂fˆ∆FW$Fó7∆îÊ÷T'îñBÜfˆ∆FW$ñBó’«TdcÇG∑6óFW2Ê∆VÊwFá“«SDS$«StCï«Ss#ï«Tdc5«SÉT«SS$Ö«SS$«SScRG∂WFÙFD÷F6ÜñÊu6óFW2Ú%«STc"¢%«SSs2'’«Tdcñ¿¢Ê˜p¢ì∞¢ñbÜ6ÜÊvVD6˜VÁB‚í∞¢vóBVÊDÜó7F˜'íÜ«Sc3ï«StCï«Ss#ï«Sc#sï«Sì4e«SS$«SScU«ScSÉu«SDTce«SSì3ï«TdcG∂fˆ∆FW$Fó7∆îÊ÷T'îñBÜfˆ∆FW$ñBó’«TdcÇG∂6ÜÊvVD6˜VÁG“«SDS$«SÑC#e«SS4cu«Tdcñ¬Ê˜rì∞¢–¢vóB&Vg&W6Çá≤6ñ∆VÁC¢G'VR“ì∞¢6WE7FGW2Ä¢6ÜÊvVD6˜VÁB‚Ú«STDc%«SDdDE«ST#SÖ«SÉî3E«SS#ï«Tdc5«STSse«ST3bG∂6ÜÊvVD6˜VÁG“«SDS$«SÑC#e«SS4cu«SS$«SScU«ScSÉu«SDTce«SSì3ì¢G∂fˆ∆FW$Fó7∆îÊ÷T'îñBÜfˆ∆FW$ñBó÷¢«STDc%«SDdDE«ST#SÖ«ScSÉu«SDTce«SSì3ï«StCï«Ss#ï«SÉî3E«SS#ì¢G∂fˆ∆FW$Fó7∆îÊ÷T'îñBÜfˆ∆FW$ñBó÷ ¢ì∞¢–¢gVÊ7Fñˆ‚˜V‰66˜VÁDfˆ∆FW$6ˆÁFWáD÷VÁRÜ66˜VÁB¬˜6óFñˆ‚í∞¢6ˆÁ7BÊ˜&÷∆ó¶VD66˜VÁB“Ê˜&÷∆ó¶T66˜VÁE6ÜRÜ66˜VÁBì∞¢6ˆÁ7B6ÜV6∂VB“ÊWr6WBÄ¢Ê˜&÷∆ó¶Tfˆ∆FW$ñD∆ó7BÜWáG&7D66˜VÁDfˆ∆FW$ñG2ÜÊ˜&÷∆ó¶VD66˜VÁBíê¢ì∞¢6ˆÁ7Bfˆ∆FW'2“6˜'Dfˆ∆FW'4f˜$Fó7∆íÜfˆ∆FW'5&rÊ÷ÜÊ˜&÷∆ó¶Tfˆ∆FW%6ÜRíì∞¢ñbÜfˆ∆FW'2Ê∆VÊwFÇ””“í∞¢6WE7FGW2Ç%«SÑ$cu«SSCÖ«SS#%«STTd«ScSÉu«SDTce«SSì3í"ì∞¢&WGW&„∞¢–¢˜V‰6ˆÁFWáD÷VÁRá∞¢É¢˜6óFñˆ„ÚÁÇÛÚ¿¢ì¢˜6óFñˆ„ÚÁíÛÚ¿¢óFV◊3¢fˆ∆FW'2Ê÷ÇÜfˆ∆FW"í”‚∞¢6ˆÁ7BñB“Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜfˆ∆FW"ÊñBì∞¢6ˆÁ7Bó46ÜV6∂VB“6ÜV6∂VBÊÜ2ÜñBì∞¢&WGW&‚∞¢∆&V√¢G∂ó46ÜV6∂VBÚ%«S#c"¢%«S#c'“G∂fˆ∆FW"ÊÊ÷W÷¿¢ˆÂ6V∆V7C¢7ñÊ2Çí”‚∞¢vóBFˆvv∆T66˜VÁDfˆ∆FW$÷V÷&W'6ÜóÜÊ˜&÷∆ó¶VD66˜VÁBÊ66˜VÁDñB¬ñBì∞¢–¢”∞¢“ê¢“ì∞¢–¢gVÊ7Fñˆ‚«îWFÙfˆ∆FW%'V∆W5FÙ66˜VÁBÜ66˜VÁB¬fˆ∆FW'2“fˆ∆FW'5&rí∞¢ñbÇ66˜VÁB«¬66˜VÁBÊó4FV∆WFVBí&WGW&‚66˜VÁC∞¢6ˆÁ7B66˜VÁE6óFW2“Ê˜&÷∆ó¶U6óFW2Ö∞¢‚‚‰'&íÊó4'&íÜ66˜VÁCÚÁ6óFW2íÚ66˜VÁBÁ6óFW2¢µ“¿¢66˜VÁCÚÊ6ÊˆÊñ6≈6óFR«¬" ¢“ì∞¢ñbÜ66˜VÁE6óFW2Ê∆VÊwFÇ””“í&WGW&‚66˜VÁC∞¢6ˆÁ7B÷F6ÜVDfˆ∆FW$ñG2“Ñ'&íÊó4'&íÜfˆ∆FW'2íÚfˆ∆FW'2¢µ“íÊ÷ÜÊ˜&÷∆ó¶Tfˆ∆FW%6ÜRíÊfñ«FW"ÇÜfˆ∆FW"í”‚fˆ∆FW"ÊWFÙFD÷F6ÜñÊu6óFW2íÊfñ«FW"ÇÜfˆ∆FW"í”‚fˆ∆FW"Ê÷F6ÜVE6óFW2Á6ˆ÷RÄ¢Üfˆ∆FW%6óFRí”‚66˜VÁE6óFW2Á6ˆ÷RÇÜ66˜VÁE6óFRí”‚Fˆ÷ñÁ4÷F6ÇÜ66˜VÁE6óFR¬fˆ∆FW%6óFRíê¢ííÊ÷ÇÜfˆ∆FW"í”‚Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜfˆ∆FW"ÊñBííÊfñ«FW"Ñ&ˆˆ∆V‚ì∞¢ñbÜ÷F6ÜVDfˆ∆FW$ñG2Ê∆VÊwFÇ””“í&WGW&‚66˜VÁC∞¢6ˆÁ7BÊWáDfˆ∆FW$ñG2“Ê˜&÷∆ó¶Tfˆ∆FW$ñD∆ó7BÖ∞¢‚‚ÊWáG&7D66˜VÁDfˆ∆FW$ñG2Ü66˜VÁBí¿¢‚‚Ê÷F6ÜVDfˆ∆FW$ñG0¢“ì∞¢&WGW&‚∞¢‚‚Ê66˜VÁB¿¢fˆ∆FW$ñC¢ÊWáDfˆ∆FW$ñG5≥“«¬ÁV∆¬¿¢fˆ∆FW$ñG3¢ÊWáDfˆ∆FW$ñG0¢”∞¢–¢gVÊ7Fñˆ‚vWD7FófUñÂ66˜T∂WíÇí∞¢&WGW&‚7G&ñÊrÜ7FófT66˜VÁEfñWr«¬&∆¬"ì∞¢–¢gVÊ7Fñˆ‚vWEñÂ66˜T∆&V¬á66˜T∂Wí“vWD7FófUñÂ66˜T∂WíÇíí∞¢ñbá66˜T∂Wí””“&∆¬"í&WGW&‚%«SScÖ«SìSÇ#∞¢ñbá66˜T∂Wí””“'76∂Wó2"í&WGW&‚%«Sì«SÉÉD5«ST$3e«SìDR#∞¢ñbá66˜T∂Wí””“'F˜G"í&WGW&‚%«SîÑ5«SÑ$3«SsÉ#∞¢ñbá66˜T∂Wí””“'&V7ñ6∆R"í&WGW&‚%«SSdDU«ScS3e«StCí#∞¢ñbÖ7G&ñÊrá66˜T∂WííÁ7F'G5vóFÇÇ&fˆ∆FW#¢"íí∞¢6ˆÁ7Bfˆ∆FW$ñB“Ê˜&÷∆ó¶Tfˆ∆FW$ñBÖ7G&ñÊrá66˜T∂WííÁ6∆ñ6RÇ&fˆ∆FW#¢"Ê∆VÊwFÇíì∞¢&WGW&‚fˆ∆FW$Fó7∆îÊ÷T'îñBÜfˆ∆FW$ñBì∞¢–¢&WGW&‚7G&ñÊrá66˜T∂Wíì∞¢–¢gVÊ7Fñˆ‚Ê˜&÷∆ó¶UñÊÊVEfñWw4÷ÜñÁWB¬∆Vv7î66˜VÁB“ÁV∆¬í∞¢6ˆÁ7B&W7V«B“∑”∞¢6ˆÁ7B6˜W&6R“ñÁWBbbGóVˆbñÁWB””“&ˆ&¶V7B"ÚñÁWB¢∑”∞¢f˜"Ü6ˆÁ7B∑66˜T∂Wí¬&uf«VU“ˆbˆ&¶V7BÊVÁG&ñW2á6˜W&6Ríí∞¢6ˆÁ7BÊ˜&÷∆ó¶VE66˜T∂Wí“7G&ñÊrá66˜T∂Wí«¬""íÁG&ñ“Çì∞¢ñbÇÊ˜&÷∆ó¶VE66˜T∂Wí«¬&uf«VR«¬GóVˆb&uf«VR”“&ˆ&¶V7B"í6ˆÁFñÁVS∞¢6ˆÁ7BñÊÊVB“&ˆˆ∆V‚á&uf«VRÁñÊÊVBì∞¢6ˆÁ7BñÊÊVE6˜'D˜&FW"“&uf«VRÁñÊÊVE6˜'D˜&FW"”“ÁV∆¬ÚÁV∆¬¢ÁV÷&W"á&uf«VRÁñÊÊVE6˜'D˜&FW"ì∞¢6ˆÁ7B&VwV∆%6˜'D˜&FW"“&uf«VRÁ&VwV∆%6˜'D˜&FW"”“ÁV∆¬ÚÁV∆¬¢ÁV÷&W"á&uf«VRÁ&VwV∆%6˜'D˜&FW"ì∞¢&W7V«E∂Ê˜&÷∆ó¶VE66˜T∂Wï““∞¢ñÊÊVB¿¢ñÊÊVE6˜'D˜&FW#¢ÁV÷&W"Êó4fñÊóFRáñÊÊVE6˜'D˜&FW"íÚñÊÊVE6˜'D˜&FW"¢ÁV∆¬¿¢&VwV∆%6˜'D˜&FW#¢ÁV÷&W"Êó4fñÊóFRá&VwV∆%6˜'D˜&FW"íÚ&VwV∆%6˜'D˜&FW"¢ÁV∆¿¢”∞¢–¢ñbÜ∆Vv7î66˜VÁBbb&W7V«BÊ∆¬í∞¢&W7V«BÊ∆¬“∞¢ñÊÊVC¢&ˆˆ∆V‚Ü∆Vv7î66˜VÁCÚÊó5ñÊÊVBí¿¢ñÊÊVE6˜'D˜&FW#¢∆Vv7î66˜VÁCÚÁñÊÊVE6˜'D˜&FW"”“ÁV∆¬ÚÁV∆¬¢ÁV÷&W"Ü∆Vv7î66˜VÁBÁñÊÊVE6˜'D˜&FW"í¿¢&VwV∆%6˜'D˜&FW#¢∆Vv7î66˜VÁCÚÁ&VwV∆%6˜'D˜&FW"”“ÁV∆¬ÚÁV∆¬¢ÁV÷&W"Ü∆Vv7î66˜VÁBÁ&VwV∆%6˜'D˜&FW"ê¢”∞¢–¢&WGW&‚&W7V«C∞¢–¢gVÊ7Fñˆ‚vWEñÊÊVEfñWu7FFRÜ66˜VÁB¬66˜T∂Wí“vWD7FófUñÂ66˜T∂WíÇíí∞¢6ˆÁ7BñÊÊVEfñWw2“Ê˜&÷∆ó¶UñÊÊVEfñWw4÷Ü66˜VÁCÚÁñÊÊVEfñWw2¬66˜VÁBì∞¢&WGW&‚ñÊÊVEfñWw5∑66˜T∂Wï“«¬∞¢ñÊÊVC¢f«6R¿¢ñÊÊVE6˜'D˜&FW#¢ÁV∆¬¿¢&VwV∆%6˜'D˜&FW#¢ÁV∆¿¢”∞¢–¢gVÊ7Fñˆ‚ó5ñÊÊVDñ‰7W'&VÁE66˜RÜ66˜VÁBí∞¢&WGW&‚&ˆˆ∆V‚ÜvWEñÊÊVEfñWu7FFRÜ66˜VÁBíÁñÊÊVBì∞¢–¢gVÊ7Fñˆ‚ó5ñÊÊVD66˜VÁBÜ66˜VÁBí∞¢&WGW&‚ó5ñÊÊVDñ‰7W'&VÁE66˜RÜ66˜VÁBì∞¢–¢gVÊ7Fñˆ‚6ˆ◊&T66˜VÁG4f˜%66˜RÜ∆á2¬&á2¬66˜T∂Wí“vWD7FófUñÂ66˜T∂WíÇíí∞¢6ˆÁ7B∆á57FFR“vWEñÊÊVEfñWu7FFRÜ∆á2¬66˜T∂Wíì∞¢6ˆÁ7B&á57FFR“vWEñÊÊVEfñWu7FFRá&á2¬66˜T∂Wíì∞¢ñbÜ∆á57FFRÁñÊÊVB”“&á57FFRÁñÊÊVBí∞¢&WGW&‚∆á57FFRÁñÊÊVBÚ”¢∞¢–¢6ˆÁ7B∆á5WFFVDB“ÁV÷&W"Ü∆á3ÚÁWFFVDD◊2«¬ì∞¢6ˆÁ7B&á5WFFVDB“ÁV÷&W"á&á3ÚÁWFFVDD◊2«¬ì∞¢ñbÜ∆á5WFFVDB”“&á5WFFVDBí&WGW&‚&á5WFFVDB“∆á5WFFVDC∞¢ñbÜ∆á57FFRÁñÊÊVBbb&á57FFRÁñÊÊVBí∞¢ñbÜ∆á57FFRÁñÊÊVE6˜'D˜&FW"“ÁV∆¬bb&á57FFRÁñÊÊVE6˜'D˜&FW"“ÁV∆¬bb∆á57FFRÁñÊÊVE6˜'D˜&FW"”“&á57FFRÁñÊÊVE6˜'D˜&FW"í∞¢&WGW&‚∆á57FFRÁñÊÊVE6˜'D˜&FW"“&á57FFRÁñÊÊVE6˜'D˜&FW#∞¢–¢ñbÜ∆á57FFRÁñÊÊVE6˜'D˜&FW"“ÁV∆¬bb&á57FFRÁñÊÊVE6˜'D˜&FW"”“ÁV∆¬í&WGW&‚”∞¢ñbÜ∆á57FFRÁñÊÊVE6˜'D˜&FW"”“ÁV∆¬bb&á57FFRÁñÊÊVE6˜'D˜&FW"“ÁV∆¬í&WGW&‚∞¢“V«6R∞¢ñbÜ∆á57FFRÁ&VwV∆%6˜'D˜&FW"“ÁV∆¬bb&á57FFRÁ&VwV∆%6˜'D˜&FW"“ÁV∆¬bb∆á57FFRÁ&VwV∆%6˜'D˜&FW"”“&á57FFRÁ&VwV∆%6˜'D˜&FW"í∞¢&WGW&‚∆á57FFRÁ&VwV∆%6˜'D˜&FW"“&á57FFRÁ&VwV∆%6˜'D˜&FW#∞¢–¢ñbÜ∆á57FFRÁ&VwV∆%6˜'D˜&FW"“ÁV∆¬bb&á57FFRÁ&VwV∆%6˜'D˜&FW"”“ÁV∆¬í&WGW&‚”∞¢ñbÜ∆á57FFRÁ&VwV∆%6˜'D˜&FW"”“ÁV∆¬bb&á57FFRÁ&VwV∆%6˜'D˜&FW"“ÁV∆¬í&WGW&‚∞¢–¢6ˆÁ7B∆á47&VFVDB“ÁV÷&W"Ü∆á3ÚÊ7&VFVDD◊2«¬ì∞¢6ˆÁ7B&á47&VFVDB“ÁV÷&W"á&á3ÚÊ7&VFVDD◊2«¬ì∞¢ñbÜ∆á47&VFVDB”“&á47&VFVDBí&WGW&‚&á47&VFVDB“∆á47&VFVDC∞¢&WGW&‚7G&ñÊrÜ∆á3ÚÊ66˜VÁDñB«¬""íÊ∆ˆ6∆T6ˆ◊&RÖ7G&ñÊrá&á3ÚÊ66˜VÁDñB«¬""íì∞¢–¢gVÊ7Fñˆ‚6˜'D66˜VÁG4f˜%66˜RÜñÁWD66˜VÁG2¬66˜T∂Wí“vWD7FófUñÂ66˜T∂WíÇíí∞¢&WGW&‚≤‚‚‰'&íÊó4'&íÜñÁWD66˜VÁG2íÚñÁWD66˜VÁG2¢µ’“Á6˜'BÄ¢Ü∆á2¬&á2í”‚6ˆ◊&T66˜VÁG4f˜%66˜RÜ∆á2¬&á2¬66˜T∂Wíê¢ì∞¢–¢gVÊ7Fñˆ‚ó466˜VÁD÷F6Ö6V&6ÇÜ66˜VÁB¬VW'íí∞¢6ˆÁ7BÊVVF∆R“7G&ñÊráVW'í«¬""íÁG&ñ“ÇíÁFÙ∆˜vW$66RÇì∞¢ñbÇÊVVF∆Rí&WGW&‚G'VS∞¢6ˆÁ7BÜó7F6∑2“µ”∞¢6ˆÁ7BW6T∆¬“66˜VÁE6V&6ÖW6T∆√∞¢ñbáW6T∆¬«¬66˜VÁE6V&6ÑfñV∆G2ÊÜ2Ç'W6W&Ê÷R"íí∞¢Üó7F6∑2ÁW6ÇÜ66˜VÁBÁW6W&Ê÷R¬66˜VÁBÁW6W&Ê÷TD7&VFRì∞¢–¢ñbáW6T∆¬«¬66˜VÁE6V&6ÑfñV∆G2ÊÜ2Ç'6óFW2"íí∞¢Üó7F6∑2ÁW6ÇÜ66˜VÁBÁ6óFW2Ê¶ˆñ‚Ç""í¬66˜VÁBÊ6ÊˆÊñ6≈6óFRì∞¢–¢ñbáW6T∆¬«¬66˜VÁE6V&6ÑfñV∆G2ÊÜ2Ç&Ê˜FR"íí∞¢Üó7F6∑2ÁW6ÇÜ66˜VÁBÊÊ˜FRì∞¢–¢ñbáW6T∆¬«¬66˜VÁE6V&6ÑfñV∆G2ÊÜ2Ç'77v˜&B"íí∞¢Üó7F6∑2ÁW6ÇÜ66˜VÁBÁ77v˜&Bì∞¢–¢ñbÜÜó7F6∑2Ê∆VÊwFÇ””“í&WGW&‚f«6S∞¢&WGW&‚Üó7F6∑2Á6ˆ÷RÇáf«VRí”‚7G&ñÊráf«VR«¬""íÁFÙ∆˜vW$66RÇíÊñÊ6«VFW2ÜÊVVF∆Ríì∞¢–¢gVÊ7Fñˆ‚6∆˜6T∆ƒ66˜VÁG56V&6ÑfñV∆G5ÊV¬Çí∞¢Fˆ“Ê∆ƒ66˜VÁG56V&6ÑfñV∆G5ÊV¬Ê6∆74∆ó7BÊFBÇ&ÜñFFV‚"ì∞¢–¢gVÊ7Fñˆ‚ó4◊V«Fñ∆ñÊTñÁWEF&vWBáF&vWBí∞¢&WGW&‚F&vWBñÁ7FÊ6VˆbÖD‘≈FWáD&VV∆V÷VÁB«¬F&vWCÚÊó46ˆÁFVÁDVFóF&∆S∞¢–¢gVÊ7Fñˆ‚fñÊDFVfV«D7Fñˆ‰'WGFˆ‰f˜$˜FñˆÁ2áF&vWBí∞¢ñbÇFˆ“ÊFE6óFW5FÙfˆ∆FW$÷ˆF¬Ê6∆74∆ó7BÊ6ˆÁFñÁ2Ç&ÜñFFV‚"íí∞¢&WGW&‚Fˆ“Ê6ˆÊfó&‘FE6óFW5FÙfˆ∆FW$'F„∞¢–¢&WGW&‚ÁV∆√∞¢–¢gVÊ7Fñˆ‚ˆ‰∆ƒ66˜VÁE6V&6ÑfñV∆D∆ƒ6ÜÊvVBÇí∞¢ñbÜFˆ“Ê∆ƒ66˜VÁG56V&6ÑfñV∆D∆¬Ê6ÜV6∂VBí∞¢66˜VÁE6V&6ÖW6T∆¬“G'VS∞¢66˜VÁE6V&6ÑfñV∆G2“Ú¢ııU$UıÚ¢ÚÊWr6WBÇì∞¢“V«6R∞¢66˜VÁE6V&6ÖW6T∆¬“f«6S∞¢–¢7ñÊ4∆ƒ66˜VÁE6V&6ÑfñV∆D6ÜV6∂&˜ÜW2Çì∞¢&VÊFW$7W'&VÁEfñWrÜ66˜VÁG5&rì∞¢–¢gVÊ7Fñˆ‚ˆ‰∆ƒ66˜VÁE6V&6ÑfñV∆D6ÜÊvVBÇí∞¢6ˆÁ7BÊWáB“Ú¢ııU$UıÚ¢ÚÊWr6WBÇì∞¢ñbÜFˆ“Ê∆ƒ66˜VÁG56V&6ÑfñV∆EW6W&Ê÷RÊ6ÜV6∂VBíÊWáBÊFBÇ'W6W&Ê÷R"ì∞¢ñbÜFˆ“Ê∆ƒ66˜VÁG56V&6ÑfñV∆E6óFW2Ê6ÜV6∂VBíÊWáBÊFBÇ'6óFW2"ì∞¢ñbÜFˆ“Ê∆ƒ66˜VÁG56V&6ÑfñV∆DÊ˜FRÊ6ÜV6∂VBíÊWáBÊFBÇ&Ê˜FR"ì∞¢ñbÜFˆ“Ê∆ƒ66˜VÁG56V&6ÑfñV∆E77v˜&BÊ6ÜV6∂VBíÊWáBÊFBÇ'77v˜&B"ì∞¢66˜VÁE6V&6ÖW6T∆¬“f«6S∞¢66˜VÁE6V&6ÑfñV∆G2“ÊWáC∞¢7ñÊ4∆ƒ66˜VÁE6V&6ÑfñV∆D6ÜV6∂&˜ÜW2Çì∞¢&VÊFW$7W'&VÁEfñWrÜ66˜VÁG5&rì∞¢–¢gVÊ7Fñˆ‚7ñÊ4∆ƒ66˜VÁE6V&6ÑfñV∆D6ÜV6∂&˜ÜW2Çí∞¢Fˆ“Ê∆ƒ66˜VÁG56V&6ÑfñV∆EW6W&Ê÷RÊ6ÜV6∂VB“66˜VÁE6V&6ÑfñV∆G2ÊÜ2Ç'W6W&Ê÷R"ì∞¢Fˆ“Ê∆ƒ66˜VÁG56V&6ÑfñV∆E6óFW2Ê6ÜV6∂VB“66˜VÁE6V&6ÑfñV∆G2ÊÜ2Ç'6óFW2"ì∞¢Fˆ“Ê∆ƒ66˜VÁG56V&6ÑfñV∆DÊ˜FRÊ6ÜV6∂VB“66˜VÁE6V&6ÑfñV∆G2ÊÜ2Ç&Ê˜FR"ì∞¢Fˆ“Ê∆ƒ66˜VÁG56V&6ÑfñV∆E77v˜&BÊ6ÜV6∂VB“66˜VÁE6V&6ÑfñV∆G2ÊÜ2Ç'77v˜&B"ì∞¢Fˆ“Ê∆ƒ66˜VÁG56V&6ÑfñV∆D∆¬Ê6ÜV6∂VB“66˜VÁE6V&6ÖW6T∆√∞¢–¢gVÊ7Fñˆ‚'Vñ∆D66˜VÁDVFóF˜"Ü66˜VÁBí∞¢6ˆÁ7BVFóF˜"“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢VFóF˜"Ê6∆74Ê÷R“&VFóF˜"#∞¢6ˆÁ7B6óFW4ñÁWB“7&VFTVFóF˜%FWáF&VÜVFóF˜"¬%«StCï«Ss#ï«SS#$%«SSCE«TdcÖ«Sd$4e«SÉÉD5«SDS«SDS$«Tdcí"¬66˜VÁBÁ6óFW2Ê¶ˆñ‚Ç%∆‚"í¬∞¢6∆74Ê÷S¢&VFóF˜"◊FWáF&VVFóF˜"◊FWáF&V◊6óFW2 ¢“ì∞¢6ˆÁ7BW6W&Ê÷TñÁWB“7&VFTVFóF˜$fñV∆BÜVFóF˜"¬%«SsS#Ö«Sc#3u«SSCB"¬66˜VÁBÁW6W&Ê÷Rì∞¢6ˆÁ7B77v˜&DñÁWB“7&VFTVFóF˜$fñV∆BÜVFóF˜"¬%«ST$3e«SsÉ"¬66˜VÁBÁ77v˜&Bì∞¢6ˆÁ7BF˜GñÁWB“7&VFTVFóF˜$fñV∆BÜVFóF˜"¬%DıE"¬66˜VÁBÁF˜G6V7&WB«¬""ì∞¢VÊEF˜Gñ◊˜'D7FñˆÁ2ÜVFóF˜"¬∞¢F˜GñÁWB¿¢6óFW4ñÁWB¿¢W6W&Ê÷TñÁW@¢“ì∞¢6ˆÁ7B&V6˜fW'îñÁWB“7&VFTVFóF˜%FWáF&VÜVFóF˜"¬%«Scc%«SSìE«SsÉ«TdcÖ«Sd$4e«SÉÉD5«SDS«SDS$«Tdcí"¬66˜VÁBÁ&V6˜fW'î6ˆFW2«¬""¬∞¢6∆74Ê÷S¢&VFóF˜"◊FWáF&VVFóF˜"◊FWáF&V◊&V6˜fW'í ¢“ì∞¢6ˆÁ7BÊ˜FTñÁWB“7&VFTVFóF˜%FWáF&VÜVFóF˜"¬%«SSìu«Sd4SÇ"¬66˜VÁBÊÊ˜FR«¬""¬∞¢6∆74Ê÷S¢&VFóF˜"◊FWáF&V ¢“ì∞¢6ˆÁ7BFWFñ«2“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢FWFñ«2Ê6∆74Ê÷R“&÷WF#∞¢FWFñ«2ÊñÊÊW$ÖD‘¬“«SS#%«STTd¢G∂f˜&÷EFñ÷RÜ66˜VÁBÊ7&VFVDD◊2ó“¬«ScdcE«ScT#¢G∂f˜&÷EFñ÷RÜ66˜VÁBÁWFFVDD◊2ó”∆'"ÛÂ«Scs«SSCU«ScD4E«SDcT5«SÑ$$U«SSìs¢G∂W66TáF÷¬Ö7G&ñÊrÜ66˜VÁBÊ∆7D˜W&FVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí«¬"“"ó”∆'"ÛÂ«SS##«SìccC¢G∂f˜&÷EFñ÷RÜ66˜VÁBÊFV∆WFVDD◊2ó”∆'"ÛÂ«SsS#Ö«Sc#3u«SSCE«TdcG∂f˜&÷EFñ÷RÜ66˜VÁBÁW6W&Ê÷UWFFVDD◊2ó“¬G∂W66TáF÷¬Ö7G&ñÊrÜ66˜VÁBÁW6W&Ê÷UWFFVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí«¬"“"ó”∆'"ÛÂ«ST$3e«SsÉ«TdcG∂f˜&÷EFñ÷RÜ66˜VÁBÁ77v˜&EWFFVDD◊2ó“¬G∂W66TáF÷¬Ö7G&ñÊrÜ66˜VÁBÁ77v˜&EWFFVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí«¬"“"ó”∆'"ÛÂDıE«TdcG∂f˜&÷EFñ÷RÜ66˜VÁBÁF˜GWFFVDD◊2ó“¬G∂W66TáF÷¬Ö7G&ñÊrÜ66˜VÁBÁF˜GWFFVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí«¬"“"ó”∆'"ÛÂ«Scc%«SSìE«SsÉ«TdcG∂f˜&÷EFñ÷RÜ66˜VÁBÁ&V6˜fW'î6ˆFW5WFFVDD◊2ó“¬G∂W66TáF÷¬Ö7G&ñÊrÜ66˜VÁBÁ&V6˜fW'î6ˆFW5WFFVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí«¬"“"ó”∆'"ÛÂ«SSìu«Sd4SÖ«TdcG∂f˜&÷EFñ÷RÜ66˜VÁBÊÊ˜FUWFFVDD◊2ó“¬G∂W66TáF÷¬Ö7G&ñÊrÜ66˜VÁBÊÊ˜FUWFFVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí«¬"“"ó”∆'"ÛÂ«Sì«SÉÉD5«ST$3e«SìDU«TdcG∂f˜&÷EFñ÷RÜ66˜VÁBÁ76∂WïWFFVDD◊2ó“¬G∂W66TáF÷¬Ö7G&ñÊrÜ66˜VÁBÁ76∂WïWFFVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí«¬"“"ó”∆'"ÛÊ∞¢VFóF˜"ÊVÊD6Üñ∆BÜFWFñ«2ì∞¢6ˆÁ7B7FñˆÁ2“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢7FñˆÁ2Ê6∆74Ê÷R“&66˜VÁB÷7FñˆÁ2#∞¢6ˆÁ7B6fT'F‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&'WGFˆ‚"ì∞¢6fT'F‚ÁFWáD6ˆÁFVÁB“%«SDdDE«ST#SÖ«Stce«SÑcì#∞¢6fT'F‚ÊFDWfVÁD∆ó7FVÊW"Ç&6∆ñ6≤"¬7ñÊ2Çí”‚∞¢vóB6fT66˜VÁDVFóBÜ66˜VÁBÊ66˜VÁDñB¬∞¢6óFW5FWáC¢6óFW4ñÁWBÁf«VR¿¢W6W&Ê÷S¢W6W&Ê÷TñÁWBÁf«VR¿¢77v˜&C¢77v˜&DñÁWBÁf«VR¿¢F˜G6V7&WC¢F˜GñÁWBÁf«VR¿¢&V6˜fW'î6ˆFW3¢&V6˜fW'îñÁWBÁf«VR¿¢Ê˜FS¢Ê˜FTñÁWBÁf«VP¢“ì∞¢“ì∞¢7FñˆÁ2ÊVÊD6Üñ∆Bá6fT'F‚ì∞¢6ˆÁ7B6Ê6Vƒ'F‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&'WGFˆ‚"ì∞¢6Ê6Vƒ'F‚ÁFWáD6ˆÁFVÁB“%«SS4Ce«SdCÉÇ#∞¢6Ê6Vƒ'F‚ÊFDWfVÁD∆ó7FVÊW"Ç&6∆ñ6≤"¬Çí”‚∞¢VFóFñÊt66˜VÁDñB“ÁV∆√∞¢&VÊFW$7W'&VÁEfñWrÜ66˜VÁG5&rì∞¢“ì∞¢7FñˆÁ2ÊVÊD6Üñ∆BÜ6Ê6Vƒ'F‚ì∞¢VFóF˜"ÊVÊD6Üñ∆BÜ7FñˆÁ2ì∞¢&WGW&‚VFóF˜#∞¢–¢7ñÊ2gVÊ7Fñˆ‚6fT66˜VÁDVFóBÜ66˜VÁDñB¬G&gBí∞¢6ˆÁ7BÊWáB“6∆ˆÊT66˜VÁG2Ü66˜VÁG5&rì∞¢6ˆÁ7BF&vWB“ÊWáBÊfñÊBÇÜóFV“í”‚7G&ñÊrÜóFV“Ê66˜VÁDñB«¬""í””“7G&ñÊrÜ66˜VÁDñBíì∞¢ñbÇF&vWBí∞¢6WE7FGW2Ç%«Scs$«Sc#tU«SS#3«Stce«SÑcì«SÑC#e«SS4cr"ì∞¢&WGW&„∞¢–¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7BFWfñ6TÊ÷R“vóBvWDFWfñ6TÊ÷RÇì∞¢∆WB6ÜÊvVB“f«6S∞¢6ˆÁ7BÜó7F˜'î÷W76vW2“µ”∞¢6ˆÁ7BÊWáE6óFW2“'6U6óFW2ÜG&gBÁ6óFW5FWáBì∞¢6ˆÁ7B&We6óFW2“Ê˜&÷∆ó¶U6óFW2áF&vWBÁ6óFW2«¬µ“ì∞¢ñbÜÊWáE6óFW2Ê∆VÊwFÇ‚bb•4Ù‚Á7G&ñÊvñgíÜÊWáE6óFW2í”“•4Ù‚Á7G&ñÊvñgíá&We6óFW2íí∞¢F&vWBÁ6óFW2“ÊWáE6óFW3∞¢6ˆÁ7BÊWáE6óFU6WB“ÊWr6WBÜÊWáE6óFW2Ê÷Çá6óFRí”‚7G&ñÊrá6óFRíÁFÙ∆˜vW$66RÇííì∞¢6ˆÁ7B&Wfñ˜W56óFU6WB“ÊWr6WBá&We6óFW2Ê÷Çá6óFRí”‚7G&ñÊrá6óFRíÁFÙ∆˜vW$66RÇííì∞¢6ˆÁ7B7FFW2“≤‚‚ÁF&vWBÁ6óFT∆ñ57FFW2«¬∑“”∞¢f˜"Ü6ˆÁ7B6óFRˆb&Wfñ˜W56óFU6WBí∞¢ñbÇÊWáE6óFU6WBÊÜ2á6óFRíí7FFW5∑6óFU““≤ó4FV∆WFVC¢G'VR¬WFFVDD◊3¢Ê˜r¬FWfñ6TÊ÷R”∞¢–¢f˜"Ü6ˆÁ7B6óFRˆbÊWáE6óFU6WBí7FFW5∑6óFU““≤ó4FV∆WFVC¢f«6R¬WFFVDD◊3¢Ê˜r¬FWfñ6TÊ÷R”∞¢F&vWBÁ6óFT∆ñ57FFW2“7FFW3∞¢6ÜÊvVB“G'VS∞¢Üó7F˜'î÷W76vW2ÁW6ÇÜ«StCï«Ss#ï«SS#$%«SSCE«ScS3ï«SDS4G∂Üó7F˜'ïf«VU6ÊóWBÜÊWáE6óFW2Ê¶ˆñ‚Ç"¬"íó÷ì∞¢–¢6ˆÁ7BÊWáEW6W&Ê÷R“Ê˜&÷∆ó¶UW6W&Ê÷RÜG&gBÁW6W&Ê÷Rì∞¢ñbÜÊWáEW6W&Ê÷RbbÊWáEW6W&Ê÷R”“7G&ñÊráF&vWBÁW6W&Ê÷R«¬""íí∞¢F&vWBÁW6W&Ê÷R“ÊWáEW6W&Ê÷S∞¢F&vWBÁW6W&Ê÷UWFFVDD◊2“Ê˜s∞¢F&vWBÁW6W&Ê÷UWFFVDFWfñ6TÊ÷R“FWfñ6TÊ÷S∞¢6ÜÊvVB“G'VS∞¢Üó7F˜'î÷W76vW2ÁW6ÇÜ«SsS#Ö«Sc#3u«SSCE«ScS3ï«SDS4G∂Üó7F˜'ïf«VU6ÊóWBÜÊWáEW6W&Ê÷Ró÷ì∞¢–¢ñbÖ7G&ñÊrÜG&gBÁ77v˜&B«¬""í”“7G&ñÊráF&vWBÁ77v˜&B«¬""íí∞¢F&vWBÁ77v˜&B“7G&ñÊrÜG&gBÁ77v˜&B«¬""ì∞¢F&vWBÁ77v˜&EWFFVDD◊2“Ê˜s∞¢F&vWBÁ77v˜&EWFFVDFWfñ6TÊ÷R“FWfñ6TÊ÷S∞¢6ÜÊvVB“G'VS∞¢Üó7F˜'î÷W76vW2ÁW6ÇÇ%«ST$3e«SsÉ«STDc%«SDdTU«ScS3í"ì∞¢–¢6ˆÁ7BÊWáEF˜G6V7&WB“Ê˜&÷∆ó¶UF˜G6V7&WBÖ7G&ñÊrÜG&gBÁF˜G6V7&WB«¬""íì∞¢ñbÜÊWáEF˜G6V7&WBbbó5f∆ñEF˜G6V7&WBÜÊWáEF˜G6V7&WBíí∞¢6WE7FGW2Ç%DıE«ST$3e«SìDU«ScTS«ScSCÖ«Tdc5«SÑ$cu«ScÑ3«SctSU«SSCU«SSÑE«SDdDE«ST#SÇ"ì∞¢&WGW&„∞¢–¢ñbÜÊWáEF˜G6V7&WB”“Ê˜&÷∆ó¶UF˜G6V7&WBÖ7G&ñÊráF&vWBÁF˜G6V7&WB«¬""ííí∞¢F&vWBÁF˜G6V7&WB“ÊWáEF˜G6V7&WC∞¢F&vWBÁF˜GWFFVDD◊2“Ê˜s∞¢F&vWBÁF˜GWFFVDFWfñ6TÊ÷R“FWfñ6TÊ÷S∞¢6ÜÊvVB“G'VS∞¢Üó7F˜'î÷W76vW2ÁW6ÇÇ%DıE«STDc%«SDdTU«ScS3í"ì∞¢–¢ñbÖ7G&ñÊrÜG&gBÁ&V6˜fW'î6ˆFW2«¬""í”“7G&ñÊráF&vWBÁ&V6˜fW'î6ˆFW2«¬""íí∞¢F&vWBÁ&V6˜fW'î6ˆFW2“7G&ñÊrÜG&gBÁ&V6˜fW'î6ˆFW2«¬""ì∞¢F&vWBÁ&V6˜fW'î6ˆFW5WFFVDD◊2“Ê˜s∞¢F&vWBÁ&V6˜fW'î6ˆFW5WFFVDFWfñ6TÊ÷R“FWfñ6TÊ÷S∞¢6ÜÊvVB“G'VS∞¢Üó7F˜'î÷W76vW2ÁW6ÇÇ%«Scc%«SSìE«SsÉ«STDc%«SDdTU«ScS3í"ì∞¢–¢ñbÖ7G&ñÊrÜG&gBÊÊ˜FR«¬""í”“7G&ñÊráF&vWBÊÊ˜FR«¬""íí∞¢F&vWBÊÊ˜FR“7G&ñÊrÜG&gBÊÊ˜FR«¬""ì∞¢F&vWBÊÊ˜FUWFFVDD◊2“Ê˜s∞¢F&vWBÊÊ˜FUWFFVDFWfñ6TÊ÷R“FWfñ6TÊ÷S∞¢6ÜÊvVB“G'VS∞¢Üó7F˜'î÷W76vW2ÁW6ÇÇ%«SSìu«Sd4SÖ«STDc%«SDdTU«ScS3í"ì∞¢–¢ñbÇ6ÜÊvVBí∞¢6WE7FGW2Ç%«Sd4«Scsï«SS4Te«SDdDE«ST#SÖ«SscÉE«SS4CÖ«ScdcB"ì∞¢&WGW&„∞¢–¢F&vWBÁWFFVDD◊2“Ê˜s∞¢F&vWBÊ∆7D˜W&FVDFWfñ6TÊ÷R“FWfñ6TÊ÷S∞¢6ˆÁ7BvóFÑWFÙfˆ∆FW'2“ÊWáBÊ÷Ä¢ÜóFV“í”‚óFV“””“F&vWBÚ«îWFÙfˆ∆FW%'V∆W5FÙ66˜VÁBÜóFV“í¢óFV–¢ì∞¢6ˆÁ7B7ñÊ6VB“7ñÊ4∆ñ4w&˜W3"ávóFÑWFÙfˆ∆FW'2ì∞¢vóB6WD66˜VÁG2á7ñÊ6VBì∞¢f˜"Ü6ˆÁ7B÷W76vRˆbÜó7F˜'î÷W76vW2í∞¢vóBVÊDÜó7F˜'íÜG∑F&vWBÊ66˜VÁDñG’«TdcG∂÷W76vW÷¬Ê˜rì∞¢–¢VFóFñÊt66˜VÁDñB“ÁV∆√∞¢vóB&Vg&W6Çá≤6ñ∆VÁC¢G'VR“ì∞¢6WE7FGW2Ç%«SÑC#e«SS4cu«Stce«SÑcì«STDc%«SDdDE«ST#SÇ"ì∞¢–¢7ñÊ2gVÊ7Fñˆ‚FV∆WFT66˜VÁDg&ˆ‘∆¬Ü66˜VÁDñBí∞¢6ˆÁ7BÊWáB“6∆ˆÊT66˜VÁG2Ü66˜VÁG5&rì∞¢6ˆÁ7BñÊFWÇ“ÊWáBÊfñÊDñÊFWÇÇÜóFV“í”‚7G&ñÊrÜóFV“Ê66˜VÁDñB«¬""í””“7G&ñÊrÜ66˜VÁDñBíì∞¢ñbÜñÊFWÇ¬í∞¢6WE7FGW2Ç%«Scs$«Sc#tU«SS#3«SsdTU«ScÉu«SÑC#e«SS4cr"ì∞¢&WGW&„∞¢–¢6ˆÁ7BF&vWB“ÊWáE∂ñÊFWÖ”∞¢ñbáF&vWBÊó4FV∆WFVBí∞¢ñbáF&vWBÊó5W&÷ÊVÁF«îFV∆WFVBí∞¢6WE7FGW2Ç%«SÑ$SU«SÑC#e«SS4cu«STDc%«Sd33Ö«SDSCU«SS##«SìccB"ì∞¢&WGW&„∞¢–¢6ˆÁ7BÊ˜s"“FFRÊÊ˜rÇì∞¢6ˆÁ7BFWfñ6TÊ÷S"“vóBvWDFWfñ6TÊ÷RÇì∞¢ÊWáE∂ñÊFWÖ““∞¢‚‚ÁF&vWB¿¢ó4FV∆WFVC¢G'VR¿¢ó5W&÷ÊVÁF«îFV∆WFVC¢G'VR¿¢FV∆WFVDD◊3¢Ê˜s"¿¢FV∆WFVDFWfñ6TÊ÷S¢FWfñ6TÊ÷S"¿¢WFFVDD◊3¢Ê˜s"¿¢∆7D˜W&FVDFWfñ6TÊ÷S¢FWfñ6TÊ÷S ¢”∞¢ñbÜVFóFñÊt66˜VÁDñB””“F&vWBÊ66˜VÁDñBí∞¢VFóFñÊt66˜VÁDñB“ÁV∆√∞¢–¢vóB6WD66˜VÁG2ÜÊWáBì∞¢vóBVÊDÜó7F˜'íÜG∑F&vWBÊ66˜VÁDñG’«Tdc«Sd33Ö«SDSCU«SS##«SìccFì∞¢vóB&Vg&W6Çá≤6ñ∆VÁC¢G'VR“ì∞¢6WE7FGW2Ü«STDc%«Sd33Ö«SDSCU«SS##«SìccE«SÑC#e«SS4cs¢G∑F&vWBÊ66˜VÁDñG÷ì∞¢&WGW&„∞¢–¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7BFWfñ6TÊ÷R“vóBvWDFWfñ6TÊ÷RÇì∞¢F&vWBÊó4FV∆WFVB“G'VS∞¢F&vWBÊFV∆WFVDD◊2“Ê˜s∞¢F&vWBÁWFFVDD◊2“Ê˜s∞¢F&vWBÊ∆7D˜W&FVDFWfñ6TÊ÷R“FWfñ6TÊ÷S∞¢ñbÜVFóFñÊt66˜VÁDñB””“F&vWBÊ66˜VÁDñBí∞¢VFóFñÊt66˜VÁDñB“ÁV∆√∞¢–¢vóB6WD66˜VÁG2ÜÊWáBì∞¢vóBVÊDÜó7F˜'íÜG∑F&vWBÊ66˜VÁDñG’«Tdc«Ssîd%«SScU«SSdDU«ScS3e«StCñ¬Ê˜rì∞¢vóB&Vg&W6Çá≤6ñ∆VÁC¢G'VR“ì∞¢6WE7FGW2Ü«STDc%«Ssîd%«SScU«SSdDU«ScS3e«StCì¢G∑F&vWBÊ66˜VÁDñG÷ì∞¢–¢7ñÊ2gVÊ7Fñˆ‚&W7F˜&TFV∆WFVD66˜VÁBÜ66˜VÁDñBí∞¢6ˆÁ7BÊWáB“6∆ˆÊT66˜VÁG2Ü66˜VÁG5&rì∞¢6ˆÁ7BF&vWB“ÊWáBÊfñÊBÇÜóFV“í”‚7G&ñÊrÜóFV“Ê66˜VÁDñB«¬""í””“7G&ñÊrÜ66˜VÁDñBíì∞¢ñbÇF&vWBí∞¢6WE7FGW2Ç%«Scs$«Sc#tU«SS#3«SsdTU«ScÉu«SÑC#e«SS4cr"ì∞¢&WGW&„∞¢–¢ñbÇF&vWBÊó4FV∆WFVBí∞¢6WE7FGW2Ç%«SÑ$SU«SÑC#e«SS4cu«SDSE«SSs#Ö«SSdDU«ScS3e«StCí"ì∞¢&WGW&„∞¢–¢ñbáF&vWBÊó5W&÷ÊVÁF«îFV∆WFVBí∞¢6WE7FGW2Ç%«SÑ$SU«SÑC#e«SS4cu«STDc%«Sd33Ö«SDSCU«SS##«SìccE«Tdc5«SDSE«SÉdE«Scc%«SSìB"ì∞¢&WGW&„∞¢–¢6ˆÁ7B6ˆÊfó&÷VB“vñÊF˜rÊ6ˆÊfó&“Ü«ST3e«Scc%«SSìE«SÑC#e«SS4cu«TdcG∑F&vWBÊ66˜VÁDñG–•«Scc$e«SSC#e«StTSu«StTTE«Tdcfì∞¢ñbÇ6ˆÊfó&÷VBí&WGW&„∞¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7BFWfñ6TÊ÷R“vóBvWDFWfñ6TÊ÷RÇì∞¢F&vWBÊó4FV∆WFVB“f«6S∞¢F&vWBÊFV∆WFVDD◊2“ÁV∆√∞¢F&vWBÁWFFVDD◊2“Ê˜s∞¢F&vWBÊ∆7D˜W&FVDFWfñ6TÊ÷R“FWfñ6TÊ÷S∞¢ñbÜVFóFñÊt66˜VÁDñB””“F&vWBÊ66˜VÁDñBí∞¢VFóFñÊt66˜VÁDñB“ÁV∆√∞¢–¢vóB6WD66˜VÁG2ÜÊWáBì∞¢vóBVÊDÜó7F˜'íÜG∑F&vWBÊ66˜VÁDñG’«Tdc«SDT4U«SSdDU«ScS3e«StCï«Scc%«SSìF¬Ê˜rì∞¢vóB&Vg&W6Çá≤6ñ∆VÁC¢G'VR“ì∞¢6WE7FGW2Ü«STDc%«Scc%«SSìE«SÑC#e«SS4cs¢G∑F&vWBÊ66˜VÁDñG÷ì∞¢–¢7ñÊ2gVÊ7Fñˆ‚W&÷ÊVÁF«îFV∆WFT66˜VÁBÜ66˜VÁDñBí∞¢6ˆÁ7BÊWáB“6∆ˆÊT66˜VÁG2Ü66˜VÁG5&rì∞¢6ˆÁ7BñÊFWÇ“ÊWáBÊfñÊDñÊFWÇÇÜóFV“í”‚7G&ñÊrÜóFV“Ê66˜VÁDñB«¬""í””“7G&ñÊrÜ66˜VÁDñBíì∞¢ñbÜñÊFWÇ¬í∞¢6WE7FGW2Ç%«Scs$«Sc#tU«SS#3«SsdTU«ScÉu«SÑC#e«SS4cr"ì∞¢&WGW&„∞¢–¢6ˆÁ7BF&vWB“ÊWáE∂ñÊFWÖ”∞¢ñbÇF&vWBÊó4FV∆WFVBí∞¢6WE7FGW2Ç%«SDT3U«ScS$e«Sc3«SSs#Ö«SSdDU«ScS3e«StCï«SDS$E«Sd33Ö«SDSCU«SS##«SìccB"ì∞¢&WGW&„∞¢–¢ñbáF&vWBÊó5W&÷ÊVÁF«îFV∆WFVBí∞¢6WE7FGW2Ç%«SÑ$SU«SÑC#e«SS4cu«STDc%«Sd33Ö«SDSCU«SS##«SìccB"ì∞¢&WGW&„∞¢–¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7BFWfñ6TÊ÷R“vóBvWDFWfñ6TÊ÷RÇì∞¢ÊWáE∂ñÊFWÖ““∞¢‚‚ÁF&vWB¿¢ó4FV∆WFVC¢G'VR¿¢ó5W&÷ÊVÁF«îFV∆WFVC¢G'VR¿¢FV∆WFVDD◊3¢Ê˜r¿¢FV∆WFVDFWfñ6TÊ÷S¢FWfñ6TÊ÷R¿¢WFFVDD◊3¢Ê˜r¿¢∆7D˜W&FVDFWfñ6TÊ÷S¢FWfñ6TÊ÷P¢”∞¢ñbÜVFóFñÊt66˜VÁDñB””“F&vWBÊ66˜VÁDñBí∞¢VFóFñÊt66˜VÁDñB“ÁV∆√∞¢–¢vóB6WD66˜VÁG2ÜÊWáBì∞¢vóBVÊDÜó7F˜'íÜG∑F&vWBÊ66˜VÁDñG’«Tdc«Sd33Ö«SDSCU«SS##«SìccFì∞¢vóB&Vg&W6Çá≤6ñ∆VÁC¢G'VR“ì∞¢6WE7FGW2Ü«STDc%«Sd33Ö«SDSCU«SS##«SìccE«SÑC#e«SS4cs¢G∑F&vWBÊ66˜VÁDñG÷ì∞¢–¢7ñÊ2gVÊ7Fñˆ‚Fˆvv∆Uñ‚Ü66˜VÁDñB¬≤g&ˆ’6˜'D÷ˆF¬“f«6R““∑“í∞¢6ˆÁ7BÊWáB“6∆ˆÊT66˜VÁG2Ü66˜VÁG5&rì∞¢6ˆÁ7BF&vWB“ÊWáBÊfñÊBÇÜóFV“í”‚7G&ñÊrÜóFV“Ê66˜VÁDñB«¬""í””“7G&ñÊrÜ66˜VÁDñBíì∞¢ñbÇF&vWBí∞¢6WE7FGW2Ç%«Scs$«Sc#tU«SS#3«SsdTU«ScÉu«SÑC#e«SS4cr"ì∞¢&WGW&„∞¢–¢ñbáF&vWBÊó4FV∆WFVBí∞¢6WE7FGW2Ç%«SSdDU«ScS3e«StCï«SÑC#e«SS4cu«SDSE«ScS$e«Sc3«StcdU«SìÉsb"ì∞¢&WGW&„∞¢–¢6ˆÁ7B66˜T∂Wí“vWD7FófUñÂ66˜T∂WíÇì∞¢6ˆÁ7B66˜T∆&V¬“vWEñÂ66˜T∆&V¬á66˜T∂Wíì∞¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7BFWfñ6TÊ÷R“vóBvWDFWfñ6TÊ÷RÇì∞¢F&vWBÁñÊÊVEfñWw2“Ê˜&÷∆ó¶UñÊÊVEfñWw4÷áF&vWBÁñÊÊVEfñWw2¬F&vWBì∞¢6ˆÁ7B7W'&VÁE7FFR“vWEñÊÊVEfñWu7FFRáF&vWB¬66˜T∂Wíì∞¢6ˆÁ7BÊWáEñÊÊVB“7W'&VÁE7FFRÁñÊÊVC∞¢ñbÜÊWáEñÊÊVBí∞¢6ˆÁ7B÷Ñ˜&FW"“ÊWáBÊfñ«FW"ÇÜóFV“í”‚óFV“Êó4FV∆WFVBbbvWEñÊÊVEfñWu7FFRÜóFV“¬66˜T∂WííÁñÊÊVBíÁ&VGV6RÇÜ÷Öf«VR¬óFV“í”‚÷FÇÊ÷ÇÜ÷Öf«VR¬ÁV÷&W"ÜvWEñÊÊVEfñWu7FFRÜóFV“¬66˜T∂WííÁñÊÊVE6˜'D˜&FW"ÛÚ”íí¬”ì∞¢F&vWBÁñÊÊVEfñWw5∑66˜T∂Wï““∞¢‚‚Ê7W'&VÁE7FFR¿¢ñÊÊVC¢G'VR¿¢ñÊÊVE6˜'D˜&FW#¢÷Ñ˜&FW"≤¢”∞¢“V«6R∞¢F&vWBÁñÊÊVEfñWw5∑66˜T∂Wï““∞¢‚‚Ê7W'&VÁE7FFR¿¢ñÊÊVC¢f«6R¿¢ñÊÊVE6˜'D˜&FW#¢ÁV∆¬¿¢&VwV∆%6˜'D˜&FW#¢ÁV∆¿¢”∞¢–¢F&vWBÁWFFVDD◊2“Ê˜s∞¢F&vWBÊ∆7D˜W&FVDFWfñ6TÊ÷R“FWfñ6TÊ÷S∞¢vóB6WD66˜VÁG2ÜÊWáBì∞¢vóBVÊDÜó7F˜'íÄ¢ÊWáEñÊÊVBÚG∑F&vWBÊ66˜VÁDñG’«Tdc«SSs#ÇG∑66˜T∆&V«’«StcdU«SìÉsf¢G∑F&vWBÊ66˜VÁDñG’«Tdc«SS4Ce«SdCÉÇG∑66˜T∆&V«’«StcdU«SìÉsf¿¢Ê˜p¢ì∞¢vóB&Vg&W6Çá≤6ñ∆VÁC¢G'VR“ì∞¢6WE7FGW2Ä¢ÊWáEñÊÊVBÚ«SÑC#e«SS4cu«STDc%«SSs#ÇG∑66˜T∆&V«’«StcdU«SìÉsc¢G∑F&vWBÊ66˜VÁDñG÷¢«STDc%«SS4Ce«SdCÉÇG∑66˜T∆&V«’«StcdU«SìÉsc¢G∑F&vWBÊ66˜VÁDñG÷ ¢ì∞¢ñbÜg&ˆ’6˜'D÷ˆF¬bbFˆ“Á6˜'D÷ˆF¬Ê6∆74∆ó7BÊ6ˆÁFñÁ2Ç&ÜñFFV‚"íí∞¢6˜'D÷ˆFƒ˜&FW$ñG2“vWE6˜'F&∆T66˜VÁG4f˜$7W'&VÁEfñWrÇíÊ÷ÇÜ66˜VÁBí”‚7G&ñÊrÜ66˜VÁBÊ66˜VÁDñB«¬""íì∞¢&VÊFW%6˜'D÷ˆFƒ∆ó7BÇì∞¢–¢–¢gVÊ7Fñˆ‚VÊEF˜Gñ◊˜'D7FñˆÁ2á&VÁB¬≤F˜GñÁWB¬6óFW4ñÁWB¬W6W&Ê÷TñÁWB“í∞¢6ˆÁ7Bw&“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢w&Ê6∆74Ê÷R“&VFóF˜"◊&˜rVFóF˜"◊&˜r÷◊V«Fñ∆ñÊRF˜G÷ñ◊˜'B◊&˜r#∞¢6ˆÁ7B∆&V¬“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ'7‚"ì∞¢∆&V¬ÁFWáD6ˆÁFVÁB“%DıE«ST$d5«SScR#∞¢w&ÊVÊD6Üñ∆BÜ∆&V¬ì∞¢6ˆÁ7B7FñˆÁ2“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢7FñˆÁ2Ê6∆74Ê÷R“'F˜G÷ñ◊˜'B÷7FñˆÁ2#∞¢w&ÊVÊD6Üñ∆BÜ7FñˆÁ2ì∞¢6ˆÁ7B&t'F‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&'WGFˆ‚"ì∞¢&t'F‚ÁGóR“&'WGFˆ‚#∞¢&t'F‚ÁFWáD6ˆÁFVÁB“%«St3ìÖ«SÑC3E«SS3îe«SSî4%«ST$3e«SìDR#∞¢&t'F‚ÊFDWfVÁD∆ó7FVÊW"Ç&6∆ñ6≤"¬Çí”‚∞¢fˆñB7FU&uF˜G6V7&WDg&ˆ‘6∆ó&ˆ&Bá∞¢F˜GñÁW@¢“ì∞¢“ì∞¢7FñˆÁ2ÊVÊD6Üñ∆Bá&t'F‚ì∞¢6ˆÁ7BW&î'F‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&'WGFˆ‚"ì∞¢W&î'F‚ÁGóR“&'WGFˆ‚#∞¢W&î'F‚ÁFWáD6ˆÁFVÁB“%«St3ìÖ«SÑC3B˜GWFÇU$í#∞¢W&î'F‚ÊFDWfVÁD∆ó7FVÊW"Ç&6∆ñ6≤"¬Çí”‚∞¢fˆñB7FT˜GWFÖW&îg&ˆ‘6∆ó&ˆ&Bá∞¢F˜GñÁWB¿¢6óFW4ñÁWB¿¢W6W&Ê÷TñÁW@¢“ì∞¢“ì∞¢7FñˆÁ2ÊVÊD6Üñ∆BáW&î'F‚ì∞¢6ˆÁ7B$'F‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&'WGFˆ‚"ì∞¢$'F‚ÁGóR“&'WGFˆ‚#∞¢$'F‚ÁFWáD6ˆÁFVÁB“%«SÑ$3e«SS#$%«SS#d«SÑC3E«Scste«SDSÑ5«StTcE«SsÉ#∞¢$'F‚ÊFDWfVÁD∆ó7FVÊW"Ç&6∆ñ6≤"¬Çí”‚∞¢fˆñB7FT˜GWFÖ$g&ˆ‘6∆ó&ˆ&Bá∞¢F˜GñÁWB¿¢6óFW4ñÁWB¿¢W6W&Ê÷TñÁW@¢“ì∞¢“ì∞¢7FñˆÁ2ÊVÊD6Üñ∆Bá$'F‚ì∞¢&VÁBÊVÊD6Üñ∆Báw&ì∞¢–¢gVÊ7Fñˆ‚7&VFTVFóF˜$fñV∆Bá&VÁB¬∆&V≈FWáB¬f«VRí∞¢6ˆÁ7Bw&“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&∆&V¬"ì∞¢w&Ê6∆74Ê÷R“&VFóF˜"◊&˜rVFóF˜"◊&˜r÷ñÊ∆ñÊR#∞¢6ˆÁ7B∆&V¬“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ'7‚"ì∞¢∆&V¬ÁFWáD6ˆÁFVÁB“∆&V≈FWáC∞¢w&ÊVÊD6Üñ∆BÜ∆&V¬ì∞¢6ˆÁ7BñÁWB“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&ñÁWB"ì∞¢ñÁWBÁGóR“'FWáB#∞¢ñÁWBÁf«VR“f«VR«¬"#∞¢w&ÊVÊD6Üñ∆BÜñÁWBì∞¢&VÁBÊVÊD6Üñ∆Báw&ì∞¢&WGW&‚ñÁWC∞¢–¢gVÊ7Fñˆ‚7&VFTVFóF˜%FWáF&Vá&VÁB¬∆&V≈FWáB¬f«VR¬≤6∆74Ê÷R“""““∑“í∞¢6ˆÁ7Bw&“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&∆&V¬"ì∞¢w&Ê6∆74Ê÷R“&VFóF˜"◊&˜rVFóF˜"◊&˜r÷◊V«Fñ∆ñÊR#∞¢6ˆÁ7B∆&V¬“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ'7‚"ì∞¢∆&V¬ÁFWáD6ˆÁFVÁB“∆&V≈FWáC∞¢w&ÊVÊD6Üñ∆BÜ∆&V¬ì∞¢6ˆÁ7BñÁWB“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ'FWáF&V"ì∞¢ñÁWBÁf«VR“f«VR«¬"#∞¢ñbÜ6∆74Ê÷Rí∞¢ñÁWBÊ6∆74Ê÷R“6∆74Ê÷S∞¢–¢w&ÊVÊD6Üñ∆BÜñÁWBì∞¢&VÁBÊVÊD6Üñ∆Báw&ì∞¢&WGW&‚ñÁWC∞¢–¢gVÊ7Fñˆ‚6∆ˆÊT66˜VÁG2ÜñÁWD66˜VÁG2í∞¢6ˆÁ7Bf«VW2“'&íÊó4'&íÜñÁWD66˜VÁG2íÚñÁWD66˜VÁG2¢µ”∞¢&WGW&‚f«VW2Ê÷ÇÜ66˜VÁBí”‚á∞¢‚‚Ê66˜VÁB¿¢fˆ∆FW$ñG3¢'&íÊó4'&íÜ66˜VÁCÚÊfˆ∆FW$ñG2íÚ≤‚‚Ê66˜VÁBÊfˆ∆FW$ñG5“¢µ“¿¢6óFW3¢'&íÊó4'&íÜ66˜VÁCÚÁ6óFW2íÚ≤‚‚Ê66˜VÁBÁ6óFW5“¢µ“¿¢76∂Wî7&VFVÁFñƒñG3¢'&íÊó4'&íÜ66˜VÁCÚÁ76∂Wî7&VFVÁFñƒñG2íÚ≤‚‚Ê66˜VÁBÁ76∂Wî7&VFVÁFñƒñG5“¢µ“¿¢ñÊÊVEfñWw3¢Ê˜&÷∆ó¶UñÊÊVEfñWw4÷Ü66˜VÁCÚÁñÊÊVEfñWw2¬66˜VÁBê¢“íì∞¢–¢7ñÊ2gVÊ7Fñˆ‚vWDFWfñ6TÊ÷RÇí∞¢6ˆÁ7B&W7V«B“vóB6á&ˆ÷RÁ7F˜&vRÊ∆ˆ6¬ÊvWBÖµ5Dı$tUÙ¥UïÙDUdî4UÙ‰‘U“ì∞¢6ˆÁ7Bf«VR“7G&ñÊrá&W7V«Eµ5Dı$tUÙ¥UïÙDUdî4UÙ‰‘U“«¬""íÁG&ñ“Çì∞¢&WGW&‚Ê˜&÷∆ó¶TFWfñ6TÊ÷Ráf«VRì∞¢–¢7ñÊ2gVÊ7Fñˆ‚vWD˜$7&VFU7ñÊ4FWfñ6TñBÇí∞¢6ˆÁ7B&W7V«B“vóB6á&ˆ÷RÁ7F˜&vRÊ∆ˆ6¬ÊvWBÖµ5Dı$tUÙ¥Uïı5î‰5ÙDUdî4UÙîE“ì∞¢6ˆÁ7BWÜó7FñÊr“7G&ñÊrá&W7V«Eµ5Dı$tUÙ¥Uïı5î‰5ÙDUdî4UÙîE“«¬""íÁG&ñ“ÇíÁFÙ∆˜vW$66RÇì∞¢ñbÜWÜó7FñÊrí&WGW&‚WÜó7FñÊs∞¢6ˆÁ7BvVÊW&FVB“6V7W&U&ÊFˆ’WVñBÇíÁFÙ∆˜vW$66RÇì∞¢vóB6á&ˆ÷RÁ7F˜&vRÊ∆ˆ6¬Á6WBá≤µ5Dı$tUÙ¥Uïı5î‰5ÙDUdî4UÙîE”¢vVÊW&FVB“ì∞¢&WGW&‚vVÊW&FVC∞¢–¢gVÊ7Fñˆ‚Ê˜&÷∆ó¶T66˜VÁE6ÜRÜ66˜VÁBí∞¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7B6óFW2“Ê˜&÷∆ó¶U6óFW2Ü66˜VÁCÚÁ6óFW2«¬µ“ì∞¢6ˆÁ7B6ÊˆÊñ6¬“66˜VÁCÚÊ6ÊˆÊñ6≈6óFR«¬WF∆E«W4ˆÊRá6óFW5≥“«¬""ì∞¢6ˆÁ7B7&VFVDD◊2“ÁV÷&W"Ü66˜VÁCÚÊ7&VFVDD◊2«¬66˜VÁCÚÁWFFVDD◊2«¬Ê˜rì∞¢6ˆÁ7BW6W&Ê÷R“7G&ñÊrÜ66˜VÁCÚÁW6W&Ê÷R«¬""ì∞¢6ˆÁ7B66˜VÁDñB“7G&ñÊrÜ66˜VÁCÚÊ66˜VÁDñB«¬'Vñ∆D66˜VÁDñBÜ6ÊˆÊñ6¬¬W6W&Ê÷R¬7&VFVDD◊2íì∞¢6ˆÁ7B&V6˜&DñB“Ê˜&÷∆ó¶U&V6˜&DñBÜ66˜VÁB¬66˜VÁDñB¬7&VFVDD◊2ì∞¢6ˆÁ7B76∂Wî7&VFVÁFñƒñG2“Ê˜&÷∆ó¶U76∂Wî7&VFVÁFñƒñG2Ü66˜VÁCÚÁ76∂Wî7&VFVÁFñƒñG2«¬µ“ì∞¢&WGW&‚∞¢&V6˜&DñB¿¢66˜VÁDñB¿¢6ÊˆÊñ6≈6óFS¢6ÊˆÊñ6¬¿¢W6W&Ê÷TD7&VFS¢7G&ñÊrÜ66˜VÁCÚÁW6W&Ê÷TD7&VFR«¬W6W&Ê÷Rí¿¢ó5ñÊÊVC¢&ˆˆ∆V‚Ü66˜VÁCÚÊó5ñÊÊVBí¿¢ñÊÊVE6˜'D˜&FW#¢66˜VÁCÚÁñÊÊVE6˜'D˜&FW"”“ÁV∆¬ÚÁV∆¬¢ÁV÷&W"Ü66˜VÁBÁñÊÊVE6˜'D˜&FW"í¿¢&VwV∆%6˜'D˜&FW#¢66˜VÁCÚÁ&VwV∆%6˜'D˜&FW"”“ÁV∆¬ÚÁV∆¬¢ÁV÷&W"Ü66˜VÁBÁ&VwV∆%6˜'D˜&FW"í¿¢ñÊÊVEfñWw3¢Ê˜&÷∆ó¶UñÊÊVEfñWw4÷Ü66˜VÁCÚÁñÊÊVEfñWw2¬66˜VÁBí¿¢fˆ∆FW$ñC¢66˜VÁCÚÊfˆ∆FW$ñB”“ÁV∆¬ÚÁV∆¬¢7G&ñÊrÜ66˜VÁBÊfˆ∆FW$ñBí¿¢fˆ∆FW$ñG3¢'&íÊó4'&íÜ66˜VÁCÚÊfˆ∆FW$ñG2íÚ66˜VÁBÊfˆ∆FW$ñG2Ê÷ÇÜñBí”‚7G&ñÊrÜñBíí¢66˜VÁCÚÊfˆ∆FW$ñB”“ÁV∆¬Úµ“¢µ7G&ñÊrÜ66˜VÁBÊfˆ∆FW$ñBï“¿¢fˆ∆FW$÷V÷&W'6Üó7FFW3¢66˜VÁCÚÊfˆ∆FW$÷V÷&W'6Üó7FFW2bbGóVˆb66˜VÁBÊfˆ∆FW$÷V÷&W'6Üó7FFW2””“&ˆ&¶V7B"Ú66˜VÁBÊfˆ∆FW$÷V÷&W'6Üó7FFW2¢∑“¿¢6óFW2¿¢6óFT∆ñ57FFW3¢66˜VÁCÚÁ6óFT∆ñ57FFW2bbGóVˆb66˜VÁBÁ6óFT∆ñ57FFW2””“&ˆ&¶V7B"Ú66˜VÁBÁ6óFT∆ñ57FFW2¢∑“¿¢W6W&Ê÷R¿¢77v˜&C¢7G&ñÊrÜ66˜VÁCÚÁ77v˜&B«¬""í¿¢F˜G6V7&WC¢7G&ñÊrÜ66˜VÁCÚÁF˜G6V7&WB«¬""í¿¢&V6˜fW'î6ˆFW3¢7G&ñÊrÜ66˜VÁCÚÁ&V6˜fW'î6ˆFW2«¬""í¿¢Ê˜FS¢7G&ñÊrÜ66˜VÁCÚÊÊ˜FR«¬""í¿¢76∂Wî7&VFVÁFñƒñG2¿¢76∂Wî∆ñÊµ7FFW3¢66˜VÁCÚÁ76∂Wî∆ñÊµ7FFW2bbGóVˆb66˜VÁBÁ76∂Wî∆ñÊµ7FFW2””“&ˆ&¶V7B"Ú66˜VÁBÁ76∂Wî∆ñÊµ7FFW2¢∑“¿¢W6W&Ê÷UWFFVDD◊3¢ÁV÷&W"Ü66˜VÁCÚÁW6W&Ê÷UWFFVDD◊2«¬7&VFVDD◊2í¿¢W6W&Ê÷UWFFVDFWfñ6TÊ÷S¢7G&ñÊrÜ66˜VÁCÚÁW6W&Ê÷UWFFVDFWfñ6TÊ÷R«¬66˜VÁCÚÊ∆7D˜W&FVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí«¬DTdT≈EÙDUdî4UÙ‰‘R¿¢77v˜&EWFFVDD◊3¢ÁV÷&W"Ü66˜VÁCÚÁ77v˜&EWFFVDD◊2«¬7&VFVDD◊2í¿¢77v˜&EWFFVDFWfñ6TÊ÷S¢7G&ñÊrÜ66˜VÁCÚÁ77v˜&EWFFVDFWfñ6TÊ÷R«¬66˜VÁCÚÊ∆7D˜W&FVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí«¬DTdT≈EÙDUdî4UÙ‰‘R¿¢F˜GWFFVDD◊3¢ÁV÷&W"Ü66˜VÁCÚÁF˜GWFFVDD◊2«¬7&VFVDD◊2í¿¢F˜GWFFVDFWfñ6TÊ÷S¢7G&ñÊrÜ66˜VÁCÚÁF˜GWFFVDFWfñ6TÊ÷R«¬66˜VÁCÚÊ∆7D˜W&FVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí«¬DTdT≈EÙDUdî4UÙ‰‘R¿¢&V6˜fW'î6ˆFW5WFFVDD◊3¢ÁV÷&W"Ü66˜VÁCÚÁ&V6˜fW'î6ˆFW5WFFVDD◊2«¬7&VFVDD◊2í¿¢&V6˜fW'î6ˆFW5WFFVDFWfñ6TÊ÷S¢7G&ñÊrÜ66˜VÁCÚÁ&V6˜fW'î6ˆFW5WFFVDFWfñ6TÊ÷R«¬66˜VÁCÚÊ∆7D˜W&FVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí«¬DTdT≈EÙDUdî4UÙ‰‘R¿¢Ê˜FUWFFVDD◊3¢ÁV÷&W"Ü66˜VÁCÚÊÊ˜FUWFFVDD◊2«¬7&VFVDD◊2í¿¢Ê˜FUWFFVDFWfñ6TÊ÷S¢7G&ñÊrÜ66˜VÁCÚÊÊ˜FUWFFVDFWfñ6TÊ÷R«¬66˜VÁCÚÊ∆7D˜W&FVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí«¬DTdT≈EÙDUdî4UÙ‰‘R¿¢76∂WïWFFVDD◊3¢ÁV÷&W"Ü66˜VÁCÚÁ76∂WïWFFVDD◊2«¬7&VFVDD◊2í¿¢76∂WïWFFVDFWfñ6TÊ÷S¢7G&ñÊrÜ66˜VÁCÚÁ76∂WïWFFVDFWfñ6TÊ÷R«¬66˜VÁCÚÊ∆7D˜W&FVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí«¬DTdT≈EÙDUdî4UÙ‰‘R¿¢ó4FV∆WFVC¢&ˆˆ∆V‚Ü66˜VÁCÚÊó4FV∆WFVBí¿¢ó5W&÷ÊVÁF«îFV∆WFVC¢&ˆˆ∆V‚Ü66˜VÁCÚÊó5W&÷ÊVÁF«îFV∆WFVBí¿¢FV∆WFVDD◊3¢66˜VÁCÚÊFV∆WFVDD◊2”“ÁV∆¬ÚÁV∆¬¢ÁV÷&W"Ü66˜VÁBÊFV∆WFVDD◊2í¿¢FV∆WFVDFWfñ6TÊ÷S¢7G&ñÊrÜ66˜VÁCÚÊFV∆WFVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí¿¢∆7D˜W&FVDFWfñ6TÊ÷S¢7G&ñÊrÜ66˜VÁCÚÊ∆7D˜W&FVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí«¬DTdT≈EÙDUdî4UÙ‰‘R¿¢7&VFVDFWfñ6TÊ÷S¢7G&ñÊrÜ66˜VÁCÚÊ7&VFVDFWfñ6TÊ÷R«¬66˜VÁCÚÊ∆7D˜W&FVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí«¬DTdT≈EÙDUdî4UÙ‰‘R¿¢7&VFVDD◊2¿¢WFFVDD◊3¢ÁV÷&W"Ü66˜VÁCÚÁWFFVDD◊2«¬7&VFVDD◊2ê¢”∞¢–¢gVÊ7Fñˆ‚Ê˜&÷∆ó¶U76∂Wï6ÜRÜóFV“í∞¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7BÊ˜&÷∆ó¶VD6ˆ◊B“Ê˜&÷∆ó¶U76∂Wî7&VFT6ˆ◊D÷WFÜˆBÜóFV”ÚÊ7&VFT6ˆ◊D÷WFÜˆB¬óFV”ÚÊ∆rì∞¢&WGW&‚∞¢7&VFVÁFñƒñD#cGS¢7G&ñÊrÜóFV”ÚÊ7&VFVÁFñƒñD#cGR«¬óFV”ÚÊñB«¬""íÁG&ñ“Çí¿¢'ñC¢Ê˜&÷∆ó¶TFˆ÷ñ‚ÜóFV”ÚÁ'ñB«¬""í¿¢W6W$Ê÷S¢Ê˜&÷∆ó¶UW6W&Ê÷RÜóFV”ÚÁW6W$Ê÷R«¬óFV”ÚÁW6W&Ê÷R«¬""í¿¢Fó7∆îÊ÷S¢7G&ñÊrÜóFV”ÚÊFó7∆îÊ÷R«¬""íÁG&ñ“Çí¿¢W6W$ÜÊF∆T#cGS¢7G&ñÊrÜóFV”ÚÁW6W$ÜÊF∆T#cGR«¬""í¿¢∆s¢ÁV÷&W"ÜóFV”ÚÊ∆r«¬”rí¿¢6ñv‰6˜VÁC¢ÁV÷&W"ÜóFV”ÚÁ6ñv‰6˜VÁB«¬í¿¢&ófFTßv≥¢óFV”ÚÁ&ófFTßv≤«¬ÁV∆¬¿¢V&∆ñ4ßv≥¢óFV”ÚÁV&∆ñ4ßv≤«¬ÁV∆¬¿¢7&VFVDD◊3¢ÁV÷&W"ÜóFV”ÚÊ7&VFVDD◊2«¬Ê˜rí¿¢WFFVDD◊3¢ÁV÷&W"ÜóFV”ÚÁWFFVDD◊2«¬óFV”ÚÊ7&VFVDD◊2«¬Ê˜rí¿¢∆7EW6VDD◊3¢óFV”ÚÊ∆7EW6VDD◊2”“ÁV∆¬ÚÁV∆¬¢ÁV÷&W"ÜóFV“Ê∆7EW6VDD◊2í¿¢÷ˆFS¢7G&ñÊrÜóFV”ÚÊ÷ˆFR«¬&÷ÊvVB"í¿¢7&VFT6ˆ◊D÷WFÜˆC¢Ê˜&÷∆ó¶VD6ˆ◊B¿¢ó4FV∆WFVC¢&ˆˆ∆V‚ÜóFV”ÚÊó4FV∆WFVBí¿¢ó5W&÷ÊVÁF«îFV∆WFVC¢&ˆˆ∆V‚ÜóFV”ÚÊó5W&÷ÊVÁF«îFV∆WFVBí¿¢FV∆WFVDD◊3¢óFV”ÚÊFV∆WFVDD◊2”“ÁV∆¬ÚÁV∆¬¢ÁV÷&W"ÜóFV“ÊFV∆WFVDD◊2í¿¢FV∆WFVDFWfñ6TÊ÷S¢7G&ñÊrÜóFV”ÚÊFV∆WFVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çê¢”∞¢–¢gVÊ7Fñˆ‚Ê˜&÷∆ó¶U76∂Wî7&VFT6ˆ◊D÷WFÜˆBÜñÁWB¬∆rí∞¢6ˆÁ7Bf«VR“7G&ñÊrÜñÁWB«¬""íÁG&ñ“ÇíÁFÙ∆˜vW$66RÇì∞¢ñbáf«VR””“'7FÊF&B"«¬f«VR””“'W6W%ˆÊ÷Uˆf∆∆&6≤"«¬f«VR””“''3#Sb"«¬f«VR””“'W6W%ˆÊ÷Uˆf∆∆&6≤∑'3#Sb"«¬f«VR””“'VÊ∂Ê˜vÂˆ∆ñÊ∂VB"í∞¢&WGW&‚f«VS∞¢–¢&WGW&‚ÁV÷&W"Ü∆rí””“”#SrÚ''3#Sb"¢'7FÊF&B#∞¢–¢gVÊ7Fñˆ‚Ê˜&÷∆ó¶Tfˆ∆FW%6ÜRÜóFV“í∞¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7BñB“Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜóFV”ÚÊñB«¬""ì∞¢6ˆÁ7BfóÜVDñB“dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%ÙîC∞¢6ˆÁ7B&tÊ÷R“7G&ñÊrÜóFV”ÚÊÊ÷R«¬""íÁG&ñ“Çì∞¢6ˆÁ7B6fTñB“ñB«¬Üv∆ˆ&≈FÜó2Ê7'óFÛÚÁ&ÊFˆ’UTîCÚ‚Çí«¬7F&∆UWVñDg&ˆ’FWáBÜfˆ∆FW'¬G∑&tÊ÷W◊¬G∂Ê˜w÷ííÁFÙ∆˜vW$66RÇì∞¢6ˆÁ7B7&VFVDD◊5&r“ÁV÷&W"ÜóFV”ÚÊ7&VFVDD◊2ÛÚÊ˜rì∞¢6ˆÁ7B7&VFVDD◊2“ÁV÷&W"Êó4fñÊóFRÜ7&VFVDD◊5&ríÚ7&VFVDD◊5&r¢Ê˜s∞¢6ˆÁ7BWFFVDD◊5&r“ÁV÷&W"ÜóFV”ÚÁWFFVDD◊2ÛÚ7&VFVDD◊2ì∞¢6ˆÁ7BWFFVDD◊2“ÁV÷&W"Êó4fñÊóFRáWFFVDD◊5&ríÚWFFVDD◊5&r¢7&VFVDD◊3∞¢6ˆÁ7B6fTÊ÷R“6fTñB””“fóÜVDñBÚdïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%Ù‰‘R¢&tÊ÷R«¬«Scs$«SSCtE«SSCE«ScSÉu«SDTce«SSì3íG∑6fTñBÁ6∆ñ6RÉ¬Çó÷∞¢&WGW&‚∞¢ñC¢6fTñB¿¢Ê÷S¢6fTÊ÷R¿¢÷F6ÜVE6óFW3¢Ê˜&÷∆ó¶U6óFW2ÜóFV”ÚÊ÷F6ÜVE6óFW2«¬µ“í¿¢WFÙFD÷F6ÜñÊu6óFW3¢&ˆˆ∆V‚ÜóFV”ÚÊWFÙFD÷F6ÜñÊu6óFW2í¿¢ó4FV∆WFVC¢&ˆˆ∆V‚ÜóFV”ÚÊó4FV∆WFVBí¿¢ó5W&÷ÊVÁF«îFV∆WFVC¢&ˆˆ∆V‚ÜóFV”ÚÊó5W&÷ÊVÁF«îFV∆WFVBí¿¢FV∆WFVDD◊3¢óFV”ÚÊFV∆WFVDD◊2”“ÁV∆¬ÚÁV∆¬¢ÁV÷&W"ÜóFV“ÊFV∆WFVDD◊2í¿¢FV∆WFVDFWfñ6TÊ÷S¢7G&ñÊrÜóFV”ÚÊFV∆WFVDFWfñ6TÊ÷R«¬""íÁG&ñ“Çí¿¢7&VFVDD◊2¿¢WFFVDD◊0¢”∞¢–¢gVÊ7Fñˆ‚'6U6óFW2á&rí∞¢&WGW&‚Ê˜&÷∆ó¶U6óFW2Ä¢7G&ñÊrá&r«¬""íÁ7∆óBÇıµ«2√µ∆Â«E“≤ˆríÊ÷Çáf«VRí”‚f«VRÁG&ñ“ÇííÊfñ«FW"Ñ&ˆˆ∆V‚ê¢ì∞¢–¢gVÊ7Fñˆ‚Ê˜&÷∆ó¶U76∂Wî7&VFVÁFñƒñG2ÜñÁWBí∞¢6ˆÁ7Bf«VW2“'&íÊó4'&íÜñÁWBíÚñÁWB¢µ”∞¢&WGW&‚≤‚‚ÊÊWr6WBáf«VW2Ê÷ÇÜóFV“í”‚7G&ñÊrÜóFV“«¬""íÁG&ñ“ÇííÊfñ«FW"Ñ&ˆˆ∆V‚íï“Á6˜'BÇì∞¢–¢gVÊ7Fñˆ‚'Vñ∆EVÊñfñVE76∂Wó2Ü66˜VÁG4ñÁWB¬76∂Wó4ñÁWBí∞¢6ˆÁ7BÊ˜r“FFRÊÊ˜rÇì∞¢6ˆÁ7B66˜VÁG2“'&íÊó4'&íÜ66˜VÁG4ñÁWBíÚ66˜VÁG4ñÁWBÊ÷ÜÊ˜&÷∆ó¶T66˜VÁE6ÜRí¢µ”∞¢6ˆÁ7B7F˜&VE76∂Wó2“'&íÊó4'&íá76∂Wó4ñÁWBíÚ76∂Wó4ñÁWBÊ÷ÜÊ˜&÷∆ó¶U76∂Wï6ÜRí¢µ”∞¢6ˆÁ7B∆ñÊ∂VD'îñB“Ú¢ııU$UıÚ¢ÚÊWr÷Çì∞¢f˜"Ü6ˆÁ7B66˜VÁBˆb66˜VÁG2í∞¢6ˆÁ7BñG2“Ê˜&÷∆ó¶U76∂Wî7&VFVÁFñƒñG2Ü66˜VÁCÚÁ76∂Wî7&VFVÁFñƒñG2«¬µ“ì∞¢ñbÜñG2Ê∆VÊwFÇ””“í6ˆÁFñÁVS∞¢6ˆÁ7B'ñB“Ê˜&÷∆ó¶TFˆ÷ñ‚Ü66˜VÁCÚÁ6óFW2bb66˜VÁBÁ6óFW5≥“«¬66˜VÁCÚÊ6ÊˆÊñ6≈6óFR«¬""ì∞¢6ˆÁ7BW6W$Ê÷R“Ê˜&÷∆ó¶UW6W&Ê÷RÜ66˜VÁCÚÁW6W&Ê÷R«¬66˜VÁCÚÁW6W&Ê÷TD7&VFR«¬""ì∞¢6ˆÁ7B7&VFVDD◊2“ÁV÷&W"Ü66˜VÁCÚÊ7&VFVDD◊2«¬Ê˜rì∞¢f˜"Ü6ˆÁ7B&tñBˆbñG2í∞¢6ˆÁ7B7&VFVÁFñƒñD#cGR“7G&ñÊrá&tñB«¬""íÁG&ñ“Çì∞¢ñbÇ7&VFVÁFñƒñD#cGRí6ˆÁFñÁVS∞¢6ˆÁ7BWÜó7FñÊr“∆ñÊ∂VD'îñBÊvWBÜ7&VFVÁFñƒñD#cGRì∞¢ñbÜWÜó7FñÊrí∞¢ñbÇWÜó7FñÊrÁ'ñBbb'ñBí∞¢WÜó7FñÊrÁ'ñB“'ñC∞¢–¢ñbÇWÜó7FñÊrÁW6W$Ê÷RbbW6W$Ê÷Rí∞¢WÜó7FñÊrÁW6W$Ê÷R“W6W$Ê÷S∞¢–¢6ˆÁFñÁVS∞¢–¢∆ñÊ∂VD'îñBÁ6WBÜ7&VFVÁFñƒñD#cGR¬∞¢7&VFVÁFñƒñD#cGR¿¢'ñB¿¢W6W$Ê÷R¿¢Fó7∆îÊ÷S¢""¿¢W6W$ÜÊF∆T#cGS¢""¿¢∆s¢”r¿¢6ñv‰6˜VÁC¢¿¢&ófFTßv≥¢ÁV∆¬¿¢V&∆ñ4ßv≥¢ÁV∆¬¿¢7&VFVDD◊2¿¢WFFVDD◊3¢¿¢∆7EW6VDD◊3¢ÁV∆¬¿¢÷ˆFS¢&∆ñÊ∂VB÷66˜VÁB"¿¢7&VFT6ˆ◊D÷WFÜˆC¢'VÊ∂Ê˜vÂˆ∆ñÊ∂VB ¢“ì∞¢–¢–¢6ˆÁ7B∆ñÊ∂VE76∂Wó2“'&íÊg&ˆ“Ü∆ñÊ∂VD'îñBÁf«VW2ÇííÊfñ«FW"ÇÜóFV“í”‚7G&ñÊrÜóFV“Á'ñB«¬""íÁG&ñ“ÇíÊ∆VÊwFÇ‚ì∞¢&WGW&‚÷W&vU76∂Wî6ˆ∆∆V7FñˆÁ3"á7F˜&VE76∂Wó2¬∆ñÊ∂VE76∂Wó2ì∞¢–¢gVÊ7Fñˆ‚Ê˜&÷∆ó¶Tfˆ∆FW$ñBáf«VRí∞¢&WGW&‚7G&ñÊráf«VR«¬""íÁG&ñ“ÇíÁFÙ∆˜vW$66RÇì∞¢–¢gVÊ7Fñˆ‚ó5WVñD∆˜vW"áf«VRí∞¢&WGW&‚ıÂ≥”ñ÷e◊≥á“’≥”ñ÷e◊≥G“’≥”ñ÷e◊≥G“’≥”ñ÷e◊≥G“’≥”ñ÷e◊≥'“BÚÁFW7BÖ7G&ñÊráf«VR«¬""íì∞¢–¢gVÊ7Fñˆ‚7F&∆UWVñDg&ˆ’FWáBÜñÁWBí∞¢6ˆÁ7B&r“7G&ñÊrÜñÁWB«¬""ì∞¢6ˆÁ7B6VVE'G2“≥#cSCC3Sscí¬##CcÉ##Sr¬3#ccCÉììí¬ccÉ#cS#c5”∞¢f˜"Ü∆WBí“≤í¬&rÊ∆VÊwFÉ≤í≥“í∞¢6ˆÁ7B6ˆFR“&rÊ6Ü$6ˆFTBÜíì∞¢6ˆÁ7BñGÇ“íRC∞¢6VVE'G5∂ñGÖ““÷FÇÊñ◊V¬á6VVE'G5∂ñGÖ“‚6ˆFR¬s3#CCCsRí„„‚∞¢6VVE'G5∂ñGÖ““á6VVE'G5∂ñGÖ“‚6VVE'G5∂ñGÖ“„„‚bí„„‚∞¢–¢6ˆÁ7BÜWÇ“6VVE'G2Ê÷Çáf«VRí”‚f«VRÁFı7G&ñÊrÉbíÁE7F'BÉÇ¬#"ííÊ¶ˆñ‚Ç""íÁ6∆ñ6RÉ¬3"ì∞¢&WGW&‚G∂ÜWÇÁ6∆ñ6RÉ¬Çó““G∂ÜWÇÁ6∆ñ6RÉÇ¬"ó““G∂ÜWÇÁ6∆ñ6RÉ"¬bó““G∂ÜWÇÁ6∆ñ6RÉb¬#ó““G∂ÜWÇÁ6∆ñ6RÉ#¬3"ó÷∞¢–¢gVÊ7Fñˆ‚Ê˜&÷∆ó¶U&V6˜&DñBÜ66˜VÁB¬66˜VÁDñB¬7&VFVDD◊2í∞¢6ˆÁ7BFó&V7B“Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜ66˜VÁCÚÁ&V6˜&DñB«¬66˜VÁCÚÊñB«¬""ì∞¢ñbÜó5WVñD∆˜vW"ÜFó&V7Bíí&WGW&‚Fó&V7C∞¢6ˆÁ7BW6W&Ê÷U6VVB“7G&ñÊrÜ66˜VÁCÚÁW6W&Ê÷TD7&VFR«¬66˜VÁCÚÁW6W&Ê÷R«¬""íÁG&ñ“Çì∞¢6ˆÁ7B7F&∆U6VVB“Gµ7G&ñÊrÜ66˜VÁDñB«¬""íÁG&ñ“Çó◊¬G¥ÁV÷&W"Ü7&VFVDD◊2«¬ó◊¬G∑W6W&Ê÷U6VVG÷∞¢&WGW&‚7F&∆UWVñDg&ˆ’FWáBá7F&∆U6VVBì∞¢–¢gVÊ7Fñˆ‚Ê˜&÷∆ó¶Tfˆ∆FW$ñD∆ó7Báf«VW2í∞¢6ˆÁ7B6˜W&6R“'&íÊó4'&íáf«VW2íÚf«VW2¢µ”∞¢&WGW&‚≤‚‚ÊÊWr6WBá6˜W&6RÊ÷ÜÊ˜&÷∆ó¶Tfˆ∆FW$ñBíÊfñ«FW"Ñ&ˆˆ∆V‚íï“Á6˜'BÇì∞¢–¢gVÊ7Fñˆ‚vóFÑfóÜVDfˆ∆FW"ÜñÁWDfˆ∆FW'2í∞¢6ˆÁ7Bfˆ∆FW'2“'&íÊó4'&íÜñÁWDfˆ∆FW'2íÚ≤‚‚ÊñÁWDfˆ∆FW'5“¢µ”∞¢6ˆÁ7BWÜó7G2“fˆ∆FW'2Á6ˆ÷RÇÜóFV“í”‚Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜóFV”ÚÊñBí””“dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%ÙîBì∞¢ñbÇWÜó7G2í∞¢fˆ∆FW'2ÁW6ÇÄ¢Ê˜&÷∆ó¶Tfˆ∆FW%6ÜRá∞¢ñC¢dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%ÙîB¿¢Ê÷S¢dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%Ù‰‘R¿¢7&VFVDD◊3¢ ¢“ê¢ì∞¢–¢&WGW&‚fˆ∆FW'2Ê÷ÇÜfˆ∆FW"í”‚∞¢ñbÜÊ˜&÷∆ó¶Tfˆ∆FW$ñBÜfˆ∆FW#ÚÊñBí”“dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%ÙîBí&WGW&‚fˆ∆FW#∞¢&WGW&‚∞¢‚‚Êfˆ∆FW"¿¢ñC¢dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%ÙîB¿¢Ê÷S¢dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%Ù‰‘P¢”∞¢“ì∞¢–¢gVÊ7Fñˆ‚fˆ∆FW$Fó7∆îÊ÷T'îñBÜfˆ∆FW$ñBí∞¢6ˆÁ7BÊ˜&÷∆ó¶VDfˆ∆FW$ñB“Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜfˆ∆FW$ñBì∞¢6ˆÁ7B÷F6ÜVB“fˆ∆FW'5&rÊfñÊBÇÜóFV“í”‚Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜóFV”ÚÊñBí””“Ê˜&÷∆ó¶VDfˆ∆FW$ñBì∞¢ñbÇ÷F6ÜVBí∞¢&WGW&‚«Scs$«SSCtE«SSCE«ScSÉu«SDTce«SSì3íG∂Ê˜&÷∆ó¶VDfˆ∆FW$ñBÁ6∆ñ6RÉ¬Çó÷∞¢–¢&WGW&‚7G&ñÊrÜ÷F6ÜVCÚÊÊ÷R«¬«Scs$«SSCtE«SSCE«ScSÉu«SDTce«SSì3íG∂Ê˜&÷∆ó¶VDfˆ∆FW$ñBÁ6∆ñ6RÉ¬Çó÷ì∞¢–¢gVÊ7Fñˆ‚WáG&7D66˜VÁDfˆ∆FW$ñG2Ü66˜VÁBí∞¢ñbÑ'&íÊó4'&íÜ66˜VÁCÚÊfˆ∆FW$ñG2íbb66˜VÁBÊfˆ∆FW$ñG2Ê∆VÊwFÇ‚í∞¢&WGW&‚66˜VÁBÊfˆ∆FW$ñG2Ê÷ÇÜñBí”‚7G&ñÊrÜñB«¬""íì∞¢–¢ñbÜ66˜VÁCÚÊfˆ∆FW$ñB“ÁV∆¬í∞¢&WGW&‚µ7G&ñÊrÜ66˜VÁBÊfˆ∆FW$ñBï”∞¢–¢&WGW&‚µ”∞¢–¢gVÊ7Fñˆ‚6˜'Dfˆ∆FW'4f˜$Fó7∆íÜñÁWDfˆ∆FW'2í∞¢6ˆÁ7Bfˆ∆FW'2“'&íÊó4'&íÜñÁWDfˆ∆FW'2íÚñÁWDfˆ∆FW'2¢µ”∞¢&WGW&‚≤‚‚Êfˆ∆FW'5“Á6˜'BÇÜ∆á2¬&á2í”‚∞¢6ˆÁ7B∆á4ñB“Ê˜&÷∆ó¶Tfˆ∆FW$ñBÜ∆á3ÚÊñBì∞¢6ˆÁ7B&á4ñB“Ê˜&÷∆ó¶Tfˆ∆FW$ñBá&á3ÚÊñBì∞¢ñbÜ∆á4ñB””“dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%ÙîBbb&á4ñB”“dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%ÙîBí&WGW&‚”∞¢ñbá&á4ñB””“dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%ÙîBbb∆á4ñB”“dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%ÙîBí&WGW&‚∞¢6ˆÁ7B∆á47&VFVB“ÁV÷&W"Ü∆á3ÚÊ7&VFVDD◊2«¬ì∞¢6ˆÁ7B&á47&VFVB“ÁV÷&W"á&á3ÚÊ7&VFVDD◊2«¬ì∞¢ñbÜ∆á47&VFVB”“&á47&VFVBí&WGW&‚∆á47&VFVB“&á47&VFVC∞¢&WGW&‚7G&ñÊrÜ∆á3ÚÊÊ÷R«¬""íÊ∆ˆ6∆T6ˆ◊&RÖ7G&ñÊrá&á3ÚÊÊ÷R«¬""íì∞¢“ì∞¢–¢gVÊ7Fñˆ‚÷W&vU7ñÊ5ñ∆ˆG3"Ü∆ˆ6¬¬&V÷˜FRí∞¢6ˆÁ7B÷W&vVB“÷W&vU7ñÊ5ñ∆ˆG2Ä¢Ê˜&÷∆ó¶U7ñÊ5ñ∆ˆE6ÜRÜ∆ˆ6¬í¿¢Ê˜&÷∆ó¶U7ñÊ5ñ∆ˆE6ÜRá&V÷˜FRí¿¢7ñÊ4÷W&vTÜV«W'2Çê¢ì∞¢÷W&vVBÊ66˜VÁG2“7ñÊ4∆ñ4w&˜W3"Ü÷W&vVBÊ66˜VÁG2ì∞¢÷W&vVBÁ76∂Wó2“'Vñ∆EVÊñfñVE76∂Wó2Ü÷W&vVBÊ66˜VÁG2¬÷W&vVBÁ76∂Wó2ì∞¢&WGW&‚Ê˜&÷∆ó¶U7ñÊ5ñ∆ˆE6ÜRÜ÷W&vVBì∞¢–¢gVÊ7Fñˆ‚÷W&vU76∂Wî6ˆ∆∆V7FñˆÁ3"Ü∆ˆ6¬¬&V÷˜FRí∞¢&WGW&‚÷W&vU76∂Wî6ˆ∆∆V7FñˆÁ2Ü∆ˆ6¬¬&V÷˜FR¬7ñÊ4÷W&vTÜV«W'2Çíì∞¢–¢gVÊ7Fñˆ‚&V6ˆÊ6ñ∆T66˜VÁDfˆ∆FW'3"Ü66˜VÁG2¬fˆ∆FW'2í∞¢&WGW&‚&V6ˆÊ6ñ∆T66˜VÁDfˆ∆FW'2Ü66˜VÁG2¬fˆ∆FW'2¬7ñÊ4÷W&vTÜV«W'2Çíì∞¢–¢gVÊ7Fñˆ‚7ñÊ4÷W&vTÜV«W'2Çí∞¢&WGW&‚∞¢Ê˜&÷∆ó¶T66˜VÁE6ÜR¿¢Ê˜&÷∆ó¶Tfˆ∆FW$ñD∆ó7B¿¢Ê˜&÷∆ó¶Tfˆ∆FW$ñB¿¢WáG&7D66˜VÁDfˆ∆FW$ñG2¿¢Ê˜&÷∆ó¶U6óFW2¿¢WF∆E«W4ˆÊR¿¢Ê˜&÷∆ó¶U76∂Wî7&VFVÁFñƒñG2¿¢7F&∆UWVñDg&ˆ’FWáB¿¢Ê˜&÷∆ó¶U76∂Wï6ÜR¿¢Ê˜&÷∆ó¶U76∂Wî7&VFT6ˆ◊D÷WFÜˆB¿¢Ê˜&÷∆ó¶Tfˆ∆FW%6ÜR¿¢6˜'Dfˆ∆FW'4f˜$Fó7∆í¿¢fóÜVDÊWt66˜VÁDfˆ∆FW$ñC¢dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%ÙîB¿¢fóÜVDÊWt66˜VÁDfˆ∆FW$Ê÷S¢dïÑTEÙ‰UuÙ44ıTÂEÙdÙƒDU%Ù‰‘P¢”∞¢–¢gVÊ7Fñˆ‚f∆ñFFU7ñÊ56fWGíÜ∆ˆ6¬¬&V÷˜FR¬÷W&vVB¬÷ˆFR“5î‰5Ù‘ÙDUÙ‘U$tRí∞¢&WGW&‚Wf«VFU7ñÊ56fWGíá≤∆ˆ6¬¬&V÷˜FR¬÷W&vVB¬÷ˆFR“¬7ñÊ4÷W&vTÜV«W'2Çíì∞¢–¢gVÊ7Fñˆ‚f˜&÷EFñ÷RÜ◊2í∞¢ñbÜ◊2”“ÁV∆¬í&WGW&‚"“#∞¢6ˆÁ7BFFR“ÊWrFFRÑÁV÷&W"Ü◊2íì∞¢ñbÑÁV÷&W"Êó4Ê‚ÜFFRÊvWEFñ÷RÇííí&WGW&‚"“#∞¢6ˆÁ7Bóí“7G&ñÊrÜFFRÊvWDgV∆≈ñV"ÇíRì∞¢6ˆÁ7B÷ˆÁFÇ“FFRÊvWD÷ˆÁFÇÇí≤∞¢6ˆÁ7BFí“FFRÊvWDFFRÇì∞¢6ˆÁ7BÜ˜W"“FFRÊvWDÜ˜W'2Çì∞¢6ˆÁ7B÷ñÁWFR“FFRÊvWD÷ñÁWFW2Çì∞¢6ˆÁ7B6V6ˆÊB“FFRÊvWE6V6ˆÊG2Çì∞¢&WGW&‚G∑óó““G∂÷ˆÁFá““G∂Fó“G∂Ü˜W'”¢G∂÷ñÁWFW”¢G∑6V6ˆÊG÷∞¢–¢gVÊ7Fñˆ‚W66TáF÷¬áf«VRí∞¢&WGW&‚7G&ñÊráf«VRíÁ&W∆6T∆¬Ç"b"¬"f◊≤"íÁ&W∆6T∆¬Ç#¬"¬"f«C≤"íÁ&W∆6T∆¬Ç#‚"¬"fwC≤"íÁ&W∆6T∆¬Çr"r¬"gV˜C≤"íÁ&W∆6T∆¬Ç"r"¬"b33ì≤"ì∞¢–¢gVÊ7Fñˆ‚FÙ◊V«Fñ∆ñÊTáF÷¬áf«VRí∞¢6ˆÁ7BFWáB“7G&ñÊráf«VR«¬""íÁ&W∆6RÇı«%∆„Úˆr¬%∆‚"íÁG&ñ“Çì∞¢ñbÇFWáBí&WGW&‚"“#∞¢&WGW&‚W66TáF÷¬áFWáBíÁ&W∆6T∆¬Ç%∆‚"¬#∆'"Û‚"ì∞¢–¢gVÊ7Fñˆ‚6∆76ñgïFˆ7EFˆÊRÜ÷W76vRí∞¢6ˆÁ7BFWáB“7G&ñÊrÜ÷W76vR«¬""íÁG&ñ“Çì∞¢6ˆÁ7B∆˜vW"“FWáBÁFÙ∆˜vW$66RÇì∞¢6ˆÁ7BW'&˜%Fˆ∂VÁ2“∞¢%«SSì3«SÑC#R"¿¢%«SìSï«SÑ$Tb"¿¢%«ScTS«Sd4CR"¿¢%«SDSE«SÉdB"¿¢%«Sc$C%«StTDB"¿¢%«ScTS«ScSCÇ"¿¢%«SsìÉ«Sd#c""¿¢%«SDSE«SS33ï«SìDB"¿¢%«STDc%«SST5«Sd#c""¿¢%«Stc4«SSì3"¿¢%«SDSE«ST#SÖ«SSs#Ç"¿¢%«SÑCÉU«ScTcb"¿¢%«STc%«STS3Ç"¿¢%«Scs$«Sc#tU«SS#3"¿¢%«SDSE«Sd#c5«SsÉdR"¿¢&W'&˜""¿¢&fñ∆VB"¿¢&fñ¬ ¢”∞¢ñbÜW'&˜%Fˆ∂VÁ2Á6ˆ÷RÇáFˆ∂V‚í”‚FWáBÊñÊ6«VFW2áFˆ∂V‚í«¬∆˜vW"ÊñÊ6«VFW2áFˆ∂V‚ííí&WGW&‚&W'&˜"#∞¢6ˆÁ7Bv&ÊñÊuFˆ∂VÁ2“∞¢%«SÑ#ce«SSCD"¿¢%«SÑ$cu«SSCÇ"¿¢%«SÑ$cu«SsÉdU«SÑ$B"¿¢%«STDc%«SS4Ce«SdCÉÇ"¿¢%«SS4Ce«SdCÉÇ"¿¢%«SccÉ%«ScTS"¿¢%«Scs$«SSC$e«SsS#Ç"¿¢%«Scs$«SìDE«StcdR"¿¢%«Sd4SÖ«Scb"¿¢%«SÑDc5«SÑd3r"¿¢%«Scs$«Sìï«Sc$Sí"¿¢%«SDSE«ST#Ñ5«ScSsB"¿¢'v&ÊñÊr"¿¢'v&‚"¿¢&6Ê6V¬ ¢”∞¢ñbáv&ÊñÊuFˆ∂VÁ2Á6ˆ÷RÇáFˆ∂V‚í”‚FWáBÊñÊ6«VFW2áFˆ∂V‚í«¬∆˜vW"ÊñÊ6«VFW2áFˆ∂V‚ííí&WGW&‚'v&ÊñÊr#∞¢&WGW&‚'7V66W72#∞¢–¢gVÊ7Fñˆ‚6WE7FGW2Ü÷W76vRí∞¢6ˆÁ7BFWáB“7G&ñÊrÜ÷W76vR«¬""íÁG&ñ“Çì∞¢ñbÇFWáBí&WGW&„∞¢Fˆ“Á7FGW2ÁFWáD6ˆÁFVÁB“FWáC∞¢6Ü˜t˜FñˆÁ5Fˆ7BáFWáBì∞¢–¢gVÊ7Fñˆ‚6WDFWfñ6U7FGW2Ü÷W76vRí∞¢Fˆ“ÊFWfñ6U7FGW2ÁFWáD6ˆÁFVÁB“÷W76vS∞¢–¢gVÊ7Fñˆ‚6Ü˜t˜FñˆÁ5Fˆ7BÜ÷W76vRí∞¢∆WBFˆ7B“Fˆ7V÷VÁBÊvWDV∆V÷VÁD'îñBÇ&˜FñˆÁ5Fˆ7B"ì∞¢ñbÇáFˆ7BñÁ7FÊ6VˆbÖD‘ƒFódV∆V÷VÁBíí∞¢Fˆ7B“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&Fób"ì∞¢Fˆ7BÊñB“&˜FñˆÁ5Fˆ7B#∞¢Fˆ7BÊ6∆74Ê÷R“&˜FñˆÁ2◊Fˆ7B#∞¢Fˆ7V÷VÁBÊ&ˆGíÊVÊD6Üñ∆BáFˆ7Bì∞¢–¢6ˆÁ7BFWáB“7G&ñÊrÜ÷W76vR«¬""ì∞¢6ˆÁ7BFˆÊR“6∆76ñgïFˆ7EFˆÊRáFWáBì∞¢Fˆ7BÁFWáD6ˆÁFVÁB“FWáC∞¢Fˆ7BÊ6∆74∆ó7BÁ&V÷˜fRÇ&˜FñˆÁ2◊Fˆ7B◊7V66W72"¬&˜FñˆÁ2◊Fˆ7B÷W'&˜""¬&˜FñˆÁ2◊Fˆ7B◊v&ÊñÊr"ì∞¢Fˆ7BÊ6∆74∆ó7BÊFBÜ˜FñˆÁ2◊Fˆ7B“G∑FˆÊW÷ì∞¢Fˆ7BÊ6∆74∆ó7BÊFBÇ&˜FñˆÁ2◊Fˆ7B◊6Ü˜r"ì∞¢ñbÜ˜FñˆÁ5Fˆ7EFñ÷W"“ÁV∆¬í∞¢6∆V%Fñ÷V˜WBÜ˜FñˆÁ5Fˆ7EFñ÷W"ì∞¢–¢˜FñˆÁ5Fˆ7EFñ÷W"“vñÊF˜rÁ6WEFñ÷V˜WBÇÇí”‚∞¢6ˆÁ7B7W'&VÁB“Fˆ7V÷VÁBÊvWDV∆V÷VÁD'îñBÇ&˜FñˆÁ5Fˆ7B"ì∞¢ñbÇÜ7W'&VÁBñÁ7FÊ6VˆbÖD‘ƒFódV∆V÷VÁBíí&WGW&„∞¢7W'&VÁBÊ6∆74∆ó7BÁ&V÷˜fRÇ&˜FñˆÁ2◊Fˆ7B◊6Ü˜r"ì∞¢“¬ıDîÙÂ5ıDÙ5EÙEU$DîÙÂÙ’2ì∞¢–¢gVÊ7Fñˆ‚Ü5F˜G6V7&WBáf«VRí∞¢&WGW&‚7G&ñÊráf«VR«¬""íÁG&ñ“ÇíÊ∆VÊwFÇ‚∞¢–¢gVÊ7Fñˆ‚ó5f∆ñEF˜G6V7&WBá6V7&WBí∞¢6ˆÁ7BÊ˜&÷∆ó¶VB“Ê˜&÷∆ó¶UF˜G6V7&WBá6V7&WBì∞¢ñbÇÊ˜&÷∆ó¶VBí&WGW&‚f«6S∞¢&WGW&‚FV6ˆFT&6S3"ÜÊ˜&÷∆ó¶VBíÊ∆VÊwFÇ‚∞¢–¢7ñÊ2gVÊ7Fñˆ‚7FU&uF˜G6V7&WDg&ˆ‘6∆ó&ˆ&Bá≤F˜GñÁWB“í∞¢G'í∞¢6ˆÁ7B&r“7G&ñÊrÜvóBÊfñvF˜"Ê6∆ó&ˆ&BÁ&VEFWáBÇí«¬""ì∞¢6ˆÁ7B6V7&WB“Ê˜&÷∆ó¶UF˜G6V7&WBá&rì∞¢ñbÇ6V7&WBí∞¢6WE7FGW2Ç%«SS#d«SÑC3E«Scste«ScSÉu«Scs$5«SDS4«Stt"ì∞¢&WGW&„∞¢–¢ñbÇó5f∆ñEF˜G6V7&WBá6V7&WBíí∞¢6WE7FGW2Ç%«St3ìÖ«SÑC3E«SSì3«SÑC#U«Tdc«SS3îe«SSî4%«ST$3e«SìDU«SDSE«Scc$e«Scsï«ScSCÇDıE"ì∞¢&WGW&„∞¢–¢F˜GñÁWBÁf«VR“6V7&WC∞¢6WE7FGW2Ç%«STDc%«SSÉd%«SSCRDıE«SS3îe«SSî4%«ST$3e«SìDR"ì∞¢“6F6ÇÜW'&˜"í∞¢6WE7FGW2Ü«SÑ$d%«SS4Ce«SS#d«SÑC3E«Scste«SSì3«SÑC#S¢G∂W'&˜"Ê÷W76vW÷ì∞¢–¢–¢7ñÊ2gVÊ7Fñˆ‚7FT˜GWFÖW&îg&ˆ‘6∆ó&ˆ&Bá≤F˜GñÁWB¬6óFW4ñÁWB¬W6W&Ê÷TñÁWB“í∞¢G'í∞¢6ˆÁ7B&r“7G&ñÊrÜvóBÊfñvF˜"Ê6∆ó&ˆ&BÁ&VEFWáBÇí«¬""ì∞¢6ˆÁ7Bñ∆ˆB“'6T˜GWFÖW&ïñ∆ˆBá&rì∞¢ñbÇñ∆ˆBí∞¢6WE7FGW2Ç%«St3ìÖ«SÑC3E«SSì3«SÑC#U«Tdc«SDSE«Scc$e«Scsï«ScSCÖ«SscÉB˜GWFÉ¢Ú˜F˜GU$í"ì∞¢&WGW&„∞¢–¢«î˜GWFÖñ∆ˆEFÙñÁWG2áñ∆ˆB¬∞¢F˜GñÁWB¿¢6óFW4ñÁWB¿¢W6W&Ê÷TñÁWB¿¢ñÊ6«VFU6óFTÊEW6W&Ê÷S¢G'VP¢“ì∞¢6WE7FGW2Ç%«STDc%«SÉîS5«Scsì˜GWFÇU$ï«Tdc5«STSse«SSÉd%«SSCRDıEı«StCï«Ss#ï«SS#$%«SSCBı«SsS#Ö«Sc#3u«SSCB"ì∞¢“6F6ÇÜW'&˜"í∞¢6WE7FGW2Ü«SÑ$d%«SS4Ce«SS#d«SÑC3E«Scste«SSì3«SÑC#S¢G∂W'&˜"Ê÷W76vW÷ì∞¢–¢–¢7ñÊ2gVÊ7Fñˆ‚7FT˜GWFÖ$g&ˆ‘6∆ó&ˆ&Bá≤F˜GñÁWB¬6óFW4ñÁWB¬W6W&Ê÷TñÁWB“í∞¢G'í∞¢6ˆÁ7Bñ∆ˆEFWáB“vóB'6U%ñ∆ˆDg&ˆ‘6∆ó&ˆ&BÇì∞¢ñbÇñ∆ˆEFWáBí∞¢6WE7FGW2Ç%«St3ìÖ«SÑC3E«SSì3«SÑC#U«Tdc«SS#d«SÑC3E«Scste«Sd4«Scsï«SS4Te«SÑ$3e«SS#$%«SscÉE«SDSÑ5«StTcE«SsÉ«SSddU«Ss#Cr"ì∞¢&WGW&„∞¢–¢6ˆÁ7Bñ∆ˆB“'6T˜GWFÖW&ïñ∆ˆBáñ∆ˆEFWáBì∞¢ñbÇñ∆ˆBí∞¢6WE7FGW2Ç%«St3ìÖ«SÑC3E«SSì3«SÑC#U«Tdc«SDSÑ5«StTcE«SsÉ«SSÉU«ST$#ï«SDSE«Scc$e«Scsï«ScSCÖ«SscÉB˜GWFÉ¢Ú˜F˜GU$í"ì∞¢&WGW&„∞¢–¢«î˜GWFÖñ∆ˆEFÙñÁWG2áñ∆ˆB¬∞¢F˜GñÁWB¿¢6óFW4ñÁWB¿¢W6W&Ê÷TñÁWB¿¢ñÊ6«VFU6óFTÊEW6W&Ê÷S¢G'VP¢“ì∞¢6WE7FGW2Ç%«STDc%«SÉîS5«Scsì«SDSÑ5«StTcE«SsÉ«Tdc5«STSse«SSÉd%«SSCRDıEı«StCï«Ss#ï«SS#$%«SSCBı«SsS#Ö«Sc#3u«SSCB"ì∞¢“6F6ÇÜW'&˜"í∞¢6WE7FGW2Ü«SÑ$3e«SS#$%«SDSÑ5«StTcE«SsÉ«SSì3«SÑC#S¢G∂W'&˜"Ê÷W76vW÷ì∞¢–¢–¢gVÊ7Fñˆ‚«î˜GWFÖñ∆ˆEFÙñÁWG2áñ∆ˆB¬≤F˜GñÁWB¬6óFW4ñÁWB¬W6W&Ê÷TñÁWB¬ñÊ6«VFU6óFTÊEW6W&Ê÷R“í∞¢F˜GñÁWBÁf«VR“ñ∆ˆBÁ6V7&WC∞¢ñbÇñÊ6«VFU6óFTÊEW6W&Ê÷Rí&WGW&„∞¢ñbá6óFW4ñÁWBbbñ∆ˆBÁ6óFT∆ñ2í∞¢6óFW4ñÁWBÁf«VR“ñ∆ˆBÁ6óFT∆ñ3∞¢–¢ñbáW6W&Ê÷TñÁWBbbñ∆ˆBÁW6W&Ê÷Rí∞¢W6W&Ê÷TñÁWBÁf«VR“ñ∆ˆBÁW6W&Ê÷S∞¢–¢–¢gVÊ7Fñˆ‚'6T˜GWFÖW&ïñ∆ˆBá&rí∞¢6ˆÁ7BG&ñ÷÷VB“7G&ñÊrá&r«¬""íÁG&ñ“Çì∞¢ñbÇG&ñ÷÷VBí&WGW&‚ÁV∆√∞¢∆WB'6VC∞¢G'í∞¢'6VB“ÊWrU$¬áG&ñ÷÷VBì∞¢“6F6Ç∞¢&WGW&‚ÁV∆√∞¢–¢ñbÖ7G&ñÊrá'6VBÁ&˜Fˆ6ˆ¬«¬""íÁFÙ∆˜vW$66RÇí”“&˜GWFÉ¢"í&WGW&‚ÁV∆√∞¢ñbÖ7G&ñÊrá'6VBÊÜ˜7FÊ÷R«¬""íÁFÙ∆˜vW$66RÇí”“'F˜G"í&WGW&‚ÁV∆√∞¢∆WB6V7&WE&r“"#∞¢∆WBó77VW$g&ˆ’VW'í“"#∞¢f˜"Ü6ˆÁ7B∂∂Wí¬f«VU“ˆb'6VBÁ6V&6Ö&◊2ÊVÁG&ñW2Çíí∞¢6ˆÁ7BÊ˜&÷∆ó¶VD∂Wí“7G&ñÊrÜ∂Wí«¬""íÁFÙ∆˜vW$66RÇì∞¢ñbÜÊ˜&÷∆ó¶VD∂Wí””“'6V7&WB"bb6V7&WE&rí∞¢6V7&WE&r“7G&ñÊráf«VR«¬""ì∞¢“V«6RñbÜÊ˜&÷∆ó¶VD∂Wí””“&ó77VW""bbó77VW$g&ˆ’VW'íí∞¢ó77VW$g&ˆ’VW'í“7G&ñÊráf«VR«¬""íÁG&ñ“Çì∞¢–¢–¢6ˆÁ7B6V7&WB“Ê˜&÷∆ó¶UF˜G6V7&WBá6V7&WE&rì∞¢ñbÇó5f∆ñEF˜G6V7&WBá6V7&WBíí&WGW&‚ÁV∆√∞¢∆WBFV6ˆFVEFÇ“7G&ñÊrá'6VBÁFÜÊ÷R«¬""ì∞¢G'í∞¢FV6ˆFVEFÇ“FV6ˆFUU$î6ˆ◊ˆÊVÁBÜFV6ˆFVEFÇì∞¢“6F6Ç∞¢–¢6ˆÁ7B∆&V¬“FV6ˆFVEFÇÁ&W∆6RÇıÂ¬Ú≤ˆr¬""íÁG&ñ“Çì∞¢∆WB∆&Vƒó77VW"“"#∞¢∆WB∆&V≈W6W&Ê÷R“"#∞¢6ˆÁ7B6ˆ∆ˆ‰ñÊFWÇ“∆&V¬ÊñÊFWÑˆbÇ#¢"ì∞¢ñbÜ6ˆ∆ˆ‰ñÊFWÇ„“í∞¢∆&Vƒó77VW"“∆&V¬Á6∆ñ6RÉ¬6ˆ∆ˆ‰ñÊFWÇíÁG&ñ“Çì∞¢∆&V≈W6W&Ê÷R“∆&V¬Á6∆ñ6RÜ6ˆ∆ˆ‰ñÊFWÇ≤íÁG&ñ“Çì∞¢“V«6R∞¢∆&V≈W6W&Ê÷R“∆&V¬ÁG&ñ“Çì∞¢–¢6ˆÁ7Bó77VW"“ó77VW$g&ˆ’VW'í«¬∆&Vƒó77VW#∞¢&WGW&‚∞¢6V7&WB¿¢6óFT∆ñ3¢&W6ˆ«fTñ◊˜'FVE6óFT∆ñ2á≤ó77VW"¬W6W&Ê÷S¢∆&V≈W6W&Ê÷R“í¿¢W6W&Ê÷S¢∆&V≈W6W&Ê÷R«¬" ¢”∞¢–¢gVÊ7Fñˆ‚6óFT∆ñ4g&ˆ‘ó77VW"Üó77VW"í∞¢6ˆÁ7B6ˆ◊7Dó77VW"“7G&ñÊrÜó77VW"«¬""íÁG&ñ“ÇíÁ&W∆6T∆¬Ç""¬""ì∞¢ñbÇ6ˆ◊7Dó77VW"í&WGW&‚"#∞¢6ˆÁ7BÊ˜&÷∆ó¶VB“Ê˜&÷∆ó¶TFˆ÷ñ‚Ü6ˆ◊7Dó77VW"ì∞¢ñbÇÊ˜&÷∆ó¶VBí&WGW&‚"#∞¢ñbÜÊ˜&÷∆ó¶VBÊñÊ6«VFW2Ç"‚"íí∞¢&WGW&‚Ê˜&÷∆ó¶VC∞¢–¢&WGW&‚G∂Ê˜&÷∆ó¶VG“Ê6ˆ÷∞¢–¢gVÊ7Fñˆ‚&W6ˆ«fTñ◊˜'FVE6óFT∆ñ2á≤ó77VW"¬W6W&Ê÷R“í∞¢6ˆÁ7B'îó77VW"“6óFT∆ñ4g&ˆ‘ó77VW"Üó77VW"ì∞¢ñbÜ'îó77VW"í&WGW&‚'îó77VW#∞¢6ˆÁ7B'ïW6W&Ê÷R“6óFT∆ñ4g&ˆ’W6W&Ê÷RáW6W&Ê÷Rì∞¢ñbÜ'ïW6W&Ê÷Rí&WGW&‚'ïW6W&Ê÷S∞¢&WGW&‚"#∞¢–¢gVÊ7Fñˆ‚6óFT∆ñ4g&ˆ’W6W&Ê÷RáW6W&Ê÷Rí∞¢6ˆÁ7B&r“7G&ñÊráW6W&Ê÷R«¬""íÁG&ñ“Çì∞¢ñbÇ&rí&WGW&‚"#∞¢6ˆÁ7BDñÊFWÇ“&rÊ∆7DñÊFWÑˆbÇ$"ì∞¢ñbÜDñÊFWÇ„“bbDñÊFWÇ¬&rÊ∆VÊwFÇ“í∞¢&WGW&‚Ê˜&÷∆ó¶TFˆ÷ñ‚á&rÁ6∆ñ6RÜDñÊFWÇ≤íì∞¢–¢&WGW&‚Ê˜&÷∆ó¶TFˆ÷ñ‚á&rì∞¢–¢7ñÊ2gVÊ7Fñˆ‚&VDvˆˆv∆TWFÜVÁFñ6F˜$÷ñw&Fñˆ‰g&ˆ‘6∆ó&ˆ&BÇí∞¢∆WB&uFWáB“"#∞¢ñbáGóVˆbÊfñvF˜#ÚÊ6∆ó&ˆ&CÚÁ&VEFWáB””“&gVÊ7Fñˆ‚"í∞¢G'í∞¢&uFWáB“7G&ñÊrÜvóBÊfñvF˜"Ê6∆ó&ˆ&BÁ&VEFWáBÇí«¬""íÁG&ñ“Çì∞¢“6F6Ç∞¢&uFWáB“"#∞¢–¢–¢∆WB'6VB“'6Tvˆˆv∆TWFÜVÁFñ6F˜$÷ñw&FñˆÂW&ïñ∆ˆBá&uFWáBì∞¢ñbá'6VBí&WGW&‚'6VC∞¢6ˆÁ7B%ñ∆ˆB“vóB'6U%ñ∆ˆDg&ˆ‘6∆ó&ˆ&BÇì∞¢ñbÇ%ñ∆ˆBí∞¢&WGW&‚ÁV∆√∞¢–¢'6VB“'6Tvˆˆv∆TWFÜVÁFñ6F˜$÷ñw&FñˆÂW&ïñ∆ˆBá%ñ∆ˆBì∞¢ñbá'6VBí&WGW&‚'6VC∞¢Fá&˜rÊWrW'&˜"Ç%«SDSÑ5«StTcE«SsÉ«SSÉU«ST$#ï«SDSE«Scc$e«Scsï«ScSCÖ«SscÉE«SÑ33u«Sd#D5«SîÑ5«SÑ$3«SSccÖ«ST$d5«SSd«ScSs«Sc3dR"ì∞¢–¢7ñÊ2gVÊ7Fñˆ‚&VDvˆˆv∆TWFÜVÁFñ6F˜$÷ñw&Fñˆ‰g&ˆ‘fñ∆W2Üfñ∆W2í∞¢ñbáGóVˆb&&6ˆFTFWFV7F˜"””“'VÊFVfñÊVB"í∞¢Fá&˜rÊWrW'&˜"Ç%«STcS5«SS#DE«SdCDe«SÉî3Ö«SSccÖ«SDSE«ScS$e«Sc3«SDSÑ5«StTcE«SsÉ«SÑ$3e«SS#$""ì∞¢–¢6ˆÁ7BFWFV7F˜"“ÊWr&&6ˆFTFWFV7F˜"á≤f˜&÷G3¢≤'%ˆ6ˆFR%““ì∞¢6ˆÁ7B÷ñw&FñˆÁ2“µ”∞¢f˜"Ü6ˆÁ7Bfñ∆Rˆb'&íÊó4'&íÜfñ∆W2íÚfñ∆W2¢µ“í∞¢6ˆÁ7Bñ∆ˆEFWáB“vóB'6U%ñ∆ˆDg&ˆ‘&∆ˆ"Üfñ∆R¬FWFV7F˜"ì∞¢ñbÇñ∆ˆEFWáBí6ˆÁFñÁVS∞¢6ˆÁ7B'6VB“'6Tvˆˆv∆TWFÜVÁFñ6F˜$÷ñw&FñˆÂW&ïñ∆ˆBáñ∆ˆEFWáBì∞¢ñbá'6VBí∞¢÷ñw&FñˆÁ2ÁW6Çá'6VBì∞¢–¢–¢ñbÜ÷ñw&FñˆÁ2Ê∆VÊwFÇ””“í&WGW&‚ÁV∆√∞¢&WGW&‚÷W&vTvˆˆv∆TWFÜVÁFñ6F˜$÷ñw&FñˆÁ2Ü÷ñw&FñˆÁ2ì∞¢–¢gVÊ7Fñˆ‚'6Tvˆˆv∆TWFÜVÁFñ6F˜$÷ñw&FñˆÂW&ïñ∆ˆBá&rí∞¢6ˆÁ7BG&ñ÷÷VB“7G&ñÊrá&r«¬""íÁG&ñ“Çì∞¢ñbÇG&ñ÷÷VBí&WGW&‚ÁV∆√∞¢∆WB'6VC∞¢G'í∞¢'6VB“ÊWrU$¬áG&ñ÷÷VBì∞¢“6F6Ç∞¢&WGW&‚ÁV∆√∞¢–¢ñbÖ7G&ñÊrá'6VBÁ&˜Fˆ6ˆ¬«¬""íÁFÙ∆˜vW$66RÇí”“&˜GWFÇ÷÷ñw&Fñˆ„¢"í&WGW&‚ÁV∆√∞¢ñbÖ7G&ñÊrá'6VBÊÜ˜7FÊ÷R«¬""íÁFÙ∆˜vW$66RÇí”“&ˆff∆ñÊR"í&WGW&‚ÁV∆√∞¢6ˆÁ7Bñ∆ˆD#cB“7G&ñÊrá'6VBÁ6V&6Ö&◊2ÊvWBÇ&FF"í«¬""íÁG&ñ“Çì∞¢ñbÇñ∆ˆD#cBí&WGW&‚ÁV∆√∞¢6ˆÁ7B'óFW2“FV6ˆFT&6ScEFÙ'óFW2áñ∆ˆD#cBì∞¢ñbÇ'óFW2«¬'óFW2Ê∆VÊwFÇ””“í&WGW&‚ÁV∆√∞¢&WGW&‚FV6ˆFTvˆˆv∆TWFÜVÁFñ6F˜$÷ñw&FñˆÂñ∆ˆBÜ'óFW2ì∞¢–¢gVÊ7Fñˆ‚FV6ˆFTvˆˆv∆TWFÜVÁFñ6F˜$÷ñw&FñˆÂñ∆ˆBÜ'óFW2í∞¢6ˆÁ7Bñ∆ˆB“∞¢VÁG&ñW3¢µ“¿¢6∂óVD6˜VÁC¢¿¢&F6Ö6ó¶S¢¿¢&F6ÑñÊFWÉ¢ ¢”∞¢∆WBˆfg6WB“∞¢vÜñ∆RÜˆfg6WB¬'óFW2Ê∆VÊwFÇí∞¢6ˆÁ7BFr“&VE&˜Fıf&ñÁBÜ'óFW2¬ˆfg6WBì∞¢ñbÇFrí'&V≥∞¢ˆfg6WB“FrÊÊWáDˆfg6WC∞¢6ˆÁ7BfñV∆DÁV÷&W"“FrÁf«VR„„‚3∞¢6ˆÁ7Bvó&UGóR“FrÁf«VRbs∞¢ñbÜfñV∆DÁV÷&W"””“bbvó&UGóR””“"í∞¢6ˆÁ7B6áVÊ≤“&VE&˜FÙ∆VÊwFÑFV∆ñ÷óFVBÜ'óFW2¬ˆfg6WBì∞¢ñbÇ6áVÊ≤í'&V≥∞¢ˆfg6WB“6áVÊ≤ÊÊWáDˆfg6WC∞¢6ˆÁ7BVÁG'í“FV6ˆFTvˆˆv∆TWFÜVÁFñ6F˜$˜G&÷WFW'2Ü6áVÊ≤Áf«VRì∞¢ñbÜVÁG'íí∞¢ñ∆ˆBÊVÁG&ñW2ÁW6ÇÜVÁG'íì∞¢“V«6R∞¢ñ∆ˆBÁ6∂óVD6˜VÁB≥“∞¢–¢6ˆÁFñÁVS∞¢–¢ñbÜfñV∆DÁV÷&W"””“2bbvó&UGóR””“í∞¢6ˆÁ7Bf«VR“&VE&˜Fıf&ñÁBÜ'óFW2¬ˆfg6WBì∞¢ñbÇf«VRí'&V≥∞¢ñ∆ˆBÊ&F6Ö6ó¶R“f«VRÁf«VS∞¢ˆfg6WB“f«VRÊÊWáDˆfg6WC∞¢6ˆÁFñÁVS∞¢–¢ñbÜfñV∆DÁV÷&W"””“Bbbvó&UGóR””“í∞¢6ˆÁ7Bf«VR“&VE&˜Fıf&ñÁBÜ'óFW2¬ˆfg6WBì∞¢ñbÇf«VRí'&V≥∞¢ñ∆ˆBÊ&F6ÑñÊFWÇ“f«VRÁf«VS∞¢ˆfg6WB“f«VRÊÊWáDˆfg6WC∞¢6ˆÁFñÁVS∞¢–¢ˆfg6WB“6∂ó&˜FÙfñV∆BÜ'óFW2¬ˆfg6WB¬vó&UGóRì∞¢ñbÜˆfg6WB¬í'&V≥∞¢–¢&WGW&‚ñ∆ˆC∞¢–¢gVÊ7Fñˆ‚FV6ˆFTvˆˆv∆TWFÜVÁFñ6F˜$˜G&÷WFW'2Ü'óFW2í∞¢∆WB6V7&WD'óFW2“ÁV∆√∞¢∆WBÊ÷R“"#∞¢∆WBó77VW"“"#∞¢∆WB∆v˜&óFÜ““∞¢∆WBFñvóG2“∞¢∆WBGóR“#∞¢∆WBˆfg6WB“∞¢vÜñ∆RÜˆfg6WB¬'óFW2Ê∆VÊwFÇí∞¢6ˆÁ7BFr“&VE&˜Fıf&ñÁBÜ'óFW2¬ˆfg6WBì∞¢ñbÇFrí'&V≥∞¢ˆfg6WB“FrÊÊWáDˆfg6WC∞¢6ˆÁ7BfñV∆DÁV÷&W"“FrÁf«VR„„‚3∞¢6ˆÁ7Bvó&UGóR“FrÁf«VRbs∞¢ñbÜfñV∆DÁV÷&W"””“bbvó&UGóR””“"í∞¢6ˆÁ7B6áVÊ≤“&VE&˜FÙ∆VÊwFÑFV∆ñ÷óFVBÜ'óFW2¬ˆfg6WBì∞¢ñbÇ6áVÊ≤í&WGW&‚ÁV∆√∞¢6V7&WD'óFW2“6áVÊ≤Áf«VS∞¢ˆfg6WB“6áVÊ≤ÊÊWáDˆfg6WC∞¢6ˆÁFñÁVS∞¢–¢ñbÜfñV∆DÁV÷&W"””“"bbvó&UGóR””“"í∞¢6ˆÁ7B6áVÊ≤“&VE&˜FÙ∆VÊwFÑFV∆ñ÷óFVBÜ'óFW2¬ˆfg6WBì∞¢ñbÇ6áVÊ≤í&WGW&‚ÁV∆√∞¢Ê÷R“FV6ˆFU&˜FıWFcÇÜ6áVÊ≤Áf«VRì∞¢ˆfg6WB“6áVÊ≤ÊÊWáDˆfg6WC∞¢6ˆÁFñÁVS∞¢–¢ñbÜfñV∆DÁV÷&W"””“2bbvó&UGóR””“"í∞¢6ˆÁ7B6áVÊ≤“&VE&˜FÙ∆VÊwFÑFV∆ñ÷óFVBÜ'óFW2¬ˆfg6WBì∞¢ñbÇ6áVÊ≤í&WGW&‚ÁV∆√∞¢ó77VW"“FV6ˆFU&˜FıWFcÇÜ6áVÊ≤Áf«VRì∞¢ˆfg6WB“6áVÊ≤ÊÊWáDˆfg6WC∞¢6ˆÁFñÁVS∞¢–¢ñbÇÜfñV∆DÁV÷&W"””“B«¬fñV∆DÁV÷&W"””“R«¬fñV∆DÁV÷&W"””“bíbbvó&UGóR””“í∞¢6ˆÁ7Bf«VR“&VE&˜Fıf&ñÁBÜ'óFW2¬ˆfg6WBì∞¢ñbÇf«VRí&WGW&‚ÁV∆√∞¢ñbÜfñV∆DÁV÷&W"””“Bí∆v˜&óFÜ““f«VRÁf«VS∞¢ñbÜfñV∆DÁV÷&W"””“RíFñvóG2“f«VRÁf«VS∞¢ñbÜfñV∆DÁV÷&W"””“bíGóR“f«VRÁf«VS∞¢ˆfg6WB“f«VRÊÊWáDˆfg6WC∞¢6ˆÁFñÁVS∞¢–¢ˆfg6WB“6∂ó&˜FÙfñV∆BÜ'óFW2¬ˆfg6WB¬vó&UGóRì∞¢ñbÜˆfg6WB¬í&WGW&‚ÁV∆√∞¢–¢ñbÇ6V7&WD'óFW2«¬6V7&WD'óFW2Ê∆VÊwFÇ””“í&WGW&‚ÁV∆√∞¢ñbáGóR”“"«¬∆v˜&óFÜ“”“«¬FñvóG2”“í&WGW&‚ÁV∆√∞¢6ˆÁ7B∆&V≈'G2“'6Tñ◊˜'FVD˜G∆&V¬ÜÊ÷Rì∞¢6ˆÁ7BVffV7FófTó77VW"“7G&ñÊrÜó77VW"«¬""íÁG&ñ“Çí«¬∆&V≈'G2Êó77VW#∞¢6ˆÁ7BW6W&Ê÷R“∆&V≈'G2ÁW6W&Ê÷R«¬7G&ñÊrÜÊ÷R«¬""íÁG&ñ“Çì∞¢6ˆÁ7B6óFT∆ñ2“&W6ˆ«fTñ◊˜'FVE6óFT∆ñ2á≤ó77VW#¢VffV7FófTó77VW"¬W6W&Ê÷R“ì∞¢6ˆÁ7B6V7&WB“'óFW5FÙ&6S3"á6V7&WD'óFW2ì∞¢ñbÇ6V7&WB«¬6óFT∆ñ2«¬ó5f∆ñEF˜G6V7&WBá6V7&WBíí&WGW&‚ÁV∆√∞¢&WGW&‚∞¢6V7&WB¿¢6óFT∆ñ2¿¢W6W&Ê÷P¢”∞¢–¢gVÊ7Fñˆ‚'6Tñ◊˜'FVD˜G∆&V¬Ü∆&V¬í∞¢6ˆÁ7BFWáB“7G&ñÊrÜ∆&V¬«¬""íÁG&ñ“Çì∞¢ñbÇFWáBí∞¢&WGW&‚≤ó77VW#¢""¬W6W&Ê÷S¢""”∞¢–¢6ˆÁ7B6ˆ∆ˆ‰ñÊFWÇ“FWáBÊñÊFWÑˆbÇ#¢"ì∞¢ñbÜ6ˆ∆ˆ‰ñÊFWÇ¬í∞¢&WGW&‚≤ó77VW#¢""¬W6W&Ê÷S¢FWáB”∞¢–¢&WGW&‚∞¢ó77VW#¢FWáBÁ6∆ñ6RÉ¬6ˆ∆ˆ‰ñÊFWÇíÁG&ñ“Çí¿¢W6W&Ê÷S¢FWáBÁ6∆ñ6RÜ6ˆ∆ˆ‰ñÊFWÇ≤íÁG&ñ“Çê¢”∞¢–¢gVÊ7Fñˆ‚&VE&˜Fıf&ñÁBÜ'óFW2¬7F'Dˆfg6WBí∞¢∆WB&W7V«B“∞¢∆WB6ÜñgB“∞¢∆WBˆfg6WB“7F'Dˆfg6WC∞¢vÜñ∆RÜˆfg6WB¬'óFW2Ê∆VÊwFÇbb6ÜñgB√“3Rí∞¢6ˆÁ7B'óFR“'óFW5∂ˆfg6WE”∞¢&W7V«B√“Ü'óFRb#rí√¬6ÜñgC∞¢ˆfg6WB≥“∞¢ñbÇÜ'óFRb#Çí””“í∞¢&WGW&‚≤f«VS¢&W7V«B„„‚¬ÊWáDˆfg6WC¢ˆfg6WB”∞¢–¢6ÜñgB≥“s∞¢–¢&WGW&‚ÁV∆√∞¢–¢gVÊ7Fñˆ‚&VE&˜FÙ∆VÊwFÑFV∆ñ÷óFVBÜ'óFW2¬7F'Dˆfg6WBí∞¢6ˆÁ7B∆VÊwFÖf«VR“&VE&˜Fıf&ñÁBÜ'óFW2¬7F'Dˆfg6WBì∞¢ñbÇ∆VÊwFÖf«VRí&WGW&‚ÁV∆√∞¢6ˆÁ7B7F'B“∆VÊwFÖf«VRÊÊWáDˆfg6WC∞¢6ˆÁ7BVÊB“7F'B≤∆VÊwFÖf«VRÁf«VS∞¢ñbÜVÊB‚'óFW2Ê∆VÊwFÇí&WGW&‚ÁV∆√∞¢&WGW&‚∞¢f«VS¢'óFW2Á6∆ñ6Rá7F'B¬VÊBí¿¢ÊWáDˆfg6WC¢VÊ@¢”∞¢–¢gVÊ7Fñˆ‚6∂ó&˜FÙfñV∆BÜ'óFW2¬7F'Dˆfg6WB¬vó&UGóRí∞¢ñbávó&UGóR””“í∞¢6ˆÁ7Bf«VR“&VE&˜Fıf&ñÁBÜ'óFW2¬7F'Dˆfg6WBì∞¢&WGW&‚f«VRÚf«VRÊÊWáDˆfg6WB¢”∞¢–¢ñbávó&UGóR””“í∞¢&WGW&‚7F'Dˆfg6WB≤Ç√“'óFW2Ê∆VÊwFÇÚ7F'Dˆfg6WB≤Ç¢”∞¢–¢ñbávó&UGóR””“"í∞¢6ˆÁ7B6áVÊ≤“&VE&˜FÙ∆VÊwFÑFV∆ñ÷óFVBÜ'óFW2¬7F'Dˆfg6WBì∞¢&WGW&‚6áVÊ≤Ú6áVÊ≤ÊÊWáDˆfg6WB¢”∞¢–¢ñbávó&UGóR””“Rí∞¢&WGW&‚7F'Dˆfg6WB≤B√“'óFW2Ê∆VÊwFÇÚ7F'Dˆfg6WB≤B¢”∞¢–¢&WGW&‚”∞¢–¢gVÊ7Fñˆ‚FV6ˆFT&6ScEFÙ'óFW2ÜñÁWBí∞¢6ˆÁ7BÊ˜&÷∆ó¶VB“7G&ñÊrÜñÁWB«¬""íÁG&ñ“ÇíÁ&W∆6RÇÚ“ˆr¬"≤"íÁ&W∆6RÇıÚˆr¬"Ú"ì∞¢ñbÇÊ˜&÷∆ó¶VBí&WGW&‚ÊWrVñÁCÑ'&íÇì∞¢6ˆÁ7BFFVB“Ê˜&÷∆ó¶VB≤#“"Á&WVBÇÉB“Ê˜&÷∆ó¶VBÊ∆VÊwFÇRBíRBì∞¢6ˆÁ7B&ñ‚“Fˆ"áFFVBì∞¢6ˆÁ7B˜WB“ÊWrVñÁCÑ'&íÜ&ñ‚Ê∆VÊwFÇì∞¢f˜"Ü∆WBñÊFWÇ“≤ñÊFWÇ¬&ñ‚Ê∆VÊwFÉ≤ñÊFWÇ≥“í∞¢˜WE∂ñÊFWÖ““&ñ‚Ê6Ü$6ˆFTBÜñÊFWÇì∞¢–¢&WGW&‚˜WC∞¢–¢gVÊ7Fñˆ‚FV6ˆFU&˜FıWFcÇÜ'óFW2í∞¢&WGW&‚ÊWrFWáDFV6ˆFW"ÇíÊFV6ˆFRÜ'óFW2íÁG&ñ“Çì∞¢–¢gVÊ7Fñˆ‚'óFW5FÙ&6S3"Ü'óFW2í∞¢6ˆÁ7B«Ü&WB“$$4DTdtÑî§¥ƒ‘‰ı%5EUeuÖï£#3CScr#∞¢∆WB˜WGWB“"#∞¢∆WB'VffW"“∞¢∆WB&óG4ñ‰'VffW"“∞¢f˜"Ü6ˆÁ7B'óFRˆb'óFW2í∞¢'VffW"“'VffW"√¬Ç¬'óFS∞¢&óG4ñ‰'VffW"≥“É∞¢vÜñ∆RÜ&óG4ñ‰'VffW"„“Rí∞¢˜WGWB≥“«Ü&WE∂'VffW"„‚&óG4ñ‰'VffW"“Rb3”∞¢&óG4ñ‰'VffW"”“S∞¢–¢–¢ñbÜ&óG4ñ‰'VffW"‚í∞¢˜WGWB≥“«Ü&WE∂'VffW"√¬R“&óG4ñ‰'VffW"b3”∞¢–¢&WGW&‚˜WGWC∞¢–¢gVÊ7Fñˆ‚fñÊDñ◊˜'FVEF˜G66˜VÁDñÊFWÇÜ66˜VÁG2¬VÁG'íí∞¢&WGW&‚fñÊDñ◊˜'FVD'&˜w6W$66˜VÁDñÊFWÇÜ66˜VÁG2¬∞¢6óFW3¢∂VÁG'íÁ6óFT∆ñ5“¿¢W6W&Ê÷S¢VÁG'íÁW6W&Ê÷R«¬" ¢“ì∞¢–¢gVÊ7Fñˆ‚«îñ◊˜'FVEF˜GVÁG'ïFÙ66˜VÁBÜ66˜VÁB¬VÁG'í¬Ê˜t◊2¬F&vWDfˆ∆FW$ñB“""í∞¢6ˆÁ7BÊWáB“Ê˜&÷∆ó¶T66˜VÁE6ÜRÜ66˜VÁBì∞¢ñbÜÊWáBÊó5W&÷ÊVÁF«îFV∆WFVBí&WGW&‚ÊWáC∞¢∆WB6ÜÊvVB“f«6S∞¢6ˆÁ7B÷W&vVE6óFW2“Ê˜&÷∆ó¶U6óFW2Ö≤‚‚ÊÊWáBÁ6óFW2«¬µ“¬VÁG'íÁ6óFT∆ñ2«¬"%“ì∞¢ñbÑ•4Ù‚Á7G&ñÊvñgíÜ÷W&vVE6óFW2í”“•4Ù‚Á7G&ñÊvñgíÜÊWáBÁ6óFW2«¬µ“íí∞¢ÊWáBÁ6óFW2“÷W&vVE6óFW3∞¢6ÜÊvVB“G'VS∞¢–¢ñbÜVÁG'íÁW6W&Ê÷RbbVÁG'íÁW6W&Ê÷R”“ÊWáBÁW6W&Ê÷Rí∞¢ÊWáBÁW6W&Ê÷R“VÁG'íÁW6W&Ê÷S∞¢ÊWáBÁW6W&Ê÷UWFFVDD◊2“Ê˜t◊3∞¢6ÜÊvVB“G'VS∞¢–¢ñbÜVÁG'íÁ6V7&WBbbVÁG'íÁ6V7&WB”“ÊWáBÁF˜G6V7&WBí∞¢ÊWáBÁF˜G6V7&WB“VÁG'íÁ6V7&WC∞¢ÊWáBÁF˜GWFFVDD◊2“Ê˜t◊3∞¢6ÜÊvVB“G'VS∞¢–¢ñbáF&vWDfˆ∆FW$ñBí∞¢6ˆÁ7B÷W&vVDfˆ∆FW$ñG2“Ê˜&÷∆ó¶Tfˆ∆FW$ñD∆ó7BÖ≤‚‚ÊÊWáBÊfˆ∆FW$ñG2«¬µ“¬F&vWDfˆ∆FW$ñE“ì∞¢ñbÑ•4Ù‚Á7G&ñÊvñgíÜ÷W&vVDfˆ∆FW$ñG2í”“•4Ù‚Á7G&ñÊvñgíÜÊ˜&÷∆ó¶Tfˆ∆FW$ñD∆ó7BÜÊWáBÊfˆ∆FW$ñG2«¬µ“ííí∞¢ÊWáBÊfˆ∆FW$ñG2“÷W&vVDfˆ∆FW$ñG3∞¢ÊWáBÊfˆ∆FW$ñB“÷W&vVDfˆ∆FW$ñG5≥“«¬ÁV∆√∞¢6ÜÊvVB“G'VS∞¢–¢–¢ñbÜÊWáBÊó4FV∆WFVBbbÊWáBÊó5W&÷ÊVÁF«îFV∆WFVBí∞¢ÊWáBÊó4FV∆WFVB“f«6S∞¢ÊWáBÊFV∆WFVDD◊2“ÁV∆√∞¢ÊWáBÊFV∆WFVDFWfñ6TÊ÷R“"#∞¢6ÜÊvVB“G'VS∞¢–¢ñbÜ6ÜÊvVBí∞¢ÊWáBÁWFFVDD◊2“Ê˜t◊3∞¢ÊWáBÊ∆7D˜W&FVDFWfñ6TÊ÷R“7W'&VÁDñ◊˜'DFWfñ6TÊ÷RÇì∞¢–¢&WGW&‚ÊWáC∞¢–¢gVÊ7Fñˆ‚'Vñ∆Dvˆˆv∆TWFÜVÁFñ6F˜$ñ◊˜'E7VffóÇá≤ñ◊˜'FVD6˜VÁB¬6∂óVD6˜VÁB¬VÊ6ÜÊvVD6˜VÁB¬&F6Ö6ó¶R¬&F6ÑñÊFWÇ“í∞¢∆WB7VffóÇ“«Tdc5«SÉîS5«ScsìG¥ÁV÷&W"Üñ◊˜'FVD6˜VÁB«¬ó“«Scsc∞¢ñbÑÁV÷&W"á6∂óVD6˜VÁB«¬í‚í∞¢7VffóÇ≥“«Tdc5«SÑDc5«SÑd3rG¥ÁV÷&W"á6∂óVD6˜VÁBó“«Scsc∞¢–¢ñbÑÁV÷&W"áVÊ6ÜÊvVD6˜VÁB«¬í‚í∞¢7VffóÇ≥“«Tdc5«Scs$«SS4CÖ«SS3bG¥ÁV÷&W"áVÊ6ÜÊvVD6˜VÁBó“«Scsc∞¢–¢ñbÑÁV÷&W"Ü&F6Ö6ó¶R«¬í‚í∞¢7VffóÇ≥“«Tdc5«STcS5«SS#DE«Sc#sï«Sd##G¥ÁV÷&W"Ü&F6ÑñÊFWÇ«¬í≤“ÚG¥ÁV÷&W"Ü&F6Ö6ó¶Ró÷∞¢–¢&WGW&‚7VffóÉ∞¢–¢gVÊ7Fñˆ‚÷W&vTvˆˆv∆TWFÜVÁFñ6F˜$÷ñw&FñˆÁ2Ü÷ñw&FñˆÁ2í∞¢6ˆÁ7B÷W&vVB“∞¢VÁG&ñW3¢µ“¿¢6∂óVD6˜VÁC¢¿¢&F6Ö6ó¶S¢¿¢&F6ÑñÊFWÉ¢ ¢”∞¢6ˆÁ7B6VV‚“Ú¢ııU$UıÚ¢ÚÊWr6WBÇì∞¢f˜"Ü6ˆÁ7B÷ñw&Fñˆ‚ˆb'&íÊó4'&íÜ÷ñw&FñˆÁ2íÚ÷ñw&FñˆÁ2¢µ“í∞¢÷W&vVBÁ6∂óVD6˜VÁB≥“ÁV÷&W"Ü÷ñw&Fñˆ„ÚÁ6∂óVD6˜VÁB«¬ì∞¢÷W&vVBÊ&F6Ö6ó¶R≥“÷FÇÊ÷ÇÑÁV÷&W"Ü÷ñw&Fñˆ„ÚÊ&F6Ö6ó¶R«¬í¬÷ñw&Fñˆ„ÚÊVÁG&ñW3ÚÊ∆VÊwFÇÚ¢ì∞¢f˜"Ü6ˆÁ7BVÁG'íˆb'&íÊó4'&íÜ÷ñw&Fñˆ„ÚÊVÁG&ñW2íÚ÷ñw&Fñˆ‚ÊVÁG&ñW2¢µ“í∞¢6ˆÁ7B∂Wí“∞¢7G&ñÊrÜVÁG'ìÚÁ6óFT∆ñ2«¬""í¿¢7G&ñÊrÜVÁG'ìÚÁW6W&Ê÷R«¬""í¿¢7G&ñÊrÜVÁG'ìÚÁ6V7&WB«¬""ê¢“Ê¶ˆñ‚Ç'¬"ì∞¢ñbÇ∂Wí«¬6VV‚ÊÜ2Ü∂Wííí6ˆÁFñÁVS∞¢6VV‚ÊFBÜ∂Wíì∞¢÷W&vVBÊVÁG&ñW2ÁW6ÇÜVÁG'íì∞¢–¢–¢÷W&vVBÊ&F6Ö6ó¶R“÷FÇÊ÷ÇÜ÷W&vVBÊ&F6Ö6ó¶R¬'&íÊó4'&íÜ÷ñw&FñˆÁ2íÚ÷ñw&FñˆÁ2Ê∆VÊwFÇ¢ì∞¢&WGW&‚÷W&vVC∞¢–¢7ñÊ2gVÊ7Fñˆ‚'6U%ñ∆ˆDg&ˆ‘6∆ó&ˆ&BÇí∞¢ñbáGóVˆbÊfñvF˜#ÚÊ6∆ó&ˆ&CÚÁ&VB”“&gVÊ7Fñˆ‚"í∞¢Fá&˜rÊWrW'&˜"Ç%«STcS5«SS#DE«SdCDe«SÉî3Ö«SSccÖ«SDSE«ScS$e«Sc3«SÑ$d%«SS4Ce«SS#d«SÑC3E«Scste«SSddU«Ss#Cr"ì∞¢–¢ñbáGóVˆb&&6ˆFTFWFV7F˜"””“'VÊFVfñÊVB"í∞¢Fá&˜rÊWrW'&˜"Ç%«STcS5«SS#DE«SdCDe«SÉî3Ö«SSccÖ«SDSE«ScS$e«Sc3«SDSÑ5«StTcE«SsÉ«SÑ$3e«SS#$""ì∞¢–¢6ˆÁ7BFWFV7F˜"“ÊWr&&6ˆFTFWFV7F˜"á≤f˜&÷G3¢≤'%ˆ6ˆFR%““ì∞¢6ˆÁ7BóFV◊2“vóBÊfñvF˜"Ê6∆ó&ˆ&BÁ&VBÇì∞¢f˜"Ü6ˆÁ7BóFV“ˆbóFV◊2í∞¢6ˆÁ7Bñ÷vUGóR“óFV“ÁGóW2ÊfñÊBÇáGóRí”‚7G&ñÊráGóRíÁ7F'G5vóFÇÇ&ñ÷vRÚ"íì∞¢ñbÇñ÷vUGóRí6ˆÁFñÁVS∞¢6ˆÁ7B&∆ˆ"“vóBóFV“ÊvWEGóRÜñ÷vUGóRì∞¢6ˆÁ7Bñ∆ˆB“vóB'6U%ñ∆ˆDg&ˆ‘&∆ˆ"Ü&∆ˆ"¬FWFV7F˜"ì∞¢ñbáñ∆ˆBí&WGW&‚ñ∆ˆC∞¢–¢&WGW&‚"#∞¢–¢7ñÊ2gVÊ7Fñˆ‚'6U%ñ∆ˆDg&ˆ‘&∆ˆ"Ü&∆ˆ"¬FWFV7F˜"í∞¢ñbÇ&∆ˆ"í&WGW&‚"#∞¢6ˆÁ7B&óF÷“vóB7&VFTñ÷vT&óF÷Ü&∆ˆ"ì∞¢G'í∞¢6ˆÁ7B&W7V«G2“vóBFWFV7F˜"ÊFWFV7BÜ&óF÷ì∞¢f˜"Ü6ˆÁ7B&W7V«Bˆb&W7V«G2í∞¢6ˆÁ7Bñ∆ˆB“7G&ñÊrá&W7V«CÚÁ&uf«VR«¬""íÁG&ñ“Çì∞¢ñbáñ∆ˆBí&WGW&‚ñ∆ˆC∞¢–¢&WGW&‚"#∞¢“fñÊ∆«í∞¢ñbáGóVˆb&óF÷Ê6∆˜6R””“&gVÊ7Fñˆ‚"í∞¢&óF÷Ê6∆˜6RÇì∞¢–¢–¢–¢gVÊ7Fñˆ‚7&VFUF˜G6˜î'WGFˆ‚á≤66˜VÁDñB¬W6W&Ê÷R¬F˜G6V7&WB“í∞¢6ˆÁ7B'WGFˆ‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇ&'WGFˆ‚"ì∞¢'WGFˆ‚ÁGóR“&'WGFˆ‚#∞¢'WGFˆ‚Ê6∆74Ê÷R“'F˜G÷6˜í÷'WGFˆ‚#∞¢'WGFˆ‚ÊFF6WBÁ75F˜G6V7&WB“7G&ñÊráF˜G6V7&WB«¬""ì∞¢'WGFˆ‚ÊFF6WBÁ75F˜G66˜VÁDñB“7G&ñÊrÜ66˜VÁDñB«¬""ì∞¢'WGFˆ‚ÊFF6WBÁ75F˜G6ˆFR“"#∞¢'WGFˆ‚ÁFWáD6ˆÁFVÁB“%«SîÑ5«SÑ$3«SsÉ¢«SÑ$«St#ìu«SDS$B‚‚‚#∞¢'WGFˆ‚ÊFDWfVÁD∆ó7FVÊW"Ç&6∆ñ6≤"¬7ñÊ2Çí”‚∞¢6ˆÁ7B6ˆFR“7G&ñÊrÜ'WGFˆ‚ÊFF6WBÁ75F˜G6ˆFR«¬""ì∞¢ñbÇ6ˆFRí∞¢6WE7FGW2Ç%«SîÑ5«SÑ$3«SsÉ«SccÉ%«SDSE«SS4Te«SsS#Ç"ì∞¢&WGW&„∞¢–¢G'í∞¢vóBÊfñvF˜"Ê6∆ó&ˆ&BÁw&óFUFWáBÜ6ˆFRì∞¢6ˆÁ7B∆&V¬“7G&ñÊráW6W&Ê÷R«¬66˜VÁDñB«¬""ì∞¢6WE7FGW2Ü«SîÑ5«SÑ$3«SsÉ«STDc%«SSìE«SS#3c¢G∂∆&V«÷ì∞¢“6F6ÇÜW'&˜"í∞¢6WE7FGW2Ü«SSìE«SS#3e«SîÑ5«SÑ$3«SsÉ«SSì3«SÑC#S¢G∂W'&˜"Ê÷W76vW÷ì∞¢–¢“ì∞¢&WGW&‚'WGFˆ„∞¢–¢gVÊ7Fñˆ‚7F'EF˜G&Vg&W6ÖFñ6∂W"Çí∞¢ñbáF˜G&Vg&W6ÖFñ÷W"“ÁV∆¬í&WGW&„∞¢F˜G&Vg&W6ÖFñ÷W"“vñÊF˜rÁ6WDñÁFW'f¬ÇÇí”‚∞¢fˆñB&Vg&W6Öfó6ñ&∆UF˜G'WGFˆÁ2Çì∞¢“¬DıEı$Te$U4ÖÙîÂDU%d≈Ù’2ì∞¢–¢7ñÊ2gVÊ7Fñˆ‚&Vg&W6Öfó6ñ&∆UF˜G'WGFˆÁ2Çí∞¢6ˆÁ7B'WGFˆÁ2“'&íÊg&ˆ“ÜFˆ7V÷VÁBÁVW'ï6V∆V7F˜$∆¬Ç"ÁF˜G÷6˜í÷'WGFˆÂ∂FF◊72◊F˜G◊6V7&WE“"íì∞¢ñbÜ'WGFˆÁ2Ê∆VÊwFÇ””“í&WGW&„∞¢6ˆÁ7B'ï6V7&WB“Ú¢ııU$UıÚ¢ÚÊWr÷Çì∞¢f˜"Ü6ˆÁ7B'WGFˆ‚ˆb'WGFˆÁ2í∞¢6ˆÁ7B&u6V7&WB“7G&ñÊrÜ'WGFˆ‚ÊFF6WBÁ75F˜G6V7&WB«¬""ì∞¢6ˆÁ7B6V7&WB“Ê˜&÷∆ó¶UF˜G6V7&WBá&u6V7&WBì∞¢6ˆÁ7B∂Wí“6V7&WB«¬%ıˆñÁf∆ñEıÚ#∞¢ñbÇ'ï6V7&WBÊÜ2Ü∂Wííí∞¢'ï6V7&WBÁ6WBÜ∂Wí¬µ“ì∞¢–¢'ï6V7&WBÊvWBÜ∂WííÁW6ÇÜ'WGFˆ‚ì∞¢–¢f˜"Ü6ˆÁ7B∑6V7&WB¬w&˜W“ˆb'ï6V7&WBÊVÁG&ñW2Çíí∞¢6ˆÁ7B&W7V«B“6V7&WB””“%ıˆñÁf∆ñEıÚ"ÚÁV∆¬¢vóBvVÊW&FUF˜G6ˆFRá6V7&WB¬FFRÊÊ˜rÇíì∞¢f˜"Ü6ˆÁ7B'WGFˆ‚ˆbw&˜Wí∞¢«ïF˜G&W7V«EFÙ'WGFˆ‚Ü'WGFˆ‚¬&W7V«Bì∞¢–¢–¢–¢gVÊ7Fñˆ‚«ïF˜G&W7V«EFÙ'WGFˆ‚Ü'WGFˆ‚¬&W7V«Bí∞¢ñbÇÜ'WGFˆ‚ñÁ7FÊ6VˆbÖD‘ƒ'WGFˆ‰V∆V÷VÁBíí&WGW&„∞¢ñbÇ'WGFˆ‚Êó46ˆÊÊV7FVBí&WGW&„∞¢ñbÇ&W7V«Bí∞¢'WGFˆ‚ÁFWáD6ˆÁFVÁB“%«SîÑ5«SÑ$3«SsÉ¢DıE«ST$3e«SìDU«ScTS«ScSCÇ#∞¢'WGFˆ‚ÊFF6WBÁ75F˜G6ˆFR“"#∞¢'WGFˆ‚ÊFó6&∆VB“G'VS∞¢'WGFˆ‚Ê6∆74∆ó7BÊFBÇ'F˜G÷ñÁf∆ñB"ì∞¢&WGW&„∞¢–¢'WGFˆ‚ÁFWáD6ˆÁFVÁB“«SîÑ5«SÑ$3«SsÉ¢G∑&W7V«BÊ6ˆFW“ÇG∑&W7V«BÁ&V÷ñÊñÊu6V6ˆÊG7◊2ñ∞¢'WGFˆ‚ÊFF6WBÁ75F˜G6ˆFR“&W7V«BÊ6ˆFS∞¢'WGFˆ‚ÊFó6&∆VB“f«6S∞¢'WGFˆ‚Ê6∆74∆ó7BÁ&V÷˜fRÇ'F˜G÷ñÁf∆ñB"ì∞¢–¢gVÊ7Fñˆ‚Ê˜&÷∆ó¶UF˜G6V7&WBÜñÁWBí∞¢&WGW&‚7G&ñÊrÜñÁWB«¬""íÁG&ñ“ÇíÁFıWW$66RÇíÁ&W∆6T∆¬Ç""¬""íÁ&W∆6T∆¬Ç"“"¬""íÁ&W∆6RÇÛ“≤Bˆr¬""ì∞¢–¢gVÊ7Fñˆ‚FV6ˆFT&6S3"á6V7&WBí∞¢6ˆÁ7B«Ü&WB“$$4DTdtÑî§¥ƒ‘‰ı%5EUeuÖï£#3CScr#∞¢∆WB&óG2“∞¢∆WBf«VR“∞¢6ˆÁ7B˜WGWB“µ”∞¢f˜"Ü6ˆÁ7B6Ü"ˆb6V7&WBí∞¢6ˆÁ7BñÊFWÇ“«Ü&WBÊñÊFWÑˆbÜ6Ü"ì∞¢ñbÜñÊFWÇ¬í∞¢&WGW&‚ÊWrVñÁCÑ'&íÇì∞¢–¢f«VR“f«VR√¬R¬ñÊFWÉ∞¢&óG2≥“S∞¢ñbÜ&óG2„“Çí∞¢˜WGWBÁW6Çáf«VR„„‚&óG2“Çb#SRì∞¢&óG2”“É∞¢–¢–¢&WGW&‚ÊWrVñÁCÑ'&íÜ˜WGWBì∞¢–¢7ñÊ2gVÊ7Fñˆ‚vVÊW&FUF˜G6ˆFRá6V7&WB¬Ê˜t◊2í∞¢6ˆÁ7BÊ˜&÷∆ó¶VB“Ê˜&÷∆ó¶UF˜G6V7&WBá6V7&WBì∞¢ñbÇÊ˜&÷∆ó¶VBí&WGW&‚ÁV∆√∞¢6ˆÁ7B∂Wî'óFW2“FV6ˆFT&6S3"ÜÊ˜&÷∆ó¶VBì∞¢ñbÜ∂Wî'óFW2Ê∆VÊwFÇ””“í&WGW&‚ÁV∆√∞¢6ˆÁ7B6˜VÁFW"“&ñtñÁBÑ÷FÇÊf∆ˆ˜"ÜÊ˜t◊2ÚS2ÚDıEıU$îÙEı4T4Ù‰E2íì∞¢6ˆÁ7B6˜VÁFW$'óFW2“ÊWrVñÁCÑ'&íÉÇì∞¢∆WBFV◊6˜VÁFW"“6˜VÁFW#∞¢f˜"Ü∆WBí“s≤í„“≤í”“í∞¢6˜VÁFW$'óFW5∂ï““ÁV÷&W"áFV◊6˜VÁFW"bÜff‚ì∞¢FV◊6˜VÁFW"„„“Ü„∞¢–¢∆WB7'óFÙ∂Wì∞¢G'í∞¢7'óFÙ∂Wí“vóB7'óFÚÁ7V'F∆RÊñ◊˜'D∂WíÇ'&r"¬∂Wî'óFW2¬≤Ê÷S¢$Ñ‘2"¬Ü6É¢%4Ñ”"“¬f«6R¬≤'6ñv‚%“ì∞¢“6F6Ç∞¢&WGW&‚ÁV∆√∞¢–¢6ˆÁ7B6ñvÊGW&R“ÊWrVñÁCÑ'&íÜvóB7'óFÚÁ7V'F∆RÁ6ñv‚Ç$Ñ‘2"¬7'óFÙ∂Wí¬6˜VÁFW$'óFW2íì∞¢ñbá6ñvÊGW&RÊ∆VÊwFÇ¬#í&WGW&‚ÁV∆√∞¢6ˆÁ7Bˆfg6WB“6ñvÊGW&U∑6ñvÊGW&RÊ∆VÊwFÇ““bS∞¢ñbÜˆfg6WB≤2„“6ñvÊGW&RÊ∆VÊwFÇí&WGW&‚ÁV∆√∞¢6ˆÁ7B&ñÊ'í“á6ñvÊGW&U∂ˆfg6WE“b#rí√¬#B¬á6ñvÊGW&U∂ˆfg6WB≤“b#SRí√¬b¬á6ñvÊGW&U∂ˆfg6WB≤%“b#SRí√¬Ç¬6ñvÊGW&U∂ˆfg6WB≤5“b#SS∞¢6ˆÁ7B6ˆFR“7G&ñÊrÜ&ñÊ'íR¢¢DıEÙDîtïE2íÁE7F'BÖDıEÙDîtïE2¬#"ì∞¢6ˆÁ7B&V÷ñÊñÊu6V6ˆÊG2“DıEıU$îÙEı4T4Ù‰E2“÷FÇÊf∆ˆ˜"ÜÊ˜t◊2ÚS2íRDıEıU$îÙEı4T4Ù‰E3∞¢&WGW&‚≤6ˆFR¬&V÷ñÊñÊu6V6ˆÊG2”∞¢–ß“íÇì∞†

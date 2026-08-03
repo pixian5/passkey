@@ -28,10 +28,17 @@ struct ServerProvisioningResult: Equatable {
     let endpoint: String
 }
 
+struct ServerSSHHostKeyInspection: Equatable, Sendable {
+    let host: String
+    let port: Int
+    let alreadyTrusted: Bool
+    let fingerprints: [String]
+    let keyLines: [String]
+}
+
 enum ServerProvisioningError: LocalizedError {
     case invalidEndpoint
     case invalidSSHPort
-    case missingToken
     case invalidToken
     case missingCredential
     case resourceUnavailable(String)
@@ -43,8 +50,6 @@ enum ServerProvisioningError: LocalizedError {
             return "服务器地址必须是 HTTPS URL，并包含有效主机名"
         case .invalidSSHPort:
             return "SSH 端口必须是 1 到 65535 之间的数字"
-        case .missingToken:
-            return "请先填写访问令牌，再接入服务器"
         case .invalidToken:
             return "访问令牌不能包含逗号、换行或回车"
         case .missingCredential:
@@ -140,7 +145,6 @@ enum ServerProvisioningService {
     ) async throws -> ServerProvisioningResult {
         let endpoint = try parseEndpoint(rawServerURL)
         let accessToken = rawAccessToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !accessToken.isEmpty else { throw ServerProvisioningError.missingToken }
         guard !accessToken.contains(","),
               !accessToken.contains("\n"),
               !accessToken.contains("\r")
@@ -181,7 +185,7 @@ enum ServerProvisioningService {
         try runner.copy(resources.server, to: "\(stage)/pass_sync_server.py")
         try runner.copy(resources.backup, to: "\(stage)/backup_sync_db.sh")
         try runner.write(
-            Data("default=\(accessToken)\n".utf8),
+            Data((accessToken.isEmpty ? "" : "default=\(accessToken)\n").utf8),
             to: "\(stage)/tokens.conf",
             mode: "0600"
         )
@@ -217,6 +221,81 @@ enum ServerProvisioningService {
 
     static func host(from rawServerURL: String) -> String? {
         try? parseEndpoint(rawServerURL).host
+    }
+
+    static func inspectHostKey(
+        serverURL: String,
+        port: Int
+    ) async throws -> ServerSSHHostKeyInspection {
+        try await Task.detached {
+            let endpoint = try parseEndpoint(serverURL)
+            guard (1 ... 65535).contains(port) else {
+                throw ServerProvisioningError.invalidSSHPort
+            }
+            let knownHosts = try knownHostsURL()
+            let query = port == 22 ? endpoint.host : "[\(endpoint.host)]:\(port)"
+            let lookup = try runLocalProcess(
+                executable: "/usr/bin/ssh-keygen",
+                arguments: ["-F", query, "-f", knownHosts.path],
+                allowFailure: true
+            )
+            if lookup.status == 0 {
+                return ServerSSHHostKeyInspection(
+                    host: endpoint.host,
+                    port: port,
+                    alreadyTrusted: true,
+                    fingerprints: [],
+                    keyLines: []
+                )
+            }
+            let scan = try runLocalProcess(
+                executable: "/usr/bin/ssh-keyscan",
+                arguments: ["-T", "10", "-p", String(port), endpoint.host]
+            )
+            let keyLines = String(decoding: scan.stdout, as: UTF8.self)
+                .split(separator: "\n")
+                .map(String.init)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
+            let fingerprints = try hostKeyFingerprints(keyLines)
+            return ServerSSHHostKeyInspection(
+                host: endpoint.host,
+                port: port,
+                alreadyTrusted: false,
+                fingerprints: fingerprints,
+                keyLines: keyLines
+            )
+        }.value
+    }
+
+    static func trustHostKey(
+        serverURL: String,
+        port: Int,
+        keyLines: [String]
+    ) async throws {
+        try await Task.detached {
+            let endpoint = try parseEndpoint(serverURL)
+            guard (1 ... 65535).contains(port) else {
+                throw ServerProvisioningError.invalidSSHPort
+            }
+            let query = port == 22 ? endpoint.host : "[\(endpoint.host)]:\(port)"
+            guard !keyLines.isEmpty,
+                  keyLines.allSatisfy({ line in
+                      guard let hostField = line.split(whereSeparator: { $0.isWhitespace }).first else {
+                          return false
+                      }
+                      return hostField == Substring(query)
+                  })
+            else {
+                throw ServerProvisioningError.commandFailed("待信任的 SSH 主机公钥与服务器地址不一致")
+            }
+            _ = try hostKeyFingerprints(keyLines)
+            let knownHosts = try knownHostsURL()
+            let handle = try FileHandle(forWritingTo: knownHosts)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data((keyLines.joined(separator: "\n") + "\n").utf8))
+            try handle.synchronize()
+        }.value
     }
 
     static func verifyPublicEndpoint(_ endpoint: String) async -> Bool {
@@ -289,17 +368,7 @@ enum ServerProvisioningService {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
 
-        let knownHosts = PassSharedData.dataDirectoryURL()
-            .appendingPathComponent("ssh-known-hosts", isDirectory: false)
-        try FileManager.default.createDirectory(
-            at: knownHosts.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        if !FileManager.default.fileExists(atPath: knownHosts.path) {
-            FileManager.default.createFile(atPath: knownHosts.path, contents: Data(), attributes: [.posixPermissions: 0o600])
-        } else {
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: knownHosts.path)
-        }
+        let knownHosts = try knownHostsURL()
 
         var keyURL: URL?
         if credential.authMode == .privateKey {
@@ -334,6 +403,67 @@ enum ServerProvisioningService {
         )
     }
 
+    private static func knownHostsURL() throws -> URL {
+        let knownHosts = PassSharedData.dataDirectoryURL()
+            .appendingPathComponent("ssh-known-hosts", isDirectory: false)
+        try FileManager.default.createDirectory(
+            at: knownHosts.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        if !FileManager.default.fileExists(atPath: knownHosts.path) {
+            FileManager.default.createFile(atPath: knownHosts.path, contents: Data(), attributes: [.posixPermissions: 0o600])
+        } else {
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: knownHosts.path)
+        }
+        return knownHosts
+    }
+
+    private static func hostKeyFingerprints(_ keyLines: [String]) throws -> [String] {
+        guard !keyLines.isEmpty else {
+            throw ServerProvisioningError.commandFailed("服务器未返回可核对的 SSH 主机公钥")
+        }
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pass-host-key-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temp) }
+        try Data((keyLines.joined(separator: "\n") + "\n").utf8).write(to: temp, options: .atomic)
+        let result = try runLocalProcess(
+            executable: "/usr/bin/ssh-keygen",
+            arguments: ["-l", "-E", "sha256", "-f", temp.path]
+        )
+        let values = String(decoding: result.stdout, as: UTF8.self)
+            .split(separator: "\n")
+            .map(String.init)
+        guard !values.isEmpty else {
+            throw ServerProvisioningError.commandFailed("无法计算 SSH 主机公钥指纹")
+        }
+        return values
+    }
+
+    private static func runLocalProcess(
+        executable: String,
+        arguments: [String],
+        allowFailure: Bool = false
+    ) throws -> (status: Int32, stdout: Data) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardInput = FileHandle.nullDevice
+        let output = Pipe()
+        let error = Pipe()
+        process.standardOutput = output
+        process.standardError = error
+        try process.run()
+        process.waitUntilExit()
+        let stdout = output.fileHandleForReading.readDataToEndOfFile()
+        let stderr = error.fileHandleForReading.readDataToEndOfFile()
+        if process.terminationStatus != 0 && !allowFailure {
+            let detail = String(decoding: stderr.isEmpty ? stdout : stderr, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw ServerProvisioningError.commandFailed(detail.isEmpty ? "SSH 主机公钥操作失败" : detail)
+        }
+        return (process.terminationStatus, stdout)
+    }
+
     private static func serviceText(endpoint: Endpoint) -> String {
         var lines = [
             "[Unit]",
@@ -344,6 +474,7 @@ enum ServerProvisioningService {
             "Type=simple",
             "User=pass",
             "Group=pass",
+            "UMask=0077",
             "WorkingDirectory=/opt/pass-sync-server",
             "Environment=PASS_SYNC_HOST=\(endpoint.usesTLS ? "0.0.0.0" : "127.0.0.1")",
             "Environment=PASS_SYNC_PORT=\(endpoint.backendPort)",
@@ -379,6 +510,7 @@ enum ServerProvisioningService {
     [Service]
     Type=oneshot
     User=root
+    UMask=0077
     ExecStart=/opt/pass-sync-server/backup_sync_db.sh
     """
 
@@ -406,10 +538,11 @@ enum ServerProvisioningService {
         if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
         $SUDO sh -c 'getent group pass >/dev/null 2>&1 || groupadd --system pass'
         $SUDO sh -c 'id -u pass >/dev/null 2>&1 || useradd --system --gid pass --home-dir /nonexistent --shell /usr/sbin/nologin pass'
-        $SUDO install -d -m 0755 /opt/pass-sync-server /etc/pass-sync /var/lib/pass-sync /var/lib/pass-sync/backups
+        $SUDO install -d -m 0755 /opt/pass-sync-server /etc/pass-sync
+        $SUDO install -d -m 0700 -o pass -g pass /var/lib/pass-sync /var/lib/pass-sync/backups
         if [ -f /var/lib/pass-sync/pass_sync.sqlite3 ]; then
           stamp=$(date +%Y%m%d-%H%M%S)
-          $SUDO install -d -m 0750 "/var/lib/pass-sync/backups/$stamp-pre-provision"
+          $SUDO install -d -m 0700 -o pass -g pass "/var/lib/pass-sync/backups/$stamp-pre-provision"
           if command -v sqlite3 >/dev/null 2>&1; then
             $SUDO sqlite3 /var/lib/pass-sync/pass_sync.sqlite3 ".backup '/var/lib/pass-sync/backups/$stamp-pre-provision/pass_sync.sqlite3'"
           else
@@ -536,7 +669,7 @@ enum ServerProvisioningService {
                 "-o", "ConnectTimeout=15",
                 "-o", "ServerAliveInterval=15",
                 "-o", "ServerAliveCountMax=2",
-                "-o", "StrictHostKeyChecking=accept-new",
+                "-o", "StrictHostKeyChecking=yes",
                 "-o", "LogLevel=ERROR",
             ]
             if includeUserKnownHosts {

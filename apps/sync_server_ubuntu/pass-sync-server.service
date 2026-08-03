@@ -6,6 +6,7 @@ After=network.target
 Type=simple
 User=pass
 Group=pass
+UMask=0077
 WorkingDirectory=/opt/pass-sync-server
 Environment=PASS_SYNC_HOST=127.0.0.1
 Environment=PASS_SYNC_PORT=5443

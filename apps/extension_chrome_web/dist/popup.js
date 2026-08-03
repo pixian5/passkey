@@ -634,7 +634,7 @@
   }
   function collectionRecordIdentity(value, collectionKey, index) {
     if (!value || typeof value !== "object") return `index:${index}`;
-    const candidates = collectionKey === COLLECTION_ACCOUNTS ? [value.accountId, value.recordId, value.id] : collectionKey === COLLECTION_PASSKEYS ? [value.credentialIdB64u, value.credentialId, value.id] : [value.id, value.folderId];
+    const candidates = collectionKey === COLLECTION_ACCOUNTS ? [value.recordId, value.id, value.accountId] : collectionKey === COLLECTION_PASSKEYS ? [value.credentialIdB64u, value.credentialId, value.id] : [value.id, value.folderId];
     const identity = candidates.find((candidate) => String(candidate || "").trim());
     if (!identity) return `index:${index}`;
     const normalized = String(identity).trim();

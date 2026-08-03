@@ -1,7 +1,8 @@
 # Android Credential Provider
 
-This module registers Pass as an Android Credential Manager provider for passwords
-and passkeys on Android 14+ (`minSdk = 34`).
+This development module registers an incomplete password-only Android Credential
+Manager provider scaffold on Android 14+ (`minSdk = 34`). It must not be shipped
+as a production provider until the unlock and credential-result paths below are complete.
 
 ## Implemented
 
@@ -9,7 +10,8 @@ and passkeys on Android 14+ (`minSdk = 34`).
   (`onBeginGetCredentialRequest`, `onBeginCreateCredentialRequest`,
   `onClearCredentialStateRequest`).
 - Manifest registration with `android.permission.BIND_CREDENTIAL_PROVIDER_SERVICE`.
-- `res/xml/provider.xml` capabilities for passwords and public-key credentials.
+- `res/xml/provider.xml` advertises only password credentials. Passkey capability
+  is intentionally absent until create/get results are implemented.
 - Demo vault loader (`filesDir/pass_demo_vault.json`), seeded from
   `assets/pass_demo_vault.json` on first read.
 - **Selectable accounts (query phase):** when the demo vault has non-deleted
@@ -19,8 +21,8 @@ and passkeys on Android 14+ (`minSdk = 34`).
   `accountId` / `username` / `sites` extras only — **no password**.
 - Confirm activity shows the selected account metadata and explains that full
   vault unlock + credential result is not wired yet.
-- Manual `application/vnd.fido.cxf+json` receive activity for Credential Exchange
-  testing.
+- Credential Exchange is intentionally not registered: the former receive
+  activity discarded every import without parsing or confirmation.
 
 Shared conversion contract: `core/pass_core/js/credential_exchange_cxf.js`.
 
@@ -76,8 +78,8 @@ Schema (do **not** put real passwords in the query-phase demo file):
 
    ```bash
    cd apps/android_credential_provider
-   # No Gradle wrapper in-tree yet — use system Gradle 8.x+ or `gradle wrapper` first.
-   gradle :app:assembleDebug
+   # AGP 8.x requires JDK 17. Install Android SDK Platform 36 first.
+   ./gradlew testDebugUnitTest :app:assembleDebug
    adb install -r app/build/outputs/apk/debug/app-debug.apk
    ```
 
@@ -126,8 +128,9 @@ PasswordCredentialEntry.Builder(context, username, pendingIntent, beginGetPasswo
 
 ## Not yet wired
 
-- Encrypted vault unlock and real password / public-key credential results
+- Encrypted vault unlock and real password credential results
+- Passkey create/get support and public-key capability declaration
+- Credential Exchange parsing, preview, confirmation, and durable import
 - Finishing the activity with `PendingIntentHandler.setGetCredentialResponse`
 - Site/domain filtering for calling apps (demo returns all non-deleted accounts,
   optionally filtered by `BeginGetPasswordOption.allowedUserIds`)
-- Gradle wrapper in this package

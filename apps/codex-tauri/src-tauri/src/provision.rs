@@ -79,7 +79,162 @@ pub struct ExistingServiceReport {
     pub summary: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshHostKeyInspection {
+    pub host: String,
+    pub port: u16,
+    pub already_trusted: bool,
+    pub fingerprints: Vec<String>,
+    pub key_lines: Vec<String>,
+}
+
 const CRED_FILE: &str = "server_ssh_credentials.json";
+
+fn known_hosts_path(data_dir: &Path) -> Result<PathBuf, String> {
+    fs::create_dir_all(data_dir).map_err(|e| format!("创建 SSH 数据目录失败: {e}"))?;
+    let path = data_dir.join("ssh-known-hosts");
+    if !path.exists() {
+        fs::write(&path, b"").map_err(|e| format!("创建 SSH known_hosts 失败: {e}"))?;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("设置 SSH known_hosts 权限失败: {e}"))?;
+    }
+    Ok(path)
+}
+
+fn known_host_query(host: &str, port: u16) -> String {
+    if port == 22 {
+        host.to_string()
+    } else {
+        format!("[{host}]:{port}")
+    }
+}
+
+fn host_key_lines_match(host: &str, port: u16, key_lines: &[String]) -> bool {
+    let query = known_host_query(host, port);
+    !key_lines.is_empty()
+        && key_lines.iter().all(|line| {
+            let host_field = line.split_whitespace().next().unwrap_or_default();
+            host_field == query
+        })
+}
+
+fn ssh_keyscan_bin() -> &'static str {
+    if cfg!(windows) {
+        "ssh-keyscan"
+    } else {
+        "/usr/bin/ssh-keyscan"
+    }
+}
+
+fn ssh_keygen_bin() -> &'static str {
+    if cfg!(windows) {
+        "ssh-keygen"
+    } else {
+        "/usr/bin/ssh-keygen"
+    }
+}
+
+fn host_key_fingerprints(lines: &[String]) -> Result<Vec<String>, String> {
+    let temp = std::env::temp_dir().join(format!("pass-host-key-{}", Uuid::new_v4()));
+    fs::write(&temp, format!("{}\n", lines.join("\n")))
+        .map_err(|e| format!("暂存 SSH 主机公钥失败: {e}"))?;
+    let output = Command::new(ssh_keygen_bin())
+        .args(["-l", "-E", "sha256", "-f"])
+        .arg(&temp)
+        .output()
+        .map_err(|e| format!("启动 ssh-keygen 失败: {e}"));
+    let _ = fs::remove_file(temp);
+    let output = output?;
+    if !output.status.success() {
+        return Err("无法计算 SSH 主机公钥指纹".into());
+    }
+    let fingerprints = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if fingerprints.is_empty() {
+        return Err("服务器未返回可核对的 SSH 主机公钥".into());
+    }
+    Ok(fingerprints)
+}
+
+pub fn inspect_ssh_host_key(
+    data_dir: &Path,
+    server_url: &str,
+    port: u16,
+) -> Result<SshHostKeyInspection, String> {
+    let endpoint = parse_endpoint(server_url)?;
+    let known_hosts = known_hosts_path(data_dir)?;
+    let query = known_host_query(&endpoint.host, port);
+    let trusted = Command::new(ssh_keygen_bin())
+        .args(["-F", &query, "-f"])
+        .arg(&known_hosts)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if trusted {
+        return Ok(SshHostKeyInspection {
+            host: endpoint.host,
+            port,
+            already_trusted: true,
+            fingerprints: Vec::new(),
+            key_lines: Vec::new(),
+        });
+    }
+    let output = Command::new(ssh_keyscan_bin())
+        .args(["-T", "10", "-p", &port.to_string(), &endpoint.host])
+        .output()
+        .map_err(|e| format!("启动 ssh-keyscan 失败: {e}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("读取 SSH 主机公钥失败: {}", detail.trim()));
+    }
+    let key_lines = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let fingerprints = host_key_fingerprints(&key_lines)?;
+    Ok(SshHostKeyInspection {
+        host: endpoint.host,
+        port,
+        already_trusted: false,
+        fingerprints,
+        key_lines,
+    })
+}
+
+pub fn trust_ssh_host_key(
+    data_dir: &Path,
+    server_url: &str,
+    port: u16,
+    key_lines: Vec<String>,
+) -> Result<(), String> {
+    let endpoint = parse_endpoint(server_url)?;
+    if !host_key_lines_match(&endpoint.host, port, &key_lines) {
+        return Err("待信任的 SSH 主机公钥与服务器地址不一致".into());
+    }
+    host_key_fingerprints(&key_lines)?;
+    let path = known_hosts_path(data_dir)?;
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("打开 SSH known_hosts 失败: {e}"))?;
+    file.write_all(format!("{}\n", key_lines.join("\n")).as_bytes())
+        .and_then(|_| file.sync_all())
+        .map_err(|e| format!("保存 SSH 主机公钥失败: {e}"))?;
+    fs::File::open(data_dir)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|e| format!("持久化 SSH 主机公钥失败: {e}"))
+}
 
 pub fn load_ssh_credential(data_dir: &Path, host: &str) -> Option<SshCredential> {
     let path = data_dir.join(CRED_FILE);
@@ -195,15 +350,7 @@ fn make_temp_ssh(data_dir: &Path, cred: &SshCredential) -> Result<TempSsh, Strin
         let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
     }
 
-    let known_hosts = data_dir.join("ssh-known-hosts");
-    if !known_hosts.exists() {
-        fs::write(&known_hosts, b"").map_err(|e| e.to_string())?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&known_hosts, fs::Permissions::from_mode(0o600));
-        }
-    }
+    let known_hosts = known_hosts_path(data_dir)?;
 
     let mut key = None;
     if cred.auth_mode == "privateKey" {
@@ -292,7 +439,7 @@ fn base_ssh_args(cred: &SshCredential, temp: &TempSsh) -> Vec<String> {
         "-o".into(),
         "ServerAliveCountMax=2".into(),
         "-o".into(),
-        "StrictHostKeyChecking=accept-new".into(),
+        "StrictHostKeyChecking=yes".into(),
         "-o".into(),
         "LogLevel=ERROR".into(),
         "-o".into(),
@@ -487,6 +634,7 @@ fn service_text(endpoint: &Endpoint) -> String {
         "Type=simple".into(),
         "User=pass".into(),
         "Group=pass".into(),
+        "UMask=0077".into(),
         "WorkingDirectory=/opt/pass-sync-server".into(),
         format!(
             "Environment=PASS_SYNC_HOST={}",
@@ -528,6 +676,7 @@ After=pass-sync-server.service
 [Service]
 Type=oneshot
 User=root
+UMask=0077
 ExecStart=/opt/pass-sync-server/backup_sync_db.sh
 "#;
 
@@ -626,10 +775,11 @@ set -eu
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
 $SUDO sh -c 'getent group pass >/dev/null 2>&1 || groupadd --system pass'
 $SUDO sh -c 'id -u pass >/dev/null 2>&1 || useradd --system --gid pass --home-dir /nonexistent --shell /usr/sbin/nologin pass'
-$SUDO install -d -m 0755 /opt/pass-sync-server /etc/pass-sync /var/lib/pass-sync /var/lib/pass-sync/backups
+$SUDO install -d -m 0755 /opt/pass-sync-server /etc/pass-sync
+$SUDO install -d -m 0700 -o pass -g pass /var/lib/pass-sync /var/lib/pass-sync/backups
 if [ -f /var/lib/pass-sync/pass_sync.sqlite3 ]; then
   stamp=$(date +%Y%m%d-%H%M%S)
-  $SUDO install -d -m 0750 "/var/lib/pass-sync/backups/$stamp-pre-provision"
+  $SUDO install -d -m 0700 -o pass -g pass "/var/lib/pass-sync/backups/$stamp-pre-provision"
   if command -v sqlite3 >/dev/null 2>&1; then
     $SUDO sqlite3 /var/lib/pass-sync/pass_sync.sqlite3 ".backup '/var/lib/pass-sync/backups/$stamp-pre-provision/pass_sync.sqlite3'"
   else
@@ -1175,7 +1325,27 @@ pub fn host_from_server_url(raw: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::shell_quote;
+    use super::{host_key_lines_match, known_host_query, shell_quote};
+
+    #[test]
+    fn known_host_query_uses_openssh_port_format() {
+        assert_eq!(known_host_query("example.com", 22), "example.com");
+        assert_eq!(known_host_query("example.com", 2222), "[example.com]:2222");
+    }
+
+    #[test]
+    fn host_key_lines_must_match_the_requested_host() {
+        let standard = vec!["example.com ssh-ed25519 AAAA".to_string()];
+        assert!(host_key_lines_match("example.com", 22, &standard));
+
+        let alternate_port = vec!["[example.com]:2222 ssh-ed25519 AAAA".to_string()];
+        assert!(host_key_lines_match("example.com", 2222, &alternate_port));
+        assert!(!host_key_lines_match("example.com", 2222, &standard));
+
+        let wrong_host = vec!["attacker.example ssh-ed25519 AAAA".to_string()];
+        assert!(!host_key_lines_match("example.com", 22, &wrong_host));
+        assert!(!host_key_lines_match("example.com", 22, &[]));
+    }
 
     #[test]
     fn shell_quote_preserves_paths_without_allowing_quote_escape() {

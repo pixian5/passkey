@@ -101,6 +101,22 @@ class OptionalBearerScriptTests(unittest.TestCase):
         for script in SCRIPTS:
             subprocess.run(["bash", "-n", str(script)], check=True, cwd=ROOT)
 
+    def test_direct_start_scripts_use_private_umask_and_data_directory(self) -> None:
+        for script in (
+            ROOT / "apps" / "sync_server_ubuntu" / "start.sh",
+            ROOT / "apps" / "sync_server_local" / "start.sh",
+            ROOT / "apps" / "sync_server_local" / "install-launchd.sh",
+        ):
+            source = script.read_text(encoding="utf-8")
+            self.assertIn("umask 077", source, script)
+            self.assertIn('chmod 0700 "${DATA_DIR}"', source, script)
+
+        launchd = (ROOT / "apps" / "sync_server_local" / "install-launchd.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("<key>Umask</key>", launchd)
+        self.assertIn("<integer>63</integer>", launchd)
+
     def test_deployment_separates_source_and_install_paths(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "deploy-sync-server.yml").read_text(encoding="utf-8")
         deploy = (ROOT / "apps" / "sync_server_ubuntu" / "deploy.sh").read_text(encoding="utf-8")

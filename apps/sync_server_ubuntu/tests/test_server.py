@@ -60,6 +60,14 @@ class PassSyncServerTests(unittest.TestCase):
         self.assertEqual(parse_ascii_decimal("+1"), None)
         self.assertEqual(parse_ascii_decimal(""), None)
 
+    def test_repository_restricts_database_files_and_uses_full_durability(self) -> None:
+        db_path = Path(self.temp_dir.name) / "private.sqlite3"
+        repository = server_module.PayloadRepository(db_path)
+        self.assertEqual(db_path.parent.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(db_path.stat().st_mode & 0o777, 0o600)
+        with repository._managed_connect() as connection:
+            self.assertEqual(connection.execute("PRAGMA synchronous;").fetchone()[0], 2)
+
     def test_rate_limit_discards_expired_client_windows(self) -> None:
         current_window = int(time.time() // 60)
         self.server._rate_windows = {

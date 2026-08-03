@@ -65,6 +65,20 @@ jobs:
       - run: ./scripts/build_pass_core_ffi.sh
       - run: swift build
 
+  android-provider:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/android_credential_provider
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew testDebugUnitTest assembleDebug
+
   desktop-tauri:
     runs-on: ubuntu-latest
     defaults:
@@ -127,10 +141,10 @@ jobs:
           cargo clippy --manifest-path core/pass_core/Cargo.toml --workspace --all-targets -- -D clippy::correctness -A warnings
           cargo clippy --manifest-path apps/pass-web/Cargo.toml --all-targets -- -D clippy::correctness -A warnings
           cargo clippy --manifest-path apps/codex-tauri/src-tauri/Cargo.toml --all-targets -- -D clippy::correctness -A warnings
-      - name: Dependency advisories (informational)
-        continue-on-error: true
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Dependency advisories
         run: |
-          cargo install cargo-audit --locked || true
-          cargo audit --manifest-path core/pass_core/Cargo.toml || true
-          cargo audit --manifest-path apps/pass-web/Cargo.toml || true
-          cargo audit --manifest-path apps/codex-tauri/src-tauri/Cargo.toml || true
+          (cd core/pass_core && cargo audit)
+          (cd apps/pass-web && cargo audit)
+          (cd apps/codex-tauri/src-tauri && cargo audit)

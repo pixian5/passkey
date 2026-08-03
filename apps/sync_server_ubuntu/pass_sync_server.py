@@ -88,7 +88,11 @@ class StoredOperation:
 class PayloadRepository:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            self.db_path.parent.chmod(0o700)
+        except OSError as error:
+            raise RuntimeError(f"无法收紧同步数据目录权限：{error}") from error
         self._write_lock = threading.Lock()
         self._initialize()
 
@@ -96,8 +100,25 @@ class PayloadRepository:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA journal_mode=WAL;")
-        connection.execute("PRAGMA synchronous=NORMAL;")
+        # This is the authority for password-sync history.  FULL is slower
+        # than NORMAL, but avoids acknowledging a write that can disappear
+        # after a power loss.  The service unit also sets UMask=0077; chmod is
+        # retained for direct/scripted launches and existing installations.
+        connection.execute("PRAGMA synchronous=FULL;")
+        self._ensure_private_storage_permissions()
         return connection
+
+    def _ensure_private_storage_permissions(self) -> None:
+        for path in (
+            self.db_path,
+            self.db_path.with_name(f"{self.db_path.name}-wal"),
+            self.db_path.with_name(f"{self.db_path.name}-shm"),
+        ):
+            try:
+                if path.exists():
+                    path.chmod(0o600)
+            except OSError as error:
+                raise RuntimeError(f"无法收紧同步存储文件权限 {path}: {error}") from error
 
     @contextmanager
     def _managed_connect(self):
@@ -261,6 +282,11 @@ class PayloadRepository:
                     "yes",
                 }
                 quarantine_path = self.db_path.parent / f"purged_payloads_{current_time_ms()}.jsonl"
+                quarantine_path.touch(mode=0o600, exist_ok=True)
+                try:
+                    quarantine_path.chmod(0o600)
+                except OSError as error:
+                    raise RuntimeError(f"无法收紧隔离文件权限：{error}") from error
                 with quarantine_path.open("a", encoding="utf-8") as handle:
                     for row in unsupported:
                         handle.write(

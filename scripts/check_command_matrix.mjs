@@ -119,6 +119,8 @@ const sharedUiSrc = read("apps/codex-tauri/src/main.js");
 const exchangeSrc = read("apps/codex-tauri/src-tauri/src/exchange.rs");
 const mustError = [
   ["provision_self_hosted_server", /case "provision_self_hosted_server":\s*throw new Error/],
+  ["inspect_ssh_host_key_cmd", /case "inspect_ssh_host_key_cmd":\s*throw new Error/],
+  ["trust_ssh_host_key_cmd", /case "trust_ssh_host_key_cmd":\s*throw new Error/],
   ["lock_unlock_biometric", /case "lock_unlock_biometric":\s*throw new Error/],
 ];
 for (const [cmd, re] of mustError) {

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 DB_PATH="${PASS_SYNC_DB_PATH:-/var/lib/pass-sync/pass_sync.sqlite3}"
 BACKUP_ROOT="${PASS_SYNC_BACKUP_DIR:-/var/lib/pass-sync/backups}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 DEST="${BACKUP_ROOT}/${STAMP}"
 
-mkdir -p "${DEST}"
+install -d -m 0700 "${DEST}"
 if command -v sqlite3 >/dev/null 2>&1; then
   # 在线备份保持 SQLite 一致性，不直接复制正在写入的主库。
   sqlite3 "${DB_PATH}" ".backup '${DEST}/pass_sync.sqlite3'"
@@ -15,6 +16,7 @@ else
   [ -e "${DB_PATH}-wal" ] && cp -a "${DB_PATH}-wal" "${DEST}/" || true
   [ -e "${DB_PATH}-shm" ] && cp -a "${DB_PATH}-shm" "${DEST}/" || true
 fi
+find "${DEST}" -type f -exec chmod 0600 {} +
 
 python3 - "${DEST}/pass_sync.sqlite3" <<'PY'
 import sqlite3

@@ -1,7 +1,7 @@
 # Pass 当前实现与设计决策基准
 
 > 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源；本轮完成后由版本脚本递增。
-> 当前为 `1.4.2`。
+> 当前为 `1.4.3`。
 >
 > 使用规则：当历史设计稿、路线图、旧 Swift 代码或界面文字与本文冲突时，先以本文和自动化门禁为准，再回到代码核对。没有测试或代码依据时，不得写“完整”“完全一致”“所有端均支持”。
 
@@ -33,7 +33,7 @@
 - `npm run prepare:dist` 生成 Tauri/Docker Web 使用的 `apps/codex-tauri/dist`，并同步 Chrome Web 扩展的 `web-options.html`、`web-main.js`、`web-options.css`。
 - `scripts/build-extension-chrome-web.sh` 也会先同步 UI。生成后的三个扩展 UI 文件不能手工维护，否则下次构建会覆盖。
 - Chrome 的 popup、content script 和 WebAuthn 注入不来自管理 UI；它们属于扩展专属界面和系统能力。
-- UI 当前调用 70 个命令。命令矩阵只证明“有对应处理分支”，不自动证明三个分支的所有返回字段和副作用都相同。
+- UI 当前调用 72 个命令。命令矩阵只证明“有对应处理分支”，不自动证明三个分支的所有返回字段和副作用都相同。
 
 ## 3. 数据模型：哪些是实体，哪些是关系和顺序
 
@@ -122,8 +122,8 @@
 
 | 表面 | 业务数据 | 设置/密钥 | 当前原子性和并发边界 |
 |---|---|---|---|
-| Tauri | 本地 SQLite KV 中的加密 vault 集合 | 同步设置文件；启用应用锁时 Token/同步密钥单独密封 | 同一进程内多集合事务；本地加密文件使用临时文件、文件 `fsync`、rename、目录 `fsync` |
-| Docker Web | `/data/pass-web-vault-v1.enc` | 未启用应用锁时为 `pass-web-vault-key-v1`；启用后为主密码派生密钥包装的 `pass-web-vault-key-wrapper-v1.json` | 进程内 `Mutex` 串行；原子文件替换带 `fsync`；数据目录单实例锁拒绝第二写实例，**仍没有跨进程 revision/CAS**；非回环监听必须配置网页访问令牌，除非明确声明只经宿主机回环 Docker 映射访问 |
+| Tauri | 本地 SQLite KV 中的加密 vault 集合 | 同步设置文件；启用应用锁时 Token/同步密钥单独密封 | 同一进程内多集合事务；跨 SQLite 与加密历史文件的写入使用加密待完成日志，数据库打开时幂等恢复；本地加密文件使用临时文件、文件 `fsync`、rename、目录 `fsync` |
+| Docker Web | `/data/pass-web-vault-v1.enc` | 未启用应用锁时为 `pass-web-vault-key-v1`；启用后为主密码派生密钥包装的 `pass-web-vault-key-wrapper-v1.json` | 进程内 `Mutex` 串行；应用锁变更用带 SHA-256 校验的双文件事务同时提交 vault 与密钥凭据；数据目录单实例锁拒绝第二写实例，**仍没有跨进程 revision/CAS**；非回环监听必须配置网页访问令牌，除非明确声明只经宿主机回环 Docker 映射访问 |
 | Chrome Web | `chrome.storage.local` 中的加密管理工作区 | 本地 AES-GCM 加密设置、UI 偏好和创建服务草稿 | 管理页写入后镜像后台；单次后台 IndexedDB 写事务覆盖账号/文件夹/Passkey/布局集合 |
 | Chrome 后台填充层 | IndexedDB `pass.local.db.v1` 业务集合镜像 | 数据密钥由扩展本地保存 | 填充/WebAuthn/后台同步写入后广播回管理页 |
 
@@ -137,6 +137,8 @@ Chrome 后台 Service Worker 的 `chrome.storage.session` 锁记录是唯一权�
 
 - 账号、文件夹、Passkey、全局顺序等关联集合应在同一事务/逻辑保存中提交。
 - 业务保存失败时，内存、撤销栈和快照栈必须回滚到已持久化状态，不能让 UI 显示未落盘数据。
+- Tauri 普通修改、撤销、重做以及同步/导入/快照恢复写入在 SQLite 提交前先落加密待完成日志；若进程在数据库与历史栈两次耐久写入之间退出，下次打开数据库会按固定操作 ID 补完历史或栈移动。日志损坏或数据库状态与日志不一致时拒绝继续覆盖。
+- Swift 保存账号、文件夹或 Passkey 失败后从 SQLite 重载真实集合；账号归属与文件夹顺序必须在同一事务成功后才产生成功历史和提示。
 - 同步采用先写本地合并结果、再推送远端。远端推送失败时，本地合并结果保留并明确提示重试；不能报告为全部成功。
 - 远端已经写成功但客户端响应丢失时，服务端通过同一 `Idempotency-Key` 重放，避免一个逻辑写入产生多个版本。
 
@@ -158,7 +160,7 @@ Bearer Token 和同步加密密钥都允许留空，项目不会自动生成 Bea
 
 仓库的 Token 轮换脚本只把用户通过 `PASS_SYNC_NEW_BEARER_TOKEN` 或交互输入提供的现有 Token 写入配置文件；它不会生成或回显 Token。空 Token 开放模式也是受支持配置，部署和升级脚本不得擅自替换。
 
-主密码不做 `trim`，首尾空格是密码的一部分。应用锁定后，不应把 Token、同步密钥或解密后的业务数据返回 UI。Touch ID 仅在 macOS Tauri 可用；Docker Web 和 Chrome 不得伪装成功。
+主密码不做 `trim`，首尾空格是密码的一部分。Docker Web 启用锁、修改主密码、关闭锁会先暂存新 vault 密文和新密钥包装/原始密钥，再写事务标记并幂等替换；重启会先恢复未完成事务，摘要不一致时拒绝覆盖。应用锁定后，不应把 Token、同步密钥或解密后的业务数据返回 UI。Touch ID 仅在 macOS Tauri 可用；Docker Web 和 Chrome 不得伪装成功。
 
 ## 8. 同步流程和模式
 
@@ -202,6 +204,10 @@ Bearer Token 和同步加密密钥都允许留空，项目不会自动生成 Bea
 
 仓库中的通用 systemd 模板不强制 TLS，证书和私钥必须成对通过 `/etc/pass-sync/pass-sync-server.env` 配置。Tauri/Swift SSH 创建服务在目标 URL 为 HTTPS 时会把已选证书复制到 `/etc/pass-sync/tls/`，并为那次生成的服务单元写入固定证书路径。这两种部署入口不能混为一谈。
 
+同步服务器数据库使用 WAL + `synchronous=FULL`；数据目录和备份目录为 `0700`，数据库、WAL、SHM、令牌与隔离文件为 `0600`，systemd 和备份脚本使用 `UMask=0077`。Tauri/Swift 创建服务也生成相同权限，不得只修改仓库模板。空 `tokens.conf` 明确表示开放模式，不得写成 `default=` 或自动生成 Token。
+
+Tauri/Swift 的 SSH 创建服务不再使用 `accept-new`。首次连接先用 `ssh-keyscan` 读取公钥、用 `ssh-keygen -E sha256` 展示指纹，用户与服务器控制台核对并确认后才写入应用私有 `known_hosts`；22 端口使用主机名，非 22 端口必须精确匹配 `[主机]:端口`。之后统一使用 `StrictHostKeyChecking=yes`，主机密钥变化会被拒绝。
+
 ## 9. 导入、导出和预览
 
 ### 9.1 同步包
@@ -238,7 +244,7 @@ Chrome 有管理页工作区快照和后台同步安全快照两种本地来源�
 
 | 能力 | Tauri | Docker Web | Chrome Web 扩展 |
 |---|---|---|---|
-| 统一管理 UI 与 70 个 UI 命令入口 | 有 | 有 | 有 |
+| 统一管理 UI 与 72 个 UI 命令入口 | 有 | 有 | 有 |
 | 账号/文件夹/排序/回收站主流程 | 有 | 有 | 有 |
 | 自建服务器同步、预览和覆盖模式 | 有 | 有 | 有 |
 | WebDAV | 有 | 有 | 有，由后台统一调度 |
@@ -251,7 +257,7 @@ Chrome 有管理页工作区快照和后台同步安全快照两种本地来源�
 | 多用户/租户隔离 | 不适用，本地单 vault | **未实现，单用户 vault** | 浏览器配置文件内单 vault |
 | 跨进程并发写 CAS | 未提供 | 未提供 | 不适用同一扩展实例；多上下文靠消息/事务协调 |
 
-“命令覆盖 70/70”不能替代这张能力表。不支持的命令可能为了 UI 契约仍有处理分支，但必须返回空值、false 或明确中文错误，不能理解为实际支持。
+“命令覆盖 72/72”不能替代这张能力表。不支持的命令可能为了 UI 契约仍有处理分支，但必须返回空值、false 或明确中文错误，不能理解为实际支持。
 
 ## 12. 已知尚未统一和不能误解的地方
 
@@ -262,22 +268,25 @@ Chrome 有管理页工作区快照和后台同步安全快照两种本地来源�
 5. Tauri/Web 的本地文件保存没有跨进程 revision；不要同时让多个实例写同一数据目录。
 6. Swift 已加入每文件夹 `regularAccountIds` 及其时间戳/设备名，并在同步合并与文件夹成员变更时保留；仍需通过真实跨端 round-trip 测试继续验证历史数据迁移。
 7. Firefox、Safari、Android 和旧 Swift 没有被命令矩阵证明与三端管理面等价。
-8. 软件 Passkey 私钥是可同步材料，不具备硬件认证器不可导出的安全属性。
-9. 同步服务器限流按 TCP 对端 IP，反向代理部署必须额外设计可信代理策略。
-10. `pass.data.v2` 机器 Schema 需要与 Rust/JS 当前字段同步维护；新增顺序或墓碑字段时必须同时改两份 Schema 和黄金向量。
-11. Docker Web 数据目录只能由一个实例持有；进程对 `pass-web-instance.lock` 持有的是内核排他锁，异常终止后由内核释放，遗留文件无需删除。若仍提示占用，说明另有实际进程挂载并持有同一 volume，必须停止该进程，不能通过删文件或多实例共享 volume 规避。
-12. Chrome 主密码与数据密钥包装当前为 v4：主密码字节不做 `trim`；旧 v2/v3 包装仅在成功解锁时兼容读取并立即重包为 v4。
-13. 同步服务的 TLS 健康检查必须以证书域名请求，并用 `--resolve` 连接本机监听地址；禁止用 `--insecure` 绕过证书校验。
-14. `cargo fmt --check` 是 CI 阻断门禁，任何 Rust 格式漂移都必须在提交前清理。
-15. 多来源同步只有 `syncPrimarySource` 指定的来源参与合并；其它来源只作为镜像接收最终结果。主源拉取失败不得继续覆盖镜像。
-16. 永久删除墓碑不计入可见数量，但稳定 ID 必须保留，避免旧设备数据复活；安全闸门和 JS/Rust 对拍都遵守这一规则。
-17. 当前密钥轮换期间，Tauri/Web/扩展同步、服务器快照恢复和同步包导入均可用运行时上一把密钥读取旧包；空密钥仍表示明文模式。
-18. 自建服务器条件写入统一处理 412/428；Tauri 一次逻辑同步复用同一幂等键，扩展重试也复用稳定键。WebDAV 依赖 ETag，不宣称服务端幂等。
-19. 扩展选项页和后台自动同步共享 `chrome.storage.session` 短时互斥锁，异常退出由过期时间释放。
-20. 服务端 `X-Sync-Revision` 是 scope 内连续 revision；`version_id` 仍是全局历史行 ID，旧数据库启动时会补齐 scope revision。
-21. 合并交换律不仅约束密码等字段值，也约束创建设备、最后操作设备、Passkey 更新设备和删除设备等元数据；任何 `>=` 隐式左侧优先或合并过程读取 `Date.now()` 都会破坏双客户端收敛。
-22. Chrome 真实页面验收使用 `scripts/fixtures/extension-autofill.html`。内容脚本注入、版本标记和页面无脚本错误可在本地 HTTP 页面验证；账号选择器只有在当前扩展存储存在匹配账号且扩展管理页可用时才可验证。Chrome 安全策略禁止自动化直接打开 `chrome://extensions/` 或 `chrome-extension://` 管理页，不能把“无账号时不显示选择器”误判为注入失败。
-23. 一次鼠标点击输入框会依次触发 `pointerdown`、`focusin`、`click`，三个监听器不能分别查询账号。内容脚本以“输入框对象 + 650ms”认领一次用户激活：同一次点击只发起一次账号列表请求，因此有账号时只开一个选择器、无账号或锁定时也只提示一次；切换到另一输入框或时间窗结束后仍允许重新打开。
+
+8. Android Provider 当前只声明密码能力并返回不含密码的 demo 查询条目；真实 vault 解锁、密码结果、Passkey 和 Credential Exchange 均未实现，不能作为生产 Provider 发布。仓库包含 Gradle Wrapper，CI 已配置单元测试与 debug APK 构建，但这不代表凭据回填可用。Safari Web Extension 构建包只包含 `dist`、HTML/CSS、manifest 和图标等运行资源，不再携带 `node_modules`、README、构建脚本或重复源码；这不改变 Safari 未纳入三端命令矩阵的事实。
+9. 软件 Passkey 私钥是可同步材料，不具备硬件认证器不可导出的安全属性。
+10. 同步服务器限流按 TCP 对端 IP，反向代理部署必须额外设计可信代理策略。
+11. `pass.data.v2` 机器 Schema 需要与 Rust/JS 当前字段同步维护；新增顺序或墓碑字段时必须同时改两份 Schema 和黄金向量。
+12. Docker Web 数据目录只能由一个实例持有；进程对 `pass-web-instance.lock` 持有的是内核排他锁，异常终止后由内核释放，遗留文件无需删除。若仍提示占用，说明另有实际进程挂载并持有同一 volume，必须停止该进程，不能通过删文件或多实例共享 volume 规避。
+13. Chrome 主密码与数据密钥包装当前为 v4：主密码字节不做 `trim`；旧 v2/v3 包装仅在成功解锁时兼容读取并立即重包为 v4。
+14. 同步服务的 TLS 健康检查必须以证书域名请求，并用 `--resolve` 连接本机监听地址；禁止用 `--insecure` 绕过证书校验。
+15. `cargo fmt --check` 是 CI 阻断门禁，任何 Rust 格式漂移都必须在提交前清理。
+16. 多来源同步只有 `syncPrimarySource` 指定的来源参与合并；其它来源只作为镜像接收最终结果。主源拉取失败不得继续覆盖镜像。
+17. 永久删除墓碑不计入可见数量，但稳定 ID 必须保留，避免旧设备数据复活；安全闸门和 JS/Rust 对拍都遵守这一规则。
+18. 当前密钥轮换期间，Tauri/Web/扩展同步、服务器快照恢复和同步包导入均可用运行时上一把密钥读取旧包；空密钥仍表示明文模式。
+19. 自建服务器条件写入统一处理 412/428；Tauri 一次逻辑同步复用同一幂等键，扩展重试也复用稳定键。WebDAV 依赖 ETag，不宣称服务端幂等。
+20. 扩展选项页和后台自动同步共享 `chrome.storage.session` 短时互斥锁，异常退出由过期时间释放。
+21. 服务端 `X-Sync-Revision` 是 scope 内连续 revision；`version_id` 仍是全局历史行 ID，旧数据库启动时会补齐 scope revision。
+22. 合并交换律不仅约束密码等字段值，也约束创建设备、最后操作设备、Passkey 更新设备和删除设备等元数据；任何 `>=` 隐式左侧优先或合并过程读取 `Date.now()` 都会破坏双客户端收敛。
+23. Chrome 真实页面验收使用 `scripts/fixtures/extension-autofill.html`。内容脚本注入、版本标记和页面无脚本错误可在本地 HTTP 页面验证；账号选择器只有在当前扩展存储存在匹配账号且扩展管理页可用时才可验证。Chrome 安全策略禁止自动化直接打开 `chrome://extensions/` 或 `chrome-extension://` 管理页，不能把“无账号时不显示选择器”误判为注入失败。
+24. 一次鼠标点击输入框会依次触发 `pointerdown`、`focusin`、`click`，三个监听器不能分别查询账号。内容脚本以“输入框对象 + 650ms”认领一次用户激活：同一次点击只发起一次账号列表请求，因此有账号时只开一个选择器、无账号或锁定时也只提示一次；切换到另一输入框或时间窗结束后仍允许重新打开。
+25. 网页内的成功、警告、错误、无匹配账号和 Passkey 提示统一由内容脚本的单一 toast 实现渲染。宿主使用 closed Shadow DOM 隔离网页 CSS，并优先进入 manual Popover top layer，固定在浏览器视口右上角；不支持 Popover 时才回退到带 `!important` 关键定位的 fixed 容器。并行安装旧扩展和新扩展时按三段版本号裁决 UI 所有权，新版本必须接管旧版本，同版本才按扩展 ID 破平。`scripts/fixtures/extension-toast-hostile.html` 故意使用全局超大字号、错误绝对定位和根节点变换验证这些约束。
 
 ## 13. 验证入口和当前基线
 
@@ -295,9 +304,17 @@ cd apps/sync_server_ubuntu && .venv/bin/python -m unittest discover -s ../../scr
 python3 -m http.server 8766 --bind 127.0.0.1
 # Chrome 打开 http://127.0.0.1:8766/scripts/fixtures/extension-autofill.html，
 # 确认 data-pass-content-version、用户名/密码联动和无重复页面 UI。
+# 再打开 http://127.0.0.1:8766/scripts/fixtures/extension-toast-hostile.html，
+# 点击手机号输入框，确认提示位于视口右上角且不继承测试页的冲突样式。
 ```
 
-版本 `1.4.1` 的当前同步复核基线：扩展测试 109 项、Core JS/Rust 合并对拍 48 组、Tauri 27 项、同步服务器 Python 测试 36 项与端到端测试 4 项、Docker Web 测试 14 项，以及 Swift `swift build`、两套严格 Clippy、Rust fmt、命令矩阵均通过。同步报告统一保留兼容字段并增加报告版本、安全结果、阶段、实际主源、重试状态、会话/操作 ID、错误码和 revision；Chrome 的成功、预览、安全阻断、拉取失败和本地并发变化报告均由同一构造器产生，并通过 JSON Schema 测试。拉取期间发现本地并发修改时返回 `checkingLocalConcurrency` 可重试报告，不再返回空值。UI 可区分“已写本地”“已推送”“待补偿”及“已暂停”。Chrome 管理页的手动同步、自动同步、预览与补偿队列全部委托扩展后台 Service Worker；后台的加密 outbox、同步锁和多来源调度是唯一权威，管理页不得恢复第二套 `syncRemote`、固定空 outbox 或逐源重复调度。Chrome 后台同步快照已并入统一管理页列表并可恢复。Chrome、Swift、Tauri 与 Docker Web 的补偿队列都会保存 payload 摘要、ETag/revision 和完整幂等上下文；同一目标且摘要相同才是同一次逻辑写入，重启后复用 key，摘要改变则重置重试次数并创建新 key；第 12 次连续失败后暂停，需用户手动恢复。Tauri 使用独立加密 `sync_outbox.json`；Docker Web 队列保存在加密 vault 内，网页关闭后仍保留，但仅由打开的 Web UI 自动同步计时器调度。安全检查阻止的预览不会写入队列，成功推送后自动清除。扩展的正向填充路径有独立回归：从用户名或密码框选择匹配账号都会写入成对字段，空凭据会清除旧值。Docker 镜像生命周期脚本会验证首次启动、普通重启、测试监护进程下的 `pass-web` 子进程被 `SIGKILL` 后容器 `RestartCount` 实际增加、强制重建和 `/healthz`；Actions 同时执行 actionlint。不能再用容器内 `kill -9 1` 作为崩溃证据：PID namespace init 的信号语义可能让命令成功但主进程不退出。自建服务器审计表记录客户端会话/操作/设备/版本；它们不是凭据，不写入 payload 或密码。账号实体数组按稳定 `recordId`（再按 `accountId`）作传输规范化，用户可见顺序仍只由顶层和文件夹顺序数组决定。扩展用单次激活认领避免一次点击密码框产生两次账号选择或两次提示。测试数量只描述该版本实际运行结果，测试增删后必须重新更新。
+版本 `1.4.3` 的当前复核基线：扩展测试 112 项、Core Rust 测试 41 项与 JS/Rust 合并对拍 48 组、Tauri 33 项、同步服务器 Python 测试 37 项及脚本/端到端测试 26 项、Docker Web 测试 17 项，以及 Swift `swift build`、Safari Xcode 构建、Android 4 项单元测试与 debug APK 构建、三套 Clippy/Rust fmt、三套 `cargo audit`、actionlint 和 72/72 命令矩阵均通过。Android 本机验证使用 JDK 17、Android SDK Platform 36；由于没有 Android 14+ 真机，不能宣称系统 Credential Manager 交互已实测。
+
+Tauri 审计仍报告 Tauri/GTK 依赖树中的 20 条上游未维护/unsound warning，但没有已知 vulnerability；CI 的 `cargo audit` 为漏洞硬门禁，不使用 `continue-on-error`。Docker 镜像生命周期实测覆盖首次启动、普通重启、测试监护进程下的 `pass-web` 子进程被 `SIGKILL` 后容器 `RestartCount` 增加、强制重建和 `/healthz`。不能用容器内 `kill -9 1` 代替该验证，因为 PID namespace init 的信号语义可能让命令返回成功但主进程不退出。
+
+同步报告统一保留兼容字段并增加报告版本、安全结果、阶段、实际主源、重试状态、会话/操作 ID、错误码和 revision。Chrome 的成功、预览、安全阻断、拉取失败和本地并发变化报告均由同一构造器产生，并通过 JSON Schema 测试；拉取期间发现本地并发修改时返回 `checkingLocalConcurrency` 可重试报告。UI 可区分“已写本地”“已推送”“待补偿”及“已暂停”。Chrome 管理页的手动同步、自动同步、预览与补偿队列全部委托扩展后台 Service Worker；后台的加密 outbox、同步锁和多来源调度是唯一权威。后台同步快照已并入统一管理页列表并可恢复。
+
+Chrome、Swift、Tauri 与 Docker Web 的补偿队列都保存 payload 摘要、ETag/revision 和完整幂等上下文；同一目标且摘要相同才复用逻辑写入，摘要改变则创建新 key，第 12 次连续失败后暂停并等待用户恢复。Tauri 使用独立加密 `sync_outbox.json`；Docker Web 队列保存在加密 vault 内，但仅由打开的 Web UI 自动同步计时器调度。安全检查阻止的预览不会写入队列，成功推送后自动清除。账号实体数组按稳定 `recordId`（再按 `accountId`）作传输规范化，用户可见顺序只由顶层和文件夹顺序数组决定。扩展的填充路径、单次激活去重、网页提示样式隔离和新版本 UI 所有权裁决均有独立回归。测试数量只描述该版本实际运行结果，测试增删后必须重新更新。
 
 `1.4.2` 在上述同步实现基础上修复了 Docker 发布工作流对 Trivy action tag 的引用：GitHub Action ref 必须使用真实的 `v0.36.0` tag，不能省略 `v`，否则 job 会在创建阶段失败，镜像不会发布。
 

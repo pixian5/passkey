@@ -1,6 +1,6 @@
 # 本地写入耐久性与历史一致性
 
-> 状态：当前代码事实（复核至版本 `1.4.2`）。开发测试版允许直接修正，不兼容旧坏历史。
+> 状态：当前代码事实（复核至版本 `1.4.3`）。开发测试版允许直接修正，不兼容旧坏历史。
 
 ## 1. 背景
 
@@ -80,6 +80,15 @@
 
 - 远端路径、证书路径、文件模式必须 shell quote，禁止直接拼进单引号字符串。
 - 部署后健康检查必须使用正常 TLS 校验，不能 `danger_accept_invalid_certs`。
+- SSH 首次连接必须先展示 SHA-256 主机指纹并由用户确认；确认后写入应用私有 `known_hosts`，后续固定 `StrictHostKeyChecking=yes`。非 22 端口的扫描结果必须精确匹配 `[host]:port`。
+- 同步数据库使用 `PRAGMA synchronous=FULL`。数据/备份目录为 `0700`，数据库、WAL、SHM、隔离文件和 Token 文件为 `0600`，systemd/备份进程使用 `UMask=0077`。
+- 空 Token 是受支持的开放模式：客户端不发送认证头，创建服务写空令牌文件；不得生成 Token，也不得写伪配置 `default=`。
+
+### 2.8 跨文件事务
+
+- Tauri 的业务数据在 SQLite、撤销/重做栈在独立加密文件。普通修改、撤销和重做先写加密待完成日志，SQLite 提交后再以固定操作 ID 幂等更新历史；数据库打开时补完中断步骤。损坏日志和不一致状态必须阻止后续覆盖。
+- Docker Web 的 vault 密文与 vault key/主密码包装是两个文件。启用锁、修改密码、关闭锁时先 `fsync` 两个暂存文件，再写包含目标类型与两份 SHA-256 的事务标记；恢复时只有暂存文件或目标文件摘要吻合才继续 rename，最后 `fsync` 目录并删除标记。
+- Swift 账号归属、文件夹普通顺序和相关 Passkey 必须在同一 SQLite 事务提交；任何保存失败都从磁盘重载真实状态，且不得追加成功历史或提示。
 
 ## 3. 回归基线（1.1.5）
 
@@ -125,12 +134,12 @@
 ## 6. 后续仍可改进
 
 - 日常单字段写入也可继续统一事务包装与故障注入测试。
-- Swift 其余仅改账号集合的路径可继续统一走可回滚封装，降低样板代码差异。
+- Swift 可继续增加可注入磁盘故障的单元测试，目前主要由编译和真实 SQLite 路径保证。
 - 远端已成功、本地失败时的自动补偿/回滚策略（当前只保证错误可见与提示重同步）。
-- CI 可再补 Clippy / fmt / 依赖审计；当前已覆盖 Tauri/Web 测试与内嵌服务器一致性检查。
+- Tauri 的待完成日志目前按单应用实例设计；仍没有两个桌面进程共享同一数据目录的跨进程 CAS。
 
 ## 7. 1.1.5 起的补强
 
 - 同步改为**先写入本地合并结果，再推送远端**（Tauri 自建/WebDAV 与 Web 自建/WebDAV）。远端推送失败时保留本地合并结果并明确提示重试，避免“远端已新、本地仍旧”。
 - Swift 单集合 `saveAccounts` / `saveFoldersToDefaults` 统一走 `writeCollectionsAtomically`，失败回滚内存。
-- CI 增加 `quality-gates`：版本/内嵌服务器漂移硬门禁、Clippy correctness 硬门禁，fmt 与 cargo-audit 先作 informational。
+- CI 增加 `quality-gates`：版本/内嵌服务器漂移、Rust fmt、Clippy correctness 和三个 Rust crate 的 `cargo audit` 都是硬门禁；新漏洞不能用 `continue-on-error` 或 `|| true` 绕过。

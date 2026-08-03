@@ -829,6 +829,8 @@ private struct ServerProvisioningSheet: View {
     @State private var syncEncryptionKey: String
     @State private var isWorking = false
     @State private var errorMessage = ""
+    @State private var pendingHostKey: ServerSSHHostKeyInspection?
+    @State private var pendingCredential: ServerSSHCredential?
 
     init(store: AccountStore) {
         self.store = store
@@ -947,6 +949,31 @@ private struct ServerProvisioningSheet: View {
             if accessToken.isEmpty { accessToken = store.serverAuthToken }
             if syncEncryptionKey.isEmpty { syncEncryptionKey = store.syncEncryptionKey }
         }
+        .alert(
+            "核对 SSH 主机指纹",
+            isPresented: Binding(
+                get: { pendingHostKey != nil },
+                set: { if !$0 { pendingHostKey = nil; pendingCredential = nil } }
+            ),
+            presenting: pendingHostKey
+        ) { inspection in
+            Button("取消", role: .cancel) {
+                pendingHostKey = nil
+                pendingCredential = nil
+            }
+            Button("指纹一致，继续") {
+                guard let credential = pendingCredential else { return }
+                pendingHostKey = nil
+                pendingCredential = nil
+                trustAndProvision(inspection: inspection, credential: credential)
+            }
+        } message: { inspection in
+            Text(
+                "服务器：\(inspection.host):\(inspection.port)\n\n" +
+                inspection.fingerprints.joined(separator: "\n") +
+                "\n\n请先在服务器控制台运行 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256，确认指纹一致。"
+            )
+        }
     }
 
     private func loadSavedCredential() {
@@ -976,18 +1003,51 @@ private struct ServerProvisioningSheet: View {
         isWorking = true
         Task { @MainActor in
             do {
-                try await store.provisionSelfHostedServer(
+                let inspection = try await ServerProvisioningService.inspectHostKey(
                     serverURL: serverURL,
-                    credential: credential,
-                    accessToken: accessToken,
-                    syncEncryptionKey: syncEncryptionKey
+                    port: credential.port
                 )
-                dismiss()
+                if inspection.alreadyTrusted {
+                    try await completeProvision(credential: credential)
+                } else {
+                    pendingHostKey = inspection
+                    pendingCredential = credential
+                }
             } catch {
                 errorMessage = error.localizedDescription
             }
             isWorking = false
         }
+    }
+
+    private func trustAndProvision(
+        inspection: ServerSSHHostKeyInspection,
+        credential: ServerSSHCredential
+    ) {
+        isWorking = true
+        Task { @MainActor in
+            do {
+                try await ServerProvisioningService.trustHostKey(
+                    serverURL: serverURL,
+                    port: credential.port,
+                    keyLines: inspection.keyLines
+                )
+                try await completeProvision(credential: credential)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isWorking = false
+        }
+    }
+
+    private func completeProvision(credential: ServerSSHCredential) async throws {
+        try await store.provisionSelfHostedServer(
+            serverURL: serverURL,
+            credential: credential,
+            accessToken: accessToken,
+            syncEncryptionKey: syncEncryptionKey
+        )
+        dismiss()
     }
 }
 

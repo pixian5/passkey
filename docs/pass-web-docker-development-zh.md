@@ -219,6 +219,8 @@ apps/pass-web/
 | `PASS_WEB_DATA_DIR` | `./data` | vault 和密钥目录 |
 | `PASS_WEB_STATIC_DIR` | `../codex-tauri/dist` | 静态资源目录 |
 | `PASS_WEB_AUTH_TOKEN` | 空 | Web 访问 Bearer Token；空值表示开放模式 |
+| `PASS_WEB_REQUIRE_AUTH` | `0` | 设为 `1/true` 时即使回环监听也强制要求 Web 访问 Token；公网 systemd/Caddy 示例使用此项 |
+| `PASS_WEB_TRUSTED_LOOPBACK_PROXY` | `0` | 仅当容器端口确实只映射宿主机回环时允许服务进程监听 `0.0.0.0` 且 Token 为空 |
 
 Compose 额外变量：
 
@@ -247,9 +249,11 @@ Compose 额外变量：
 ```text
 /data/pass-web-vault-v1.enc
 /data/pass-web-vault-key-v1
+/data/pass-web-vault-key-wrapper-v1.json  # 启用应用锁后替代原始 key
+/data/pass-web-instance.lock
 ```
 
-后续可以增加数据库、迁移标记、审计日志或快照文件，但必须保持同一卷内的版本化目录结构。
+应用锁配置变更期间还可能短暂存在 `pass-web-lock-transaction-v1.json` 和两个点号开头的暂存文件。启动时必须先完成或拒绝该事务，不能人工只删除标记继续运行；标记记录两份目标内容的 SHA-256，防止把旧 vault 与新密钥错误配对。后续可以增加数据库、迁移标记、审计日志或快照文件，但必须保持同一卷内的版本化目录结构。
 
 密文和密钥必须成套备份。恢复时先停止写入，再原子替换完整目录，最后启动容器并检查 `/healthz` 和 vault 解密。
 

@@ -851,6 +851,8 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
         }
       }
       case "detect_existing_sync_service": return { exists: false, message: "Chrome 扩展不提供 SSH 部署检测；请在桌面端创建服务，或手动配置已有服务器地址" };
+      case "inspect_ssh_host_key_cmd": throw new Error("读取和信任 SSH 主机指纹需要桌面端系统 SSH 能力");
+      case "trust_ssh_host_key_cmd": throw new Error("保存 SSH 主机指纹需要桌面端系统 SSH 能力");
       case "provision_self_hosted_server": throw new Error("创建服务需要桌面端 SSH 能力；Chrome 扩展只保存草稿并支持已有服务器同步");
       case "choose_export_directory": return null;
       case "export_csv_to_path": return exportCsv("pass.csv");

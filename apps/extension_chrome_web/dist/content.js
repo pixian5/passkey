@@ -185,7 +185,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.2";
+  var PASS_EXTENSION_VERSION = "1.4.3";
 
   // fill_chooser_activation.js
   var FILL_CHOOSER_ACTIVATION_DEDUPE_MS = 650;
@@ -200,6 +200,19 @@
     return true;
   }
 
+  // page_ui_owner.js
+  var PAGE_UI_PRIORITY_BASE = 1e3;
+  var VERSION_PART_RADIX = 65536;
+  function parseVersionPart(value) {
+    const parsed = Number.parseInt(String(value || "0"), 10);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.max(0, Math.min(VERSION_PART_RADIX - 1, parsed));
+  }
+  function pageUiOwnerPriority(version) {
+    const [major = "0", minor = "0", patch = "0"] = String(version || "").split(".");
+    return PAGE_UI_PRIORITY_BASE + (parseVersionPart(major) * VERSION_PART_RADIX + parseVersionPart(minor)) * VERSION_PART_RADIX + parseVersionPart(patch);
+  }
+
   // content.js
   var PASS_LOGIN_COOLDOWN_MS = 5e3;
   var WEB_AUTHN_BRIDGE_SOURCE = "pass-webauthn-bridge";
@@ -210,6 +223,7 @@
   var WEB_AUTHN_NOTICE_MAX_AGE_MS = 5e3;
   var WEB_AUTHN_NOTICE_TOAST_DEDUPE_MS = 2500;
   var PASS_PAGE_TOAST_HOST_ID = "pass-page-toast-host";
+  var PASS_CONTENT_VERSION_ATTR = "data-pass-content-version";
   var PASS_PAGE_UI_OWNER_ATTR = "data-pass-ui-owner";
   var PASS_PAGE_UI_OWNER_PRIORITY_ATTR = "data-pass-ui-owner-priority";
   var PASS_PAGE_TOAST_DURATION_MS = 3e3;
@@ -228,6 +242,8 @@
   var lastWebAuthnNoticeToastAt = 0;
   var passPageToastSeq = 0;
   var passPageToasts = [];
+  var passPageToastHost = null;
+  var passPageToastContainer = null;
   var fillChooserHost = null;
   var fillChooserShadow = null;
   var fillChooserListInFlight = false;
@@ -253,10 +269,11 @@
       const manifest = chrome.runtime.getManifest?.() || {};
       const name = String(manifest.name || "Pass").trim();
       const runtimeId = String(chrome.runtime.id || "").trim();
-      const priority = 10;
-      return { key: `${runtimeId}|${name}`, priority };
+      const version = String(manifest.version || PASS_EXTENSION_VERSION || "0.0.0").trim();
+      const priority = pageUiOwnerPriority(version);
+      return { key: `${runtimeId}|${name}|${version}`, priority };
     } catch {
-      return { key: "pass-extension|unknown", priority: 10 };
+      return { key: "pass-extension|unknown", priority: pageUiOwnerPriority("0.0.0") };
     }
   }
   function claimPageUiOwner() {
@@ -276,17 +293,23 @@
     return true;
   }
   function ownsPageUi() {
-    return claimPageUiOwner();
+    const owned = claimPageUiOwner();
+    if (owned) {
+      document.documentElement?.setAttribute(PASS_CONTENT_VERSION_ATTR, PASS_EXTENSION_VERSION);
+    }
+    return owned;
   }
   if (!globalThis.__passContentBridgeInstalled) {
     globalThis.__passContentBridgeInstalled = true;
     installPassContentBridge();
   }
   function installPassContentBridge() {
-    claimPageUiOwner();
+    const ownsUi = claimPageUiOwner();
     try {
       window.__passContentVersion = PASS_EXTENSION_VERSION;
-      document.documentElement?.setAttribute("data-pass-content-version", PASS_EXTENSION_VERSION);
+      if (ownsUi) {
+        document.documentElement?.setAttribute(PASS_CONTENT_VERSION_ATTR, PASS_EXTENSION_VERSION);
+      }
       console.info(`${PASSKEY_LOG_PREFIX} loaded`, {
         version: PASS_EXTENSION_VERSION,
         href: window.location.href
@@ -1143,22 +1166,59 @@
     return "";
   }
   function ensurePassPageToastHost() {
-    let host = document.getElementById(PASS_PAGE_TOAST_HOST_ID);
-    if (host instanceof HTMLDivElement) return host;
-    host = document.createElement("div");
+    if (passPageToastHost?.isConnected && passPageToastContainer) {
+      return passPageToastContainer;
+    }
+    document.getElementById(PASS_PAGE_TOAST_HOST_ID)?.remove();
+    const host = document.createElement("div");
     host.id = PASS_PAGE_TOAST_HOST_ID;
-    host.style.position = "fixed";
-    host.style.top = "14px";
-    host.style.right = "14px";
-    host.style.zIndex = "2147483647";
-    host.style.display = "flex";
-    host.style.flexDirection = "column";
-    host.style.alignItems = "flex-end";
-    host.style.gap = "8px";
-    host.style.maxWidth = "min(520px, calc(100vw - 28px))";
-    host.style.pointerEvents = "none";
-    (document.documentElement || document.body).appendChild(host);
-    return host;
+    host.setAttribute("popover", "manual");
+    host.setAttribute("aria-label", "Pass \u63D0\u793A");
+    const criticalStyles = {
+      all: "initial",
+      position: "fixed",
+      inset: "14px 14px auto auto",
+      margin: "0",
+      padding: "0",
+      border: "0",
+      width: "auto",
+      height: "auto",
+      maxWidth: "min(360px, calc(100vw - 28px))",
+      background: "transparent",
+      overflow: "visible",
+      pointerEvents: "none",
+      zIndex: "2147483647",
+      colorScheme: "light"
+    };
+    for (const [property, value] of Object.entries(criticalStyles)) {
+      const cssProperty = property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+      host.style.setProperty(cssProperty, value, "important");
+    }
+    const shadow = host.attachShadow({ mode: "closed" });
+    const container = document.createElement("div");
+    container.setAttribute("role", "status");
+    container.setAttribute("aria-live", "polite");
+    container.style.display = "flex";
+    container.style.flexDirection = "column";
+    container.style.alignItems = "flex-end";
+    container.style.gap = "8px";
+    container.style.maxWidth = "100%";
+    container.style.pointerEvents = "none";
+    shadow.appendChild(container);
+    (document.body || document.documentElement).appendChild(host);
+    if (typeof host.showPopover === "function") {
+      try {
+        host.showPopover();
+      } catch {
+        host.removeAttribute("popover");
+      }
+    } else {
+      host.removeAttribute("popover");
+    }
+    host.style.setProperty("display", "block", "important");
+    passPageToastHost = host;
+    passPageToastContainer = container;
+    return container;
   }
   function passPageToastToneStyle(tone) {
     const styles = {
@@ -1185,6 +1245,14 @@
         shadow: "0 12px 28px rgba(120, 92, 16, 0.2)",
         badgeBg: "#6a5208",
         badgeFg: "#fff8df"
+      },
+      info: {
+        border: "1px solid #6b91d8",
+        background: "linear-gradient(180deg, #edf4ff 0%, #dbe9ff 100%)",
+        color: "#214f9a",
+        shadow: "0 12px 28px rgba(33, 79, 154, 0.2)",
+        badgeBg: "#214f9a",
+        badgeFg: "#edf4ff"
       }
     };
     return styles[tone] || styles.success;
@@ -1209,9 +1277,10 @@
     item.el.style.transform = "translateY(-4px)";
     window.setTimeout(() => {
       item.el.remove();
-      const host = document.getElementById(PASS_PAGE_TOAST_HOST_ID);
-      if (host instanceof HTMLDivElement && passPageToasts.length === 0) {
-        host.remove();
+      if (passPageToastHost?.isConnected && passPageToasts.length === 0) {
+        passPageToastHost.remove();
+        passPageToastHost = null;
+        passPageToastContainer = null;
       }
     }, 160);
     renumberPassPageToasts();
@@ -1234,12 +1303,12 @@
     el.style.alignItems = "flex-start";
     el.style.gap = "10px";
     el.style.padding = "10px 12px";
-    el.style.borderRadius = "10px";
+    el.style.borderRadius = "8px";
     el.style.border = style.border;
     el.style.background = style.background;
     el.style.color = style.color;
     el.style.boxShadow = style.shadow;
-    el.style.font = '600 24px/1.4 "SF Pro Text", "PingFang SC", sans-serif';
+    el.style.font = '600 14px/1.45 "SF Pro Text", "PingFang SC", sans-serif';
     el.style.opacity = "0";
     el.style.transform = "translateY(-4px)";
     el.style.transition = "opacity 140ms ease-out, transform 140ms ease-out";
@@ -1256,7 +1325,7 @@
     badge.style.borderRadius = "999px";
     badge.style.background = style.badgeBg;
     badge.style.color = style.badgeFg;
-    badge.style.fontSize = "16px";
+    badge.style.fontSize = "12px";
     badge.style.fontWeight = "700";
     badge.style.lineHeight = "1";
     badge.style.marginTop = "4px";

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Pass 网页提示隔离测试页</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html { transform: translateZ(0); }
+    body {
+      align-items: center;
+      background: #f3f5f8;
+      display: flex;
+      font: 16px system-ui, sans-serif;
+      justify-content: center;
+      margin: 0;
+      min-height: 100vh;
+    }
+    .login-modal {
+      background: white;
+      border: 1px solid #dce1e8;
+      border-radius: 8px;
+      box-shadow: 0 20px 48px rgb(31 41 55 / 16%);
+      padding: 32px;
+      width: min(420px, calc(100vw - 48px));
+    }
+    label { display: block; margin: 18px 0 6px; }
+    input { box-sizing: border-box; font: inherit; padding: 10px; width: 100%; }
+    button { margin-top: 24px; padding: 10px 18px; }
+
+    /* Deliberately hostile rules: injected Pass UI must not inherit these. */
+    div { font-size: 48px !important; line-height: 1.8 !important; }
+    #pass-page-toast-host {
+      inset: 240px auto auto 120px !important;
+      max-width: 700px !important;
+      position: absolute !important;
+    }
+  </style>
+</head>
+<body>
+  <main class="login-modal">
+    <h1>手机号登录</h1>
+    <form autocomplete="on">
+      <label for="username">手机号</label>
+      <input id="username" name="username" type="text" autocomplete="username">
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password">
+      <button type="submit">登录</button>
+    </form>
+  </main>
+</body>
+</html>

@@ -20,6 +20,7 @@ DerivedData/
 # Gradle build cache
 .gradle/
 apps/android_credential_provider/build/
+apps/android_credential_provider/app/build/
 
 # Language dependencies and local environments
 node_modules/

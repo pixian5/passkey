@@ -2,6 +2,7 @@ mod app_lock;
 mod exchange;
 mod local_snapshots;
 mod local_vault;
+mod mutation_journal;
 mod operation_history;
 mod provision;
 mod provision_settings;
@@ -39,11 +40,12 @@ use exchange::{
     run_sync_with_mode_context, ImportResult, PathResult, SyncVersionSummary,
 };
 use local_snapshots::LocalSnapshotSummary;
+use mutation_journal::PendingAction;
 use operation_history::HistoryEntry;
 use provision::{
-    detect_existing_service, host_from_server_url, load_ssh_credential, provision_server,
-    save_ssh_credential, verify_public_endpoint, ExistingServiceReport, ProvisionResult,
-    SshCredential,
+    detect_existing_service, host_from_server_url, inspect_ssh_host_key, load_ssh_credential,
+    provision_server, save_ssh_credential, trust_ssh_host_key, verify_public_endpoint,
+    ExistingServiceReport, ProvisionResult, SshCredential, SshHostKeyInspection,
 };
 use provision_settings::ProvisionDraft;
 use sync::crypto::key_id;
@@ -255,8 +257,9 @@ fn get_redo_status(
 ) -> Result<Option<UndoStatus>, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
+    let _conn = open_db(&app)?;
     Ok(
-        operation_history::latest_redo(&dir).map(|entry| UndoStatus {
+        operation_history::latest_redo(&dir)?.map(|entry| UndoStatus {
             title: entry.title,
             created_at_ms: entry.created_at_ms,
         }),
@@ -270,7 +273,8 @@ fn get_operation_history(
 ) -> Result<Vec<HistorySummary>, String> {
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
-    let mut entries = operation_history::undo_entries(&dir)
+    let _conn = open_db(&app)?;
+    let mut entries = operation_history::undo_entries(&dir)?
         .into_iter()
         .map(|entry| HistorySummary {
             id: entry.id,
@@ -280,7 +284,7 @@ fn get_operation_history(
         })
         .collect::<Vec<_>>();
     entries.extend(
-        operation_history::redo_entries(&dir)
+        operation_history::redo_entries(&dir)?
             .into_iter()
             .map(|entry| HistorySummary {
                 id: entry.id,
@@ -306,8 +310,16 @@ fn undo_last_operation(
     let entry: HistoryEntry = operation_history::latest_distinct_undo(&dir, &current)?
         .ok_or_else(|| "没有可撤销的本地操作".to_string())?;
     local_snapshots::create(&dir, &current, "撤销本地操作前自动备份")?;
+    mutation_journal::begin_undo(
+        &dir,
+        &entry.title,
+        entry.id.clone(),
+        current.clone(),
+        entry.payload.clone(),
+    )?;
     save_payload_atomic(&mut conn, &entry.payload)?;
     operation_history::move_undo_to_redo(&dir, &entry.id, current)?;
+    mutation_journal::clear(&dir)?;
     Ok(serde_json::json!({ "message": format!("已撤销：{}", entry.title) }))
 }
 
@@ -319,13 +331,21 @@ fn redo_last_operation(
     let dir = app_data_dir(&app)?;
     state.require_unlocked(&dir)?;
     let entry: HistoryEntry =
-        operation_history::latest_redo(&dir).ok_or_else(|| "没有可重做的本地操作".to_string())?;
+        operation_history::latest_redo(&dir)?.ok_or_else(|| "没有可重做的本地操作".to_string())?;
     let mut conn = open_db(&app)?;
     let current_device = load_device_name(&conn)?;
     let current = local_payload_from_conn(&conn, &current_device)?;
     local_snapshots::create(&dir, &current, "重做本地操作前自动备份")?;
+    mutation_journal::begin_redo(
+        &dir,
+        &entry.title,
+        entry.id.clone(),
+        current.clone(),
+        entry.payload.clone(),
+    )?;
     save_payload_atomic(&mut conn, &entry.payload)?;
     operation_history::move_redo_to_undo(&dir, &entry.id, current)?;
+    mutation_journal::clear(&dir)?;
     Ok(serde_json::json!({ "message": format!("已重做：{}", entry.title) }))
 }
 
@@ -1376,10 +1396,15 @@ async fn sync_now(
                             &local_for_apply,
                             "同步写入本地前自动备份",
                         )?;
+                        mutation_journal::begin(
+                            &worker_dir_for_apply,
+                            "同步写入本地",
+                            local_for_apply.clone(),
+                        )?;
                     }
                     save_payload_if_unchanged(&mut conn, &device, expected, payload)?;
                     if !snapshot_created {
-                        operation_history::push(
+                        commit_undo_point(
                             &worker_dir_for_apply,
                             "同步写入本地",
                             local_for_apply.clone(),
@@ -1482,10 +1507,15 @@ async fn sync_now_mode(
                             &local_for_apply,
                             "同步写入本地前自动备份",
                         )?;
+                        mutation_journal::begin(
+                            &worker_dir_for_apply,
+                            "同步写入本地",
+                            local_for_apply.clone(),
+                        )?;
                     }
                     save_payload_if_unchanged(&mut conn, &device, expected, payload)?;
                     if !snapshot_created {
-                        operation_history::push(
+                        commit_undo_point(
                             &worker_dir_for_apply,
                             "同步写入本地",
                             local_for_apply.clone(),
@@ -1579,10 +1609,15 @@ async fn sync_webdav_now_mode(
                             &local_for_apply,
                             "WebDAV 同步写入本地前自动备份",
                         )?;
+                        mutation_journal::begin(
+                            &worker_dir_for_apply,
+                            "WebDAV 同步写入本地",
+                            local_for_apply.clone(),
+                        )?;
                     }
                     save_payload_if_unchanged(&mut conn, &device, expected, payload)?;
                     if !snapshot_created {
-                        operation_history::push(
+                        commit_undo_point(
                             &worker_dir_for_apply,
                             "WebDAV 同步写入本地",
                             local_for_apply.clone(),
@@ -1824,8 +1859,9 @@ fn import_sync_bundle(
     )?;
     if apply && result.safe {
         local_snapshots::create(&dir, &local, "导入同步包前自动备份")?;
-        operation_history::push(&dir, "导入并合并同步包", local.clone())?;
+        mutation_journal::begin(&dir, "导入并合并同步包", local.clone())?;
         save_payload_atomic(&mut conn, &result.payload)?;
+        commit_undo_point(&dir, "导入并合并同步包", local)?;
     }
     serde_json::to_value(result).map_err(|e| e.to_string())
 }
@@ -1849,8 +1885,9 @@ fn import_sync_bundle_text(
     )?;
     if apply && result.safe {
         local_snapshots::create(&dir, &local, "导入同步包前自动备份")?;
-        operation_history::push(&dir, "导入并合并同步包", local.clone())?;
+        mutation_journal::begin(&dir, "导入并合并同步包", local.clone())?;
         save_payload_atomic(&mut conn, &result.payload)?;
+        commit_undo_point(&dir, "导入并合并同步包", local)?;
     }
     serde_json::to_value(result).map_err(|e| e.to_string())
 }
@@ -2138,13 +2175,11 @@ fn restore_server_version(
     let device = load_device_name(&conn)?;
     let local = local_payload_from_conn(&conn, &device)?;
     let (payload, _) = restore_sync_version(&settings, &version_id)?;
+    let undo_title = format!("恢复服务器快照：{}", version_id);
     local_snapshots::create(&dir, &local, "恢复服务器快照前自动备份")?;
-    operation_history::push(
-        &dir,
-        format!("恢复服务器快照：{}", version_id),
-        local.clone(),
-    )?;
+    mutation_journal::begin(&dir, &undo_title, local.clone())?;
     save_payload_atomic(&mut conn, &payload)?;
+    commit_undo_point(&dir, &undo_title, local)?;
     Ok(serde_json::json!({
         "message": format!(
             "已恢复快照 {}：账号 {}，文件夹 {}，通行密钥 {}",
@@ -2164,6 +2199,7 @@ fn snapshot_current_vault(
     let device = load_device_name(conn)?;
     let payload = local_payload_from_conn(conn, &device)?;
     local_snapshots::create(data_dir, &payload, reason)?;
+    mutation_journal::begin(data_dir, reason, payload.clone())?;
     Ok(payload)
 }
 
@@ -2172,6 +2208,23 @@ fn commit_undo_point(
     reason: &str,
     pre_payload: SyncPayload,
 ) -> Result<(), String> {
+    if let Some(pending) = mutation_journal::load(data_dir)? {
+        if pending.title == reason
+            && pending.before == pre_payload
+            && matches!(pending.action, PendingAction::PushUndo)
+        {
+            if let Err(error) =
+                operation_history::push_with_id(data_dir, pending.id, pending.title, pending.before)
+            {
+                // The SQLite mutation already committed.  Keep the encrypted
+                // journal so the next database open can finish history.
+                eprintln!("操作历史暂未写入，将自动恢复：{error}");
+                return Ok(());
+            }
+            return mutation_journal::clear(data_dir);
+        }
+        return Err("待完成写入日志与当前操作不一致，拒绝覆盖恢复依据".into());
+    }
     operation_history::push(data_dir, reason, pre_payload)
 }
 
@@ -2195,8 +2248,11 @@ fn restore_local_snapshot(
     let device = load_device_name(&conn)?;
     let current = local_payload_from_conn(&conn, &device)?;
     let payload = local_snapshots::get(&dir, &snapshot_id)?;
+    let undo_title = format!("恢复本地安全快照：{}", snapshot_id);
     local_snapshots::create(&dir, &current, "恢复本地安全快照前自动备份")?;
+    mutation_journal::begin(&dir, &undo_title, current.clone())?;
     save_payload_atomic(&mut conn, &payload)?;
+    commit_undo_point(&dir, &undo_title, current)?;
     Ok(serde_json::json!({
         "message": format!(
             "已恢复本地安全快照：账号 {}，文件夹 {}，通行密钥 {}",
@@ -2268,6 +2324,33 @@ async fn detect_existing_sync_service(
     })
     .await
     .map_err(|e| format!("检测服务任务异常: {e}"))?
+}
+
+#[tauri::command]
+async fn inspect_ssh_host_key_cmd(
+    app: AppHandle,
+    state: tauri::State<'_, AppLockState>,
+    server_url: String,
+    port: u16,
+) -> Result<SshHostKeyInspection, String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    tauri::async_runtime::spawn_blocking(move || inspect_ssh_host_key(&dir, &server_url, port))
+        .await
+        .map_err(|e| format!("读取 SSH 主机指纹任务异常: {e}"))?
+}
+
+#[tauri::command]
+fn trust_ssh_host_key_cmd(
+    app: AppHandle,
+    state: tauri::State<AppLockState>,
+    server_url: String,
+    port: u16,
+    key_lines: Vec<String>,
+) -> Result<(), String> {
+    let dir = app_data_dir(&app)?;
+    state.require_unlocked(&dir)?;
+    trust_ssh_host_key(&dir, &server_url, port, key_lines)
 }
 
 #[tauri::command]
@@ -2598,7 +2681,47 @@ fn open_db(app: &AppHandle) -> Result<Connection, String> {
         ",
     )
     .map_err(|e| format!("初始化数据库失败: {e}"))?;
+    recover_pending_mutation(&conn, &dir)?;
     Ok(conn)
+}
+
+fn recover_pending_mutation(conn: &Connection, data_dir: &std::path::Path) -> Result<(), String> {
+    let Some(pending) = mutation_journal::load(data_dir)? else {
+        return Ok(());
+    };
+    let device = load_device_name(conn)?;
+    let current = local_payload_from_conn(conn, &device)?;
+    if current == pending.before {
+        return mutation_journal::clear(data_dir);
+    }
+    match &pending.action {
+        PendingAction::PushUndo => operation_history::push_with_id(
+            data_dir,
+            pending.id.clone(),
+            pending.title.clone(),
+            pending.before.clone(),
+        )?,
+        PendingAction::Undo {
+            history_entry_id,
+            after,
+        } if current == *after => operation_history::move_undo_to_redo(
+            data_dir,
+            history_entry_id,
+            pending.before.clone(),
+        )?,
+        PendingAction::Redo {
+            history_entry_id,
+            after,
+        } if current == *after => operation_history::move_redo_to_undo(
+            data_dir,
+            history_entry_id,
+            pending.before.clone(),
+        )?,
+        PendingAction::Undo { .. } | PendingAction::Redo { .. } => {
+            return Err("本地数据库与待恢复的撤销/重做日志不一致，拒绝继续覆盖数据".into());
+        }
+    }
+    mutation_journal::clear(data_dir)
 }
 
 fn load_device_name(conn: &Connection) -> Result<String, String> {
@@ -4164,6 +4287,8 @@ fn main() {
             save_ssh_credential_cmd,
             get_provision_draft,
             save_provision_draft,
+            inspect_ssh_host_key_cmd,
+            trust_ssh_host_key_cmd,
             detect_existing_sync_service,
             provision_self_hosted_server,
             verify_sync_endpoint,
@@ -4198,6 +4323,13 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn journal_test_connection(dir: &std::path::Path) -> Connection {
+        let conn = Connection::open(dir.join("pass-tauri.db")).unwrap();
+        conn.execute_batch("CREATE TABLE kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);")
+            .unwrap();
+        conn
+    }
 
     fn test_account(id: &str, site: &str, username: &str, updated_at_ms: i64) -> PasswordAccount {
         PasswordAccount {
@@ -4331,5 +4463,60 @@ mod tests {
             },
         ];
         assert!(canonical_active_folder_ids(&folders, &["work".into()]).is_err());
+    }
+
+    #[test]
+    fn database_open_recovery_finishes_missing_undo_entry() {
+        let dir = std::env::temp_dir().join(format!("pass-journal-recover-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let mut conn = journal_test_connection(&dir);
+        let before = SyncPayload::default();
+        let after = SyncPayload {
+            all_regular_order_updated_at_ms: 42,
+            ..Default::default()
+        };
+        mutation_journal::begin(&dir, "测试普通修改", before.clone()).unwrap();
+        save_payload_atomic(&mut conn, &after).unwrap();
+
+        recover_pending_mutation(&conn, &dir).unwrap();
+
+        let undo = operation_history::undo_entries(&dir).unwrap();
+        assert_eq!(undo.len(), 1);
+        assert_eq!(undo[0].payload, before);
+        assert!(mutation_journal::load(&dir).unwrap().is_none());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn database_open_recovery_finishes_undo_stack_move() {
+        let dir = std::env::temp_dir().join(format!("pass-journal-undo-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let mut conn = journal_test_connection(&dir);
+        let undo_target = SyncPayload::default();
+        let current = SyncPayload {
+            all_regular_order_updated_at_ms: 99,
+            ..Default::default()
+        };
+        save_payload_atomic(&mut conn, &current).unwrap();
+        operation_history::push_with_id(&dir, "undo-entry".into(), "测试撤销", undo_target.clone())
+            .unwrap();
+        mutation_journal::begin_undo(
+            &dir,
+            "测试撤销",
+            "undo-entry".into(),
+            current.clone(),
+            undo_target.clone(),
+        )
+        .unwrap();
+        save_payload_atomic(&mut conn, &undo_target).unwrap();
+
+        recover_pending_mutation(&conn, &dir).unwrap();
+
+        assert!(operation_history::undo_entries(&dir).unwrap().is_empty());
+        let redo = operation_history::redo_entries(&dir).unwrap();
+        assert_eq!(redo.len(), 1);
+        assert_eq!(redo[0].id, "undo-entry");
+        assert_eq!(redo[0].payload, current);
+        let _ = fs::remove_dir_all(dir);
     }
 }

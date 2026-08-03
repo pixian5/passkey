@@ -172,25 +172,12 @@
 		17B4E9A42F7689DA00EB61C1 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				17B4E9A52F7689DA00EB61C1 /* webauthn_injected.js */,
-				17B4E9A62F7689DA00EB61C1 /* popup.js */,
-				17B4E9A72F7689DA00EB61C1 /* background.js */,
 				17B4E9A82F7689DA00EB61C1 /* dist */,
 				17B4E9A92F7689DA00EB61C1 /* popup.html */,
-				17B4E9AA2F7689DA00EB61C1 /* options.js */,
-				17B4E9AB2F7689DA00EB61C1 /* node_modules */,
-				17B4E9AC2F7689DA00EB61C1 /* data_store.js */,
-				17B4E9AD2F7689DA00EB61C1 /* passkey_store.js */,
-				17B4E9AE2F7689DA00EB61C1 /* README.md */,
-				17B4E9AF2F7689DA00EB61C1 /* package-lock.json */,
-				17B4E9B02F7689DA00EB61C1 /* package.json */,
-				17B4E9B12F7689DA00EB61C1 /* account_core.js */,
 				17B4E9CC2F7689DA00EB61C1 /* icons */,
-				17B4E9B22F7689DA00EB61C1 /* scripts */,
 				17B4E9B32F7689DA00EB61C1 /* manifest.json */,
 				17B4E9B42F7689DA00EB61C1 /* options.html */,
 				17B4E9B52F7689DA00EB61C1 /* popup.css */,
-				17B4E9B62F7689DA00EB61C1 /* content.js */,
 				17B4E9B72F7689DA00EB61C1 /* options.css */,
 			);
 			name = Resources;
@@ -296,25 +283,12 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				17B4E9C02F7689DA00EB61C1 /* passkey_store.js in Resources */,
-				17B4E9C52F7689DA00EB61C1 /* scripts in Resources */,
 				17B4E9BB2F7689DA00EB61C1 /* dist in Resources */,
-				17B4E9C12F7689DA00EB61C1 /* README.md in Resources */,
-				17B4E9BD2F7689DA00EB61C1 /* options.js in Resources */,
-				17B4E9C22F7689DA00EB61C1 /* package-lock.json in Resources */,
-				17B4E9C92F7689DA00EB61C1 /* content.js in Resources */,
 				17B4E9BC2F7689DA00EB61C1 /* popup.html in Resources */,
 				17B4E9C62F7689DA00EB61C1 /* manifest.json in Resources */,
-				17B4E9BE2F7689DA00EB61C1 /* node_modules in Resources */,
-				17B4E9B82F7689DA00EB61C1 /* webauthn_injected.js in Resources */,
-				17B4E9C32F7689DA00EB61C1 /* package.json in Resources */,
 				17B4E9C72F7689DA00EB61C1 /* options.html in Resources */,
 				17B4E9C82F7689DA00EB61C1 /* popup.css in Resources */,
-				17B4E9BA2F7689DA00EB61C1 /* background.js in Resources */,
-				17B4E9BF2F7689DA00EB61C1 /* data_store.js in Resources */,
-				17B4E9B92F7689DA00EB61C1 /* popup.js in Resources */,
 				17B4E9CA2F7689DA00EB61C1 /* options.css in Resources */,
-				17B4E9C42F7689DA00EB61C1 /* account_core.js in Resources */,
 				17B4E9CB2F7689DA00EB61C1 /* icons in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -494,7 +468,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 142;
+				CURRENT_PROJECT_VERSION = 143;
 				DEVELOPMENT_TEAM = PSTNW3UN4R;
 				"DEVELOPMENT_TEAM[sdk=macosx*]" = PSTNW3UN4R;
 				ENABLE_APP_SANDBOX = YES;
@@ -510,7 +484,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 1.4.2;
+				MARKETING_VERSION = 1.4.3;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -535,7 +509,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 142;
+				CURRENT_PROJECT_VERSION = 143;
 				DEVELOPMENT_TEAM = PSTNW3UN4R;
 				"DEVELOPMENT_TEAM[sdk=macosx*]" = PSTNW3UN4R;
 				ENABLE_APP_SANDBOX = YES;
@@ -551,7 +525,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 1.4.2;
+				MARKETING_VERSION = 1.4.3;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -579,7 +553,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 142;
+				CURRENT_PROJECT_VERSION = 143;
 				DEVELOPMENT_TEAM = PSTNW3UN4R;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -595,7 +569,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.4.2;
+				MARKETING_VERSION = 1.4.3;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -625,7 +599,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 142;
+				CURRENT_PROJECT_VERSION = 143;
 				DEVELOPMENT_TEAM = PSTNW3UN4R;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -641,7 +615,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.4.2;
+				MARKETING_VERSION = 1.4.3;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,

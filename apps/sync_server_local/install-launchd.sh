@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAUNCHD_PLIST="com.pass.sync-server.plist"
@@ -10,6 +11,7 @@ LOG_DIR="${HOME}/Library/Logs"
 # 确保目录存在
 mkdir -p "${LAUNCHD_DIR}"
 mkdir -p "${DATA_DIR}"
+chmod 0700 "${DATA_DIR}"
 mkdir -p "${LOG_DIR}"
 
 # 留空即开放模式；只有用户显式设置时才启用 Bearer Token。
@@ -57,6 +59,8 @@ cat > "${LAUNCHD_DIR}/${LAUNCHD_PLIST}" <<EOF
   <true/>
   <key>KeepAlive</key>
   <true/>
+  <key>Umask</key>
+  <integer>63</integer>
   <key>StandardOutPath</key>
   <string>${LOG_DIR}/pass-sync-server.log</string>
   <key>StandardErrorPath</key>

@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_PY="${SCRIPT_DIR}/../sync_server_ubuntu/pass_sync_server.py"
@@ -12,6 +13,7 @@ HOST="${PASS_SYNC_HOST:-0.0.0.0}"
 
 # 确保数据目录存在
 mkdir -p "${DATA_DIR}"
+chmod 0700 "${DATA_DIR}"
 mkdir -p "${LOG_DIR}"
 
 # 获取本机局域网 IP（优先 en0 的 IPv4）

@@ -1,3 +1,5 @@
 pass.example.com {
+    # /etc/pass-web/pass-web.env must set PASS_WEB_AUTH_TOKEN.  The backend
+    # rejects every API request without its matching Bearer token.
     reverse_proxy 127.0.0.1:53335
 }
