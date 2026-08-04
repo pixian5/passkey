@@ -17,6 +17,11 @@ const CREATE_COMPAT_RS256 = "rs256";
 const CREATE_COMPAT_USER_NAME_FALLBACK_RS256 = "user_name_fallback+rs256";
 const AAGUID_ZERO = new Uint8Array(16);
 const PASSKEY_LOG_PREFIX = "[Pass passkey_store]";
+const AUTH_DATA_FLAG_UP = 0x01;
+const AUTH_DATA_FLAG_UV = 0x04;
+const AUTH_DATA_FLAG_BE = 0x08;
+const AUTH_DATA_FLAG_BS = 0x10;
+const AUTH_DATA_FLAG_AT = 0x40;
 
 function logPasskeyStore(event, details = {}) {
   try {
@@ -174,7 +179,11 @@ async function createManagedCredential({ origin, host, publicKey }) {
   const rpIdHash = await sha256(utf8(rpId));
   const authData = concatBytes(
     rpIdHash,
-    new Uint8Array([0x45]), // UP + UV + AT
+    new Uint8Array([buildManagedAuthenticatorFlags({
+      backupEligible: true,
+      backupState: true,
+      includeAttestedCredentialData: true,
+    })]),
     uint32be(0),
     AAGUID_ZERO,
     uint16be(credentialId.length),
@@ -201,6 +210,8 @@ async function createManagedCredential({ origin, host, publicKey }) {
     privateJwk,
     publicJwk,
     signCount: 0,
+    backupEligible: true,
+    backupState: true,
     createCompatMethod,
     createdAtMs: now,
     updatedAtMs: now,
@@ -314,7 +325,11 @@ async function buildCreateResultFromStoredPasskey({
   const signCount = Number(existing?.signCount || 0);
   const authData = concatBytes(
     rpIdHash,
-    new Uint8Array([0x45]), // UP + UV + AT
+    new Uint8Array([buildManagedAuthenticatorFlags({
+      backupEligible: existing?.backupEligible === true,
+      backupState: existing?.backupState === true,
+      includeAttestedCredentialData: true,
+    })]),
     uint32be(signCount),
     AAGUID_ZERO,
     uint16be(credentialId.length),
@@ -386,7 +401,10 @@ async function getManagedAssertion({ origin, host, publicKey }) {
   const nextSignCount = Number(selected.signCount || 0) + 1;
   const authenticatorData = concatBytes(
     await sha256(utf8(rpId)),
-    new Uint8Array([0x05]), // UP + UV
+    new Uint8Array([buildManagedAuthenticatorFlags({
+      backupEligible: selected?.backupEligible === true,
+      backupState: selected?.backupState === true,
+    })]),
     uint32be(nextSignCount)
   );
   const signedPayload = concatBytes(authenticatorData, clientDataHash);
@@ -533,6 +551,20 @@ function normalizeHost(input) {
 
 function normalizeBase64url(input) {
   return String(input || "").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+// BE and BS declare a multi-device credential. BS is only valid together with BE.
+export function buildManagedAuthenticatorFlags({
+  backupEligible = false,
+  backupState = false,
+  includeAttestedCredentialData = false,
+} = {}) {
+  const supportsBackup = backupEligible === true;
+  let flags = AUTH_DATA_FLAG_UP | AUTH_DATA_FLAG_UV;
+  if (supportsBackup) flags |= AUTH_DATA_FLAG_BE;
+  if (supportsBackup && backupState === true) flags |= AUTH_DATA_FLAG_BS;
+  if (includeAttestedCredentialData === true) flags |= AUTH_DATA_FLAG_AT;
+  return flags;
 }
 
 function randomBytes(length) {

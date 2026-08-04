@@ -416,6 +416,36 @@ test("Golden Vector: 真实账号、文件夹和 Passkey 合并结果稳定", ()
   }
 });
 
+test("通行密钥合并保留可备份和已备份属性", () => {
+  const first = {
+    credentialIdB64u: "credential-backup",
+    rpId: "google.com",
+    userName: "user@example.com",
+    displayName: "User",
+    userHandleB64u: "user-handle",
+    alg: -7,
+    signCount: 1,
+    backupEligible: true,
+    backupState: false,
+    createdAtMs: 10,
+    updatedAtMs: 10,
+    mode: "managed",
+    createCompatMethod: "standard",
+  };
+  const second = {
+    ...first,
+    backupEligible: false,
+    backupState: true,
+    signCount: 2,
+    updatedAtMs: 20,
+  };
+
+  const merged = mergePasskeyCollections([first], [second], helpers)[0];
+  assert.equal(merged.backupEligible, true);
+  assert.equal(merged.backupState, true);
+  assert.equal(merged.signCount, 2);
+});
+
 test("文件夹永久删除墓碑不会被旧设备记录重新生成", () => {
   const deleted = helpers.normalizeFolderShape({
     id: "folder-1",

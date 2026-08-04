@@ -411,6 +411,8 @@
         "userHandleB64u",
         "alg",
         "signCount",
+        "backupEligible",
+        "backupState",
         "createdAtMs",
         "updatedAtMs",
         "mode",
@@ -440,6 +442,12 @@
         "signCount": {
           "type": "integer",
           "minimum": 0
+        },
+        "backupEligible": {
+          "type": "boolean"
+        },
+        "backupState": {
+          "type": "boolean"
         },
         "privateJwk": {
           "type": [

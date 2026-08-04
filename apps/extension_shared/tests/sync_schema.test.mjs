@@ -54,3 +54,27 @@ test("Schema 拒绝未声明的同步字段", () => {
   bundle.payload.accounts[0].unexpectedField = true;
   assert.equal(validate(bundle), false);
 });
+
+test("Schema 要求通行密钥明确声明备份属性", () => {
+  const validate = buildValidator();
+  const bundle = sampleBundle();
+  bundle.payload.passkeys.push({
+    credentialIdB64u: "credential-1",
+    rpId: "google.com",
+    userName: "user@example.com",
+    displayName: "User",
+    userHandleB64u: "user-handle",
+    alg: -7,
+    signCount: 0,
+    backupEligible: true,
+    backupState: true,
+    createdAtMs: 100,
+    updatedAtMs: 100,
+    mode: "managed",
+    createCompatMethod: "standard",
+  });
+  assert.equal(validate(bundle), true, JSON.stringify(validate.errors));
+
+  delete bundle.payload.passkeys[0].backupState;
+  assert.equal(validate(bundle), false);
+});

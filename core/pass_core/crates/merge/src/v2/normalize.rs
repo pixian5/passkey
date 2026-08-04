@@ -409,6 +409,7 @@ pub fn normalize_passkey_shape(mut passkey: Passkey) -> Passkey {
     passkey.user_handle_b64u = passkey.user_handle_b64u.trim().to_string();
     passkey.alg = alg;
     passkey.sign_count = passkey.sign_count.max(0);
+    passkey.backup_state = passkey.backup_eligible && passkey.backup_state;
     passkey.created_at_ms = created_at;
     passkey.updated_at_ms = updated_at;
     passkey.last_used_at_ms = passkey.last_used_at_ms.map(|v| v.max(0));

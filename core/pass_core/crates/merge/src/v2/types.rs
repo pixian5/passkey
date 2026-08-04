@@ -162,6 +162,10 @@ pub struct Passkey {
     pub alg: i64,
     #[serde(default)]
     pub sign_count: i64,
+    #[serde(default)]
+    pub backup_eligible: bool,
+    #[serde(default)]
+    pub backup_state: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub private_jwk: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

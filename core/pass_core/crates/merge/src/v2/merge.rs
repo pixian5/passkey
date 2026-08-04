@@ -625,6 +625,9 @@ fn merge_same_passkey(lhs: Passkey, rhs: Passkey) -> Passkey {
         },
         alg: if newer.alg != 0 { newer.alg } else { older.alg },
         sign_count: left.sign_count.max(right.sign_count),
+        backup_eligible: left.backup_eligible || right.backup_eligible,
+        backup_state: (left.backup_eligible || right.backup_eligible)
+            && (left.backup_state || right.backup_state),
         private_jwk: newer
             .private_jwk
             .clone()

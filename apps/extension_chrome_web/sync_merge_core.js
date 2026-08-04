@@ -429,6 +429,9 @@ function mergeSamePasskey(lhs, rhs, h) {
     userHandleB64u: newer.userHandleB64u || older.userHandleB64u,
     alg: asNumber(newer.alg || older.alg || -7),
     signCount: Math.max(asNumber(left.signCount), asNumber(right.signCount)),
+    backupEligible: Boolean(left.backupEligible || right.backupEligible),
+    backupState: Boolean(left.backupEligible || right.backupEligible)
+      && Boolean(left.backupState || right.backupState),
     privateJwk: newer.privateJwk || older.privateJwk || null,
     publicJwk: newer.publicJwk || older.publicJwk || null,
     createdAtMs: Math.min(asNumber(left.createdAtMs), asNumber(right.createdAtMs)),

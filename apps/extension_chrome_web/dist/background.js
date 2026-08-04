@@ -1019,6 +1019,11 @@
   var CREATE_COMPAT_USER_NAME_FALLBACK_RS256 = "user_name_fallback+rs256";
   var AAGUID_ZERO = new Uint8Array(16);
   var PASSKEY_LOG_PREFIX = "[Pass passkey_store]";
+  var AUTH_DATA_FLAG_UP = 1;
+  var AUTH_DATA_FLAG_UV = 4;
+  var AUTH_DATA_FLAG_BE = 8;
+  var AUTH_DATA_FLAG_BS = 16;
+  var AUTH_DATA_FLAG_AT = 64;
   function logPasskeyStore(event, details = {}) {
     try {
       console.info(PASSKEY_LOG_PREFIX, event, details);
@@ -1157,8 +1162,11 @@
     const rpIdHash = await sha256(utf8(rpId));
     const authData = concatBytes(
       rpIdHash,
-      new Uint8Array([69]),
-      // UP + UV + AT
+      new Uint8Array([buildManagedAuthenticatorFlags({
+        backupEligible: true,
+        backupState: true,
+        includeAttestedCredentialData: true
+      })]),
       uint32be(0),
       AAGUID_ZERO,
       uint16be(credentialId.length),
@@ -1183,6 +1191,8 @@
       privateJwk,
       publicJwk,
       signCount: 0,
+      backupEligible: true,
+      backupState: true,
       createCompatMethod,
       createdAtMs: now,
       updatedAtMs: now,
@@ -1273,8 +1283,10 @@
     const nextSignCount = Number(selected.signCount || 0) + 1;
     const authenticatorData = concatBytes(
       await sha256(utf8(rpId)),
-      new Uint8Array([5]),
-      // UP + UV
+      new Uint8Array([buildManagedAuthenticatorFlags({
+        backupEligible: selected?.backupEligible === true,
+        backupState: selected?.backupState === true
+      })]),
       uint32be(nextSignCount)
     );
     const signedPayload = concatBytes(authenticatorData, clientDataHash);
@@ -1404,6 +1416,18 @@
   }
   function normalizeBase64url(input) {
     return String(input || "").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  }
+  function buildManagedAuthenticatorFlags({
+    backupEligible = false,
+    backupState = false,
+    includeAttestedCredentialData = false
+  } = {}) {
+    const supportsBackup = backupEligible === true;
+    let flags = AUTH_DATA_FLAG_UP | AUTH_DATA_FLAG_UV;
+    if (supportsBackup) flags |= AUTH_DATA_FLAG_BE;
+    if (supportsBackup && backupState === true) flags |= AUTH_DATA_FLAG_BS;
+    if (includeAttestedCredentialData === true) flags |= AUTH_DATA_FLAG_AT;
+    return flags;
   }
   function randomBytes(length) {
     const bytes = new Uint8Array(length);
@@ -1726,7 +1750,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.8";
+  var PASS_EXTENSION_VERSION = "1.4.9";
 
   // ../../core/pass_core/js/sync_alias_core.js
   function syncAliasGroups(accounts, helpers, options = {}) {
@@ -2352,6 +2376,8 @@
       userHandleB64u: newer.userHandleB64u || older.userHandleB64u,
       alg: asNumber(newer.alg || older.alg || -7),
       signCount: Math.max(asNumber(left.signCount), asNumber(right.signCount)),
+      backupEligible: Boolean(left.backupEligible || right.backupEligible),
+      backupState: Boolean(left.backupEligible || right.backupEligible) && Boolean(left.backupState || right.backupState),
       privateJwk: newer.privateJwk || older.privateJwk || null,
       publicJwk: newer.publicJwk || older.publicJwk || null,
       createdAtMs: Math.min(asNumber(left.createdAtMs), asNumber(right.createdAtMs)),
@@ -4796,6 +4822,8 @@
       userHandleB64u: String(item?.userHandleB64u || ""),
       alg: Number(item?.alg || -7),
       signCount: Number(item?.signCount || 0),
+      backupEligible: item?.backupEligible === true,
+      backupState: item?.backupEligible === true && item?.backupState === true,
       privateJwk: item?.privateJwk || null,
       publicJwk: item?.publicJwk || null,
       createdAtMs: Number(item?.createdAtMs || now),
@@ -4894,6 +4922,8 @@
           userHandleB64u: "",
           alg: -7,
           signCount: 0,
+          backupEligible: false,
+          backupState: false,
           privateJwk: null,
           publicJwk: null,
           createdAtMs,

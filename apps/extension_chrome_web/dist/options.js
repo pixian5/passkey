@@ -1,6 +1,6 @@
 (() => {
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.8";
+  var PASS_EXTENSION_VERSION = "1.4.9";
 
   // ../../core/pass_core/js/sync_policy.js
   var DEFAULT_DEVICE_NAME = "PassDevice";
@@ -673,6 +673,8 @@
       userHandleB64u: newer.userHandleB64u || older.userHandleB64u,
       alg: asNumber(newer.alg || older.alg || -7),
       signCount: Math.max(asNumber(left.signCount), asNumber(right.signCount)),
+      backupEligible: Boolean(left.backupEligible || right.backupEligible),
+      backupState: Boolean(left.backupEligible || right.backupEligible) && Boolean(left.backupState || right.backupState),
       privateJwk: newer.privateJwk || older.privateJwk || null,
       publicJwk: newer.publicJwk || older.publicJwk || null,
       createdAtMs: Math.min(asNumber(left.createdAtMs), asNumber(right.createdAtMs)),
@@ -6239,6 +6241,8 @@
       userHandleB64u: String(item?.userHandleB64u || ""),
       alg: Number(item?.alg || -7),
       signCount: Number(item?.signCount || 0),
+      backupEligible: item?.backupEligible === true,
+      backupState: item?.backupEligible === true && item?.backupState === true,
       privateJwk: item?.privateJwk || null,
       publicJwk: item?.publicJwk || null,
       createdAtMs: Number(item?.createdAtMs || now),
@@ -6324,6 +6328,8 @@
           userHandleB64u: "",
           alg: -7,
           signCount: 0,
+          backupEligible: false,
+          backupState: false,
           privateJwk: null,
           publicJwk: null,
           createdAtMs,

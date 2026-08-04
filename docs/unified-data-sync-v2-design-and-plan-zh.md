@@ -98,6 +98,8 @@
 - `userHandleB64u`
 - `alg`
 - `signCount`
+- `backupEligible`
+- `backupState`
 - `createdAtMs`
 - `updatedAtMs`
 - `mode`
@@ -192,6 +194,7 @@
 - 去重键：`credentialIdB64u`
 - 主体元数据取较新 `updatedAtMs`
 - `signCount` 取最大
+- `backupEligible` 和 `backupState` 按逻辑或合并；`backupState` 仅在凭据可备份时为真
 - `lastUsedAtMs` 取最大
 - `createdAtMs` 取最小
 
