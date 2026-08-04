@@ -994,8 +994,8 @@
       challenge: String(challengeB64u || "").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, ""),
       origin: normalizeHttpOrigin(origin) || String(origin || "")
     };
-    if (crossOrigin) {
-      payload.crossOrigin = true;
+    payload.crossOrigin = Boolean(crossOrigin);
+    if (payload.crossOrigin) {
       const normalizedTopOrigin = normalizeHttpOrigin(topOrigin);
       if (normalizedTopOrigin) payload.topOrigin = normalizedTopOrigin;
     }
@@ -1142,6 +1142,7 @@
     const keyPair = await generateManagedKeyPair(selectedAlg);
     const privateJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
     const publicJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
+    const publicKeySpki = new Uint8Array(await crypto.subtle.exportKey("spki", keyPair.publicKey));
     const cosePublicKey = buildCosePublicKeyFromJwk(selectedAlg, publicJwk);
     const credentialId = randomBytes(32);
     const credentialIdB64u = bytesToBase64url(credentialId);
@@ -1204,6 +1205,9 @@
         response: {
           clientDataJSONB64u: bytesToBase64url(clientDataJSON),
           attestationObjectB64u: bytesToBase64url(attestationObject),
+          authenticatorDataB64u: bytesToBase64url(authData),
+          publicKeyB64u: bytesToBase64url(publicKeySpki),
+          publicKeyAlgorithm: selectedAlg,
           transports: ["internal"]
         },
         clientExtensionResults
@@ -1722,7 +1726,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.7";
+  var PASS_EXTENSION_VERSION = "1.4.8";
 
   // ../../core/pass_core/js/sync_alias_core.js
   function syncAliasGroups(accounts, helpers, options = {}) {

@@ -40,6 +40,7 @@ test("Google 同源 iframe 注册不会被误标为跨源", () => {
     type: "webauthn.create",
     challenge: "YWJjZA",
     origin: "https://myaccount.google.com",
+    crossOrigin: false,
   });
 });
 

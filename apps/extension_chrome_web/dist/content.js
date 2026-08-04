@@ -185,7 +185,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.7";
+  var PASS_EXTENSION_VERSION = "1.4.8";
 
   // fill_chooser_activation.js
   var FILL_CHOOSER_ACTIVATION_DEDUPE_MS = 650;

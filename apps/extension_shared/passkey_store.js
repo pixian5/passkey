@@ -156,6 +156,7 @@ async function createManagedCredential({ origin, host, publicKey }) {
   const keyPair = await generateManagedKeyPair(selectedAlg);
   const privateJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
   const publicJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
+  const publicKeySpki = new Uint8Array(await crypto.subtle.exportKey("spki", keyPair.publicKey));
   const cosePublicKey = buildCosePublicKeyFromJwk(selectedAlg, publicJwk);
 
   const credentialId = randomBytes(32);
@@ -223,6 +224,9 @@ async function createManagedCredential({ origin, host, publicKey }) {
       response: {
         clientDataJSONB64u: bytesToBase64url(clientDataJSON),
         attestationObjectB64u: bytesToBase64url(attestationObject),
+        authenticatorDataB64u: bytesToBase64url(authData),
+        publicKeyB64u: bytesToBase64url(publicKeySpki),
+        publicKeyAlgorithm: selectedAlg,
         transports: ["internal"],
       },
       clientExtensionResults,

@@ -80,11 +80,8 @@ export function buildWebAuthnClientDataJSON({
     origin: normalizeHttpOrigin(origin) || String(origin || ""),
   };
 
-  // Google rejects some software-authenticator registrations when a same-origin
-  // request contains a synthetic crossOrigin:false member. For a real cross-origin
-  // request the WebAuthn collected-client-data contract requires both fields.
-  if (crossOrigin) {
-    payload.crossOrigin = true;
+  payload.crossOrigin = Boolean(crossOrigin);
+  if (payload.crossOrigin) {
     const normalizedTopOrigin = normalizeHttpOrigin(topOrigin);
     if (normalizedTopOrigin) payload.topOrigin = normalizedTopOrigin;
   }

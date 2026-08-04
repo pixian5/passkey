@@ -1,6 +1,6 @@
 (() => {
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.7";
+  var PASS_EXTENSION_VERSION = "1.4.8";
 
   // webauthn_client_data.js
   function normalizeHttpOrigin(value) {
@@ -59,6 +59,76 @@
       host,
       crossOrigin,
       topOrigin: crossOrigin ? topOrigin : ""
+    };
+  }
+
+  // webauthn_response.js
+  function normalizeBase64url(input) {
+    return String(input || "").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  }
+  function base64urlToArrayBuffer(input) {
+    const normalized = normalizeBase64url(input);
+    if (!normalized) return new ArrayBuffer(0);
+    const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+    const bin = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
+    const bytes = new Uint8Array(bin.length);
+    for (let index = 0; index < bin.length; index += 1) {
+      bytes[index] = bin.charCodeAt(index);
+    }
+    return bytes.buffer;
+  }
+  function cloneArrayBuffer(input) {
+    return input.slice(0);
+  }
+  function buildAuthenticatorAttestationResponse(responseData) {
+    const clientDataJSON = base64urlToArrayBuffer(responseData?.clientDataJSONB64u);
+    const attestationObject = base64urlToArrayBuffer(responseData?.attestationObjectB64u);
+    const authenticatorData = base64urlToArrayBuffer(responseData?.authenticatorDataB64u);
+    const publicKey = responseData?.publicKeyB64u ? base64urlToArrayBuffer(responseData.publicKeyB64u) : null;
+    const publicKeyAlgorithm = Number(responseData?.publicKeyAlgorithm);
+    const transports = Array.isArray(responseData?.transports) ? responseData.transports.map(String) : ["internal"];
+    return {
+      clientDataJSON,
+      attestationObject,
+      getTransports() {
+        return [...transports];
+      },
+      getAuthenticatorData() {
+        return cloneArrayBuffer(authenticatorData);
+      },
+      getPublicKey() {
+        return publicKey ? cloneArrayBuffer(publicKey) : null;
+      },
+      getPublicKeyAlgorithm() {
+        return Number.isFinite(publicKeyAlgorithm) ? publicKeyAlgorithm : 0;
+      },
+      toJSON() {
+        return {
+          clientDataJSON: normalizeBase64url(responseData?.clientDataJSONB64u),
+          attestationObject: normalizeBase64url(responseData?.attestationObjectB64u),
+          transports: [...transports],
+          authenticatorData: normalizeBase64url(responseData?.authenticatorDataB64u),
+          publicKey: responseData?.publicKeyB64u ? normalizeBase64url(responseData.publicKeyB64u) : null,
+          publicKeyAlgorithm: Number.isFinite(publicKeyAlgorithm) ? publicKeyAlgorithm : 0
+        };
+      }
+    };
+  }
+  function buildAuthenticatorAssertionResponse(responseData) {
+    const userHandle = responseData?.userHandleB64u ? base64urlToArrayBuffer(responseData.userHandleB64u) : null;
+    return {
+      clientDataJSON: base64urlToArrayBuffer(responseData?.clientDataJSONB64u),
+      authenticatorData: base64urlToArrayBuffer(responseData?.authenticatorDataB64u),
+      signature: base64urlToArrayBuffer(responseData?.signatureB64u),
+      userHandle,
+      toJSON() {
+        return {
+          clientDataJSON: normalizeBase64url(responseData?.clientDataJSONB64u),
+          authenticatorData: normalizeBase64url(responseData?.authenticatorDataB64u),
+          signature: normalizeBase64url(responseData?.signatureB64u),
+          userHandle: responseData?.userHandleB64u ? normalizeBase64url(responseData.userHandleB64u) : null
+        };
+      }
     };
   }
 
@@ -349,16 +419,7 @@
         throw new Error("\u521B\u5EFA\u901A\u884C\u5BC6\u94A5\u8FD4\u56DE\u4E3A\u7A7A");
       }
       const rawId = fromBase64url(credential.rawIdB64u || credential.id);
-      const clientDataJSON = fromBase64url(credential?.response?.clientDataJSONB64u);
-      const attestationObject = fromBase64url(credential?.response?.attestationObjectB64u);
-      const transports = Array.isArray(credential?.response?.transports) ? credential.response.transports : ["internal"];
-      const response = {
-        clientDataJSON,
-        attestationObject,
-        getTransports() {
-          return transports;
-        }
-      };
+      const response = buildAuthenticatorAttestationResponse(credential?.response);
       if (typeof AuthenticatorAttestationResponse === "function") {
         Object.setPrototypeOf(response, AuthenticatorAttestationResponse.prototype);
       }
@@ -376,11 +437,8 @@
             id: credential.id,
             rawId: credential.rawIdB64u || credential.id,
             type: credential.type || "public-key",
-            response: {
-              clientDataJSON: credential?.response?.clientDataJSONB64u || "",
-              attestationObject: credential?.response?.attestationObjectB64u || "",
-              transports
-            },
+            authenticatorAttachment: credential.authenticatorAttachment || "platform",
+            response: response.toJSON(),
             clientExtensionResults: credential.clientExtensionResults || {}
           };
         }
@@ -395,13 +453,7 @@
         throw new Error("\u83B7\u53D6\u901A\u884C\u5BC6\u94A5\u65AD\u8A00\u8FD4\u56DE\u4E3A\u7A7A");
       }
       const rawId = fromBase64url(credential.rawIdB64u || credential.id);
-      const userHandle = credential?.response?.userHandleB64u ? fromBase64url(credential.response.userHandleB64u) : null;
-      const response = {
-        clientDataJSON: fromBase64url(credential?.response?.clientDataJSONB64u),
-        authenticatorData: fromBase64url(credential?.response?.authenticatorDataB64u),
-        signature: fromBase64url(credential?.response?.signatureB64u),
-        userHandle
-      };
+      const response = buildAuthenticatorAssertionResponse(credential?.response);
       if (typeof AuthenticatorAssertionResponse === "function") {
         Object.setPrototypeOf(response, AuthenticatorAssertionResponse.prototype);
       }
@@ -419,12 +471,8 @@
             id: credential.id,
             rawId: credential.rawIdB64u || credential.id,
             type: credential.type || "public-key",
-            response: {
-              clientDataJSON: credential?.response?.clientDataJSONB64u || "",
-              authenticatorData: credential?.response?.authenticatorDataB64u || "",
-              signature: credential?.response?.signatureB64u || "",
-              userHandle: credential?.response?.userHandleB64u || null
-            },
+            authenticatorAttachment: credential.authenticatorAttachment || "platform",
+            response: response.toJSON(),
             clientExtensionResults: credential.clientExtensionResults || {}
           };
         }
