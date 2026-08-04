@@ -1017,7 +1017,24 @@
   var CREATE_COMPAT_USER_NAME_FALLBACK = "user_name_fallback";
   var CREATE_COMPAT_RS256 = "rs256";
   var CREATE_COMPAT_USER_NAME_FALLBACK_RS256 = "user_name_fallback+rs256";
-  var AAGUID_ZERO = new Uint8Array(16);
+  var MANAGED_AAGUID = new Uint8Array([
+    184,
+    228,
+    52,
+    75,
+    27,
+    80,
+    78,
+    161,
+    180,
+    169,
+    208,
+    186,
+    32,
+    160,
+    7,
+    166
+  ]);
   var PASSKEY_LOG_PREFIX = "[Pass passkey_store]";
   var AUTH_DATA_FLAG_UP = 1;
   var AUTH_DATA_FLAG_UV = 4;
@@ -1168,7 +1185,7 @@
         includeAttestedCredentialData: true
       })]),
       uint32be(0),
-      AAGUID_ZERO,
+      MANAGED_AAGUID,
       uint16be(credentialId.length),
       credentialId,
       cosePublicKey
@@ -1750,7 +1767,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.9";
+  var PASS_EXTENSION_VERSION = "1.5.0";
 
   // ../../core/pass_core/js/sync_alias_core.js
   function syncAliasGroups(accounts, helpers, options = {}) {

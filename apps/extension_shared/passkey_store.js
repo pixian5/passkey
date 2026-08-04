@@ -15,7 +15,12 @@ const CREATE_COMPAT_STANDARD = "standard";
 const CREATE_COMPAT_USER_NAME_FALLBACK = "user_name_fallback";
 const CREATE_COMPAT_RS256 = "rs256";
 const CREATE_COMPAT_USER_NAME_FALLBACK_RS256 = "user_name_fallback+rs256";
-const AAGUID_ZERO = new Uint8Array(16);
+// Stable, product-owned UUID v4 AAGUID: b8e4344b-1b50-4ea1-b4a9-d0ba20a007a6.
+// A zero AAGUID means an unidentified authenticator and is rejected by some RPs.
+export const MANAGED_AAGUID = new Uint8Array([
+  0xb8, 0xe4, 0x34, 0x4b, 0x1b, 0x50, 0x4e, 0xa1,
+  0xb4, 0xa9, 0xd0, 0xba, 0x20, 0xa0, 0x07, 0xa6,
+]);
 const PASSKEY_LOG_PREFIX = "[Pass passkey_store]";
 const AUTH_DATA_FLAG_UP = 0x01;
 const AUTH_DATA_FLAG_UV = 0x04;
@@ -185,7 +190,7 @@ async function createManagedCredential({ origin, host, publicKey }) {
       includeAttestedCredentialData: true,
     })]),
     uint32be(0),
-    AAGUID_ZERO,
+    MANAGED_AAGUID,
     uint16be(credentialId.length),
     credentialId,
     cosePublicKey
@@ -331,7 +336,7 @@ async function buildCreateResultFromStoredPasskey({
       includeAttestedCredentialData: true,
     })]),
     uint32be(signCount),
-    AAGUID_ZERO,
+    MANAGED_AAGUID,
     uint16be(credentialId.length),
     credentialId,
     cosePublicKey
