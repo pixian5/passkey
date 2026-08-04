@@ -163,7 +163,7 @@
         passwordInput = findRelatedPassword(activeInput);
       }
     }
-    if (!passwordInput) passwordInput = findFallbackPassword();
+    if (!passwordInput && !activeInput) passwordInput = findFallbackPassword();
     if (!usernameInput && passwordInput) usernameInput = findRelatedUsername(passwordInput);
     if (usernameInput && !passwordInput) passwordInput = findRelatedPassword(usernameInput);
     let filledUsername = false;
@@ -185,7 +185,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.5";
+  var PASS_EXTENSION_VERSION = "1.4.6";
 
   // fill_chooser_activation.js
   var FILL_CHOOSER_ACTIVATION_DEDUPE_MS = 650;
@@ -518,17 +518,8 @@
   function findRelatedPasswordInput(usernameInput) {
     if (!(usernameInput instanceof HTMLInputElement)) return null;
     const form = usernameInput.form || usernameInput.closest("form");
-    const scope = form || document;
-    const passwordInputs = collectVisiblePasswordInputs(scope);
-    if (passwordInputs.length === 0) return collectVisiblePasswordInputs(document)[0] || null;
-    const sameForm = passwordInputs.find((input) => {
-      return input.form === usernameInput.form || form && form.contains(input);
-    });
-    if (sameForm) return sameForm;
-    const following = passwordInputs.find((input) => {
-      return Boolean(usernameInput.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING);
-    });
-    return following || passwordInputs[0] || null;
+    if (!form) return null;
+    return collectVisiblePasswordInputs(form).find((input) => input !== usernameInput) || null;
   }
   function scoreUsernameCandidate(input, passwordInput) {
     let score = 0;
@@ -552,20 +543,15 @@
   function findRelatedUsernameInput(passwordInput) {
     if (!(passwordInput instanceof HTMLInputElement)) return null;
     const form = passwordInput.form || passwordInput.closest("form");
-    const scopes = [];
-    if (form) scopes.push(form);
-    scopes.push(document);
+    if (!form) return null;
     const seen = /* @__PURE__ */ new Set();
     const candidates = [];
-    for (const scope of scopes) {
-      for (const input of scope.querySelectorAll("input")) {
-        if (!(input instanceof HTMLInputElement) || seen.has(input) || input === passwordInput) continue;
-        seen.add(input);
-        if (isUsernameLikeInput(input, { strict: true }) || form && form.contains(input) && isUsernameLikeInput(input, { strict: false })) {
-          candidates.push(input);
-        }
+    for (const input of form.querySelectorAll("input")) {
+      if (!(input instanceof HTMLInputElement) || seen.has(input) || input === passwordInput) continue;
+      seen.add(input);
+      if (isUsernameLikeInput(input, { strict: true }) || isUsernameLikeInput(input, { strict: false })) {
+        candidates.push(input);
       }
-      if (candidates.length > 0) break;
     }
     if (candidates.length === 0) return null;
     candidates.sort((left, right) => scoreUsernameCandidate(right, passwordInput) - scoreUsernameCandidate(left, passwordInput));
@@ -938,13 +924,13 @@
         }
       } else if (result.filledPassword && !result.filledUsername) {
         showPassPageToast(
-          hasPasswordValue ? `\u5DF2\u586B\u5145\u5BC6\u7801\uFF0C\u4F46\u672A\u627E\u5230\u7528\u6237\u540D\u6846\uFF1A${response.username || ""}`.trim() : "\u5DF2\u6E05\u7A7A\u5BC6\u7801\u6846\uFF0C\u4F46\u672A\u627E\u5230\u7528\u6237\u540D\u6846",
-          "warning"
+          hasPasswordValue ? "\u5DF2\u586B\u5145\u5BC6\u7801" : "\u5DF2\u6E05\u7A7A\u5BC6\u7801\u6846",
+          "success"
         );
       } else if (result.filledUsername && !result.filledPassword) {
         showPassPageToast(
-          hasUsernameValue ? `\u5DF2\u586B\u5145\u7528\u6237\u540D\uFF0C\u4F46\u672A\u627E\u5230\u5BC6\u7801\u6846\uFF1A${response.username || ""}`.trim() : "\u5DF2\u6E05\u7A7A\u7528\u6237\u540D\u6846\uFF0C\u4F46\u672A\u627E\u5230\u5BC6\u7801\u6846",
-          "warning"
+          hasUsernameValue ? `\u5DF2\u586B\u5145\u7528\u6237\u540D\uFF1A${response.username || "\u8D26\u53F7"}` : "\u5DF2\u6E05\u7A7A\u7528\u6237\u540D\u6846",
+          "success"
         );
       } else {
         showPassPageToast("\u672A\u627E\u5230\u53EF\u586B\u5145\u7684\u7528\u6237\u540D/\u5BC6\u7801\u8F93\u5165\u6846", "warning");

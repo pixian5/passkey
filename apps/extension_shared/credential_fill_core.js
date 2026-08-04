@@ -29,7 +29,9 @@ export function fillCredentialFields({
     }
   }
 
-  if (!passwordInput) passwordInput = findFallbackPassword();
+  // A user-selected field is authoritative. Do not reach into another login
+  // step or unrelated form merely to fill a missing counterpart.
+  if (!passwordInput && !activeInput) passwordInput = findFallbackPassword();
   if (!usernameInput && passwordInput) usernameInput = findRelatedUsername(passwordInput);
   if (usernameInput && !passwordInput) passwordInput = findRelatedPassword(usernameInput);
 

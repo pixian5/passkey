@@ -52,3 +52,51 @@ test("从密码框选择账号仍会填充配对用户名，空凭据会清除�
   assert.equal(password.value, "");
   assert.equal(outcome.result.filledBoth, true);
 });
+
+test("分步登录只有用户名框时不触碰页面中其他密码框", () => {
+  const username = field("username");
+  const unrelatedPassword = field("password", "keep-me");
+  const writes = [];
+  const result = fillCredentialFields({
+    activeInput: username,
+    username: "alice@example.com",
+    password: "correct-horse",
+    isPasswordInput: (input) => input?.kind === "password",
+    findRelatedUsername: () => null,
+    findRelatedPassword: () => null,
+    findFallbackPassword: () => unrelatedPassword,
+    writeValue: (input, value) => {
+      writes.push([input.kind, value]);
+      input.value = value;
+    },
+  });
+
+  assert.deepEqual(writes, [["username", "alice@example.com"]]);
+  assert.equal(unrelatedPassword.value, "keep-me");
+  assert.equal(result.filledUsername, true);
+  assert.equal(result.filledPassword, false);
+});
+
+test("分步登录只有密码框时不触碰页面中其他用户名框", () => {
+  const password = field("password");
+  const unrelatedUsername = field("username", "keep-me");
+  const writes = [];
+  const result = fillCredentialFields({
+    activeInput: password,
+    username: "alice@example.com",
+    password: "correct-horse",
+    isPasswordInput: (input) => input?.kind === "password",
+    findRelatedUsername: () => null,
+    findRelatedPassword: () => null,
+    findFallbackPassword: () => null,
+    writeValue: (input, value) => {
+      writes.push([input.kind, value]);
+      input.value = value;
+    },
+  });
+
+  assert.deepEqual(writes, [["password", "correct-horse"]]);
+  assert.equal(unrelatedUsername.value, "keep-me");
+  assert.equal(result.filledUsername, false);
+  assert.equal(result.filledPassword, true);
+});

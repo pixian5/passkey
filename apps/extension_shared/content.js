@@ -386,17 +386,8 @@ function collectVisiblePasswordInputs(scope = document) {
 function findRelatedPasswordInput(usernameInput) {
   if (!(usernameInput instanceof HTMLInputElement)) return null;
   const form = usernameInput.form || usernameInput.closest("form");
-  const scope = form || document;
-  const passwordInputs = collectVisiblePasswordInputs(scope);
-  if (passwordInputs.length === 0) return collectVisiblePasswordInputs(document)[0] || null;
-  const sameForm = passwordInputs.find((input) => {
-    return input.form === usernameInput.form || (form && form.contains(input));
-  });
-  if (sameForm) return sameForm;
-  const following = passwordInputs.find((input) => {
-    return Boolean(usernameInput.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING);
-  });
-  return following || passwordInputs[0] || null;
+  if (!form) return null;
+  return collectVisiblePasswordInputs(form).find((input) => input !== usernameInput) || null;
 }
 
 function scoreUsernameCandidate(input, passwordInput) {
@@ -422,22 +413,16 @@ function scoreUsernameCandidate(input, passwordInput) {
 function findRelatedUsernameInput(passwordInput) {
   if (!(passwordInput instanceof HTMLInputElement)) return null;
   const form = passwordInput.form || passwordInput.closest("form");
-  const scopes = [];
-  if (form) scopes.push(form);
-  scopes.push(document);
-
+  if (!form) return null;
   const seen = new Set();
   const candidates = [];
-  for (const scope of scopes) {
-    for (const input of scope.querySelectorAll("input")) {
-      if (!(input instanceof HTMLInputElement) || seen.has(input) || input === passwordInput) continue;
-      seen.add(input);
-      // Prefer semantic matches; if none, fall back to plain text inputs in the same form.
-      if (isUsernameLikeInput(input, { strict: true }) || (form && form.contains(input) && isUsernameLikeInput(input, { strict: false }))) {
-        candidates.push(input);
-      }
+  for (const input of form.querySelectorAll("input")) {
+    if (!(input instanceof HTMLInputElement) || seen.has(input) || input === passwordInput) continue;
+    seen.add(input);
+    // Prefer semantic matches; if none, fall back to plain text inputs in the same form.
+    if (isUsernameLikeInput(input, { strict: true }) || isUsernameLikeInput(input, { strict: false })) {
+      candidates.push(input);
     }
-    if (candidates.length > 0) break;
   }
   if (candidates.length === 0) return null;
   candidates.sort((left, right) => scoreUsernameCandidate(right, passwordInput) - scoreUsernameCandidate(left, passwordInput));
@@ -853,16 +838,16 @@ async function applyFillAccount(accountId) {
     } else if (result.filledPassword && !result.filledUsername) {
       showPassPageToast(
         hasPasswordValue
-          ? `已填充密码，但未找到用户名框：${response.username || ""}`.trim()
-          : "已清空密码框，但未找到用户名框",
-        "warning",
+          ? "已填充密码"
+          : "已清空密码框",
+        "success",
       );
     } else if (result.filledUsername && !result.filledPassword) {
       showPassPageToast(
         hasUsernameValue
-          ? `已填充用户名，但未找到密码框：${response.username || ""}`.trim()
-          : "已清空用户名框，但未找到密码框",
-        "warning",
+          ? `已填充用户名：${response.username || "账号"}`
+          : "已清空用户名框",
+        "success",
       );
     } else {
       showPassPageToast("未找到可填充的用户名/密码输入框", "warning");
