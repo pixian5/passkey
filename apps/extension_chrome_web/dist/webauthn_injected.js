@@ -1,6 +1,66 @@
 (() => {
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.6";
+  var PASS_EXTENSION_VERSION = "1.4.7";
+
+  // webauthn_client_data.js
+  function normalizeHttpOrigin(value) {
+    const raw = String(value || "").trim();
+    if (!raw || raw === "null") return "";
+    try {
+      const parsed = new URL(raw);
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return "";
+      return parsed.origin;
+    } catch {
+      return "";
+    }
+  }
+  function readLocationOrigin(target) {
+    try {
+      return normalizeHttpOrigin(target?.location?.origin);
+    } catch {
+      return "";
+    }
+  }
+  function readAncestorOrigins(targetWindow) {
+    try {
+      return Array.from(targetWindow?.location?.ancestorOrigins || []).map(normalizeHttpOrigin).filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+  function resolveWebAuthnWindowContext(targetWindow) {
+    if (!targetWindow) {
+      return { origin: "", host: "", crossOrigin: false, topOrigin: "" };
+    }
+    let isTopLevel = true;
+    try {
+      isTopLevel = targetWindow.top === targetWindow.self;
+    } catch {
+      isTopLevel = false;
+    }
+    const ancestorOrigins = readAncestorOrigins(targetWindow);
+    let origin = readLocationOrigin(targetWindow);
+    if (!origin && !isTopLevel) {
+      origin = readLocationOrigin(targetWindow.parent) || ancestorOrigins[0] || "";
+    }
+    let topOrigin = isTopLevel ? origin : readLocationOrigin(targetWindow.top);
+    if (!topOrigin && ancestorOrigins.length > 0) {
+      topOrigin = ancestorOrigins[ancestorOrigins.length - 1];
+    }
+    const crossOrigin = !isTopLevel && (!origin || !topOrigin || origin !== topOrigin);
+    let host = "";
+    try {
+      host = origin ? new URL(origin).hostname : "";
+    } catch {
+      host = "";
+    }
+    return {
+      origin,
+      host,
+      crossOrigin,
+      topOrigin: crossOrigin ? topOrigin : ""
+    };
+  }
 
   // webauthn_routing.js
   function explainCreateManageability({ hasChallenge, hasUserId, authenticatorAttachment } = {}) {
@@ -164,6 +224,7 @@
       return;
     }
     async function callBridge(operation, publicKey) {
+      const frameContext = resolveWebAuthnWindowContext(window);
       const requestId = (() => {
         try {
           if (typeof crypto?.randomUUID === "function") return `req_${crypto.randomUUID()}`;
@@ -191,7 +252,7 @@
         };
         const onMessage = (event) => {
           if (event.source !== window) return;
-          if (event.origin && event.origin !== window.location.origin) return;
+          if (event.origin && frameContext.origin && event.origin !== frameContext.origin) return;
           const data = event.data;
           if (!data || data.source !== BRIDGE_SOURCE || data.type !== RESPONSE_TYPE) return;
           if (data.requestId !== requestId) return;
@@ -226,18 +287,20 @@
           requestId,
           operation
         });
-        window.postMessage(request, window.location.origin);
+        window.postMessage(request, frameContext.origin || "*");
       });
     }
     function serializeCreateOptions(publicKey) {
       const challenge = toBase64url(publicKey?.challenge);
       const userId = toBase64url(publicKey?.user?.id);
       if (!challenge || !userId) return null;
+      const frameContext = resolveWebAuthnWindowContext(window);
+      if (!frameContext.origin || frameContext.crossOrigin && !frameContext.topOrigin) return null;
       return {
         challengeB64u: challenge,
         rp: {
-          id: String(publicKey?.rp?.id || window.location.hostname || ""),
-          name: String(publicKey?.rp?.name || publicKey?.rp?.id || window.location.hostname || "")
+          id: String(publicKey?.rp?.id || frameContext.host || ""),
+          name: String(publicKey?.rp?.name || publicKey?.rp?.id || frameContext.host || "")
         },
         user: {
           idB64u: userId,
@@ -253,20 +316,24 @@
         authenticatorSelection: publicKey?.authenticatorSelection || null,
         excludeCredentials: serializeCredentialList(publicKey?.excludeCredentials || []),
         extensions: publicKey?.extensions || null,
-        crossOrigin: window.top !== window.self
+        crossOrigin: frameContext.crossOrigin,
+        topOrigin: frameContext.topOrigin
       };
     }
     function serializeGetOptions(publicKey) {
       const challenge = toBase64url(publicKey?.challenge);
       if (!challenge) return null;
+      const frameContext = resolveWebAuthnWindowContext(window);
+      if (!frameContext.origin || frameContext.crossOrigin && !frameContext.topOrigin) return null;
       return {
         challengeB64u: challenge,
-        rpId: String(publicKey?.rpId || window.location.hostname || ""),
+        rpId: String(publicKey?.rpId || frameContext.host || ""),
         timeout: Number(publicKey?.timeout || 0) || null,
         userVerification: publicKey?.userVerification || null,
         allowCredentials: serializeCredentialList(publicKey?.allowCredentials || []),
         extensions: publicKey?.extensions || null,
-        crossOrigin: window.top !== window.self
+        crossOrigin: frameContext.crossOrigin,
+        topOrigin: frameContext.topOrigin
       };
     }
     function serializeCredentialList(list) {

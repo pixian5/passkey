@@ -1,4 +1,5 @@
 import { PASS_EXTENSION_VERSION } from "./extension_version.js";
+import { resolveWebAuthnWindowContext } from "./webauthn_client_data.js";
 import {
   explainCreateManageability as explainCreateRouting,
   explainGetManageability as explainGetRouting,
@@ -162,6 +163,7 @@ import {
   }
 
   async function callBridge(operation, publicKey) {
+    const frameContext = resolveWebAuthnWindowContext(window);
     const requestId = (() => {
       try {
         if (typeof crypto?.randomUUID === "function") return `req_${crypto.randomUUID()}`;
@@ -192,7 +194,7 @@ import {
 
       const onMessage = (event) => {
         if (event.source !== window) return;
-        if (event.origin && event.origin !== window.location.origin) return;
+        if (event.origin && frameContext.origin && event.origin !== frameContext.origin) return;
         const data = event.data;
         if (!data || data.source !== BRIDGE_SOURCE || data.type !== RESPONSE_TYPE) return;
         if (data.requestId !== requestId) return;
@@ -230,7 +232,7 @@ import {
         requestId,
         operation,
       });
-      window.postMessage(request, window.location.origin);
+      window.postMessage(request, frameContext.origin || "*");
     });
   }
 
@@ -238,12 +240,14 @@ import {
     const challenge = toBase64url(publicKey?.challenge);
     const userId = toBase64url(publicKey?.user?.id);
     if (!challenge || !userId) return null;
+    const frameContext = resolveWebAuthnWindowContext(window);
+    if (!frameContext.origin || (frameContext.crossOrigin && !frameContext.topOrigin)) return null;
 
     return {
       challengeB64u: challenge,
       rp: {
-        id: String(publicKey?.rp?.id || window.location.hostname || ""),
-        name: String(publicKey?.rp?.name || publicKey?.rp?.id || window.location.hostname || ""),
+        id: String(publicKey?.rp?.id || frameContext.host || ""),
+        name: String(publicKey?.rp?.name || publicKey?.rp?.id || frameContext.host || ""),
       },
       user: {
         idB64u: userId,
@@ -261,22 +265,26 @@ import {
       authenticatorSelection: publicKey?.authenticatorSelection || null,
       excludeCredentials: serializeCredentialList(publicKey?.excludeCredentials || []),
       extensions: publicKey?.extensions || null,
-      crossOrigin: window.top !== window.self,
+      crossOrigin: frameContext.crossOrigin,
+      topOrigin: frameContext.topOrigin,
     };
   }
 
   function serializeGetOptions(publicKey) {
     const challenge = toBase64url(publicKey?.challenge);
     if (!challenge) return null;
+    const frameContext = resolveWebAuthnWindowContext(window);
+    if (!frameContext.origin || (frameContext.crossOrigin && !frameContext.topOrigin)) return null;
 
     return {
       challengeB64u: challenge,
-      rpId: String(publicKey?.rpId || window.location.hostname || ""),
+      rpId: String(publicKey?.rpId || frameContext.host || ""),
       timeout: Number(publicKey?.timeout || 0) || null,
       userVerification: publicKey?.userVerification || null,
       allowCredentials: serializeCredentialList(publicKey?.allowCredentials || []),
       extensions: publicKey?.extensions || null,
-      crossOrigin: window.top !== window.self,
+      crossOrigin: frameContext.crossOrigin,
+      topOrigin: frameContext.topOrigin,
     };
   }
 

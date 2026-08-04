@@ -3,6 +3,10 @@ import {
   getPasskeys as getPasskeysFromDataStore,
   setPasskeys as setPasskeysToDataStore,
 } from "./data_store.js";
+import {
+  buildCreateClientExtensionResults,
+  buildWebAuthnClientDataJSON,
+} from "./webauthn_client_data.js";
 
 const COSE_ALG_ES256 = -7;
 const COSE_ALG_RS256 = -257;
@@ -157,12 +161,14 @@ async function createManagedCredential({ origin, host, publicKey }) {
   const credentialId = randomBytes(32);
   const credentialIdB64u = bytesToBase64url(credentialId);
 
-  const clientDataJSON = buildClientDataJSON({
+  const clientDataJSON = buildWebAuthnClientDataJSON({
     type: "webauthn.create",
     challengeB64u: bytesToBase64url(challenge),
     origin,
     crossOrigin: Boolean(publicKey?.crossOrigin),
+    topOrigin: publicKey?.topOrigin,
   });
+  const clientExtensionResults = buildCreateClientExtensionResults(publicKey?.extensions);
 
   const rpIdHash = await sha256(utf8(rpId));
   const authData = concatBytes(
@@ -219,7 +225,7 @@ async function createManagedCredential({ origin, host, publicKey }) {
         attestationObjectB64u: bytesToBase64url(attestationObject),
         transports: ["internal"],
       },
-      clientExtensionResults: {},
+      clientExtensionResults,
     },
     accountHint: {
       rpId,
@@ -292,11 +298,12 @@ async function buildCreateResultFromStoredPasskey({
     throw new PasskeyError("OperationError", "已存在凭据公钥无效", "PASSKEY_EXISTING_PUBLIC_KEY_INVALID");
   }
 
-  const clientDataJSON = buildClientDataJSON({
+  const clientDataJSON = buildWebAuthnClientDataJSON({
     type: "webauthn.create",
     challengeB64u: bytesToBase64url(challenge),
     origin,
     crossOrigin: Boolean(existing?.crossOrigin),
+    topOrigin: existing?.topOrigin,
   });
 
   const rpIdHash = await sha256(utf8(rpId));
@@ -363,11 +370,12 @@ async function getManagedAssertion({ origin, host, publicKey }) {
   const alg = normalizeManagedAlg(selected?.alg);
   const privateKey = await importManagedPrivateKey(alg, selected?.privateJwk);
 
-  const clientDataJSON = buildClientDataJSON({
+  const clientDataJSON = buildWebAuthnClientDataJSON({
     type: "webauthn.get",
     challengeB64u: bytesToBase64url(challenge),
     origin,
     crossOrigin: Boolean(publicKey?.crossOrigin),
+    topOrigin: publicKey?.topOrigin,
   });
   const clientDataHash = await sha256(clientDataJSON);
 
@@ -527,16 +535,6 @@ function randomBytes(length) {
   const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);
   return bytes;
-}
-
-function buildClientDataJSON({ type, challengeB64u, origin, crossOrigin = false }) {
-  const payload = {
-    type,
-    challenge: normalizeBase64url(challengeB64u),
-    origin,
-    crossOrigin: Boolean(crossOrigin),
-  };
-  return utf8(JSON.stringify(payload));
 }
 
 function utf8(input) {

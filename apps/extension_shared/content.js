@@ -3,6 +3,7 @@ import { fillCredentialFields } from "./credential_fill_core.js";
 import { PASS_EXTENSION_VERSION } from "./extension_version.js";
 import { claimFillChooserActivation } from "./fill_chooser_activation.js";
 import { pageUiOwnerPriority } from "./page_ui_owner.js";
+import { resolveWebAuthnWindowContext } from "./webauthn_client_data.js";
 
 const PASS_LOGIN_COOLDOWN_MS = 5000;
 const WEB_AUTHN_BRIDGE_SOURCE = "pass-webauthn-bridge";
@@ -921,11 +922,12 @@ function onWebAuthnBridgeMessage(event) {
   const requestId = String(data.requestId || "");
   if (!requestId) return;
 
+  const frameContext = resolveWebAuthnWindowContext(window);
   const payload = {
     operation: data.operation,
     publicKey: data.publicKey,
-    origin: window.location.origin,
-    host: window.location.hostname,
+    origin: frameContext.origin,
+    host: frameContext.host,
   };
 
   logPasskeyContent("bridge-request-received", {
@@ -1045,11 +1047,11 @@ async function handleWebAuthnBridgeRequest(requestId, payload) {
         const createMode = String(response?.result?.createMode || "").toLowerCase();
         const compatLabel = formatPasskeyCreateCompatToastLabel(response?.result?.createCompatMethod);
         if (createMode === "replaced") {
-          showPassPageToast(`Pass 已更新通行密钥${compatLabel ? `（${compatLabel}）` : ""}`);
+          showPassPageToast(`Pass 已更新通行密钥，等待网站确认${compatLabel ? `（${compatLabel}）` : ""}`, "info");
         } else if (createMode === "existing") {
-          showPassPageToast(`Pass 已存在同账号通行密钥，已复用${compatLabel ? `（${compatLabel}）` : ""}`);
+          showPassPageToast(`Pass 已准备已有通行密钥，等待网站确认${compatLabel ? `（${compatLabel}）` : ""}`, "info");
         } else {
-          showPassPageToast(`Pass 已保存通行密钥${compatLabel ? `（${compatLabel}）` : ""}`);
+          showPassPageToast(`Pass 已生成通行密钥，等待网站确认${compatLabel ? `（${compatLabel}）` : ""}`, "info");
         }
       } else if (payload?.operation === "get") {
         const siteLabel = resolvePasskeyReadSiteLabel(payload, response);

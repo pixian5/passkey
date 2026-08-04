@@ -970,6 +970,45 @@
     await setHistory([entry, ...current]);
   }
 
+  // webauthn_client_data.js
+  function normalizeHttpOrigin(value) {
+    const raw = String(value || "").trim();
+    if (!raw || raw === "null") return "";
+    try {
+      const parsed = new URL(raw);
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return "";
+      return parsed.origin;
+    } catch {
+      return "";
+    }
+  }
+  function buildWebAuthnClientDataJSON({
+    type,
+    challengeB64u,
+    origin,
+    crossOrigin = false,
+    topOrigin = ""
+  }) {
+    const payload = {
+      type: String(type || ""),
+      challenge: String(challengeB64u || "").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, ""),
+      origin: normalizeHttpOrigin(origin) || String(origin || "")
+    };
+    if (crossOrigin) {
+      payload.crossOrigin = true;
+      const normalizedTopOrigin = normalizeHttpOrigin(topOrigin);
+      if (normalizedTopOrigin) payload.topOrigin = normalizedTopOrigin;
+    }
+    return new TextEncoder().encode(JSON.stringify(payload));
+  }
+  function buildCreateClientExtensionResults(extensions) {
+    const results = {};
+    if (extensions?.credProps === true) {
+      results.credProps = { rk: true };
+    }
+    return results;
+  }
+
   // passkey_store.js
   var COSE_ALG_ES256 = -7;
   var COSE_ALG_RS256 = -257;
@@ -1106,12 +1145,14 @@
     const cosePublicKey = buildCosePublicKeyFromJwk(selectedAlg, publicJwk);
     const credentialId = randomBytes(32);
     const credentialIdB64u = bytesToBase64url(credentialId);
-    const clientDataJSON = buildClientDataJSON({
+    const clientDataJSON = buildWebAuthnClientDataJSON({
       type: "webauthn.create",
       challengeB64u: bytesToBase64url(challenge),
       origin,
-      crossOrigin: Boolean(publicKey?.crossOrigin)
+      crossOrigin: Boolean(publicKey?.crossOrigin),
+      topOrigin: publicKey?.topOrigin
     });
+    const clientExtensionResults = buildCreateClientExtensionResults(publicKey?.extensions);
     const rpIdHash = await sha256(utf8(rpId));
     const authData = concatBytes(
       rpIdHash,
@@ -1165,7 +1206,7 @@
           attestationObjectB64u: bytesToBase64url(attestationObject),
           transports: ["internal"]
         },
-        clientExtensionResults: {}
+        clientExtensionResults
       },
       accountHint: {
         rpId,
@@ -1217,11 +1258,12 @@
     const selected = candidates[0];
     const alg = normalizeManagedAlg(selected?.alg);
     const privateKey = await importManagedPrivateKey(alg, selected?.privateJwk);
-    const clientDataJSON = buildClientDataJSON({
+    const clientDataJSON = buildWebAuthnClientDataJSON({
       type: "webauthn.get",
       challengeB64u: bytesToBase64url(challenge),
       origin,
-      crossOrigin: Boolean(publicKey?.crossOrigin)
+      crossOrigin: Boolean(publicKey?.crossOrigin),
+      topOrigin: publicKey?.topOrigin
     });
     const clientDataHash = await sha256(clientDataJSON);
     const nextSignCount = Number(selected.signCount || 0) + 1;
@@ -1363,15 +1405,6 @@
     const bytes = new Uint8Array(length);
     crypto.getRandomValues(bytes);
     return bytes;
-  }
-  function buildClientDataJSON({ type, challengeB64u, origin, crossOrigin = false }) {
-    const payload = {
-      type,
-      challenge: normalizeBase64url(challengeB64u),
-      origin,
-      crossOrigin: Boolean(crossOrigin)
-    };
-    return utf8(JSON.stringify(payload));
   }
   function utf8(input) {
     return new TextEncoder().encode(String(input));
@@ -1689,7 +1722,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.6";
+  var PASS_EXTENSION_VERSION = "1.4.7";
 
   // ../../core/pass_core/js/sync_alias_core.js
   function syncAliasGroups(accounts, helpers, options = {}) {

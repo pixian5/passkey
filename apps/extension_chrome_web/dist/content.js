@@ -185,7 +185,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.6";
+  var PASS_EXTENSION_VERSION = "1.4.7";
 
   // fill_chooser_activation.js
   var FILL_CHOOSER_ACTIVATION_DEDUPE_MS = 650;
@@ -211,6 +211,66 @@
   function pageUiOwnerPriority(version) {
     const [major = "0", minor = "0", patch = "0"] = String(version || "").split(".");
     return PAGE_UI_PRIORITY_BASE + (parseVersionPart(major) * VERSION_PART_RADIX + parseVersionPart(minor)) * VERSION_PART_RADIX + parseVersionPart(patch);
+  }
+
+  // webauthn_client_data.js
+  function normalizeHttpOrigin(value) {
+    const raw = String(value || "").trim();
+    if (!raw || raw === "null") return "";
+    try {
+      const parsed = new URL(raw);
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return "";
+      return parsed.origin;
+    } catch {
+      return "";
+    }
+  }
+  function readLocationOrigin(target) {
+    try {
+      return normalizeHttpOrigin(target?.location?.origin);
+    } catch {
+      return "";
+    }
+  }
+  function readAncestorOrigins(targetWindow) {
+    try {
+      return Array.from(targetWindow?.location?.ancestorOrigins || []).map(normalizeHttpOrigin).filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+  function resolveWebAuthnWindowContext(targetWindow) {
+    if (!targetWindow) {
+      return { origin: "", host: "", crossOrigin: false, topOrigin: "" };
+    }
+    let isTopLevel = true;
+    try {
+      isTopLevel = targetWindow.top === targetWindow.self;
+    } catch {
+      isTopLevel = false;
+    }
+    const ancestorOrigins = readAncestorOrigins(targetWindow);
+    let origin = readLocationOrigin(targetWindow);
+    if (!origin && !isTopLevel) {
+      origin = readLocationOrigin(targetWindow.parent) || ancestorOrigins[0] || "";
+    }
+    let topOrigin = isTopLevel ? origin : readLocationOrigin(targetWindow.top);
+    if (!topOrigin && ancestorOrigins.length > 0) {
+      topOrigin = ancestorOrigins[ancestorOrigins.length - 1];
+    }
+    const crossOrigin = !isTopLevel && (!origin || !topOrigin || origin !== topOrigin);
+    let host = "";
+    try {
+      host = origin ? new URL(origin).hostname : "";
+    } catch {
+      host = "";
+    }
+    return {
+      origin,
+      host,
+      crossOrigin,
+      topOrigin: crossOrigin ? topOrigin : ""
+    };
   }
 
   // content.js
@@ -988,11 +1048,12 @@
     if (data.type !== WEB_AUTHN_REQUEST_TYPE) return;
     const requestId = String(data.requestId || "");
     if (!requestId) return;
+    const frameContext = resolveWebAuthnWindowContext(window);
     const payload = {
       operation: data.operation,
       publicKey: data.publicKey,
-      origin: window.location.origin,
-      host: window.location.hostname
+      origin: frameContext.origin,
+      host: frameContext.host
     };
     logPasskeyContent("bridge-request-received", {
       requestId,
@@ -1091,11 +1152,11 @@
           const createMode = String(response?.result?.createMode || "").toLowerCase();
           const compatLabel = formatPasskeyCreateCompatToastLabel(response?.result?.createCompatMethod);
           if (createMode === "replaced") {
-            showPassPageToast(`Pass \u5DF2\u66F4\u65B0\u901A\u884C\u5BC6\u94A5${compatLabel ? `\uFF08${compatLabel}\uFF09` : ""}`);
+            showPassPageToast(`Pass \u5DF2\u66F4\u65B0\u901A\u884C\u5BC6\u94A5\uFF0C\u7B49\u5F85\u7F51\u7AD9\u786E\u8BA4${compatLabel ? `\uFF08${compatLabel}\uFF09` : ""}`, "info");
           } else if (createMode === "existing") {
-            showPassPageToast(`Pass \u5DF2\u5B58\u5728\u540C\u8D26\u53F7\u901A\u884C\u5BC6\u94A5\uFF0C\u5DF2\u590D\u7528${compatLabel ? `\uFF08${compatLabel}\uFF09` : ""}`);
+            showPassPageToast(`Pass \u5DF2\u51C6\u5907\u5DF2\u6709\u901A\u884C\u5BC6\u94A5\uFF0C\u7B49\u5F85\u7F51\u7AD9\u786E\u8BA4${compatLabel ? `\uFF08${compatLabel}\uFF09` : ""}`, "info");
           } else {
-            showPassPageToast(`Pass \u5DF2\u4FDD\u5B58\u901A\u884C\u5BC6\u94A5${compatLabel ? `\uFF08${compatLabel}\uFF09` : ""}`);
+            showPassPageToast(`Pass \u5DF2\u751F\u6210\u901A\u884C\u5BC6\u94A5\uFF0C\u7B49\u5F85\u7F51\u7AD9\u786E\u8BA4${compatLabel ? `\uFF08${compatLabel}\uFF09` : ""}`, "info");
           }
         } else if (payload?.operation === "get") {
           const siteLabel = resolvePasskeyReadSiteLabel(payload, response);
