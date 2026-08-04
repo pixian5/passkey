@@ -317,7 +317,7 @@ async function ensureMainWorldPasskeyBridge(tabId, url) {
   if (!tabId || !shouldInjectMainWorldBridge(url)) return;
   try {
     await chrome.scripting.executeScript({
-      target: { tabId },
+      target: { tabId, allFrames: true },
       files: ["dist/content.js"],
     });
     logPasskeyFlow("isolated-bridge-injected", {
@@ -325,7 +325,7 @@ async function ensureMainWorldPasskeyBridge(tabId, url) {
       url,
     });
     await chrome.scripting.executeScript({
-      target: { tabId },
+      target: { tabId, allFrames: true },
       world: "MAIN",
       func: (version) => {
         try {
@@ -342,7 +342,7 @@ async function ensureMainWorldPasskeyBridge(tabId, url) {
       args: [PASS_EXTENSION_VERSION],
     });
     await chrome.scripting.executeScript({
-      target: { tabId },
+      target: { tabId, allFrames: true },
       files: ["dist/webauthn_injected.js"],
       world: "MAIN",
     });

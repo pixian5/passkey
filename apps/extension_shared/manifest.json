@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Pass",
   "description": "Password manager extension with device name, domain alias groups, autofill, and encrypted local vault.",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "permissions": [
     "storage",
     "alarms",
@@ -39,7 +39,9 @@
         "dist/webauthn_injected.js"
       ],
       "run_at": "document_start",
-      "world": "MAIN"
+      "world": "MAIN",
+      "all_frames": true,
+      "match_about_blank": true
     },
     {
       "matches": [

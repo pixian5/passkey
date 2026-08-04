@@ -516,45 +516,43 @@ function hideFillChooser() {
   }
 }
 
-function positionFillChooserNear(input) {
-  if (!fillChooserHost || !(input instanceof HTMLElement)) return;
-  const rect = input.getBoundingClientRect();
-  const viewportPadding = 8;
-  const gap = 6;
-  const panelHeight = Math.ceil(fillChooserHost.getBoundingClientRect().height || 0);
-  const belowTop = rect.bottom + gap;
-  const availableBottom = window.innerHeight - viewportPadding;
-  const aboveTop = rect.top - panelHeight - gap;
-  let top = belowTop;
-  if (panelHeight > 0 && belowTop + panelHeight > availableBottom) {
-    top = aboveTop >= viewportPadding
-      ? aboveTop
-      : availableBottom - panelHeight;
-  }
-  const maxTop = Math.max(viewportPadding, availableBottom - panelHeight);
-  top = Math.min(maxTop, Math.max(viewportPadding, top));
-  const panelWidth = Math.ceil(fillChooserHost.getBoundingClientRect().width || 280);
-  const maxLeft = Math.max(viewportPadding, window.innerWidth - viewportPadding - panelWidth);
-  const left = Math.min(maxLeft, Math.max(viewportPadding, rect.left));
-  fillChooserHost.style.top = `${top}px`;
-  fillChooserHost.style.left = `${left}px`;
-}
-
 function ensureFillChooserHost() {
   if (fillChooserHost && fillChooserShadow) return fillChooserShadow;
   const host = document.createElement("div");
   host.id = PASS_FILL_CHOOSER_ID;
-  host.style.all = "initial";
-  host.style.position = "fixed";
-  host.style.zIndex = "2147483646";
-  host.style.width = "min(360px, calc(100vw - 16px))";
-  host.style.maxHeight = "min(560px, calc(100vh - 16px))";
-  host.style.overflow = "hidden";
-  host.style.maxWidth = "min(360px, calc(100vw - 16px))";
+  host.setAttribute("popover", "manual");
+  const criticalStyles = {
+    all: "initial",
+    position: "fixed",
+    inset: "14px 14px auto auto",
+    margin: "0",
+    padding: "0",
+    border: "0",
+    width: "min(360px, calc(100vw - 28px))",
+    maxWidth: "min(360px, calc(100vw - 28px))",
+    maxHeight: "min(560px, calc(100vh - 28px))",
+    overflow: "hidden",
+    zIndex: "2147483647",
+    colorScheme: "light",
+  };
+  for (const [property, value] of Object.entries(criticalStyles)) {
+    const cssProperty = property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+    host.style.setProperty(cssProperty, value, "important");
+  }
   const shadow = host.attachShadow({ mode: "closed" });
   fillChooserHost = host;
   fillChooserShadow = shadow;
   document.documentElement.appendChild(host);
+  if (typeof host.showPopover === "function") {
+    try {
+      host.showPopover();
+    } catch {
+      host.removeAttribute("popover");
+    }
+  } else {
+    host.removeAttribute("popover");
+  }
+  host.style.setProperty("display", "block", "important");
   return shadow;
 }
 
@@ -564,7 +562,6 @@ function renderFillChooser(accounts, input) {
   fillChooserLastAccounts = accounts;
   fillChooserActiveInput = input;
   const shadow = ensureFillChooserHost();
-  positionFillChooserNear(input);
 
   const root = document.createElement("div");
   root.style.background = "#ffffff";
@@ -663,9 +660,6 @@ function renderFillChooser(accounts, input) {
   footer.appendChild(closeBtn);
   root.appendChild(footer);
   shadow.appendChild(root);
-  // The final height is known only after the list is mounted. Reposition now
-  // so a tall chooser opens above the field when there is not enough room below.
-  positionFillChooserNear(input);
 }
 
 function runtimeSendMessage(message) {
@@ -776,7 +770,6 @@ async function showFillChooserForInput(input, { userInitiated = false } = {}) {
   if (userInitiated && !claimFillChooserActivation(fillChooserActivationClaim, input, now)) return;
   if (fillChooserListInFlight) return;
   if (now - fillChooserLastListAt < PASS_FILL_LIST_COOLDOWN_MS && fillChooserHost) {
-    positionFillChooserNear(input);
     fillChooserActiveInput = input;
     return;
   }

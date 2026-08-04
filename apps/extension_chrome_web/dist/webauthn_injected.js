@@ -1,6 +1,27 @@
 (() => {
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.4";
+  var PASS_EXTENSION_VERSION = "1.4.5";
+
+  // webauthn_routing.js
+  function explainCreateManageability({ hasChallenge, hasUserId, authenticatorAttachment } = {}) {
+    if (!hasChallenge || !hasUserId) {
+      return { manageable: false, reason: "missing-challenge-or-user-id" };
+    }
+    if (String(authenticatorAttachment || "").toLowerCase() === "cross-platform") {
+      return { manageable: false, reason: "cross-platform-requested" };
+    }
+    return { manageable: true, reason: "managed-by-pass" };
+  }
+  function explainGetManageability({ hasChallenge } = {}) {
+    if (!hasChallenge) {
+      return { manageable: false, reason: "missing-challenge" };
+    }
+    return { manageable: true, reason: "managed-by-pass" };
+  }
+  function shouldFallbackToBrowser(error) {
+    const code = String(error?.code || "");
+    return code === "PASSKEY_NOT_FOUND" || code === "PASSKEY_USE_BROWSER";
+  }
 
   // webauthn_injected.js
   (() => {
@@ -46,7 +67,7 @@
       if (!options?.publicKey) {
         return originalCreate(options);
       }
-      const createDecision = explainCreateManageability(options.publicKey);
+      const createDecision = explainCreateManageability2(options.publicKey);
       logInjected("create-intercepted", {
         manageable: createDecision.manageable,
         reason: createDecision.reason,
@@ -82,9 +103,9 @@
           name: error?.name || "Error",
           code: error?.code || "",
           message: error?.message || String(error || ""),
-          willFallback: shouldFallbackToBrowser(error)
+          willFallback: shouldFallbackToBrowser2(error)
         });
-        if (shouldFallbackToBrowser(error)) {
+        if (shouldFallbackToBrowser2(error)) {
           await notifyFallbackBeforeBrowser("create", error?.code || error?.name || "fallback");
           return originalCreate(options);
         }
@@ -95,7 +116,7 @@
       if (!options?.publicKey) {
         return originalGet(options);
       }
-      const getDecision = explainGetManageability(options.publicKey);
+      const getDecision = explainGetManageability2(options.publicKey);
       logInjected("get-intercepted", {
         manageable: getDecision.manageable,
         reason: getDecision.reason,
@@ -128,9 +149,9 @@
           name: error?.name || "Error",
           code: error?.code || "",
           message: error?.message || String(error || ""),
-          willFallback: shouldFallbackToBrowser(error)
+          willFallback: shouldFallbackToBrowser2(error)
         });
-        if (shouldFallbackToBrowser(error)) {
+        if (shouldFallbackToBrowser2(error)) {
           await notifyFallbackBeforeBrowser("get", error?.code || error?.name || "fallback");
           return originalGet(options);
         }
@@ -346,49 +367,27 @@
       }
       return result;
     }
-    function shouldFallbackToBrowser(error) {
-      const code = String(error?.code || "");
-      const name = String(error?.name || "");
-      return code === "PASSKEY_NOT_FOUND" || code === "PASSKEY_USE_BROWSER" || code === "PASSKEY_CONTEXT_INVALIDATED" || code === "PASSKEY_RUNTIME_ERROR" || code === "PASSKEY_EMPTY_RESPONSE" || code === "PASSKEY_ALG_UNSUPPORTED" || code === "PASSKEY_OP_UNSUPPORTED" || name === "NotSupportedError" || name === "TimeoutError";
+    function shouldFallbackToBrowser2(error) {
+      return shouldFallbackToBrowser(error);
     }
     function canPassManageCreate(publicKey) {
-      return explainCreateManageability(publicKey).manageable;
+      return explainCreateManageability2(publicKey).manageable;
     }
     function canPassManageGet(publicKey) {
-      return explainGetManageability(publicKey).manageable;
+      return explainGetManageability2(publicKey).manageable;
     }
-    function explainCreateManageability(publicKey) {
+    function explainCreateManageability2(publicKey) {
       const challenge = toBase64url(publicKey?.challenge);
       const userId = toBase64url(publicKey?.user?.id);
-      if (!challenge || !userId) {
-        return { manageable: false, reason: "missing-challenge-or-user-id" };
-      }
-      const attachment = String(publicKey?.authenticatorSelection?.authenticatorAttachment || "").toLowerCase();
-      if (attachment === "cross-platform") {
-        return { manageable: false, reason: "cross-platform-requested" };
-      }
-      return { manageable: true, reason: "managed-by-pass" };
-    }
-    function explainGetManageability(publicKey) {
-      const challenge = toBase64url(publicKey?.challenge);
-      if (!challenge) {
-        return { manageable: false, reason: "missing-challenge" };
-      }
-      const allow = Array.isArray(publicKey?.allowCredentials) ? publicKey.allowCredentials : [];
-      if (allow.length === 0) {
-        return { manageable: true, reason: "no-allow-credentials" };
-      }
-      const hasInternalCapable = allow.some((item) => {
-        const transports = Array.isArray(item?.transports) ? item.transports.map((t) => String(t || "").toLowerCase()) : [];
-        if (transports.length === 0) {
-          return true;
-        }
-        return transports.includes("internal");
+      return explainCreateManageability({
+        hasChallenge: Boolean(challenge),
+        hasUserId: Boolean(userId),
+        authenticatorAttachment: publicKey?.authenticatorSelection?.authenticatorAttachment
       });
-      if (!hasInternalCapable) {
-        return { manageable: false, reason: "allow-credentials-without-internal" };
-      }
-      return { manageable: true, reason: "allow-credentials-has-internal" };
+    }
+    function explainGetManageability2(publicKey) {
+      const challenge = toBase64url(publicKey?.challenge);
+      return explainGetManageability({ hasChallenge: Boolean(challenge) });
     }
     function postFallbackNotice(operation, reason) {
       const message = buildFallbackNoticeMessage(operation, reason);
@@ -454,8 +453,6 @@
       switch (String(reason || "")) {
         case "cross-platform-requested":
           return `Pass \u672A\u63A5\u7BA1${opLabel}\uFF0C\u672C\u6B21\u6539\u7531\u6D4F\u89C8\u5668\u539F\u751F\u5904\u7406\uFF1A\u7F51\u7AD9\u8BF7\u6C42\u5916\u7F6E\u5B89\u5168\u5BC6\u94A5`;
-        case "allow-credentials-without-internal":
-          return `Pass \u672A\u63A5\u7BA1${opLabel}\uFF0C\u672C\u6B21\u6539\u7531\u6D4F\u89C8\u5668\u539F\u751F\u5904\u7406\uFF1A\u7F51\u7AD9\u6307\u5B9A\u4E86\u975E\u672C\u673A\u901A\u884C\u5BC6\u94A5`;
         case "missing-challenge-or-user-id":
         case "missing-challenge":
           return `Pass \u672A\u63A5\u7BA1${opLabel}\uFF0C\u672C\u6B21\u6539\u7531\u6D4F\u89C8\u5668\u539F\u751F\u5904\u7406\uFF1A\u7F51\u7AD9\u8BF7\u6C42\u53C2\u6570\u4E0D\u5B8C\u6574`;

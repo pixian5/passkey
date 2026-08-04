@@ -1,4 +1,9 @@
 import { PASS_EXTENSION_VERSION } from "./extension_version.js";
+import {
+  explainCreateManageability as explainCreateRouting,
+  explainGetManageability as explainGetRouting,
+  shouldFallbackToBrowser as shouldFallbackRouting,
+} from "./webauthn_routing.js";
 
 (() => {
   const BRIDGE_SOURCE = "pass-webauthn-bridge";
@@ -389,17 +394,7 @@ import { PASS_EXTENSION_VERSION } from "./extension_version.js";
   }
 
   function shouldFallbackToBrowser(error) {
-    const code = String(error?.code || "");
-    const name = String(error?.name || "");
-    return code === "PASSKEY_NOT_FOUND" ||
-      code === "PASSKEY_USE_BROWSER" ||
-      code === "PASSKEY_CONTEXT_INVALIDATED" ||
-      code === "PASSKEY_RUNTIME_ERROR" ||
-      code === "PASSKEY_EMPTY_RESPONSE" ||
-      code === "PASSKEY_ALG_UNSUPPORTED" ||
-      code === "PASSKEY_OP_UNSUPPORTED" ||
-      name === "NotSupportedError" ||
-      name === "TimeoutError";
+    return shouldFallbackRouting(error);
   }
 
   function canPassManageCreate(publicKey) {
@@ -413,43 +408,16 @@ import { PASS_EXTENSION_VERSION } from "./extension_version.js";
   function explainCreateManageability(publicKey) {
     const challenge = toBase64url(publicKey?.challenge);
     const userId = toBase64url(publicKey?.user?.id);
-    if (!challenge || !userId) {
-      return { manageable: false, reason: "missing-challenge-or-user-id" };
-    }
-
-    const attachment = String(publicKey?.authenticatorSelection?.authenticatorAttachment || "").toLowerCase();
-    if (attachment === "cross-platform") {
-      return { manageable: false, reason: "cross-platform-requested" };
-    }
-
-    return { manageable: true, reason: "managed-by-pass" };
+    return explainCreateRouting({
+      hasChallenge: Boolean(challenge),
+      hasUserId: Boolean(userId),
+      authenticatorAttachment: publicKey?.authenticatorSelection?.authenticatorAttachment,
+    });
   }
 
   function explainGetManageability(publicKey) {
     const challenge = toBase64url(publicKey?.challenge);
-    if (!challenge) {
-      return { manageable: false, reason: "missing-challenge" };
-    }
-
-    const allow = Array.isArray(publicKey?.allowCredentials) ? publicKey.allowCredentials : [];
-    if (allow.length === 0) {
-      return { manageable: true, reason: "no-allow-credentials" };
-    }
-
-    const hasInternalCapable = allow.some((item) => {
-      const transports = Array.isArray(item?.transports)
-        ? item.transports.map((t) => String(t || "").toLowerCase())
-        : [];
-      if (transports.length === 0) {
-        return true;
-      }
-      return transports.includes("internal");
-    });
-    if (!hasInternalCapable) {
-      return { manageable: false, reason: "allow-credentials-without-internal" };
-    }
-
-    return { manageable: true, reason: "allow-credentials-has-internal" };
+    return explainGetRouting({ hasChallenge: Boolean(challenge) });
   }
 
   function postFallbackNotice(operation, reason) {
@@ -534,8 +502,6 @@ import { PASS_EXTENSION_VERSION } from "./extension_version.js";
     switch (String(reason || "")) {
       case "cross-platform-requested":
         return `Pass 未接管${opLabel}，本次改由浏览器原生处理：网站请求外置安全密钥`;
-      case "allow-credentials-without-internal":
-        return `Pass 未接管${opLabel}，本次改由浏览器原生处理：网站指定了非本机通行密钥`;
       case "missing-challenge-or-user-id":
       case "missing-challenge":
         return `Pass 未接管${opLabel}，本次改由浏览器原生处理：网站请求参数不完整`;

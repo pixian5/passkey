@@ -1689,7 +1689,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.4.4";
+  var PASS_EXTENSION_VERSION = "1.4.5";
 
   // ../../core/pass_core/js/sync_alias_core.js
   function syncAliasGroups(accounts, helpers, options = {}) {
@@ -3162,7 +3162,7 @@
     if (!tabId || !shouldInjectMainWorldBridge(url)) return;
     try {
       await chrome.scripting.executeScript({
-        target: { tabId },
+        target: { tabId, allFrames: true },
         files: ["dist/content.js"]
       });
       logPasskeyFlow("isolated-bridge-injected", {
@@ -3170,7 +3170,7 @@
         url
       });
       await chrome.scripting.executeScript({
-        target: { tabId },
+        target: { tabId, allFrames: true },
         world: "MAIN",
         func: (version) => {
           try {
@@ -3186,7 +3186,7 @@
         args: [PASS_EXTENSION_VERSION]
       });
       await chrome.scripting.executeScript({
-        target: { tabId },
+        target: { tabId, allFrames: true },
         files: ["dist/webauthn_injected.js"],
         world: "MAIN"
       });
