@@ -897,6 +897,7 @@
     passkeySection: document.getElementById("passkeySection"),
     passkeyCurrentSiteOnly: document.getElementById("passkeyCurrentSiteOnly"),
     passkeySearch: document.getElementById("passkeySearch"),
+    copyPasskeyCreateDiagnosticBtn: document.getElementById("copyPasskeyCreateDiagnostic"),
     passkeyList: document.getElementById("passkeyList"),
     accountList: document.getElementById("accountList"),
     status: document.getElementById("popupStatus")
@@ -1118,10 +1119,27 @@
     dom.modeAllBtn.addEventListener("click", () => setViewMode("all"));
     dom.modeRecycleBtn.addEventListener("click", () => setViewMode("recycle"));
     dom.modePasskeyBtn.addEventListener("click", () => setViewMode("passkeys"));
+    dom.copyPasskeyCreateDiagnosticBtn.addEventListener("click", () => {
+      void copyLatestPasskeyCreateDiagnostic();
+    });
     dom.accountSearch.addEventListener("input", renderAccounts);
     dom.passkeyCurrentSiteOnly.addEventListener("change", renderAccounts);
     dom.passkeySearch.addEventListener("input", renderAccounts);
     bindLockRuntimeEvents();
+  }
+  async function copyLatestPasskeyCreateDiagnostic() {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: "PASS_PASSKEY_LATEST_CREATE_DIAGNOSTIC" });
+      if (!response?.ok) throw new Error(response?.error || "\u672A\u80FD\u8BFB\u53D6\u8BCA\u65AD");
+      if (!response.diagnostic) {
+        setStatus("\u6682\u65E0\u6CE8\u518C\u8BCA\u65AD\u3002\u8BF7\u5148\u5728\u7F51\u7AD9\u89E6\u53D1\u4E00\u6B21\u901A\u884C\u5BC6\u94A5\u6CE8\u518C\u3002");
+        return;
+      }
+      await navigator.clipboard.writeText(JSON.stringify(response.diagnostic, null, 2));
+      setStatus("\u5DF2\u590D\u5236\u6700\u8FD1\u6CE8\u518C\u8BCA\u65AD\uFF08\u4E0D\u542B challenge\u3001\u7528\u6237 ID\u3001\u51ED\u636E ID \u6216\u5BC6\u94A5\uFF09\u3002");
+    } catch (error) {
+      setStatus(`\u590D\u5236\u6CE8\u518C\u8BCA\u65AD\u5931\u8D25: ${error?.message || String(error || "\u672A\u77E5\u9519\u8BEF")}`);
+    }
   }
   function bindLockRuntimeEvents() {
     const activityEvents = ["mousedown", "keydown", "scroll", "touchstart"];

@@ -31,3 +31,10 @@ test("Chrome 和 Firefox 在所有框架最早注入 WebAuthn 桥接", async () 
     assert.equal(entry.match_about_blank, true, `${manifestPath} 必须覆盖 about:blank 认证框架`);
   }
 });
+
+test("Chrome 弹窗包含注册诊断控件，和打包脚本保持一致", async () => {
+  const chromePopup = await readFile(path.join(repoDir, "apps/extension_chrome_web/popup.html"), "utf8");
+  const sharedPopup = await readFile(path.join(repoDir, "apps/extension_shared/popup.html"), "utf8");
+  assert.match(chromePopup, /id="copyPasskeyCreateDiagnostic"/);
+  assert.match(sharedPopup, /id="copyPasskeyCreateDiagnostic"/);
+});

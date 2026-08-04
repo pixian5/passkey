@@ -928,6 +928,9 @@ function onWebAuthnBridgeMessage(event) {
     publicKey: data.publicKey,
     origin: frameContext.origin,
     host: frameContext.host,
+    // Page-provided context is diagnostic-only. The operation always uses the
+    // isolated-world context above, which cannot be forged by the page.
+    sourceContext: data.sourceContext,
   };
 
   logPasskeyContent("bridge-request-received", {

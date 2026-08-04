@@ -183,6 +183,7 @@ import {
       requestId,
       operation,
       publicKey,
+      sourceContext: frameContext,
     };
 
     return await new Promise((resolve, reject) => {

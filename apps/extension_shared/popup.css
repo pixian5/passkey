@@ -330,6 +330,12 @@ button:active {
   margin-bottom: 6px;
 }
 
+.passkey-diagnostic-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 8px;
+}
+
 .passkey-filter-check {
   display: flex;
   align-items: center;

@@ -1,6 +1,6 @@
 (() => {
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.5.0";
+  var PASS_EXTENSION_VERSION = "1.5.1";
 
   // webauthn_client_data.js
   function normalizeHttpOrigin(value) {
@@ -309,7 +309,8 @@
         type: REQUEST_TYPE,
         requestId,
         operation,
-        publicKey
+        publicKey,
+        sourceContext: frameContext
       };
       return await new Promise((resolve, reject) => {
         let completed = false;

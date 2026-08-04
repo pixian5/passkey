@@ -92,6 +92,7 @@ const dom = {
   passkeySection: document.getElementById("passkeySection"),
   passkeyCurrentSiteOnly: document.getElementById("passkeyCurrentSiteOnly"),
   passkeySearch: document.getElementById("passkeySearch"),
+  copyPasskeyCreateDiagnosticBtn: document.getElementById("copyPasskeyCreateDiagnostic"),
   passkeyList: document.getElementById("passkeyList"),
   accountList: document.getElementById("accountList"),
   status: document.getElementById("popupStatus"),
@@ -335,10 +336,28 @@ function bindEvents() {
   dom.modeAllBtn.addEventListener("click", () => setViewMode("all"));
   dom.modeRecycleBtn.addEventListener("click", () => setViewMode("recycle"));
   dom.modePasskeyBtn.addEventListener("click", () => setViewMode("passkeys"));
+  dom.copyPasskeyCreateDiagnosticBtn.addEventListener("click", () => {
+    void copyLatestPasskeyCreateDiagnostic();
+  });
   dom.accountSearch.addEventListener("input", renderAccounts);
   dom.passkeyCurrentSiteOnly.addEventListener("change", renderAccounts);
   dom.passkeySearch.addEventListener("input", renderAccounts);
   bindLockRuntimeEvents();
+}
+
+async function copyLatestPasskeyCreateDiagnostic() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "PASS_PASSKEY_LATEST_CREATE_DIAGNOSTIC" });
+    if (!response?.ok) throw new Error(response?.error || "未能读取诊断");
+    if (!response.diagnostic) {
+      setStatus("暂无注册诊断。请先在网站触发一次通行密钥注册。");
+      return;
+    }
+    await navigator.clipboard.writeText(JSON.stringify(response.diagnostic, null, 2));
+    setStatus("已复制最近注册诊断（不含 challenge、用户 ID、凭据 ID 或密钥）。");
+  } catch (error) {
+    setStatus(`复制注册诊断失败: ${error?.message || String(error || "未知错误")}`);
+  }
 }
 
 function bindLockRuntimeEvents() {

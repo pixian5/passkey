@@ -1,6 +1,12 @@
 import { ensurePasskeyStorageShape, handlePasskeyBridgeOperation } from "./passkey_store.js";
 import { PASS_EXTENSION_VERSION } from "./extension_version.js";
 import {
+  appendPasskeyDiagnostic,
+  buildPasskeyBridgeDiagnostic,
+  getLatestCreateDiagnostic,
+  STORAGE_KEY_PASSKEY_DIAGNOSTICS,
+} from "./webauthn_diagnostics.js";
+import {
   buildAccountId,
   domainsMatch,
   etldPlusOne,
@@ -1066,6 +1072,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "PASS_PASSKEY_OPERATION":
         sendResponse(await handlePasskeyOperationAndSyncAccount(message.payload));
         return;
+      case "PASS_PASSKEY_LATEST_CREATE_DIAGNOSTIC":
+        sendResponse(await getLatestPasskeyCreateDiagnostic());
+        return;
       case "PASS_CONTENT_GET_ACCOUNTS":
         // Compatibility alias: never returns passwords.
         sendResponse(await handleContentGetAccounts());
@@ -1236,6 +1245,7 @@ async function handlePasskeyOperationAndSyncAccount(payload) {
     origin: String(payload?.origin || ""),
   });
   const response = await handlePasskeyBridgeOperation(payload);
+  await recordPasskeyDiagnostic(payload, response, "store-response");
   if (!response?.ok) {
     logPasskeyFlow("bridge-failed", {
       operation: String(payload?.operation || ""),
@@ -1258,6 +1268,30 @@ async function handlePasskeyOperationAndSyncAccount(payload) {
     });
   }
   return response;
+}
+
+async function recordPasskeyDiagnostic(payload, response, phase) {
+  try {
+    const diagnostic = buildPasskeyBridgeDiagnostic({
+      payload,
+      response,
+      extensionVersion: PASS_EXTENSION_VERSION,
+      phase,
+    });
+    await appendPasskeyDiagnostic(chrome.storage?.session, diagnostic);
+  } catch (error) {
+    logPasskeyFlow("diagnostic-record-failed", {
+      operation: String(payload?.operation || ""),
+      message: error?.message || String(error || ""),
+    });
+  }
+}
+
+async function getLatestPasskeyCreateDiagnostic() {
+  const storage = chrome.storage?.session;
+  if (!storage?.get) return { ok: false, error: "当前浏览器不支持会话诊断" };
+  const stored = await storage.get([STORAGE_KEY_PASSKEY_DIAGNOSTICS]);
+  return { ok: true, diagnostic: getLatestCreateDiagnostic(stored?.[STORAGE_KEY_PASSKEY_DIAGNOSTICS]) };
 }
 
 function parseTabSecurityContext(urlValue) {

@@ -185,7 +185,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.5.0";
+  var PASS_EXTENSION_VERSION = "1.5.1";
 
   // fill_chooser_activation.js
   var FILL_CHOOSER_ACTIVATION_DEDUPE_MS = 650;
@@ -1053,7 +1053,10 @@
       operation: data.operation,
       publicKey: data.publicKey,
       origin: frameContext.origin,
-      host: frameContext.host
+      host: frameContext.host,
+      // Page-provided context is diagnostic-only. The operation always uses the
+      // isolated-world context above, which cannot be forged by the page.
+      sourceContext: data.sourceContext
     };
     logPasskeyContent("bridge-request-received", {
       requestId,
