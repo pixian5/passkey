@@ -2,6 +2,7 @@ export function explainCreateManageability({
   hasChallenge,
   hasUserId,
   authenticatorAttachment,
+  attestation,
   googleLegacyAppidSupport,
 } = {}) {
   if (!hasChallenge || !hasUserId) {
@@ -13,6 +14,12 @@ export function explainCreateManageability({
   // satisfy that contract, so leave the request to Chrome.
   if (googleLegacyAppidSupport === true) {
     return { manageable: false, reason: "google-legacy-appid-request" };
+  }
+
+  // Pass has no certified attestation key or metadata chain. Let the browser
+  // use its real platform authenticator when the RP explicitly requires it.
+  if (["direct", "enterprise"].includes(String(attestation || "").toLowerCase())) {
+    return { manageable: false, reason: "attestation-required-by-rp" };
   }
 
   if (String(authenticatorAttachment || "").toLowerCase() === "cross-platform") {

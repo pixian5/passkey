@@ -1,6 +1,6 @@
 (() => {
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.5.5";
+  var PASS_EXTENSION_VERSION = "1.5.6";
 
   // webauthn_client_data.js
   function normalizeHttpOrigin(value) {
@@ -137,6 +137,7 @@
     hasChallenge,
     hasUserId,
     authenticatorAttachment,
+    attestation,
     googleLegacyAppidSupport
   } = {}) {
     if (!hasChallenge || !hasUserId) {
@@ -144,6 +145,9 @@
     }
     if (googleLegacyAppidSupport === true) {
       return { manageable: false, reason: "google-legacy-appid-request" };
+    }
+    if (["direct", "enterprise"].includes(String(attestation || "").toLowerCase())) {
+      return { manageable: false, reason: "attestation-required-by-rp" };
     }
     if (String(authenticatorAttachment || "").toLowerCase() === "cross-platform") {
       return { manageable: false, reason: "cross-platform-requested" };
@@ -617,6 +621,7 @@
         hasChallenge: Boolean(challenge),
         hasUserId: Boolean(userId),
         authenticatorAttachment: publicKey?.authenticatorSelection?.authenticatorAttachment,
+        attestation: publicKey?.attestation,
         googleLegacyAppidSupport: publicKey?.extensions?.googleLegacyAppidSupport === true
       });
     }
@@ -690,6 +695,8 @@
           return `Pass \u672A\u63A5\u7BA1${opLabel}\uFF0C\u672C\u6B21\u6539\u7531\u6D4F\u89C8\u5668\u539F\u751F\u5904\u7406\uFF1A\u7F51\u7AD9\u8BF7\u6C42\u5916\u7F6E\u5B89\u5168\u5BC6\u94A5`;
         case "google-legacy-appid-request":
           return `Pass \u672A\u63A5\u7BA1${opLabel}\uFF0C\u672C\u6B21\u6539\u7531\u6D4F\u89C8\u5668\u539F\u751F\u5904\u7406\uFF1AGoogle \u8BF7\u6C42\u65E7\u5F0F\u5916\u7F6E\u5B89\u5168\u5BC6\u94A5`;
+        case "attestation-required-by-rp":
+          return `Pass \u672A\u63A5\u7BA1${opLabel}\uFF0C\u672C\u6B21\u6539\u7531\u6D4F\u89C8\u5668\u539F\u751F\u5904\u7406\uFF1A\u7F51\u7AD9\u8981\u6C42\u53EF\u9A8C\u8BC1\u8BA4\u8BC1\u5668\u8BC1\u660E`;
         case "missing-challenge-or-user-id":
         case "missing-challenge":
           return `Pass \u672A\u63A5\u7BA1${opLabel}\uFF0C\u672C\u6B21\u6539\u7531\u6D4F\u89C8\u5668\u539F\u751F\u5904\u7406\uFF1A\u7F51\u7AD9\u8BF7\u6C42\u53C2\u6570\u4E0D\u5B8C\u6574`;

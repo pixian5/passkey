@@ -514,6 +514,7 @@ import {
       hasChallenge: Boolean(challenge),
       hasUserId: Boolean(userId),
       authenticatorAttachment: publicKey?.authenticatorSelection?.authenticatorAttachment,
+      attestation: publicKey?.attestation,
       googleLegacyAppidSupport: publicKey?.extensions?.googleLegacyAppidSupport === true,
     });
   }
@@ -607,6 +608,8 @@ import {
         return `Pass 未接管${opLabel}，本次改由浏览器原生处理：网站请求外置安全密钥`;
       case "google-legacy-appid-request":
         return `Pass 未接管${opLabel}，本次改由浏览器原生处理：Google 请求旧式外置安全密钥`;
+      case "attestation-required-by-rp":
+        return `Pass 未接管${opLabel}，本次改由浏览器原生处理：网站要求可验证认证器证明`;
       case "missing-challenge-or-user-id":
       case "missing-challenge":
         return `Pass 未接管${opLabel}，本次改由浏览器原生处理：网站请求参数不完整`;

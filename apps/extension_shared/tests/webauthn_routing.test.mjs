@@ -47,6 +47,19 @@ test("Google Legacy AppID 注册必须交给浏览器的 U2F 外置认证器", (
   );
 });
 
+test("RP 要求 direct 或 enterprise 证明时交给浏览器真实认证器", () => {
+  for (const attestation of ["direct", "enterprise"]) {
+    assert.deepEqual(
+      explainCreateManageability({ hasChallenge: true, hasUserId: true, attestation }),
+      { manageable: false, reason: "attestation-required-by-rp" },
+    );
+  }
+  assert.deepEqual(
+    explainCreateManageability({ hasChallenge: true, hasUserId: true, attestation: "none" }),
+    { manageable: true, reason: "managed-by-pass" },
+  );
+});
+
 test("Pass 通信或超时失败不会静默回退到浏览器原生通行密钥", () => {
   assert.equal(shouldFallbackToBrowser({ code: "PASSKEY_NOT_FOUND" }), true);
   assert.equal(shouldFallbackToBrowser({ code: "PASSKEY_USE_BROWSER" }), true);
