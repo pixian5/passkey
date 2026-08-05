@@ -16,6 +16,12 @@ export function explainCreateManageability({
     return { manageable: false, reason: "google-legacy-appid-request" };
   }
 
+  // Pass has no certified attestation key or metadata chain. Let Chrome use
+  // the real system authenticator when the RP explicitly requires proof.
+  if (["direct", "enterprise"].includes(String(attestation || "").toLowerCase())) {
+    return { manageable: false, reason: "attestation-required-by-rp" };
+  }
+
   if (String(authenticatorAttachment || "").toLowerCase() === "cross-platform") {
     return { manageable: false, reason: "cross-platform-requested" };
   }

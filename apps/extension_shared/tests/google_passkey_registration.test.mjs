@@ -35,7 +35,7 @@ globalThis.chrome = {
 
 const { handlePasskeyBridgeOperation } = await import("../passkey_store.js");
 
-test("Google 风格 direct 请求返回 packed 自证明并通过独立 WebAuthn 服务端验签", async () => {
+test("Google 风格 direct 请求的托管实现保持匿名证明协议正确", async () => {
   const challenge = Buffer.from("google-passkey-registration-challenge").toString("base64url");
   const userId = Buffer.from("google-user-id").toString("base64url");
   const bridgeResponse = await handlePasskeyBridgeOperation({
@@ -70,7 +70,7 @@ test("Google 风格 direct 请求返回 packed 自证明并通过独立 WebAuthn
 
   assert.equal(bridgeResponse.ok, true);
   const credential = bridgeResponse.result.credential;
-  assert.equal(credential.attestationFormat, "packed");
+  assert.equal(credential.attestationFormat, "none");
   assert.deepEqual(credential.clientExtensionResults, {
     credProps: { rk: true },
   });
@@ -99,6 +99,6 @@ test("Google 风格 direct 请求返回 packed 自证明并通过独立 WebAuthn
 
   assert.equal(verification.verified, true);
   assert.ok(verification.registrationInfo);
-  assert.equal(verification.registrationInfo.fmt, "packed");
+  assert.equal(verification.registrationInfo.fmt, "none");
   assert.equal(verification.registrationInfo.aaguid, "00000000-0000-0000-0000-000000000000");
 });
