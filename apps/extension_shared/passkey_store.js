@@ -196,13 +196,13 @@ async function createManagedCredential({ origin, host, publicKey }) {
     cosePublicKey
   );
 
-  const attestationObject = cborEncode(
-    new Map([
-      ["fmt", "none"],
-      ["authData", authData],
-      ["attStmt", new Map()],
-    ])
-  );
+  const { attestationObject, format: attestationFormat } = await buildManagedAttestationObject({
+    requestedAttestation: publicKey?.attestation,
+    alg: selectedAlg,
+    privateKey: keyPair.privateKey,
+    authData,
+    clientDataJSON,
+  });
 
   const now = Date.now();
   nextPasskeys.push({
@@ -245,6 +245,7 @@ async function createManagedCredential({ origin, host, publicKey }) {
         publicKeyAlgorithm: selectedAlg,
         transports: ["internal"],
       },
+      attestationFormat,
       clientExtensionResults,
     },
     accountHint: {
@@ -255,6 +256,45 @@ async function createManagedCredential({ origin, host, publicKey }) {
     },
     createMode: existing ? "replaced" : "created",
     createCompatMethod,
+  };
+}
+
+// A request for direct attestation must not be answered with fmt="none". Pass
+// owns the credential private key, so it can return the standards-compliant
+// Packed self attestation without introducing an external attestation CA.
+export async function buildManagedAttestationObject({
+  requestedAttestation,
+  alg,
+  privateKey,
+  authData,
+  clientDataJSON,
+}) {
+  const wantsDirectAttestation = ["direct", "enterprise"].includes(
+    String(requestedAttestation || "").trim().toLowerCase()
+  );
+  if (!wantsDirectAttestation) {
+    return {
+      format: "none",
+      attestationObject: cborEncode(new Map([
+        ["fmt", "none"],
+        ["authData", authData],
+        ["attStmt", new Map()],
+      ])),
+    };
+  }
+
+  const signedPayload = concatBytes(authData, await sha256(clientDataJSON));
+  const signature = await signManagedAssertion(normalizeManagedAlg(alg), privateKey, signedPayload);
+  return {
+    format: "packed",
+    attestationObject: cborEncode(new Map([
+      ["fmt", "packed"],
+      ["authData", authData],
+      ["attStmt", new Map([
+        ["alg", normalizeManagedAlg(alg)],
+        ["sig", signature],
+      ])],
+    ])),
   };
 }
 

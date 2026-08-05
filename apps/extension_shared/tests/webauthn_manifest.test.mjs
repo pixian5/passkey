@@ -38,3 +38,8 @@ test("Chrome 弹窗包含注册诊断控件，和打包脚本保持一致", asyn
   assert.match(chromePopup, /id="copyPasskeyCreateDiagnostic"/);
   assert.match(sharedPopup, /id="copyPasskeyCreateDiagnostic"/);
 });
+
+test("Chrome 不声明未实现的远程桌面 WebAuthn 代理", async () => {
+  const chromeManifest = await readManifest("apps/extension_chrome_web/manifest.json");
+  assert.equal(chromeManifest.permissions.includes("webAuthenticationProxy"), false);
+});

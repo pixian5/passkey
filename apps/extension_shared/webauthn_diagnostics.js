@@ -99,6 +99,7 @@ export function buildPasskeyBridgeDiagnostic({ payload, response, extensionVersi
       errorCode: safeString(response?.error?.code),
       createMode: safeString(result?.createMode),
       createCompatMethod: safeString(result?.createCompatMethod),
+      attestationFormat: safeString(result?.credential?.attestationFormat),
       authenticatorData: getAuthenticatorDataSummary(result?.credential),
       publicKeyAlgorithm: Number(result?.credential?.response?.publicKeyAlgorithm) || null,
       transports: Array.isArray(result?.credential?.response?.transports)

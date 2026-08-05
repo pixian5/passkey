@@ -37,6 +37,7 @@ test("注册诊断只保留协议元数据，不泄露挑战、用户或凭据�
       result: {
         createMode: "created",
         credential: {
+          attestationFormat: "packed",
           id: "do-not-log-id",
           response: {
             authenticatorDataB64u: authenticatorData,
@@ -55,6 +56,7 @@ test("注册诊断只保留协议元数据，不泄露挑战、用户或凭据�
   assert.equal(diagnostic.response.authenticatorData.flags, "0x5d");
   assert.equal(diagnostic.response.authenticatorData.aaguid, "b8e4344b1b504ea1b4a9d0ba20a007a6");
   assert.equal(diagnostic.response.authenticatorData.credentialIdLength, 32);
+  assert.equal(diagnostic.response.attestationFormat, "packed");
 });
 
 test("优先返回最近一次注册而不是断言诊断", () => {

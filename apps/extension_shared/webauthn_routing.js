@@ -1,6 +1,18 @@
-export function explainCreateManageability({ hasChallenge, hasUserId, authenticatorAttachment } = {}) {
+export function explainCreateManageability({
+  hasChallenge,
+  hasUserId,
+  authenticatorAttachment,
+  googleLegacyAppidSupport,
+} = {}) {
   if (!hasChallenge || !hasUserId) {
     return { manageable: false, reason: "missing-challenge-or-user-id" };
+  }
+
+  // Google's legacy AppID extension turns create() into a roaming U2F
+  // registration bound to its gstatic AppID. A platform credential cannot
+  // satisfy that contract, so leave the request to Chrome.
+  if (googleLegacyAppidSupport === true) {
+    return { manageable: false, reason: "google-legacy-appid-request" };
   }
 
   if (String(authenticatorAttachment || "").toLowerCase() === "cross-platform") {

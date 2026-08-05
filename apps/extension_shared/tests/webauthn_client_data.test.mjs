@@ -84,3 +84,14 @@ test("Google 请求 credProps 时声明已创建可发现凭据", () => {
   });
   assert.deepEqual(buildCreateClientExtensionResults({}), {});
 });
+
+test("Google Legacy AppID 是路由输入而不是客户端扩展输出", () => {
+  assert.deepEqual(buildCreateClientExtensionResults({ googleLegacyAppidSupport: true }), {});
+  assert.deepEqual(buildCreateClientExtensionResults({ googleLegacyAppidSupport: false }), {});
+});
+
+test("Google 请求 AppID 排除检查时显式报告未处理外部 AppID", () => {
+  assert.deepEqual(buildCreateClientExtensionResults({ appidExclude: "https://legacy.example" }), {
+    appidExclude: false,
+  });
+});

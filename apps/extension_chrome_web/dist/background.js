@@ -1006,6 +1006,9 @@
     if (extensions?.credProps === true) {
       results.credProps = { rk: true };
     }
+    if (Object.prototype.hasOwnProperty.call(extensions || {}, "appidExclude")) {
+      results.appidExclude = false;
+    }
     return results;
   }
 
@@ -1190,13 +1193,13 @@
       credentialId,
       cosePublicKey
     );
-    const attestationObject = cborEncode(
-      /* @__PURE__ */ new Map([
-        ["fmt", "none"],
-        ["authData", authData],
-        ["attStmt", /* @__PURE__ */ new Map()]
-      ])
-    );
+    const { attestationObject, format: attestationFormat } = await buildManagedAttestationObject({
+      requestedAttestation: publicKey?.attestation,
+      alg: selectedAlg,
+      privateKey: keyPair.privateKey,
+      authData,
+      clientDataJSON
+    });
     const now = Date.now();
     nextPasskeys.push({
       credentialIdB64u,
@@ -1237,6 +1240,7 @@
           publicKeyAlgorithm: selectedAlg,
           transports: ["internal"]
         },
+        attestationFormat,
         clientExtensionResults
       },
       accountHint: {
@@ -1247,6 +1251,40 @@
       },
       createMode: existing ? "replaced" : "created",
       createCompatMethod
+    };
+  }
+  async function buildManagedAttestationObject({
+    requestedAttestation,
+    alg,
+    privateKey,
+    authData,
+    clientDataJSON
+  }) {
+    const wantsDirectAttestation = ["direct", "enterprise"].includes(
+      String(requestedAttestation || "").trim().toLowerCase()
+    );
+    if (!wantsDirectAttestation) {
+      return {
+        format: "none",
+        attestationObject: cborEncode(/* @__PURE__ */ new Map([
+          ["fmt", "none"],
+          ["authData", authData],
+          ["attStmt", /* @__PURE__ */ new Map()]
+        ]))
+      };
+    }
+    const signedPayload = concatBytes(authData, await sha256(clientDataJSON));
+    const signature = await signManagedAssertion(normalizeManagedAlg(alg), privateKey, signedPayload);
+    return {
+      format: "packed",
+      attestationObject: cborEncode(/* @__PURE__ */ new Map([
+        ["fmt", "packed"],
+        ["authData", authData],
+        ["attStmt", /* @__PURE__ */ new Map([
+          ["alg", normalizeManagedAlg(alg)],
+          ["sig", signature]
+        ])]
+      ]))
     };
   }
   function pickLatestPasskeyForAccount(passkeys, rpId, userName, userHandleB64u = "") {
@@ -1767,7 +1805,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.5.1";
+  var PASS_EXTENSION_VERSION = "1.5.2";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 12;
@@ -1858,6 +1896,7 @@
         errorCode: safeString(response?.error?.code),
         createMode: safeString(result?.createMode),
         createCompatMethod: safeString(result?.createCompatMethod),
+        attestationFormat: safeString(result?.credential?.attestationFormat),
         authenticatorData: getAuthenticatorDataSummary(result?.credential),
         publicKeyAlgorithm: Number(result?.credential?.response?.publicKeyAlgorithm) || null,
         transports: Array.isArray(result?.credential?.response?.transports) ? result.credential.response.transports.map(safeString) : [],

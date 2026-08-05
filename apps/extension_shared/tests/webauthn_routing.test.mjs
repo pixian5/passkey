@@ -28,6 +28,25 @@ test("创建外置安全密钥和缺失 challenge 的请求仍由浏览器处理
   });
 });
 
+test("Google Legacy AppID 注册必须交给浏览器的 U2F 外置认证器", () => {
+  assert.deepEqual(
+    explainCreateManageability({
+      hasChallenge: true,
+      hasUserId: true,
+      googleLegacyAppidSupport: true,
+    }),
+    { manageable: false, reason: "google-legacy-appid-request" },
+  );
+  assert.deepEqual(
+    explainCreateManageability({
+      hasChallenge: true,
+      hasUserId: true,
+      googleLegacyAppidSupport: false,
+    }),
+    { manageable: true, reason: "managed-by-pass" },
+  );
+});
+
 test("Pass 通信或超时失败不会静默回退到浏览器原生通行密钥", () => {
   assert.equal(shouldFallbackToBrowser({ code: "PASSKEY_NOT_FOUND" }), true);
   assert.equal(shouldFallbackToBrowser({ code: "PASSKEY_USE_BROWSER" }), true);

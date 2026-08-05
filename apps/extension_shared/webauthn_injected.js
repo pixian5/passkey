@@ -397,6 +397,7 @@ import {
       hasChallenge: Boolean(challenge),
       hasUserId: Boolean(userId),
       authenticatorAttachment: publicKey?.authenticatorSelection?.authenticatorAttachment,
+      googleLegacyAppidSupport: publicKey?.extensions?.googleLegacyAppidSupport === true,
     });
   }
 
@@ -487,6 +488,8 @@ import {
     switch (String(reason || "")) {
       case "cross-platform-requested":
         return `Pass 未接管${opLabel}，本次改由浏览器原生处理：网站请求外置安全密钥`;
+      case "google-legacy-appid-request":
+        return `Pass 未接管${opLabel}，本次改由浏览器原生处理：Google 请求旧式外置安全密钥`;
       case "missing-challenge-or-user-id":
       case "missing-challenge":
         return `Pass 未接管${opLabel}，本次改由浏览器原生处理：网站请求参数不完整`;

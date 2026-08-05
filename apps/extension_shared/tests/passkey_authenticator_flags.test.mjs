@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MANAGED_AAGUID, buildManagedAuthenticatorFlags } from "../passkey_store.js";
+import {
+  MANAGED_AAGUID,
+  buildManagedAuthenticatorFlags,
+  buildManagedAttestationObject,
+} from "../passkey_store.js";
 
 test("托管认证器使用稳定的非零 UUID AAGUID", () => {
   assert.deepEqual([...MANAGED_AAGUID], [
@@ -28,4 +32,41 @@ test("同步通行密钥断言保留 BE 和 BS", () => {
 test("旧的设备绑定通行密钥保持原有断言标志", () => {
   assert.equal(buildManagedAuthenticatorFlags(), 0x05);
   assert.equal(buildManagedAuthenticatorFlags({ backupState: true }), 0x05);
+});
+
+test("网站请求 direct 证明时返回 Packed 自证明", async () => {
+  const keyPair = await crypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign", "verify"]
+  );
+  const result = await buildManagedAttestationObject({
+    requestedAttestation: "direct",
+    alg: -7,
+    privateKey: keyPair.privateKey,
+    authData: new Uint8Array(37),
+    clientDataJSON: new TextEncoder().encode('{"type":"webauthn.create"}'),
+  });
+
+  assert.equal(result.format, "packed");
+  assert.match(new TextDecoder().decode(result.attestationObject), /packed/);
+  assert.match(new TextDecoder().decode(result.attestationObject), /sig/);
+});
+
+test("网站未请求 direct 证明时保留 none 格式", async () => {
+  const keyPair = await crypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign", "verify"]
+  );
+  const result = await buildManagedAttestationObject({
+    requestedAttestation: "none",
+    alg: -7,
+    privateKey: keyPair.privateKey,
+    authData: new Uint8Array(37),
+    clientDataJSON: new Uint8Array(),
+  });
+
+  assert.equal(result.format, "none");
+  assert.match(new TextDecoder().decode(result.attestationObject), /none/);
 });
