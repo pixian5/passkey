@@ -1173,7 +1173,13 @@
       credentialId,
       cosePublicKey
     );
-    const { attestationObject, format: attestationFormat } = await buildManagedAttestationObject({ authData });
+    const { attestationObject, format: attestationFormat } = await buildManagedAttestationObject({
+      requestedAttestation: publicKey?.attestation,
+      alg: selectedAlg,
+      privateKey: keyPair.privateKey,
+      authData,
+      clientDataJSON
+    });
     const now = Date.now();
     nextPasskeys.push({
       credentialIdB64u,
@@ -1227,7 +1233,31 @@
       createCompatMethod
     };
   }
-  async function buildManagedAttestationObject({ authData }) {
+  async function buildManagedAttestationObject({
+    requestedAttestation,
+    alg,
+    privateKey,
+    authData,
+    clientDataJSON
+  }) {
+    const wantsDirect = ["direct", "enterprise"].includes(
+      String(requestedAttestation || "").trim().toLowerCase()
+    );
+    if (wantsDirect && privateKey && clientDataJSON) {
+      const signedPayload = concatBytes(authData, await sha256(clientDataJSON));
+      const signature = await signManagedAssertion(normalizeManagedAlg(alg), privateKey, signedPayload);
+      return {
+        format: "packed",
+        attestationObject: cborEncode(/* @__PURE__ */ new Map([
+          ["fmt", "packed"],
+          ["authData", authData],
+          ["attStmt", /* @__PURE__ */ new Map([
+            ["alg", normalizeManagedAlg(alg)],
+            ["sig", signature]
+          ])]
+        ]))
+      };
+    }
     return {
       format: "none",
       attestationObject: cborEncode(/* @__PURE__ */ new Map([
@@ -1755,7 +1785,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.5.6";
+  var PASS_EXTENSION_VERSION = "1.5.7";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 40;

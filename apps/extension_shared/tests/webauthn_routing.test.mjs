@@ -17,6 +17,13 @@ test("读取通行密钥不因网站给出的 transport 提示跳过 Pass", () =
   );
 });
 
+test("Google direct 注册仍由 Pass 生成自证明", () => {
+  assert.deepEqual(
+    explainCreateManageability({ hasChallenge: true, hasUserId: true, attestation: "direct" }),
+    { manageable: true, reason: "managed-by-pass" },
+  );
+});
+
 test("创建外置安全密钥和缺失 challenge 的请求仍由浏览器处理", () => {
   assert.deepEqual(
     explainCreateManageability({ hasChallenge: true, hasUserId: true, authenticatorAttachment: "cross-platform" }),
@@ -47,11 +54,11 @@ test("Google Legacy AppID 注册必须交给浏览器的 U2F 外置认证器", (
   );
 });
 
-test("RP 要求 direct 或 enterprise 证明时交给浏览器真实认证器", () => {
+test("RP 要求 direct 或 enterprise 证明时由 Pass 返回自证明", () => {
   for (const attestation of ["direct", "enterprise"]) {
     assert.deepEqual(
       explainCreateManageability({ hasChallenge: true, hasUserId: true, attestation }),
-      { manageable: false, reason: "attestation-required-by-rp" },
+      { manageable: true, reason: "managed-by-pass" },
     );
   }
   assert.deepEqual(
