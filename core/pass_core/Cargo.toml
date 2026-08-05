@@ -11,5 +11,5 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-version = "1.5.7"
+version = "1.5.8"
 license = "MIT"
