@@ -1017,24 +1017,7 @@
   var CREATE_COMPAT_USER_NAME_FALLBACK = "user_name_fallback";
   var CREATE_COMPAT_RS256 = "rs256";
   var CREATE_COMPAT_USER_NAME_FALLBACK_RS256 = "user_name_fallback+rs256";
-  var MANAGED_AAGUID = new Uint8Array([
-    184,
-    228,
-    52,
-    75,
-    27,
-    80,
-    78,
-    161,
-    180,
-    169,
-    208,
-    186,
-    32,
-    160,
-    7,
-    166
-  ]);
+  var ANONYMOUS_AAGUID = new Uint8Array(16);
   var PASSKEY_LOG_PREFIX = "[Pass passkey_store]";
   var AUTH_DATA_FLAG_UP = 1;
   var AUTH_DATA_FLAG_UV = 4;
@@ -1185,18 +1168,12 @@
         includeAttestedCredentialData: true
       })]),
       uint32be(0),
-      MANAGED_AAGUID,
+      ANONYMOUS_AAGUID,
       uint16be(credentialId.length),
       credentialId,
       cosePublicKey
     );
-    const { attestationObject, format: attestationFormat } = await buildManagedAttestationObject({
-      requestedAttestation: publicKey?.attestation,
-      alg: selectedAlg,
-      privateKey: keyPair.privateKey,
-      authData,
-      clientDataJSON
-    });
+    const { attestationObject, format: attestationFormat } = await buildManagedAttestationObject({ authData });
     const now = Date.now();
     nextPasskeys.push({
       credentialIdB64u,
@@ -1250,37 +1227,13 @@
       createCompatMethod
     };
   }
-  async function buildManagedAttestationObject({
-    requestedAttestation,
-    alg,
-    privateKey,
-    authData,
-    clientDataJSON
-  }) {
-    const wantsDirectAttestation = ["direct", "enterprise"].includes(
-      String(requestedAttestation || "").trim().toLowerCase()
-    );
-    if (!wantsDirectAttestation) {
-      return {
-        format: "none",
-        attestationObject: cborEncode(/* @__PURE__ */ new Map([
-          ["fmt", "none"],
-          ["authData", authData],
-          ["attStmt", /* @__PURE__ */ new Map()]
-        ]))
-      };
-    }
-    const signedPayload = concatBytes(authData, await sha256(clientDataJSON));
-    const signature = await signManagedAssertion(normalizeManagedAlg(alg), privateKey, signedPayload);
+  async function buildManagedAttestationObject({ authData }) {
     return {
-      format: "packed",
+      format: "none",
       attestationObject: cborEncode(/* @__PURE__ */ new Map([
-        ["fmt", "packed"],
+        ["fmt", "none"],
         ["authData", authData],
-        ["attStmt", /* @__PURE__ */ new Map([
-          ["alg", normalizeManagedAlg(alg)],
-          ["sig", signature]
-        ])]
+        ["attStmt", /* @__PURE__ */ new Map()]
       ]))
     };
   }
@@ -1802,7 +1755,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.5.4";
+  var PASS_EXTENSION_VERSION = "1.5.5";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 40;
@@ -1868,6 +1821,7 @@
     };
     if (flags & 64 && bytes.length >= 55) {
       summary.aaguid = bytesToHex(bytes.slice(37, 53));
+      summary.aaguidIsZero = bytes.slice(37, 53).every((value) => value === 0);
       summary.credentialIdLength = bytes[53] << 8 | bytes[54];
     }
     return summary;
@@ -1946,6 +1900,7 @@
       responseHasAttestationObject: byteLengthOfBase64url(credential?.response?.attestationObjectB64u) > 0,
       responseHasAuthenticatorData: byteLengthOfBase64url(credential?.response?.authenticatorDataB64u) > 0,
       responseHasPublicKey: byteLengthOfBase64url(credential?.response?.publicKeyB64u) > 0,
+      anonymousAttestationIsConsistent: safeString(credential?.attestationFormat) !== "none" || authenticatorData.aaguidIsZero === true,
       createModePresent: Boolean(safeString(result?.createMode)),
       nonStandardClientExtensionResultNames: clientExtensionResultNames.filter((name) => !recognizedOutputs.has(name))
     };
@@ -1990,6 +1945,7 @@
         authenticatorAttachment: safeString(credential?.authenticatorAttachment),
         rawIdByteLength: byteLengthOfBase64url(credential?.rawIdB64u || credential?.id),
         attestationFormat: safeString(credential?.attestationFormat),
+        anonymousAttestation: safeString(credential?.attestationFormat) === "none" && authenticatorData.aaguidIsZero === true,
         clientData,
         authenticatorData,
         byteLengths: {

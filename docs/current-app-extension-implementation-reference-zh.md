@@ -1,7 +1,7 @@
 # Pass 当前实现与设计决策基准
 
 > 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源；本轮完成后由版本脚本递增。
-> 当前为 `1.5.4`。
+> 当前为 `1.5.5`。
 >
 > 使用规则：当历史设计稿、路线图、旧 Swift 代码或界面文字与本文冲突时，先以本文和自动化门禁为准，再回到代码核对。没有测试或代码依据时，不得写“完整”“完全一致”“所有端均支持”。
 
@@ -291,12 +291,13 @@ Chrome 有管理页工作区快照和后台同步安全快照两种本地来源�
 27. 填充以用户当前聚焦的输入框为准：只填写该字段及同一表单中的配对字段。分步登录页只有用户名或密码字段时，单字段填充就是成功，不能为了补全另一字段写入页面中其他表单的输入框。
 28. WebAuthn 收集客户端数据必须使用认证调用所在框架的有效来源：同源 iframe 不能仅因 `window.top !== window.self` 被误标为跨源，`about:blank` 子框架继承父来源；真正跨源时必须同时返回 `crossOrigin: true` 和 `topOrigin`，同源请求显式返回 `crossOrigin: false`。网站请求 `credProps` 时返回 `rk: true`。扩展只提示“已生成，等待网站确认”，不能在 RP 服务端接受注册前宣称最终保存成功。
 29. 扩展构造的 `AuthenticatorAttestationResponse` 不能只修改原型：必须提供自有的 `getAuthenticatorData()`、`getPublicKey()`、`getPublicKeyAlgorithm()`、`getTransports()` 和 `toJSON()`，否则 Google 等网站调用原生原型方法时会因浏览器品牌校验失败。创建响应同时返回 SPKI 公钥、COSE 算法和认证数据；`PublicKeyCredential.toJSON()` 必须包含 `authenticatorAttachment` 及完整响应字段。
-30. Pass 新建的托管通行密钥是同步型、多设备凭据：注册认证数据使用 `UP|UV|BE|BS|AT`（`0x5d`），断言使用 `UP|UV|BE|BS`（`0x1d`），并写入 Pass 固定的非零 UUID AAGUID；全零 AAGUID 表示未标识认证器，会被部分 RP（包括 Google）拒绝。`backupEligible`、`backupState` 随凭据同步并在合并时保守保留；创建这些字段前的旧凭据继续使用原有设备绑定标志，避免注册与后续断言声明不一致。
+30. Pass 新建的托管通行密钥是同步型、多设备凭据：注册认证数据使用 `UP|UV|BE|BS|AT`（`0x5d`），断言使用 `UP|UV|BE|BS`（`0x1d`）。注册证明使用匿名 `fmt: "none"` 与全零 AAGUID，不声称未经 FIDO Metadata 登记的认证器型号；`backupEligible`、`backupState` 随凭据同步并在合并时保守保留，创建这些字段前的旧凭据继续使用原有设备绑定标志。
 31. 当 RP（例如 Google）接受 WebAuthn API 返回值却在服务端拒绝注册时，Pass 在 `chrome.storage.session` 保存最近 40 个脱敏诊断事件，并按随机会话 ID 聚合同一次注册时间线。时间线包含请求字段/字节长度、扩展输入、clientData 解析摘要、认证数据标志、响应字段长度、算法、客户端扩展输出、本地一致性检查、页面收到的凭据/API 调用，以及返回凭据后 30 秒内的 `error` / `unhandledrejection`（例如 Google `RpcError`）。弹窗“通行密钥”页可先清空诊断再重试，并复制完整报告。禁止记录 challenge、用户 ID、凭据 ID、密钥、完整 clientData；页面错误中的 URL、邮箱和长令牌也必须脱敏。
-32. 注册请求指定 `attestation: "direct"` 或 `"enterprise"` 时，不能固定返回 `fmt: "none"`；Pass 必须用新建凭据私钥对 `authData || hash(clientDataJSON)` 签名，返回 Packed self-attestation。`none` 与未指定证明的请求仍返回 `fmt: "none"`。
+32. `attestation: "direct"` 或 `"enterprise"` 是 RP 的证明偏好，不代表软件认证器必须伪造厂商身份。Pass 没有受信任的认证器证明证书链和 FIDO Metadata 条目，因此所有注册请求都返回匿名 `fmt: "none"`、空 `attStmt` 与全零 AAGUID；不得使用凭据私钥构造带自定义产品 AAGUID 的 Packed self-attestation，也不得冒用其他产品的 AAGUID。
 33. `googleLegacyAppidSupport` 是 Google 的旧 U2F 路由输入，不是客户端扩展输出。值为 `true` 时，协议要求使用漫游认证器并绑定 Google 固定 AppID；Pass 必须放弃接管并交给 Chrome 原生处理。值为 `false` 时仍可按普通平台 Passkey 创建，但不得把该输入伪造成 `getClientExtensionResults()` 输出。
 34. `appidExclude` 是创建请求的旧 U2F AppID 排除检查输入，不属于 `AuthenticationExtensionsClientOutputs`。Pass 只在自身的 RP 凭据库执行 `excludeCredentials`，但不得把未处理外部 AppID 伪造成 `appidExclude: false` 返回给页面；这会偏离 Chrome 输出并可能被 Google 拒绝。
 35. Chrome 的 `webAuthenticationProxy` 是远程桌面专用的全局 WebAuthn 代理；当前 Pass 采用页面桥接且没有代理 attach/detach 生命周期，因此 manifest 不声明该权限。
+36. Google 注册失败的诊断必须区分浏览器返回阶段与 RP 服务端确认阶段。Google 的 `FinishPasskeyEnrollment` 只消费 `clientDataJSON`、`attestationObject`、transports、UV 结果和 authenticator attachment；当本地结构检查全部通过且随后出现 `RpcError` 时，应优先核查证明格式、AAGUID 与认证器元数据，而不是反复修改 Google 未提交的 `rawId` 或客户端扩展输出。诊断报告记录 `aaguidIsZero`、`anonymousAttestation` 和 `anonymousAttestationIsConsistent`，便于确认匿名证明组合是否一致。
 
 ## 13. 验证入口和当前基线
 
@@ -328,7 +329,7 @@ python3 -m http.server 8766 --bind 127.0.0.1
 
 版本 `1.4.4` 的当前复核基线：扩展测试 112 项、Core Rust 测试 41 项与 JS/Rust 合并对拍 48 组、Tauri 33 项、同步服务器 Python 测试 37 项及脚本/端到端测试 26 项、Docker Web 测试 17 项，以及 Swift `swift build`、Safari Xcode 构建、Android 4 项单元测试与 debug APK 构建、三套 Clippy/Rust fmt、三套 `cargo audit`、actionlint 和 72/72 命令矩阵均通过。Android 本机验证使用 JDK 17、Android SDK Platform 36；由于没有 Android 14+ 真机，不能宣称系统 Credential Manager 交互已实测。
 
-Tauri 审计仍报告 Tauri/GTK 依赖树中的 20 条上游未维护/unsound warning，但没有已知 vulnerability；CI 的 `cargo audit` 为漏洞硬门禁，不使用 `continue-on-error`。Docker 镜像生命周期实测覆盖首次启动、普通重启、测试监护进程下的 `pass-web` 子进程被 `SIGKILL` 后容器 `RestartCount` 增加、强制重建和 `/healthz`。不能用容器内 `kill -9 1` 代替该验证，因为 PID namespace init 的信号语义可能让命令返回成功但主进程不退出。
+Tauri 审计仍报告 Tauri/GTK 依赖树中的 21 条上游未维护/unsound warning，但没有已知 vulnerability；CI 的 `cargo audit` 为漏洞硬门禁，不使用 `continue-on-error`。Docker 镜像生命周期实测覆盖首次启动、普通重启、测试监护进程下的 `pass-web` 子进程被 `SIGKILL` 后容器 `RestartCount` 增加、强制重建和 `/healthz`。不能用容器内 `kill -9 1` 代替该验证，因为 PID namespace init 的信号语义可能让命令返回成功但主进程不退出。
 
 同步报告统一保留兼容字段并增加报告版本、安全结果、阶段、实际主源、重试状态、会话/操作 ID、错误码和 revision。Chrome 的成功、预览、安全阻断、拉取失败和本地并发变化报告均由同一构造器产生，并通过 JSON Schema 测试；拉取期间发现本地并发修改时返回 `checkingLocalConcurrency` 可重试报告。UI 可区分“已写本地”“已推送”“待补偿”及“已暂停”。Chrome 管理页的手动同步、自动同步、预览与补偿队列全部委托扩展后台 Service Worker；后台的加密 outbox、同步锁和多来源调度是唯一权威。后台同步快照已并入统一管理页列表并可恢复。
 

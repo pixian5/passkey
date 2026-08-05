@@ -15,12 +15,8 @@ const CREATE_COMPAT_STANDARD = "standard";
 const CREATE_COMPAT_USER_NAME_FALLBACK = "user_name_fallback";
 const CREATE_COMPAT_RS256 = "rs256";
 const CREATE_COMPAT_USER_NAME_FALLBACK_RS256 = "user_name_fallback+rs256";
-// Stable, product-owned UUID v4 AAGUID: b8e4344b-1b50-4ea1-b4a9-d0ba20a007a6.
-// A zero AAGUID means an unidentified authenticator and is rejected by some RPs.
-export const MANAGED_AAGUID = new Uint8Array([
-  0xb8, 0xe4, 0x34, 0x4b, 0x1b, 0x50, 0x4e, 0xa1,
-  0xb4, 0xa9, 0xd0, 0xba, 0x20, 0xa0, 0x07, 0xa6,
-]);
+// Anonymous attestation must not claim an unregistered authenticator model.
+export const ANONYMOUS_AAGUID = new Uint8Array(16);
 const PASSKEY_LOG_PREFIX = "[Pass passkey_store]";
 const AUTH_DATA_FLAG_UP = 0x01;
 const AUTH_DATA_FLAG_UV = 0x04;
@@ -190,19 +186,13 @@ async function createManagedCredential({ origin, host, publicKey }) {
       includeAttestedCredentialData: true,
     })]),
     uint32be(0),
-    MANAGED_AAGUID,
+    ANONYMOUS_AAGUID,
     uint16be(credentialId.length),
     credentialId,
     cosePublicKey
   );
 
-  const { attestationObject, format: attestationFormat } = await buildManagedAttestationObject({
-    requestedAttestation: publicKey?.attestation,
-    alg: selectedAlg,
-    privateKey: keyPair.privateKey,
-    authData,
-    clientDataJSON,
-  });
+  const { attestationObject, format: attestationFormat } = await buildManagedAttestationObject({ authData });
 
   const now = Date.now();
   nextPasskeys.push({
@@ -259,41 +249,15 @@ async function createManagedCredential({ origin, host, publicKey }) {
   };
 }
 
-// A request for direct attestation must not be answered with fmt="none". Pass
-// owns the credential private key, so it can return the standards-compliant
-// Packed self attestation without introducing an external attestation CA.
-export async function buildManagedAttestationObject({
-  requestedAttestation,
-  alg,
-  privateKey,
-  authData,
-  clientDataJSON,
-}) {
-  const wantsDirectAttestation = ["direct", "enterprise"].includes(
-    String(requestedAttestation || "").trim().toLowerCase()
-  );
-  if (!wantsDirectAttestation) {
-    return {
-      format: "none",
-      attestationObject: cborEncode(new Map([
-        ["fmt", "none"],
-        ["authData", authData],
-        ["attStmt", new Map()],
-      ])),
-    };
-  }
-
-  const signedPayload = concatBytes(authData, await sha256(clientDataJSON));
-  const signature = await signManagedAssertion(normalizeManagedAlg(alg), privateKey, signedPayload);
+// WebAuthn attestation conveyance is an RP preference. Without a certified
+// attestation key and metadata entry, Pass returns anonymous attestation.
+export async function buildManagedAttestationObject({ authData }) {
   return {
-    format: "packed",
+    format: "none",
     attestationObject: cborEncode(new Map([
-      ["fmt", "packed"],
+      ["fmt", "none"],
       ["authData", authData],
-      ["attStmt", new Map([
-        ["alg", normalizeManagedAlg(alg)],
-        ["sig", signature],
-      ])],
+      ["attStmt", new Map()],
     ])),
   };
 }
@@ -376,7 +340,7 @@ async function buildCreateResultFromStoredPasskey({
       includeAttestedCredentialData: true,
     })]),
     uint32be(signCount),
-    MANAGED_AAGUID,
+    ANONYMOUS_AAGUID,
     uint16be(credentialId.length),
     credentialId,
     cosePublicKey

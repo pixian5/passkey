@@ -13,8 +13,7 @@ import {
 test("注册诊断只保留协议元数据，不泄露挑战、用户或凭据标识", () => {
   const authenticatorData = Buffer.from([
     ...new Uint8Array(32), 0x5d, 0, 0, 0, 0,
-    0xb8, 0xe4, 0x34, 0x4b, 0x1b, 0x50, 0x4e, 0xa1,
-    0xb4, 0xa9, 0xd0, 0xba, 0x20, 0xa0, 0x07, 0xa6,
+    ...new Uint8Array(16),
     0, 32,
   ]).toString("base64url");
   const clientDataJSON = Buffer.from(JSON.stringify({
@@ -49,7 +48,7 @@ test("注册诊断只保留协议元数据，不泄露挑战、用户或凭据�
       result: {
         createMode: "created",
         credential: {
-          attestationFormat: "packed",
+          attestationFormat: "none",
           id: "do-not-log-id",
           rawIdB64u: rawId,
           type: "public-key",
@@ -72,9 +71,11 @@ test("注册诊断只保留协议元数据，不泄露挑战、用户或凭据�
   assert.equal(serialized.includes("do-not-log"), false);
   assert.equal(diagnostic.request.rpId, "google.com");
   assert.equal(diagnostic.response.authenticatorData.flags, "0x5d");
-  assert.equal(diagnostic.response.authenticatorData.aaguid, "b8e4344b1b504ea1b4a9d0ba20a007a6");
+  assert.equal(diagnostic.response.authenticatorData.aaguid, "00000000000000000000000000000000");
+  assert.equal(diagnostic.response.authenticatorData.aaguidIsZero, true);
   assert.equal(diagnostic.response.authenticatorData.credentialIdLength, 32);
-  assert.equal(diagnostic.response.attestationFormat, "packed");
+  assert.equal(diagnostic.response.attestationFormat, "none");
+  assert.equal(diagnostic.response.anonymousAttestation, true);
   assert.ok(diagnostic.request.challengeByteLength > 0);
   assert.equal(diagnostic.response.clientData.challengeByteLength, 32);
   assert.equal(diagnostic.response.clientData.origin, "https://myaccount.google.com");
@@ -82,6 +83,7 @@ test("注册诊断只保留协议元数据，不泄露挑战、用户或凭据�
   assert.equal(diagnostic.response.byteLengths.publicKey, 91);
   assert.deepEqual(diagnostic.response.clientExtensionResults, { names: ["credProps"], credPropsRk: true });
   assert.deepEqual(diagnostic.selfChecks.nonStandardClientExtensionResultNames, []);
+  assert.equal(diagnostic.selfChecks.anonymousAttestationIsConsistent, true);
 });
 
 test("页面错误诊断会脱敏 URL、邮箱和长令牌", () => {

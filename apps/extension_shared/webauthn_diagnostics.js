@@ -75,6 +75,7 @@ function getAuthenticatorDataSummary(credential) {
   };
   if (flags & 0x40 && bytes.length >= 55) {
     summary.aaguid = bytesToHex(bytes.slice(37, 53));
+    summary.aaguidIsZero = bytes.slice(37, 53).every((value) => value === 0);
     summary.credentialIdLength = (bytes[53] << 8) | bytes[54];
   }
   return summary;
@@ -166,6 +167,8 @@ function buildCreateSelfChecks({ payload, result, credential, clientData, authen
     responseHasAttestationObject: byteLengthOfBase64url(credential?.response?.attestationObjectB64u) > 0,
     responseHasAuthenticatorData: byteLengthOfBase64url(credential?.response?.authenticatorDataB64u) > 0,
     responseHasPublicKey: byteLengthOfBase64url(credential?.response?.publicKeyB64u) > 0,
+    anonymousAttestationIsConsistent: safeString(credential?.attestationFormat) !== "none"
+      || authenticatorData.aaguidIsZero === true,
     createModePresent: Boolean(safeString(result?.createMode)),
     nonStandardClientExtensionResultNames: clientExtensionResultNames.filter((name) => !recognizedOutputs.has(name)),
   };
@@ -213,6 +216,8 @@ export function buildPasskeyBridgeDiagnostic({ payload, response, extensionVersi
       authenticatorAttachment: safeString(credential?.authenticatorAttachment),
       rawIdByteLength: byteLengthOfBase64url(credential?.rawIdB64u || credential?.id),
       attestationFormat: safeString(credential?.attestationFormat),
+      anonymousAttestation: safeString(credential?.attestationFormat) === "none"
+        && authenticatorData.aaguidIsZero === true,
       clientData,
       authenticatorData,
       byteLengths: {
