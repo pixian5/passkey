@@ -90,8 +90,6 @@ test("Google Legacy AppID 是路由输入而不是客户端扩展输出", () => 
   assert.deepEqual(buildCreateClientExtensionResults({ googleLegacyAppidSupport: false }), {});
 });
 
-test("Google 请求 AppID 排除检查时显式报告未处理外部 AppID", () => {
-  assert.deepEqual(buildCreateClientExtensionResults({ appidExclude: "https://legacy.example" }), {
-    appidExclude: false,
-  });
+test("Google AppID 排除检查是输入，不伪造成客户端扩展输出", () => {
+  assert.deepEqual(buildCreateClientExtensionResults({ appidExclude: "https://legacy.example" }), {});
 });

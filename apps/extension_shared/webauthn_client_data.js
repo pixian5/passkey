@@ -94,11 +94,5 @@ export function buildCreateClientExtensionResults(extensions) {
   if (extensions?.credProps === true) {
     results.credProps = { rk: true };
   }
-  // Pass applies excludeCredentials against its RP-scoped credential store.
-  // It does not resolve a separate legacy U2F AppID, so report that fact
-  // explicitly instead of omitting the requested extension result.
-  if (Object.prototype.hasOwnProperty.call(extensions || {}, "appidExclude")) {
-    results.appidExclude = false;
-  }
   return results;
 }

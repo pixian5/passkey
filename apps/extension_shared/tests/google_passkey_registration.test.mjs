@@ -73,7 +73,6 @@ test("Google 风格 direct 注册响应通过独立 WebAuthn 服务端验签", a
   assert.equal(credential.attestationFormat, "packed");
   assert.deepEqual(credential.clientExtensionResults, {
     credProps: { rk: true },
-    appidExclude: false,
   });
 
   const verification = await verifyRegistrationResponse({

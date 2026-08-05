@@ -1006,9 +1006,6 @@
     if (extensions?.credProps === true) {
       results.credProps = { rk: true };
     }
-    if (Object.prototype.hasOwnProperty.call(extensions || {}, "appidExclude")) {
-      results.appidExclude = false;
-    }
     return results;
   }
 
@@ -1805,7 +1802,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.5.2";
+  var PASS_EXTENSION_VERSION = "1.5.3";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 12;

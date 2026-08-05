@@ -1,7 +1,7 @@
 # Pass 当前实现与设计决策基准
 
 > 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源；本轮完成后由版本脚本递增。
-> 当前为 `1.5.2`。
+> 当前为 `1.5.3`。
 >
 > 使用规则：当历史设计稿、路线图、旧 Swift 代码或界面文字与本文冲突时，先以本文和自动化门禁为准，再回到代码核对。没有测试或代码依据时，不得写“完整”“完全一致”“所有端均支持”。
 
@@ -295,7 +295,7 @@ Chrome 有管理页工作区快照和后台同步安全快照两种本地来源�
 31. 当 RP（例如 Google）接受 WebAuthn API 返回值却在服务端拒绝注册时，Pass 在 `chrome.storage.session` 保存最近 12 次操作的脱敏协议诊断，弹窗“通行密钥”页可复制最近一次注册。诊断只含来源、RP、选项摘要、算法、认证数据标志和桥接结果，禁止记录 challenge、用户 ID、凭据 ID、密钥或完整 clientData。
 32. 注册请求指定 `attestation: "direct"` 或 `"enterprise"` 时，不能固定返回 `fmt: "none"`；Pass 必须用新建凭据私钥对 `authData || hash(clientDataJSON)` 签名，返回 Packed self-attestation。`none` 与未指定证明的请求仍返回 `fmt: "none"`。
 33. `googleLegacyAppidSupport` 是 Google 的旧 U2F 路由输入，不是客户端扩展输出。值为 `true` 时，协议要求使用漫游认证器并绑定 Google 固定 AppID；Pass 必须放弃接管并交给 Chrome 原生处理。值为 `false` 时仍可按普通平台 Passkey 创建，但不得把该输入伪造成 `getClientExtensionResults()` 输出。
-34. Google 同时可能请求 `appidExclude`。Pass 只在自身的 RP 凭据库执行 `excludeCredentials`，未处理外部旧 U2F AppID 时必须显式返回 `appidExclude: false`，不能遗漏结果或虚报已处理。
+34. `appidExclude` 是创建请求的旧 U2F AppID 排除检查输入，不属于 `AuthenticationExtensionsClientOutputs`。Pass 只在自身的 RP 凭据库执行 `excludeCredentials`，但不得把未处理外部 AppID 伪造成 `appidExclude: false` 返回给页面；这会偏离 Chrome 输出并可能被 Google 拒绝。
 35. Chrome 的 `webAuthenticationProxy` 是远程桌面专用的全局 WebAuthn 代理；当前 Pass 采用页面桥接且没有代理 attach/detach 生命周期，因此 manifest 不声明该权限。
 
 ## 13. 验证入口和当前基线
