@@ -333,6 +333,7 @@ button:active {
 .passkey-diagnostic-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 6px;
   margin: 0 0 8px;
 }
 

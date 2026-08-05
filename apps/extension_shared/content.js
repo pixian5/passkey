@@ -10,6 +10,7 @@ const WEB_AUTHN_BRIDGE_SOURCE = "pass-webauthn-bridge";
 const WEB_AUTHN_REQUEST_TYPE = "PASSKEY_REQUEST";
 const WEB_AUTHN_RESPONSE_TYPE = "PASSKEY_RESPONSE";
 const WEB_AUTHN_NOTICE_TYPE = "PASSKEY_NOTICE";
+const WEB_AUTHN_DIAGNOSTIC_TYPE = "PASSKEY_DIAGNOSTIC";
 const WEB_AUTHN_NOTICE_DOM_ATTR = "data-pass-webauthn-notice";
 const WEB_AUTHN_NOTICE_MAX_AGE_MS = 5000;
 const WEB_AUTHN_NOTICE_TOAST_DEDUPE_MS = 2500;
@@ -917,6 +918,10 @@ function onWebAuthnBridgeMessage(event) {
     handleWebAuthnBridgeNotice(data);
     return;
   }
+  if (data.type === WEB_AUTHN_DIAGNOSTIC_TYPE) {
+    forwardWebAuthnPageDiagnostic(data);
+    return;
+  }
   if (data.type !== WEB_AUTHN_REQUEST_TYPE) return;
 
   const requestId = String(data.requestId || "");
@@ -931,6 +936,7 @@ function onWebAuthnBridgeMessage(event) {
     // Page-provided context is diagnostic-only. The operation always uses the
     // isolated-world context above, which cannot be forged by the page.
     sourceContext: data.sourceContext,
+    diagnosticSessionId: requestId,
   };
 
   logPasskeyContent("bridge-request-received", {
@@ -941,6 +947,34 @@ function onWebAuthnBridgeMessage(event) {
   });
 
   void handleWebAuthnBridgeRequest(requestId, payload);
+}
+
+function forwardWebAuthnPageDiagnostic(data) {
+  if (!isRuntimeAvailable()) return;
+  const frameContext = resolveWebAuthnWindowContext(window);
+  const payload = {
+    operation: String(data?.operation || ""),
+    phase: String(data?.phase || ""),
+    diagnosticSessionId: String(data?.diagnosticSessionId || ""),
+    origin: frameContext.origin,
+    host: frameContext.host,
+    details: data?.details,
+  };
+  logPasskeyContent("page-diagnostic-forwarded", {
+    operation: payload.operation,
+    phase: payload.phase,
+    diagnosticSessionId: payload.diagnosticSessionId,
+  });
+  try {
+    chrome.runtime.sendMessage({
+      type: "PASS_PASSKEY_DIAGNOSTIC_EVENT",
+      payload,
+    }, () => {
+      void chrome.runtime.lastError;
+    });
+  } catch {
+    // Diagnostics must never interfere with the RP's WebAuthn flow.
+  }
 }
 
 function clearPendingWebAuthnNoticeAttr() {

@@ -92,6 +92,7 @@ const dom = {
   passkeySection: document.getElementById("passkeySection"),
   passkeyCurrentSiteOnly: document.getElementById("passkeyCurrentSiteOnly"),
   passkeySearch: document.getElementById("passkeySearch"),
+  clearPasskeyDiagnosticsBtn: document.getElementById("clearPasskeyDiagnostics"),
   copyPasskeyCreateDiagnosticBtn: document.getElementById("copyPasskeyCreateDiagnostic"),
   passkeyList: document.getElementById("passkeyList"),
   accountList: document.getElementById("accountList"),
@@ -339,6 +340,9 @@ function bindEvents() {
   dom.copyPasskeyCreateDiagnosticBtn.addEventListener("click", () => {
     void copyLatestPasskeyCreateDiagnostic();
   });
+  dom.clearPasskeyDiagnosticsBtn.addEventListener("click", () => {
+    void clearPasskeyDiagnostics();
+  });
   dom.accountSearch.addEventListener("input", renderAccounts);
   dom.passkeyCurrentSiteOnly.addEventListener("change", renderAccounts);
   dom.passkeySearch.addEventListener("input", renderAccounts);
@@ -354,9 +358,19 @@ async function copyLatestPasskeyCreateDiagnostic() {
       return;
     }
     await navigator.clipboard.writeText(JSON.stringify(response.diagnostic, null, 2));
-    setStatus("已复制最近注册诊断（不含 challenge、用户 ID、凭据 ID 或密钥）。");
+    setStatus(`已复制注册诊断时间线（${Number(response.diagnostic.eventCount || 0)} 个事件，不含敏感标识或密钥）。`);
   } catch (error) {
     setStatus(`复制注册诊断失败: ${error?.message || String(error || "未知错误")}`);
+  }
+}
+
+async function clearPasskeyDiagnostics() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "PASS_PASSKEY_CLEAR_DIAGNOSTICS" });
+    if (!response?.ok) throw new Error(response?.error || "未能清空诊断");
+    setStatus("注册诊断已清空。现在重试一次，再复制诊断时间线。");
+  } catch (error) {
+    setStatus(`清空注册诊断失败: ${error?.message || String(error || "未知错误")}`);
   }
 }
 

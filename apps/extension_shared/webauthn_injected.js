@@ -15,12 +15,15 @@ import {
   const REQUEST_TYPE = "PASSKEY_REQUEST";
   const RESPONSE_TYPE = "PASSKEY_RESPONSE";
   const NOTICE_TYPE = "PASSKEY_NOTICE";
+  const DIAGNOSTIC_TYPE = "PASSKEY_DIAGNOSTIC";
   const REQUEST_TIMEOUT_MS = 10000;
   const FALLBACK_NOTICE_DELAY_MS = 1200;
   const FALLBACK_NOTICE_DEDUPE_MS = 2500;
   const PASSKEY_LOG_PREFIX = "[Pass injected]";
+  const CREATE_ERROR_MONITOR_MS = 30000;
   let lastFallbackNoticeKey = "";
   let lastFallbackNoticeAt = 0;
+  let activeCreateDiagnostic = null;
 
   if (window.__passWebAuthnBridgeInstalled) {
     return;
@@ -56,6 +59,71 @@ import {
       // Ignore logging failures.
     }
   }
+
+  function postPageDiagnostic(diagnosticSessionId, phase, details = {}) {
+    if (!diagnosticSessionId) return;
+    try {
+      window.postMessage({
+        source: BRIDGE_SOURCE,
+        type: DIAGNOSTIC_TYPE,
+        operation: "create",
+        diagnosticSessionId,
+        phase,
+        details,
+      }, window.location.origin);
+    } catch {
+      // Diagnostics must never interfere with the RP's WebAuthn flow.
+    }
+  }
+
+  function activateCreateErrorMonitor(diagnosticSessionId) {
+    const now = Date.now();
+    activeCreateDiagnostic = {
+      diagnosticSessionId,
+      startedAtMs: now,
+      expiresAtMs: now + CREATE_ERROR_MONITOR_MS,
+    };
+  }
+
+  function currentCreateDiagnosticContext() {
+    if (!activeCreateDiagnostic || Date.now() > activeCreateDiagnostic.expiresAtMs) {
+      activeCreateDiagnostic = null;
+      return null;
+    }
+    return activeCreateDiagnostic;
+  }
+
+  function summarizePageError(reason) {
+    try {
+      const value = reason && typeof reason === "object" ? reason : {};
+      return {
+        constructor: String(value?.constructor?.name || typeof reason || ""),
+        name: String(value?.name || ""),
+        code: String(value?.code ?? ""),
+        message: String(value?.message || reason || ""),
+      };
+    } catch {
+      return { constructor: "unknown", name: "", code: "", message: "无法读取页面错误对象" };
+    }
+  }
+
+  window.addEventListener("unhandledrejection", (event) => {
+    const context = currentCreateDiagnosticContext();
+    if (!context) return;
+    postPageDiagnostic(context.diagnosticSessionId, "page-unhandled-rejection", {
+      ...summarizePageError(event?.reason),
+      afterCredentialReturnMs: Date.now() - context.startedAtMs,
+    });
+  }, true);
+
+  window.addEventListener("error", (event) => {
+    const context = currentCreateDiagnosticContext();
+    if (!context) return;
+    postPageDiagnostic(context.diagnosticSessionId, "page-error", {
+      ...summarizePageError(event?.error || event?.message),
+      afterCredentialReturnMs: Date.now() - context.startedAtMs,
+    });
+  }, true);
 
   const patchedCreate = async function patchedCreate(options) {
     if (!options?.publicKey) {
@@ -93,7 +161,8 @@ import {
         createCompatMethod: String(response?.createCompatMethod || ""),
         credentialId: String(response?.credential?.id || ""),
       });
-      return buildCreateCredential(response?.credential);
+      activateCreateErrorMonitor(response?.diagnosticSessionId);
+      return buildCreateCredential(response?.credential, response?.diagnosticSessionId);
     } catch (error) {
       logInjected("create-bridge-error", {
         name: error?.name || "Error",
@@ -210,7 +279,7 @@ import {
             requestId,
             operation,
           });
-          resolve(data.result || {});
+          resolve({ ...(data.result || {}), diagnosticSessionId: requestId });
           return;
         }
         logInjected("bridge-response-error", {
@@ -304,7 +373,7 @@ import {
       .filter((item) => item.idB64u);
   }
 
-  function buildCreateCredential(credential) {
+  function buildCreateCredential(credential, diagnosticSessionId) {
     if (!credential) {
       throw new Error("创建通行密钥返回为空");
     }
@@ -315,6 +384,12 @@ import {
       Object.setPrototypeOf(response, AuthenticatorAttestationResponse.prototype);
     }
 
+    const reportedApiMethods = new Set();
+    const reportApiCall = (method, resultNames = []) => {
+      if (reportedApiMethods.has(method)) return;
+      reportedApiMethods.add(method);
+      postPageDiagnostic(diagnosticSessionId, "page-api-called", { method, resultNames });
+    };
     const result = {
       id: credential.id,
       rawId,
@@ -322,9 +397,12 @@ import {
       authenticatorAttachment: credential.authenticatorAttachment || "platform",
       response,
       getClientExtensionResults() {
-        return credential.clientExtensionResults || {};
+        const extensionResults = credential.clientExtensionResults || {};
+        reportApiCall("PublicKeyCredential.getClientExtensionResults", Object.keys(extensionResults));
+        return extensionResults;
       },
       toJSON() {
+        reportApiCall("PublicKeyCredential.toJSON");
         return {
           id: credential.id,
           rawId: credential.rawIdB64u || credential.id,
@@ -338,6 +416,45 @@ import {
     if (typeof PublicKeyCredential === "function") {
       Object.setPrototypeOf(result, PublicKeyCredential.prototype);
     }
+    for (const method of [
+      "getAuthenticatorData",
+      "getPublicKey",
+      "getPublicKeyAlgorithm",
+      "getTransports",
+      "toJSON",
+    ]) {
+      if (typeof response?.[method] !== "function") continue;
+      const originalMethod = response[method].bind(response);
+      response[method] = (...args) => {
+        reportApiCall(`AuthenticatorAttestationResponse.${method}`);
+        return originalMethod(...args);
+      };
+    }
+    postPageDiagnostic(diagnosticSessionId, "page-credential-returned", {
+      credentialConstructor: String(result?.constructor?.name || ""),
+      responseConstructor: String(response?.constructor?.name || ""),
+      credentialType: String(result.type || ""),
+      authenticatorAttachment: String(result.authenticatorAttachment || ""),
+      rawIdByteLength: rawId.byteLength,
+      responseByteLengths: {
+        clientDataJSON: response.clientDataJSON?.byteLength || 0,
+        attestationObject: response.attestationObject?.byteLength || 0,
+        authenticatorData: base64urlToBytes(credential?.response?.authenticatorDataB64u).byteLength,
+        publicKey: base64urlToBytes(credential?.response?.publicKeyB64u).byteLength,
+      },
+      responseOwnKeys: Object.keys(response),
+      responseJsonKeys: Object.keys(credential?.response || {}),
+      clientExtensionResultNames: Object.keys(credential.clientExtensionResults || {}),
+      api: {
+        credentialToJSON: typeof result.toJSON === "function",
+        getClientExtensionResults: typeof result.getClientExtensionResults === "function",
+        getAuthenticatorData: typeof response.getAuthenticatorData === "function",
+        getPublicKey: typeof response.getPublicKey === "function",
+        getPublicKeyAlgorithm: typeof response.getPublicKeyAlgorithm === "function",
+        getTransports: typeof response.getTransports === "function",
+        responseToJSON: typeof response.toJSON === "function",
+      },
+    });
     return result;
   }
 

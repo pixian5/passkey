@@ -185,7 +185,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.5.3";
+  var PASS_EXTENSION_VERSION = "1.5.4";
 
   // fill_chooser_activation.js
   var FILL_CHOOSER_ACTIVATION_DEDUPE_MS = 650;
@@ -279,6 +279,7 @@
   var WEB_AUTHN_REQUEST_TYPE = "PASSKEY_REQUEST";
   var WEB_AUTHN_RESPONSE_TYPE = "PASSKEY_RESPONSE";
   var WEB_AUTHN_NOTICE_TYPE = "PASSKEY_NOTICE";
+  var WEB_AUTHN_DIAGNOSTIC_TYPE = "PASSKEY_DIAGNOSTIC";
   var WEB_AUTHN_NOTICE_DOM_ATTR = "data-pass-webauthn-notice";
   var WEB_AUTHN_NOTICE_MAX_AGE_MS = 5e3;
   var WEB_AUTHN_NOTICE_TOAST_DEDUPE_MS = 2500;
@@ -1045,6 +1046,10 @@
       handleWebAuthnBridgeNotice(data);
       return;
     }
+    if (data.type === WEB_AUTHN_DIAGNOSTIC_TYPE) {
+      forwardWebAuthnPageDiagnostic(data);
+      return;
+    }
     if (data.type !== WEB_AUTHN_REQUEST_TYPE) return;
     const requestId = String(data.requestId || "");
     if (!requestId) return;
@@ -1056,7 +1061,8 @@
       host: frameContext.host,
       // Page-provided context is diagnostic-only. The operation always uses the
       // isolated-world context above, which cannot be forged by the page.
-      sourceContext: data.sourceContext
+      sourceContext: data.sourceContext,
+      diagnosticSessionId: requestId
     };
     logPasskeyContent("bridge-request-received", {
       requestId,
@@ -1065,6 +1071,32 @@
       rpId: String(payload?.publicKey?.rp?.id || payload?.publicKey?.rpId || "")
     });
     void handleWebAuthnBridgeRequest(requestId, payload);
+  }
+  function forwardWebAuthnPageDiagnostic(data) {
+    if (!isRuntimeAvailable()) return;
+    const frameContext = resolveWebAuthnWindowContext(window);
+    const payload = {
+      operation: String(data?.operation || ""),
+      phase: String(data?.phase || ""),
+      diagnosticSessionId: String(data?.diagnosticSessionId || ""),
+      origin: frameContext.origin,
+      host: frameContext.host,
+      details: data?.details
+    };
+    logPasskeyContent("page-diagnostic-forwarded", {
+      operation: payload.operation,
+      phase: payload.phase,
+      diagnosticSessionId: payload.diagnosticSessionId
+    });
+    try {
+      chrome.runtime.sendMessage({
+        type: "PASS_PASSKEY_DIAGNOSTIC_EVENT",
+        payload
+      }, () => {
+        void chrome.runtime.lastError;
+      });
+    } catch {
+    }
   }
   function clearPendingWebAuthnNoticeAttr() {
     try {

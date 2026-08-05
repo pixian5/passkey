@@ -897,6 +897,7 @@
     passkeySection: document.getElementById("passkeySection"),
     passkeyCurrentSiteOnly: document.getElementById("passkeyCurrentSiteOnly"),
     passkeySearch: document.getElementById("passkeySearch"),
+    clearPasskeyDiagnosticsBtn: document.getElementById("clearPasskeyDiagnostics"),
     copyPasskeyCreateDiagnosticBtn: document.getElementById("copyPasskeyCreateDiagnostic"),
     passkeyList: document.getElementById("passkeyList"),
     accountList: document.getElementById("accountList"),
@@ -1122,6 +1123,9 @@
     dom.copyPasskeyCreateDiagnosticBtn.addEventListener("click", () => {
       void copyLatestPasskeyCreateDiagnostic();
     });
+    dom.clearPasskeyDiagnosticsBtn.addEventListener("click", () => {
+      void clearPasskeyDiagnostics();
+    });
     dom.accountSearch.addEventListener("input", renderAccounts);
     dom.passkeyCurrentSiteOnly.addEventListener("change", renderAccounts);
     dom.passkeySearch.addEventListener("input", renderAccounts);
@@ -1136,9 +1140,18 @@
         return;
       }
       await navigator.clipboard.writeText(JSON.stringify(response.diagnostic, null, 2));
-      setStatus("\u5DF2\u590D\u5236\u6700\u8FD1\u6CE8\u518C\u8BCA\u65AD\uFF08\u4E0D\u542B challenge\u3001\u7528\u6237 ID\u3001\u51ED\u636E ID \u6216\u5BC6\u94A5\uFF09\u3002");
+      setStatus(`\u5DF2\u590D\u5236\u6CE8\u518C\u8BCA\u65AD\u65F6\u95F4\u7EBF\uFF08${Number(response.diagnostic.eventCount || 0)} \u4E2A\u4E8B\u4EF6\uFF0C\u4E0D\u542B\u654F\u611F\u6807\u8BC6\u6216\u5BC6\u94A5\uFF09\u3002`);
     } catch (error) {
       setStatus(`\u590D\u5236\u6CE8\u518C\u8BCA\u65AD\u5931\u8D25: ${error?.message || String(error || "\u672A\u77E5\u9519\u8BEF")}`);
+    }
+  }
+  async function clearPasskeyDiagnostics() {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: "PASS_PASSKEY_CLEAR_DIAGNOSTICS" });
+      if (!response?.ok) throw new Error(response?.error || "\u672A\u80FD\u6E05\u7A7A\u8BCA\u65AD");
+      setStatus("\u6CE8\u518C\u8BCA\u65AD\u5DF2\u6E05\u7A7A\u3002\u73B0\u5728\u91CD\u8BD5\u4E00\u6B21\uFF0C\u518D\u590D\u5236\u8BCA\u65AD\u65F6\u95F4\u7EBF\u3002");
+    } catch (error) {
+      setStatus(`\u6E05\u7A7A\u6CE8\u518C\u8BCA\u65AD\u5931\u8D25: ${error?.message || String(error || "\u672A\u77E5\u9519\u8BEF")}`);
     }
   }
   function bindLockRuntimeEvents() {

@@ -3,7 +3,8 @@ import { PASS_EXTENSION_VERSION } from "./extension_version.js";
 import {
   appendPasskeyDiagnostic,
   buildPasskeyBridgeDiagnostic,
-  getLatestCreateDiagnostic,
+  buildPasskeyPageDiagnostic,
+  getLatestCreateDiagnosticReport,
   STORAGE_KEY_PASSKEY_DIAGNOSTICS,
 } from "./webauthn_diagnostics.js";
 import {
@@ -1072,8 +1073,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "PASS_PASSKEY_OPERATION":
         sendResponse(await handlePasskeyOperationAndSyncAccount(message.payload));
         return;
+      case "PASS_PASSKEY_DIAGNOSTIC_EVENT":
+        sendResponse(await recordPasskeyPageDiagnostic(message.payload));
+        return;
       case "PASS_PASSKEY_LATEST_CREATE_DIAGNOSTIC":
         sendResponse(await getLatestPasskeyCreateDiagnostic());
+        return;
+      case "PASS_PASSKEY_CLEAR_DIAGNOSTICS":
+        sendResponse(await clearPasskeyDiagnostics());
         return;
       case "PASS_CONTENT_GET_ACCOUNTS":
         // Compatibility alias: never returns passwords.
@@ -1287,11 +1294,39 @@ async function recordPasskeyDiagnostic(payload, response, phase) {
   }
 }
 
+async function recordPasskeyPageDiagnostic(payload) {
+  try {
+    const diagnostic = buildPasskeyPageDiagnostic({
+      payload,
+      extensionVersion: PASS_EXTENSION_VERSION,
+    });
+    await appendPasskeyDiagnostic(chrome.storage?.session, diagnostic);
+    logPasskeyFlow("page-diagnostic-recorded", {
+      phase: String(diagnostic?.phase || ""),
+      operation: String(diagnostic?.operation || ""),
+      diagnosticSessionId: String(diagnostic?.diagnosticSessionId || ""),
+    });
+    return { ok: true };
+  } catch (error) {
+    logPasskeyFlow("page-diagnostic-record-failed", {
+      message: error?.message || String(error || ""),
+    });
+    return { ok: false, error: error?.message || String(error || "诊断记录失败") };
+  }
+}
+
 async function getLatestPasskeyCreateDiagnostic() {
   const storage = chrome.storage?.session;
   if (!storage?.get) return { ok: false, error: "当前浏览器不支持会话诊断" };
   const stored = await storage.get([STORAGE_KEY_PASSKEY_DIAGNOSTICS]);
-  return { ok: true, diagnostic: getLatestCreateDiagnostic(stored?.[STORAGE_KEY_PASSKEY_DIAGNOSTICS]) };
+  return { ok: true, diagnostic: getLatestCreateDiagnosticReport(stored?.[STORAGE_KEY_PASSKEY_DIAGNOSTICS]) };
+}
+
+async function clearPasskeyDiagnostics() {
+  const storage = chrome.storage?.session;
+  if (!storage?.set) return { ok: false, error: "当前浏览器不支持会话诊断" };
+  await storage.set({ [STORAGE_KEY_PASSKEY_DIAGNOSTICS]: [] });
+  return { ok: true };
 }
 
 function parseTabSecurityContext(urlValue) {

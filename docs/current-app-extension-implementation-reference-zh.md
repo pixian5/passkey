@@ -1,7 +1,7 @@
 # Pass 当前实现与设计决策基准
 
 > 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源；本轮完成后由版本脚本递增。
-> 当前为 `1.5.3`。
+> 当前为 `1.5.4`。
 >
 > 使用规则：当历史设计稿、路线图、旧 Swift 代码或界面文字与本文冲突时，先以本文和自动化门禁为准，再回到代码核对。没有测试或代码依据时，不得写“完整”“完全一致”“所有端均支持”。
 
@@ -292,7 +292,7 @@ Chrome 有管理页工作区快照和后台同步安全快照两种本地来源�
 28. WebAuthn 收集客户端数据必须使用认证调用所在框架的有效来源：同源 iframe 不能仅因 `window.top !== window.self` 被误标为跨源，`about:blank` 子框架继承父来源；真正跨源时必须同时返回 `crossOrigin: true` 和 `topOrigin`，同源请求显式返回 `crossOrigin: false`。网站请求 `credProps` 时返回 `rk: true`。扩展只提示“已生成，等待网站确认”，不能在 RP 服务端接受注册前宣称最终保存成功。
 29. 扩展构造的 `AuthenticatorAttestationResponse` 不能只修改原型：必须提供自有的 `getAuthenticatorData()`、`getPublicKey()`、`getPublicKeyAlgorithm()`、`getTransports()` 和 `toJSON()`，否则 Google 等网站调用原生原型方法时会因浏览器品牌校验失败。创建响应同时返回 SPKI 公钥、COSE 算法和认证数据；`PublicKeyCredential.toJSON()` 必须包含 `authenticatorAttachment` 及完整响应字段。
 30. Pass 新建的托管通行密钥是同步型、多设备凭据：注册认证数据使用 `UP|UV|BE|BS|AT`（`0x5d`），断言使用 `UP|UV|BE|BS`（`0x1d`），并写入 Pass 固定的非零 UUID AAGUID；全零 AAGUID 表示未标识认证器，会被部分 RP（包括 Google）拒绝。`backupEligible`、`backupState` 随凭据同步并在合并时保守保留；创建这些字段前的旧凭据继续使用原有设备绑定标志，避免注册与后续断言声明不一致。
-31. 当 RP（例如 Google）接受 WebAuthn API 返回值却在服务端拒绝注册时，Pass 在 `chrome.storage.session` 保存最近 12 次操作的脱敏协议诊断，弹窗“通行密钥”页可复制最近一次注册。诊断只含来源、RP、选项摘要、算法、认证数据标志和桥接结果，禁止记录 challenge、用户 ID、凭据 ID、密钥或完整 clientData。
+31. 当 RP（例如 Google）接受 WebAuthn API 返回值却在服务端拒绝注册时，Pass 在 `chrome.storage.session` 保存最近 40 个脱敏诊断事件，并按随机会话 ID 聚合同一次注册时间线。时间线包含请求字段/字节长度、扩展输入、clientData 解析摘要、认证数据标志、响应字段长度、算法、客户端扩展输出、本地一致性检查、页面收到的凭据/API 调用，以及返回凭据后 30 秒内的 `error` / `unhandledrejection`（例如 Google `RpcError`）。弹窗“通行密钥”页可先清空诊断再重试，并复制完整报告。禁止记录 challenge、用户 ID、凭据 ID、密钥、完整 clientData；页面错误中的 URL、邮箱和长令牌也必须脱敏。
 32. 注册请求指定 `attestation: "direct"` 或 `"enterprise"` 时，不能固定返回 `fmt: "none"`；Pass 必须用新建凭据私钥对 `authData || hash(clientDataJSON)` 签名，返回 Packed self-attestation。`none` 与未指定证明的请求仍返回 `fmt: "none"`。
 33. `googleLegacyAppidSupport` 是 Google 的旧 U2F 路由输入，不是客户端扩展输出。值为 `true` 时，协议要求使用漫游认证器并绑定 Google 固定 AppID；Pass 必须放弃接管并交给 Chrome 原生处理。值为 `false` 时仍可按普通平台 Passkey 创建，但不得把该输入伪造成 `getClientExtensionResults()` 输出。
 34. `appidExclude` 是创建请求的旧 U2F AppID 排除检查输入，不属于 `AuthenticationExtensionsClientOutputs`。Pass 只在自身的 RP 凭据库执行 `excludeCredentials`，但不得把未处理外部 AppID 伪造成 `appidExclude: false` 返回给页面；这会偏离 Chrome 输出并可能被 Google 拒绝。

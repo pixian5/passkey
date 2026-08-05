@@ -17,6 +17,7 @@ node "${TAURI_DIR}/scripts/sync-web-ui.mjs"
 mkdir -p "${TARGET_DIR}/dist" "${TARGET_DIR}/icons" "${TARGET_DIR}/vendor"
 cp -p "${SOURCE_DIR}"/dist/*.js "${TARGET_DIR}/dist/"
 cp -p "${SOURCE_DIR}"/icons/icon-*.png "${TARGET_DIR}/icons/"
+cp -p "${SOURCE_DIR}/popup.html" "${SOURCE_DIR}/popup.css" "${TARGET_DIR}/"
 
 if [[ -f "${TAURI_DIR}/node_modules/jsqr/dist/jsQR.js" ]]; then
   cp -p "${TAURI_DIR}/node_modules/jsqr/dist/jsQR.js" "${TARGET_DIR}/vendor/jsQR.js"
