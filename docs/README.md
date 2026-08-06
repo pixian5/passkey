@@ -6,23 +6,24 @@
 
 1. [架构宪章（简版执行边界）：ARCHITECTURE.md](/Users/x/code/pass/docs/ARCHITECTURE.md)
 2. [当前实现参考：current-app-extension-implementation-reference-zh.md](/Users/x/code/pass/docs/current-app-extension-implementation-reference-zh.md)
-3. [当前跨平台架构：cross-platform-architecture-zh.md](/Users/x/code/pass/docs/cross-platform-architecture-zh.md)
-4. [三端统一方案：three-surface-unification-zh.md](/Users/x/code/pass/docs/three-surface-unification-zh.md)
-5. [跨平台同步后端契约（V2）：cross-platform-sync-backends-v2-zh.md](/Users/x/code/pass/docs/cross-platform-sync-backends-v2-zh.md)
-6. [本轮程序/文档一致性审计：audit-2026-07-26-zh.md](/Users/x/code/pass/docs/audit-2026-07-26-zh.md)
-7. [总体历史设计：password-manager-design-zh.md](/Users/x/code/pass/docs/password-manager-design-zh.md)
-8. [插件与客户端目标蓝图（含通行密钥）：browser-client-passkey-full-design-zh.md](/Users/x/code/pass/docs/browser-client-passkey-full-design-zh.md)
-9. [历史目标规范：implementation-spec-full-zh.md](/Users/x/code/pass/docs/implementation-spec-full-zh.md)
-10. [历史本地配对协议：sync-protocol-contract-zh.md](/Users/x/code/pass/docs/sync-protocol-contract-zh.md)
-11. [多设备同步与手动导入导出：manual-sync-import-export-design-and-implementation-zh.md](/Users/x/code/pass/docs/manual-sync-import-export-design-and-implementation-zh.md)
-12. [统一数据与同步实施计划（V2）：unified-data-sync-v2-design-and-plan-zh.md](/Users/x/code/pass/docs/unified-data-sync-v2-design-and-plan-zh.md)
-13. [历史/候选规范化数据库 DDL：sqlite-schema.sql](/Users/x/code/pass/docs/sqlite-schema.sql)
-14. [数据模型 Schema（V2）：schemas/pass-data-v2.schema.json](/Users/x/code/pass/docs/schemas/pass-data-v2.schema.json)
-15. [同步包 Schema（V2）：schemas/pass-sync-bundle-v2.schema.json](/Users/x/code/pass/docs/schemas/pass-sync-bundle-v2.schema.json)
-16. [开发路线图（A+C+J+G）：dev-roadmap-a-c-j-g-zh.md](/Users/x/code/pass/docs/dev-roadmap-a-c-j-g-zh.md)
-17. [Web/Docker/Ubuntu 三阶段设计：pass-web-three-stage-design-zh.md](/Users/x/code/pass/docs/pass-web-three-stage-design-zh.md)
-18. [Pass Web Docker 开发与发布设计：pass-web-docker-development-zh.md](/Users/x/code/pass/docs/pass-web-docker-development-zh.md)
-19. [全部账号与文件夹独立账号排序设计：scoped-account-order-design-zh.md](/Users/x/code/pass/docs/scoped-account-order-design-zh.md)
+3. [浏览器扩展网页内浮窗：browser-extension-in-page-prompts-zh.md](/Users/x/code/pass/docs/browser-extension-in-page-prompts-zh.md)
+4. [当前跨平台架构：cross-platform-architecture-zh.md](/Users/x/code/pass/docs/cross-platform-architecture-zh.md)
+5. [三端统一方案：three-surface-unification-zh.md](/Users/x/code/pass/docs/three-surface-unification-zh.md)
+6. [跨平台同步后端契约（V2）：cross-platform-sync-backends-v2-zh.md](/Users/x/code/pass/docs/cross-platform-sync-backends-v2-zh.md)
+7. [本轮程序/文档一致性审计：audit-2026-07-26-zh.md](/Users/x/code/pass/docs/audit-2026-07-26-zh.md)
+8. [总体历史设计：password-manager-design-zh.md](/Users/x/code/pass/docs/password-manager-design-zh.md)
+9. [插件与客户端目标蓝图（含通行密钥）：browser-client-passkey-full-design-zh.md](/Users/x/code/pass/docs/browser-client-passkey-full-design-zh.md)
+10. [历史目标规范：implementation-spec-full-zh.md](/Users/x/code/pass/docs/implementation-spec-full-zh.md)
+11. [历史本地配对协议：sync-protocol-contract-zh.md](/Users/x/code/pass/docs/sync-protocol-contract-zh.md)
+12. [多设备同步与手动导入导出：manual-sync-import-export-design-and-implementation-zh.md](/Users/x/code/pass/docs/manual-sync-import-export-design-and-implementation-zh.md)
+13. [统一数据与同步实施计划（V2）：unified-data-sync-v2-design-and-plan-zh.md](/Users/x/code/pass/docs/unified-data-sync-v2-design-and-plan-zh.md)
+14. [历史/候选规范化数据库 DDL：sqlite-schema.sql](/Users/x/code/pass/docs/sqlite-schema.sql)
+15. [数据模型 Schema（V2）：schemas/pass-data-v2.schema.json](/Users/x/code/pass/docs/schemas/pass-data-v2.schema.json)
+16. [同步包 Schema（V2）：schemas/pass-sync-bundle-v2.schema.json](/Users/x/code/pass/docs/schemas/pass-sync-bundle-v2.schema.json)
+17. [开发路线图（A+C+J+G）：dev-roadmap-a-c-j-g-zh.md](/Users/x/code/pass/docs/dev-roadmap-a-c-j-g-zh.md)
+18. [Web/Docker/Ubuntu 三阶段设计：pass-web-three-stage-design-zh.md](/Users/x/code/pass/docs/pass-web-three-stage-design-zh.md)
+19. [Pass Web Docker 开发与发布设计：pass-web-docker-development-zh.md](/Users/x/code/pass/docs/pass-web-docker-development-zh.md)
+20. [全部账号与文件夹独立账号排序设计：scoped-account-order-design-zh.md](/Users/x/code/pass/docs/scoped-account-order-design-zh.md)
 
 ## 文档职责
 
@@ -33,6 +34,7 @@
 - `implementation-spec-full-zh.md`：V1 历史目标规范与测试门槛，不作为当前模块清单。
 - `sync-protocol-contract-zh.md`：V1 本地配对协议草案；当前远端接口看 V2 后端契约。
 - `current-app-extension-implementation-reference-zh.md`：当前代码真实实现、设计意图、失败语义和已知限制的首要入口。
+- `browser-extension-in-page-prompts-zh.md`：网页内账号选择、拖动、保存/更新确认浮窗的状态流、安全边界、手工验收和排障入口。
 - `audit-2026-07-26-zh.md`：逐项记录文档旧理解、代码事实、修正结果和仍未解决风险。
 - `manual-sync-import-export-design-and-implementation-zh.md`：多设备同步策略与手动导入导出协议、冲突合并规则及实施说明。
 - `unified-data-sync-v2-design-and-plan-zh.md`：APP/扩展统一数据格式、迁移规则、合并规则与实施排期。

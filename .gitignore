@@ -103,3 +103,27 @@ yarn-error.log*
 pnpm-debug.log*
 
 apps/codex-tauri/dist/
+
+# Browser extension packages, local loading state, and test profiles
+*.crx
+apps/extension_chrome_web/*.zip
+apps/extension_chrome_web/.extension-cache/
+apps/extension_chrome_web/.chrome-test-profile/
+apps/extension_chrome_web/test-profile/
+apps/extension_chrome_web/test-downloads/
+apps/extension_chrome_web/dist/*.map
+apps/extension_firefox/.web-ext/
+apps/extension_firefox/web-ext-artifacts/
+apps/extension_safari/DerivedData/
+apps/extension_safari/.build/
+
+# JavaScript build tools and browser automation caches
+.cache/
+.eslintcache
+.stylelintcache
+.parcel-cache/
+.turbo/
+.vite/
+.playwright/
+blob-report/
+*.tsbuildinfo

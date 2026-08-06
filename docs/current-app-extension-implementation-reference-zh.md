@@ -1,7 +1,7 @@
 # Pass 当前实现与设计决策基准
 
 > 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源；本轮完成后由版本脚本递增。
-> 当前为 `1.6.1`。
+> 当前为 `1.6.2`。
 >
 > 使用规则：当历史设计稿、路线图、旧 Swift 代码或界面文字与本文冲突时，先以本文和自动化门禁为准，再回到代码核对。没有测试或代码依据时，不得写“完整”“完全一致”“所有端均支持”。
 
@@ -298,6 +298,7 @@ Chrome 有管理页工作区快照和后台同步安全快照两种本地来源�
 34. `appidExclude` 是创建请求的旧 U2F AppID 排除检查输入，不属于 `AuthenticationExtensionsClientOutputs`。Pass 只在自身的 RP 凭据库执行 `excludeCredentials`，但不得把未处理外部 AppID 伪造成 `appidExclude: false` 返回给页面；这会偏离 Chrome 输出并可能被 Google 拒绝。
 35. Chrome 的 `webAuthenticationProxy` 是远程桌面专用的全局 WebAuthn 代理；当前 Pass 采用页面桥接且没有代理 attach/detach 生命周期，因此 manifest 不声明该权限。
 36. Google 注册失败的诊断必须区分浏览器返回阶段与 RP 服务端确认阶段。Google 的 `FinishPasskeyEnrollment` 只消费 `clientDataJSON`、`attestationObject`、transports、UV 结果和 authenticator attachment；当 Pass 的匿名证明组合正确但 Google 仍拒绝时，Pass 必须停止接管该 `direct` 请求并交给 Chrome/系统原生认证器。Pass 诊断报告记录 `aaguidIsZero`、`anonymousAttestation` 和 `anonymousAttestationIsConsistent`，便于确认协议组合是否一致。
+37. 网页内账号选择框与保存/更新确认框均可从标题或外层留白拖动，且始终限制在可视区域内；账号按钮、确认按钮和滚动列表不可触发拖动。保存/更新确认不使用 `window.confirm`：同站点同用户名但密码变化时明确显示“更新已保存的密码？”，新账号显示“保存这个账号？”。浮窗出现后必须等待用户点击保存/更新或暂不保存，不能因固定计时器自动关闭或提交表单；完整状态流、安全边界和手工验收见 [`browser-extension-in-page-prompts-zh.md`](./browser-extension-in-page-prompts-zh.md)。
 
 ## 13. 验证入口和当前基线
 
