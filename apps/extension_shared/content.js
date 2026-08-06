@@ -2,6 +2,7 @@ import { normalizeDomain } from "./account_core.js";
 import { fillCredentialFields } from "./credential_fill_core.js";
 import { PASS_EXTENSION_VERSION } from "./extension_version.js";
 import { claimFillChooserActivation } from "./fill_chooser_activation.js";
+import { installFloatingDrag } from "./floating_drag.js";
 import { pageUiOwnerPriority } from "./page_ui_owner.js";
 import { resolveWebAuthnWindowContext } from "./webauthn_client_data.js";
 
@@ -563,6 +564,7 @@ function renderFillChooser(accounts, input) {
   root.style.flexDirection = "column";
   root.style.overflow = "hidden";
   root.style.position = "relative";
+  root.style.cursor = "grab";
   root.style.font = '12px/1.4 "SF Pro Text", "PingFang SC", sans-serif';
   root.style.color = "#1d314d";
 
@@ -576,6 +578,10 @@ function renderFillChooser(accounts, input) {
   title.style.fontSize = "13px";
   title.style.margin = "2px 4px 8px";
   title.style.paddingRight = "56px";
+  title.style.cursor = "grab";
+  title.style.touchAction = "none";
+  title.style.userSelect = "none";
+  title.setAttribute("data-pass-drag-handle", "true");
   root.appendChild(title);
 
   const list = document.createElement("div");
@@ -586,6 +592,8 @@ function renderFillChooser(accounts, input) {
   list.style.maxHeight = "min(500px, calc(100vh - 96px))";
   list.style.overflowY = "auto";
   list.style.scrollbarGutter = "stable";
+  list.style.cursor = "default";
+  list.setAttribute("data-pass-no-drag", "true");
 
   for (const account of accounts) {
     const button = document.createElement("button");
@@ -647,6 +655,7 @@ function renderFillChooser(accounts, input) {
   footer.appendChild(closeBtn);
   root.appendChild(footer);
   shadow.appendChild(root);
+  installFloatingDrag({ host: fillChooserHost, surface: root });
 }
 
 function runtimeSendMessage(message) {

@@ -185,7 +185,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.5.9";
+  var PASS_EXTENSION_VERSION = "1.6.0";
 
   // fill_chooser_activation.js
   var FILL_CHOOSER_ACTIVATION_DEDUPE_MS = 650;
@@ -198,6 +198,108 @@
     state.input = input;
     state.at = now;
     return true;
+  }
+
+  // floating_drag.js
+  var FLOATING_DRAG_VIEWPORT_MARGIN_PX = 8;
+  function clampFloatingPosition({
+    left,
+    top,
+    width,
+    height,
+    viewportWidth,
+    viewportHeight,
+    margin = FLOATING_DRAG_VIEWPORT_MARGIN_PX
+  }) {
+    const safeMargin = Math.max(0, Number(margin) || 0);
+    const maxLeft = Math.max(safeMargin, Number(viewportWidth) - Number(width) - safeMargin);
+    const maxTop = Math.max(safeMargin, Number(viewportHeight) - Number(height) - safeMargin);
+    return {
+      left: Math.min(maxLeft, Math.max(safeMargin, Number(left) || 0)),
+      top: Math.min(maxTop, Math.max(safeMargin, Number(top) || 0))
+    };
+  }
+  function shouldStartFloatingDrag({
+    button,
+    isPrimary,
+    targetIsSurface,
+    targetHasHandle,
+    targetIsInteractive
+  }) {
+    return button === 0 && isPrimary !== false && !targetIsInteractive && (targetIsSurface || targetHasHandle);
+  }
+  function installFloatingDrag({ host, surface, viewport = window }) {
+    if (!host || !surface) return () => {
+    };
+    const idleCursor = surface.style.cursor;
+    let activePointerId = null;
+    let startPointerX = 0;
+    let startPointerY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    let surfaceWidth = 0;
+    let surfaceHeight = 0;
+    const finishDrag = (event) => {
+      if (activePointerId == null || event.pointerId !== activePointerId) return;
+      if (surface.hasPointerCapture?.(activePointerId)) {
+        surface.releasePointerCapture(activePointerId);
+      }
+      activePointerId = null;
+      surface.style.cursor = idleCursor;
+    };
+    const onPointerDown = (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const targetHasHandle = Boolean(target?.closest?.("[data-pass-drag-handle]"));
+      const targetIsInteractive = Boolean(target?.closest?.(
+        "button, input, select, textarea, a, [role='button'], [contenteditable='true'], [data-pass-no-drag]"
+      ));
+      if (!shouldStartFloatingDrag({
+        button: event.button,
+        isPrimary: event.isPrimary,
+        targetIsSurface: target === surface,
+        targetHasHandle,
+        targetIsInteractive
+      })) return;
+      const rect = host.getBoundingClientRect();
+      activePointerId = event.pointerId;
+      startPointerX = event.clientX;
+      startPointerY = event.clientY;
+      startLeft = rect.left;
+      startTop = rect.top;
+      surfaceWidth = rect.width;
+      surfaceHeight = rect.height;
+      surface.setPointerCapture?.(activePointerId);
+      surface.style.cursor = "grabbing";
+      event.preventDefault();
+    };
+    const onPointerMove = (event) => {
+      if (activePointerId == null || event.pointerId !== activePointerId) return;
+      const position = clampFloatingPosition({
+        left: startLeft + event.clientX - startPointerX,
+        top: startTop + event.clientY - startPointerY,
+        width: surfaceWidth,
+        height: surfaceHeight,
+        viewportWidth: viewport.innerWidth,
+        viewportHeight: viewport.innerHeight
+      });
+      host.style.setProperty("left", `${position.left}px`, "important");
+      host.style.setProperty("top", `${position.top}px`, "important");
+      host.style.setProperty("right", "auto", "important");
+      host.style.setProperty("bottom", "auto", "important");
+      event.preventDefault();
+    };
+    surface.addEventListener("pointerdown", onPointerDown);
+    surface.addEventListener("pointermove", onPointerMove);
+    surface.addEventListener("pointerup", finishDrag);
+    surface.addEventListener("pointercancel", finishDrag);
+    surface.addEventListener("lostpointercapture", finishDrag);
+    return () => {
+      surface.removeEventListener("pointerdown", onPointerDown);
+      surface.removeEventListener("pointermove", onPointerMove);
+      surface.removeEventListener("pointerup", finishDrag);
+      surface.removeEventListener("pointercancel", finishDrag);
+      surface.removeEventListener("lostpointercapture", finishDrag);
+    };
   }
 
   // page_ui_owner.js
@@ -743,6 +845,7 @@
     root.style.flexDirection = "column";
     root.style.overflow = "hidden";
     root.style.position = "relative";
+    root.style.cursor = "grab";
     root.style.font = '12px/1.4 "SF Pro Text", "PingFang SC", sans-serif';
     root.style.color = "#1d314d";
     const title = document.createElement("div");
@@ -755,6 +858,10 @@
     title.style.fontSize = "13px";
     title.style.margin = "2px 4px 8px";
     title.style.paddingRight = "56px";
+    title.style.cursor = "grab";
+    title.style.touchAction = "none";
+    title.style.userSelect = "none";
+    title.setAttribute("data-pass-drag-handle", "true");
     root.appendChild(title);
     const list = document.createElement("div");
     list.style.display = "grid";
@@ -764,6 +871,8 @@
     list.style.maxHeight = "min(500px, calc(100vh - 96px))";
     list.style.overflowY = "auto";
     list.style.scrollbarGutter = "stable";
+    list.style.cursor = "default";
+    list.setAttribute("data-pass-no-drag", "true");
     for (const account of accounts) {
       const button = document.createElement("button");
       button.type = "button";
@@ -818,6 +927,7 @@
     footer.appendChild(closeBtn);
     root.appendChild(footer);
     shadow.appendChild(root);
+    installFloatingDrag({ host: fillChooserHost, surface: root });
   }
   function runtimeSendMessage(message) {
     return new Promise((resolve) => {
