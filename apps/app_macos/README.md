@@ -4,6 +4,8 @@ This module remains buildable for macOS AutoFill, Credential Exchange, migration
 and compatibility verification. The current cross-platform desktop product is
 `apps/codex-tauri`; new shared management features should not be added here.
 
+Current feature decisions live in [`../../docs/current-app-extension-implementation-reference-zh.md`](../../docs/current-app-extension-implementation-reference-zh.md). This module is a platform/system-capability module, not the active shared management UI.
+
 Remote sync may use AES-256-GCM with an independent local sync key, or plaintext `pass.sync.bundle.v2` when the key is left empty. Secrets are stored as 0600 files in the shared app-group directory, so normal launches do not access or prompt for the macOS Keychain. A legacy Keychain item, when present, is read once without UI and migrated to the file store. The sync key is never sent to the server; when encryption is used, browser extensions and other platforms must share the same key. Leaving the key empty enables plaintext sync/export (passwords may be exposed on the wire or in files—only use on trusted paths). The self-hosted server is the default primary source; WebDAV/iCloud can be selected as mirrors or the primary source, and preview never writes data.
 
 The app-lock password verifier uses PBKDF2-SHA-256 (310000 iterations). Existing legacy password verifiers are upgraded after the next successful password unlock. Sync endpoints must use HTTPS; HTTP is accepted only for `localhost`, `127.0.0.1`, and `::1` during local development, so network credentials are not sent in plaintext.

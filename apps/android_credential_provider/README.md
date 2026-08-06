@@ -4,6 +4,8 @@ This development module registers an incomplete password-only Android Credential
 Manager provider scaffold on Android 14+ (`minSdk = 34`). It must not be shipped
 as a production provider until the unlock and credential-result paths below are complete.
 
+Current project status is tracked in [`../../docs/current-app-extension-implementation-reference-zh.md`](../../docs/current-app-extension-implementation-reference-zh.md). This module is not an Android management app yet.
+
 ## Implemented
 
 - `PassCredentialProviderService` — Credential Manager query hooks

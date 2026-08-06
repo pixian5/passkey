@@ -55,6 +55,7 @@ const androidGradleTarget = "apps/android_credential_provider/app/build.gradle.k
 const documentationVersionTargets = [
   ["docs/current-app-extension-implementation-reference-zh.md", /(当前为 `)[^`]+(`)/, "当前实现版本"],
   ["docs/three-surface-unification-zh.md", /(## 8\. 当前对齐结论（版本 )[^）]+(）)/, "三端对齐版本"],
+  ["docs/browser-extension-in-page-prompts-zh.md", /(状态：当前实现（版本 )\d+\.\d+\.\d+([^）]*）)/, "浏览器网页内浮窗版本"],
 ];
 
 function absolute(relativePath) {

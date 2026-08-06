@@ -8,9 +8,9 @@
 bash scripts/test_all.sh
 ```
 
-默认不下载依赖，依次运行：
+默认不下载依赖，依次运行（测试数量随用例增删变化，以命令输出为准，不在本文件硬编码为当前事实）：
 
-1. 扩展共享层 Node 测试（112 项）
+1. 扩展共享层 Node 测试
 2. Ubuntu 同步服务器和脚本 Python 测试
 3. `core/pass_core` 全工作区 Rust 测试
 4. JS 与 Rust 合并黄金向量对拍

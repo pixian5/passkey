@@ -1,6 +1,6 @@
 # pass_core
 
-Shared Rust core for the cross-platform password manager.
+Shared Rust core for the cross-platform password manager. Current production authority is `pass_merge::v2`; browser JS remains a parity-tested implementation until a future WASM/runtime unification.
 
 ## Crates
 
@@ -41,13 +41,14 @@ let report = evaluate_sync_safety(&local, Some(&remote), &merged, "merge");
 
 ```bash
 cd core/pass_core
-cargo build -p pass-merge --bin pass-merge-cli
+TASK_CARGO_TARGET_DIR="$(mktemp -d)"
+CARGO_TARGET_DIR="$TASK_CARGO_TARGET_DIR" cargo build -p pass-merge --bin pass-merge-cli --locked
 
 # Merge two payload JSON files (accounts/folders/passkeys objects)
-./target/debug/pass-merge-cli merge --local local.json --remote remote.json
+"$TASK_CARGO_TARGET_DIR"/debug/pass-merge-cli merge --local local.json --remote remote.json
 
 # Or stdin wrapper
-echo '{"local":{...},"remote":{...}}' | ./target/debug/pass-merge-cli merge --stdin
+echo '{"local":{...},"remote":{...}}' | "$TASK_CARGO_TARGET_DIR"/debug/pass-merge-cli merge --stdin
 ```
 
 ### C ABI (`pass-core-ffi`)
@@ -72,10 +73,14 @@ const char *pass_core_last_error_message(void);
 
 ```bash
 cd core/pass_core
-cargo test -p pass-merge
+TASK_CARGO_TARGET_DIR="$(mktemp -d)"
+CARGO_TARGET_DIR="$TASK_CARGO_TARGET_DIR" cargo test --workspace --locked
 # JS ↔ Rust parity against docs/sync-golden-vectors.json
-node js/check_merge_parity.mjs
+CARGO_TARGET_DIR="$TASK_CARGO_TARGET_DIR" cargo build -p pass-merge --bin pass-merge-cli --locked
+CARGO_TARGET_DIR="$TASK_CARGO_TARGET_DIR" node js/check_merge_parity.mjs
 ```
+
+Prefer a temporary `CARGO_TARGET_DIR` for verification so stale or damaged local `target/` artifacts cannot mask test results.
 
 ## Shared JS modules
 

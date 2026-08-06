@@ -1,6 +1,6 @@
 # Pass Web（Ubuntu / Docker 无 GUI 版）
 
-这是 Pass 的无 GUI 网页版第一阶段实现。完整三阶段方案见 [`docs/pass-web-three-stage-design-zh.md`](../../docs/pass-web-three-stage-design-zh.md)，Docker 专项开发、发布和运维规范见 [`docs/pass-web-docker-development-zh.md`](../../docs/pass-web-docker-development-zh.md)。它复用 `pass_merge::v2` 的账号、文件夹和同步数据结构，并直接提供与 Tauri 前端兼容的命令 RPC：
+这是 Pass 的无 GUI 网页版当前实现，复用 Tauri 生成的统一管理 UI。完整三阶段方案见 [`docs/pass-web-three-stage-design-zh.md`](../../docs/pass-web-three-stage-design-zh.md)，Docker 专项开发、发布和运维规范见 [`docs/pass-web-docker-development-zh.md`](../../docs/pass-web-docker-development-zh.md)。它复用 `pass_merge::v2` 的账号、文件夹和同步数据结构，并直接提供与 Tauri 前端兼容的命令 RPC：
 
 - 账号新建、编辑、回收站、恢复、永久删除
 - 文件夹创建、删除、账号归属和排序
@@ -13,6 +13,9 @@
 ## 本机运行
 
 ```bash
+cd apps/codex-tauri
+npm install
+npm run prepare:dist
 cd apps/pass-web
 cargo run
 ```
@@ -61,6 +64,18 @@ docker compose up -d --build
 - 系统 AutoFill/Credential Provider 和 macOS 钥匙串直接集成。
 - 原生文件选择器；Web 版应使用浏览器上传、下载或 File System Access API。
 - 直接通过网页执行 SSH 部署。该功能会让公开的 Web 服务具备远程命令执行能力，因此 Web 版只保存草稿、检测端点；实际部署请使用桌面版或服务器端 Docker/systemd。
+
+## 验证
+
+```bash
+cargo test --locked
+cd /Users/x/code/pass
+bash scripts/test_all.sh
+# 生命周期/重启验证需要 Docker daemon：
+bash scripts/test_all.sh --docker
+```
+
+当前事实和安全边界见 [`../../docs/current-app-extension-implementation-reference-zh.md`](../../docs/current-app-extension-implementation-reference-zh.md)。
 
 Ubuntu 可参考 `pass-web.service.example`，Caddy 可参考 `Caddyfile.example`。仓库中的
 `.github/workflows/deploy-pass-web.yml` 会在每次相关提交后运行验证；只有配置仓库变量

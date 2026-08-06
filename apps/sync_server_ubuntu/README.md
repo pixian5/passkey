@@ -14,6 +14,8 @@
 
 服务端只负责认证、版本控制和持久化同步快照；客户端配置密钥时保存 `pass.sync.encrypted.v1` 密文信封，留空时会保存明文内容。
 
+当前客户端能力和协议边界见 [`../../docs/current-app-extension-implementation-reference-zh.md`](../../docs/current-app-extension-implementation-reference-zh.md) 与 [`../../docs/cross-platform-sync-backends-v2-zh.md`](../../docs/cross-platform-sync-backends-v2-zh.md)。WebDAV 不使用本服务的版本、审计和恢复接口。
+
 ## 特性
 
 - 单文件 Python 服务，零第三方依赖

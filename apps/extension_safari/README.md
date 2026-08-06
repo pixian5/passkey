@@ -1,6 +1,6 @@
 # extension_safari
 
-Safari Web Extension wrapper for the existing Pass browser extension.
+Safari Web Extension wrapper for the shared Pass browser extension. Safari is a platform shell and is not proven equivalent to the Tauri / Docker Web / Chrome Web management surfaces.
 
 ## What it is
 - Generated from `/Users/x/code/pass/apps/extension_shared`
@@ -67,3 +67,4 @@ npm run build
 ```
 - Safari converter reported that `clipboardRead` is not supported by the current Safari version. Clipboard-related flows may need Safari-specific fallback behavior later.
 - The source `manifest.json` currently has no icon entries, so the generated Safari project used default assets.
+- Current capability boundaries are tracked in [`../../docs/current-app-extension-implementation-reference-zh.md`](../../docs/current-app-extension-implementation-reference-zh.md); do not infer Chrome management parity from the Safari wrapper alone.

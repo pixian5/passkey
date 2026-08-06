@@ -7,6 +7,8 @@ macOS **系统级**能力（AutoFill、Credential Exchange）仍在 `apps/app_ma
 
 旧 Tauri/Flutter 实验壳已移除；跨平台桌面功能只在本目录继续开发。
 
+当前事实、命令矩阵和跨平台边界以 [`../../docs/current-app-extension-implementation-reference-zh.md`](../../docs/current-app-extension-implementation-reference-zh.md) 为准。
+
 ## 已实现
 
 ### 账号与组织
@@ -49,13 +51,13 @@ macOS **系统级**能力（AutoFill、Credential Exchange）仍在 `apps/app_ma
 ```bash
 cd apps/codex-tauri
 npm install
-npm run tauri dev
+npm run dev
 ```
 
 ## 打包
 
 ```bash
-npm run tauri build
+npm run build
 # 产物：src-tauri/target/release/bundle/
 codesign --verify --deep --strict src-tauri/target/release/bundle/macos/PassDesktop.app
 ```
@@ -90,3 +92,4 @@ macOS 开发包在 `tauri.conf.json` 中使用临时签名身份 `-`，使 `Info
 
 - 开发测试向；本地 vault 使用逐记录 AES-256-GCM 加密，尚未切换到 SQLCipher。
 - 不要把 Token / 同步密钥写进仓库或 CI 日志。
+- 修改共享管理 UI 后，Docker Web 和 Chrome Web 扩展也会受影响；提交前至少运行根目录 `bash scripts/test_all.sh` 或按变更范围运行对应分模块测试。

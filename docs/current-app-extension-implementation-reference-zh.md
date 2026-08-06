@@ -1,7 +1,7 @@
 # Pass 当前实现与设计决策基准
 
 > 文档性质：**当前代码事实**，不是目标蓝图。版本以仓库根目录 `VERSION` 为唯一来源；本轮完成后由版本脚本递增。
-> 当前为 `1.6.2`。
+> 当前为 `1.6.3`；完成本轮全项目文档同步后必须由版本脚本递增并校验。
 >
 > 使用规则：当历史设计稿、路线图、旧 Swift 代码或界面文字与本文冲突时，先以本文和自动化门禁为准，再回到代码核对。没有测试或代码依据时，不得写“完整”“完全一致”“所有端均支持”。
 
@@ -328,7 +328,7 @@ python3 -m http.server 8766 --bind 127.0.0.1
 # 点击手机号输入框，确认提示位于视口右上角且不继承测试页的冲突样式。
 ```
 
-版本 `1.4.4` 的当前复核基线：扩展测试 112 项、Core Rust 测试 41 项与 JS/Rust 合并对拍 48 组、Tauri 33 项、同步服务器 Python 测试 37 项及脚本/端到端测试 26 项、Docker Web 测试 17 项，以及 Swift `swift build`、Safari Xcode 构建、Android 4 项单元测试与 debug APK 构建、三套 Clippy/Rust fmt、三套 `cargo audit`、actionlint 和 72/72 命令矩阵均通过。Android 本机验证使用 JDK 17、Android SDK Platform 36；由于没有 Android 14+ 真机，不能宣称系统 Credential Manager 交互已实测。
+历史复核记录：版本 `1.4.4` 曾完成扩展共享层、Core Rust、JS/Rust 合并对拍、Tauri、同步服务器 Python、脚本/端到端、Docker Web、Swift、Safari Xcode、Android 单元与 debug APK、三套 Clippy/Rust fmt、三套 `cargo audit`、actionlint 和 72/72 命令矩阵等完整门禁。该记录只说明当时运行结果；当前提交是否可发布必须重新运行本节命令和版本/Markdown 检查，测试数量以最新输出为准。Android 本机验证当时使用 JDK 17、Android SDK Platform 36；由于没有 Android 14+ 真机，不能宣称系统 Credential Manager 交互已实测。
 
 Tauri 审计仍报告 Tauri/GTK 依赖树中的 21 条上游未维护/unsound warning，但没有已知 vulnerability；CI 的 `cargo audit` 为漏洞硬门禁，不使用 `continue-on-error`。Docker 镜像生命周期实测覆盖首次启动、普通重启、测试监护进程下的 `pass-web` 子进程被 `SIGKILL` 后容器 `RestartCount` 增加、强制重建和 `/healthz`。不能用容器内 `kill -9 1` 代替该验证，因为 PID namespace init 的信号语义可能让命令返回成功但主进程不退出。
 

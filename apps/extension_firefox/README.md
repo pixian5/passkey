@@ -4,7 +4,7 @@ Firefox 平台壳层。
 
 ## 说明
 - 共享代码位于 [`/Users/x/code/pass/apps/extension_shared`](/Users/x/code/pass/apps/extension_shared)
-- 当前目录只保留 Firefox 专用 `manifest.json` 与壳层入口
+- 当前目录只保留 Firefox 专用 `manifest.json` 与壳层入口；Firefox 尚未纳入 Tauri / Docker Web / Chrome Web 三端命令矩阵，不能宣称管理能力等价
 - `popup.*`、`options.*`、`background.js`、`content.js`、`dist/` 都通过符号链接引用共享目录
 
 ## 构建
@@ -12,6 +12,8 @@ Firefox 平台壳层。
 cd /Users/x/code/pass/apps/extension_firefox
 npm run build
 ```
+
+该命令会构建共享扩展 bundle。若修改网页内浮窗、自动填充或 WebAuthn，请同时参考 [`../../docs/browser-extension-in-page-prompts-zh.md`](../../docs/browser-extension-in-page-prompts-zh.md) 和共享扩展 README。
 
 ## 载入
 1. 打开 `about:debugging#/runtime/this-firefox`

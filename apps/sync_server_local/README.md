@@ -2,6 +2,8 @@
 
 适用于 macOS 开发/可信网络的一键同步服务器。服务可以监听局域网地址，但当前 Tauri 和 Chrome 只允许回环地址使用明文 HTTP；跨设备访问必须在服务前配置 HTTPS 反向代理。
 
+当前生产协议和安全边界见 [`../../docs/cross-platform-sync-backends-v2-zh.md`](../../docs/cross-platform-sync-backends-v2-zh.md) 与 [`../sync_server_ubuntu/README.md`](../sync_server_ubuntu/README.md)。本目录只是本机开发启动/launchd 包装，不维护另一套服务实现。
+
 ## 原理
 
 复用 `apps/sync_server_ubuntu/pass_sync_server.py`（单文件 Python，零第三方依赖）：
