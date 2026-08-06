@@ -25,6 +25,7 @@ const PASS_PAGE_TOAST_MAX = 6;
 const PASSKEY_USE_BROWSER_FALLBACK = "__PASSKEY_USE_BROWSER_FALLBACK__";
 const PASSKEY_LOG_PREFIX = "[Pass content]";
 const PASS_FILL_CHOOSER_ID = "pass-fill-chooser";
+const PASS_LOGIN_SAVE_PROMPT_ID = "pass-login-save-prompt";
 const PASS_FILL_LIST_COOLDOWN_MS = 400;
 // Brief post-success window for focus churn between username/password.
 const PASS_FILL_SUPPRESS_REOPEN_MS = 1200;
@@ -44,6 +45,10 @@ let passPageToasts = [];
 let passPageToastHost = null;
 /** @type {HTMLDivElement | null} */
 let passPageToastContainer = null;
+/** @type {HTMLDivElement | null} */
+let loginSavePromptHost = null;
+/** @type {((decision: "save" | "dismiss") => void) | null} */
+let loginSavePromptResolve = null;
 let fillChooserHost = null;
 let fillChooserShadow = null;
 let fillChooserListInFlight = false;
@@ -97,6 +102,7 @@ function claimPageUiOwner() {
     // A higher-priority extension is taking over an already rendered chooser.
     document.getElementById(PASS_FILL_CHOOSER_ID)?.remove();
     document.getElementById(PASS_PAGE_TOAST_HOST_ID)?.remove();
+    hideLoginSavePrompt("dismiss");
   }
   root.setAttribute(PASS_PAGE_UI_OWNER_ATTR, current.key);
   root.setAttribute(PASS_PAGE_UI_OWNER_PRIORITY_ATTR, String(current.priority));
@@ -180,6 +186,11 @@ function installPassContentBridge() {
       return;
     }
 
+    if (loginSavePromptHost) {
+      event.preventDefault();
+      return;
+    }
+
     const payload = extractCredentialPayload(form);
     if (!payload) return;
 
@@ -193,12 +204,14 @@ function installPassContentBridge() {
       resumeSubmit(form, submitter);
     };
 
+    let checkFinished = false;
     chrome.runtime.sendMessage(
       {
         type: "PASS_CONTENT_CHECK_LOGIN",
         payload,
       },
       (response) => {
+        checkFinished = true;
         const runtimeError = chrome.runtime.lastError;
         if (runtimeError || !response?.ok || !response?.shouldPrompt) {
           resumeOnce();
@@ -213,32 +226,172 @@ function installPassContentBridge() {
         }
         lastPromptKey = promptKey;
         lastPromptAt = now;
-        const actionText = mode === "update" ? "更新密码" : "保存账号";
-        const confirmed = window.confirm(
-          `检测到登录行为。\n域名: ${payload.domain}\n用户名: ${payload.username}\n是否${actionText}到 Pass？`
-        );
-        if (!confirmed) {
-          resumeOnce();
-          return;
-        }
-        chrome.runtime.sendMessage(
-          {
-            type: "PASS_SAVE_FROM_LOGIN",
-            payload,
-          },
-          () => {
+        void showLoginSavePrompt(payload, mode).then((decision) => {
+          if (decision !== "save") {
             resumeOnce();
+            return;
           }
-        );
-        setTimeout(resumeOnce, 250);
+          chrome.runtime.sendMessage(
+            {
+              type: "PASS_SAVE_FROM_LOGIN",
+              payload,
+            },
+            () => {
+              resumeOnce();
+            }
+          );
+          setTimeout(resumeOnce, 250);
+        });
       }
     );
 
-    // Fallback in case runtime message callback is delayed.
-    setTimeout(resumeOnce, 800);
+    // Only recover when the background never answers. Once the prompt is shown,
+    // the intercepted submission waits for an explicit user choice.
+    setTimeout(() => {
+      if (!checkFinished) resumeOnce();
+    }, 800);
     },
     true
   );
+}
+
+function hideLoginSavePrompt(decision = null) {
+  loginSavePromptHost?.remove();
+  loginSavePromptHost = null;
+  const resolve = loginSavePromptResolve;
+  loginSavePromptResolve = null;
+  if (decision && resolve) resolve(decision);
+}
+
+function showLoginSavePrompt(payload, mode) {
+  hideLoginSavePrompt("dismiss");
+  hideFillChooser();
+
+  return new Promise((resolve) => {
+    loginSavePromptResolve = resolve;
+    const host = document.createElement("div");
+    host.id = PASS_LOGIN_SAVE_PROMPT_ID;
+    host.setAttribute("popover", "manual");
+    const criticalStyles = {
+      all: "initial",
+      position: "fixed",
+      inset: "14px 14px auto auto",
+      margin: "0",
+      padding: "0",
+      border: "0",
+      width: "min(360px, calc(100vw - 28px))",
+      maxWidth: "min(360px, calc(100vw - 28px))",
+      zIndex: "2147483647",
+      colorScheme: "light",
+    };
+    for (const [property, value] of Object.entries(criticalStyles)) {
+      const cssProperty = property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+      host.style.setProperty(cssProperty, value, "important");
+    }
+
+    const shadow = host.attachShadow({ mode: "closed" });
+    const root = document.createElement("div");
+    root.setAttribute("role", "dialog");
+    root.setAttribute("aria-label", mode === "update" ? "更新 Pass 中的密码" : "保存账号到 Pass");
+    root.style.boxSizing = "border-box";
+    root.style.width = "100%";
+    root.style.padding = "12px";
+    root.style.border = "1px solid #c7dafb";
+    root.style.borderRadius = "10px";
+    root.style.background = "#ffffff";
+    root.style.boxShadow = "0 10px 26px rgba(36, 67, 109, 0.22)";
+    root.style.color = "#1d314d";
+    root.style.cursor = "grab";
+    root.style.font = '12px/1.4 "SF Pro Text", "PingFang SC", sans-serif';
+
+    const title = document.createElement("div");
+    title.textContent = mode === "update" ? "更新已保存的密码？" : "保存这个账号？";
+    title.style.marginBottom = "8px";
+    title.style.fontSize = "13px";
+    title.style.fontWeight = "600";
+    title.style.cursor = "grab";
+    title.style.touchAction = "none";
+    title.style.userSelect = "none";
+    title.setAttribute("data-pass-drag-handle", "true");
+    root.appendChild(title);
+
+    const details = document.createElement("div");
+    details.style.display = "grid";
+    details.style.gap = "3px";
+    details.style.marginBottom = "12px";
+    details.style.color = "#4b6485";
+    details.style.cursor = "default";
+    details.setAttribute("data-pass-no-drag", "true");
+
+    const explanationLine = document.createElement("div");
+    explanationLine.textContent = mode === "update"
+      ? "检测到该账号密码已更改。"
+      : "检测到一个尚未保存的登录账号。";
+    explanationLine.style.marginBottom = "3px";
+    explanationLine.style.color = "#1d314d";
+    details.appendChild(explanationLine);
+    const domainLine = document.createElement("div");
+    domainLine.textContent = `网站：${String(payload?.domain || "当前网站")}`;
+    details.appendChild(domainLine);
+    const usernameLine = document.createElement("div");
+    usernameLine.textContent = `用户名：${String(payload?.username || "未命名账号")}`;
+    details.appendChild(usernameLine);
+    root.appendChild(details);
+
+    const actions = document.createElement("div");
+    actions.style.display = "flex";
+    actions.style.justifyContent = "flex-end";
+    actions.style.gap = "8px";
+    actions.setAttribute("data-pass-no-drag", "true");
+
+    const dismissButton = document.createElement("button");
+    dismissButton.type = "button";
+    dismissButton.textContent = "暂不保存";
+    dismissButton.style.border = "1px solid #9ab9eb";
+    dismissButton.style.borderRadius = "8px";
+    dismissButton.style.padding = "6px 10px";
+    dismissButton.style.background = "#ffffff";
+    dismissButton.style.color = "#1d314d";
+    dismissButton.style.cursor = "pointer";
+    dismissButton.style.font = "inherit";
+    dismissButton.addEventListener("click", (event) => {
+      if (event.isTrusted === false) return;
+      hideLoginSavePrompt("dismiss");
+    });
+    actions.appendChild(dismissButton);
+
+    const saveButton = document.createElement("button");
+    saveButton.type = "button";
+    saveButton.textContent = mode === "update" ? "更新并继续" : "保存并继续";
+    saveButton.style.border = "1px solid #2d68c4";
+    saveButton.style.borderRadius = "8px";
+    saveButton.style.padding = "6px 10px";
+    saveButton.style.background = "#2d68c4";
+    saveButton.style.color = "#ffffff";
+    saveButton.style.cursor = "pointer";
+    saveButton.style.font = "inherit";
+    saveButton.addEventListener("click", (event) => {
+      if (event.isTrusted === false) return;
+      hideLoginSavePrompt("save");
+    });
+    actions.appendChild(saveButton);
+    root.appendChild(actions);
+
+    shadow.appendChild(root);
+    loginSavePromptHost = host;
+    document.documentElement.appendChild(host);
+    if (typeof host.showPopover === "function") {
+      try {
+        host.showPopover();
+      } catch {
+        host.removeAttribute("popover");
+      }
+    } else {
+      host.removeAttribute("popover");
+    }
+    host.style.setProperty("display", "block", "important");
+    installFloatingDrag({ host, surface: root });
+  });
 }
 
 function extractCredentialPayload(form) {

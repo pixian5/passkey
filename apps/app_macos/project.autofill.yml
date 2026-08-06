@@ -21,8 +21,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pass.desktop
-        MARKETING_VERSION: "1.6.0"
-        CURRENT_PROJECT_VERSION: "160"
+        MARKETING_VERSION: "1.6.1"
+        CURRENT_PROJECT_VERSION: "161"
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_ENTITLEMENTS: PassMac.entitlements
         INFOPLIST_KEY_CFBundleDisplayName: PassMac
@@ -39,8 +39,8 @@ targets:
     info:
       path: AutofillExtension/AutoFillExtension-Info.plist
       properties:
-        CFBundleShortVersionString: "1.6.0"
-        CFBundleVersion: "160"
+        CFBundleShortVersionString: "1.6.1"
+        CFBundleVersion: "161"
         NSExtension:
           NSExtensionAttributes:
             ASCredentialProviderExtensionCapabilities:
@@ -61,8 +61,8 @@ targets:
         PRODUCT_NAME: PassAutoFillExtension
         PRODUCT_MODULE_NAME: PassAutoFillExtension
         PRODUCT_BUNDLE_IDENTIFIER: com.pass.desktop.autofill
-        MARKETING_VERSION: "1.6.0"
-        CURRENT_PROJECT_VERSION: "160"
+        MARKETING_VERSION: "1.6.1"
+        CURRENT_PROJECT_VERSION: "161"
         CODE_SIGN_ENTITLEMENTS: AutofillExtension/AutoFillExtension.entitlements
         OTHER_LDFLAGS:
           - "$(inherited)"

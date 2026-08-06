@@ -185,7 +185,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.6.0";
+  var PASS_EXTENSION_VERSION = "1.6.1";
 
   // fill_chooser_activation.js
   var FILL_CHOOSER_ACTIVATION_DEDUPE_MS = 650;
@@ -395,6 +395,7 @@
   var PASSKEY_USE_BROWSER_FALLBACK = "__PASSKEY_USE_BROWSER_FALLBACK__";
   var PASSKEY_LOG_PREFIX = "[Pass content]";
   var PASS_FILL_CHOOSER_ID = "pass-fill-chooser";
+  var PASS_LOGIN_SAVE_PROMPT_ID = "pass-login-save-prompt";
   var PASS_FILL_LIST_COOLDOWN_MS = 400;
   var PASS_FILL_SUPPRESS_REOPEN_MS = 1200;
   var PASS_FILL_RECENT_VALUE_MS = 8e3;
@@ -407,6 +408,8 @@
   var passPageToasts = [];
   var passPageToastHost = null;
   var passPageToastContainer = null;
+  var loginSavePromptHost = null;
+  var loginSavePromptResolve = null;
   var fillChooserHost = null;
   var fillChooserShadow = null;
   var fillChooserListInFlight = false;
@@ -450,6 +453,7 @@
       if (existingPriority === current.priority && existingKey.localeCompare(current.key) < 0) return false;
       document.getElementById(PASS_FILL_CHOOSER_ID)?.remove();
       document.getElementById(PASS_PAGE_TOAST_HOST_ID)?.remove();
+      hideLoginSavePrompt("dismiss");
     }
     root.setAttribute(PASS_PAGE_UI_OWNER_ATTR, current.key);
     root.setAttribute(PASS_PAGE_UI_OWNER_PRIORITY_ATTR, String(current.priority));
@@ -519,6 +523,10 @@
           delete form.dataset.passResubmitting;
           return;
         }
+        if (loginSavePromptHost) {
+          event.preventDefault();
+          return;
+        }
         const payload = extractCredentialPayload(form);
         if (!payload) return;
         const submitter = event.submitter;
@@ -529,12 +537,14 @@
           resumed = true;
           resumeSubmit(form, submitter);
         };
+        let checkFinished = false;
         chrome.runtime.sendMessage(
           {
             type: "PASS_CONTENT_CHECK_LOGIN",
             payload
           },
           (response) => {
+            checkFinished = true;
             const runtimeError = chrome.runtime.lastError;
             if (runtimeError || !response?.ok || !response?.shouldPrompt) {
               resumeOnce();
@@ -549,33 +559,156 @@
             }
             lastPromptKey = promptKey;
             lastPromptAt = now;
-            const actionText = mode === "update" ? "\u66F4\u65B0\u5BC6\u7801" : "\u4FDD\u5B58\u8D26\u53F7";
-            const confirmed = window.confirm(
-              `\u68C0\u6D4B\u5230\u767B\u5F55\u884C\u4E3A\u3002
-\u57DF\u540D: ${payload.domain}
-\u7528\u6237\u540D: ${payload.username}
-\u662F\u5426${actionText}\u5230 Pass\uFF1F`
-            );
-            if (!confirmed) {
-              resumeOnce();
-              return;
-            }
-            chrome.runtime.sendMessage(
-              {
-                type: "PASS_SAVE_FROM_LOGIN",
-                payload
-              },
-              () => {
+            void showLoginSavePrompt(payload, mode).then((decision) => {
+              if (decision !== "save") {
                 resumeOnce();
+                return;
               }
-            );
-            setTimeout(resumeOnce, 250);
+              chrome.runtime.sendMessage(
+                {
+                  type: "PASS_SAVE_FROM_LOGIN",
+                  payload
+                },
+                () => {
+                  resumeOnce();
+                }
+              );
+              setTimeout(resumeOnce, 250);
+            });
           }
         );
-        setTimeout(resumeOnce, 800);
+        setTimeout(() => {
+          if (!checkFinished) resumeOnce();
+        }, 800);
       },
       true
     );
+  }
+  function hideLoginSavePrompt(decision = null) {
+    loginSavePromptHost?.remove();
+    loginSavePromptHost = null;
+    const resolve = loginSavePromptResolve;
+    loginSavePromptResolve = null;
+    if (decision && resolve) resolve(decision);
+  }
+  function showLoginSavePrompt(payload, mode) {
+    hideLoginSavePrompt("dismiss");
+    hideFillChooser();
+    return new Promise((resolve) => {
+      loginSavePromptResolve = resolve;
+      const host = document.createElement("div");
+      host.id = PASS_LOGIN_SAVE_PROMPT_ID;
+      host.setAttribute("popover", "manual");
+      const criticalStyles = {
+        all: "initial",
+        position: "fixed",
+        inset: "14px 14px auto auto",
+        margin: "0",
+        padding: "0",
+        border: "0",
+        width: "min(360px, calc(100vw - 28px))",
+        maxWidth: "min(360px, calc(100vw - 28px))",
+        zIndex: "2147483647",
+        colorScheme: "light"
+      };
+      for (const [property, value] of Object.entries(criticalStyles)) {
+        const cssProperty = property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+        host.style.setProperty(cssProperty, value, "important");
+      }
+      const shadow = host.attachShadow({ mode: "closed" });
+      const root = document.createElement("div");
+      root.setAttribute("role", "dialog");
+      root.setAttribute("aria-label", mode === "update" ? "\u66F4\u65B0 Pass \u4E2D\u7684\u5BC6\u7801" : "\u4FDD\u5B58\u8D26\u53F7\u5230 Pass");
+      root.style.boxSizing = "border-box";
+      root.style.width = "100%";
+      root.style.padding = "12px";
+      root.style.border = "1px solid #c7dafb";
+      root.style.borderRadius = "10px";
+      root.style.background = "#ffffff";
+      root.style.boxShadow = "0 10px 26px rgba(36, 67, 109, 0.22)";
+      root.style.color = "#1d314d";
+      root.style.cursor = "grab";
+      root.style.font = '12px/1.4 "SF Pro Text", "PingFang SC", sans-serif';
+      const title = document.createElement("div");
+      title.textContent = mode === "update" ? "\u66F4\u65B0\u5DF2\u4FDD\u5B58\u7684\u5BC6\u7801\uFF1F" : "\u4FDD\u5B58\u8FD9\u4E2A\u8D26\u53F7\uFF1F";
+      title.style.marginBottom = "8px";
+      title.style.fontSize = "13px";
+      title.style.fontWeight = "600";
+      title.style.cursor = "grab";
+      title.style.touchAction = "none";
+      title.style.userSelect = "none";
+      title.setAttribute("data-pass-drag-handle", "true");
+      root.appendChild(title);
+      const details = document.createElement("div");
+      details.style.display = "grid";
+      details.style.gap = "3px";
+      details.style.marginBottom = "12px";
+      details.style.color = "#4b6485";
+      details.style.cursor = "default";
+      details.setAttribute("data-pass-no-drag", "true");
+      const explanationLine = document.createElement("div");
+      explanationLine.textContent = mode === "update" ? "\u68C0\u6D4B\u5230\u8BE5\u8D26\u53F7\u5BC6\u7801\u5DF2\u66F4\u6539\u3002" : "\u68C0\u6D4B\u5230\u4E00\u4E2A\u5C1A\u672A\u4FDD\u5B58\u7684\u767B\u5F55\u8D26\u53F7\u3002";
+      explanationLine.style.marginBottom = "3px";
+      explanationLine.style.color = "#1d314d";
+      details.appendChild(explanationLine);
+      const domainLine = document.createElement("div");
+      domainLine.textContent = `\u7F51\u7AD9\uFF1A${String(payload?.domain || "\u5F53\u524D\u7F51\u7AD9")}`;
+      details.appendChild(domainLine);
+      const usernameLine = document.createElement("div");
+      usernameLine.textContent = `\u7528\u6237\u540D\uFF1A${String(payload?.username || "\u672A\u547D\u540D\u8D26\u53F7")}`;
+      details.appendChild(usernameLine);
+      root.appendChild(details);
+      const actions = document.createElement("div");
+      actions.style.display = "flex";
+      actions.style.justifyContent = "flex-end";
+      actions.style.gap = "8px";
+      actions.setAttribute("data-pass-no-drag", "true");
+      const dismissButton = document.createElement("button");
+      dismissButton.type = "button";
+      dismissButton.textContent = "\u6682\u4E0D\u4FDD\u5B58";
+      dismissButton.style.border = "1px solid #9ab9eb";
+      dismissButton.style.borderRadius = "8px";
+      dismissButton.style.padding = "6px 10px";
+      dismissButton.style.background = "#ffffff";
+      dismissButton.style.color = "#1d314d";
+      dismissButton.style.cursor = "pointer";
+      dismissButton.style.font = "inherit";
+      dismissButton.addEventListener("click", (event) => {
+        if (event.isTrusted === false) return;
+        hideLoginSavePrompt("dismiss");
+      });
+      actions.appendChild(dismissButton);
+      const saveButton = document.createElement("button");
+      saveButton.type = "button";
+      saveButton.textContent = mode === "update" ? "\u66F4\u65B0\u5E76\u7EE7\u7EED" : "\u4FDD\u5B58\u5E76\u7EE7\u7EED";
+      saveButton.style.border = "1px solid #2d68c4";
+      saveButton.style.borderRadius = "8px";
+      saveButton.style.padding = "6px 10px";
+      saveButton.style.background = "#2d68c4";
+      saveButton.style.color = "#ffffff";
+      saveButton.style.cursor = "pointer";
+      saveButton.style.font = "inherit";
+      saveButton.addEventListener("click", (event) => {
+        if (event.isTrusted === false) return;
+        hideLoginSavePrompt("save");
+      });
+      actions.appendChild(saveButton);
+      root.appendChild(actions);
+      shadow.appendChild(root);
+      loginSavePromptHost = host;
+      document.documentElement.appendChild(host);
+      if (typeof host.showPopover === "function") {
+        try {
+          host.showPopover();
+        } catch {
+          host.removeAttribute("popover");
+        }
+      } else {
+        host.removeAttribute("popover");
+      }
+      host.style.setProperty("display", "block", "important");
+      installFloatingDrag({ host, surface: root });
+    });
   }
   function extractCredentialPayload(form) {
     const inputs = Array.from(form.querySelectorAll("input"));
