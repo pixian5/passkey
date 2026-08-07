@@ -1,6 +1,6 @@
 # 浏览器扩展网页内浮窗交互
 
-> 状态：当前实现（版本 1.6.5；完成本轮全项目文档同步后随仓库版本递增）。本文只描述 `apps/extension_shared/content.js` 注入登录页后的账号选择和保存/更新确认交互；Chrome 管理页、工具栏 popup 与 WebAuthn 的完整协议不在本文范围。
+> 状态：当前实现（版本 1.6.6；完成本轮全项目文档同步后随仓库版本递增）。本文只描述 `apps/extension_shared/content.js` 注入登录页后的账号选择和保存/更新确认交互；Chrome 管理页、工具栏 popup 与 WebAuthn 的完整协议不在本文范围。
 
 ## 1. 目标与边界
 

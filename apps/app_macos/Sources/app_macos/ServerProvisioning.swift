@@ -476,11 +476,12 @@ enum ServerProvisioningService {
             "Group=pass",
             "UMask=0077",
             "WorkingDirectory=/opt/pass-sync-server",
+            // Load legacy settings first; generated values below must win.
+            "EnvironmentFile=-/etc/pass-sync/pass-sync-server.env",
             "Environment=PASS_SYNC_HOST=\(endpoint.usesTLS ? "0.0.0.0" : "127.0.0.1")",
             "Environment=PASS_SYNC_PORT=\(endpoint.backendPort)",
             "Environment=PASS_SYNC_DB_PATH=/var/lib/pass-sync/pass_sync.sqlite3",
             "Environment=PASS_SYNC_BEARER_TOKENS_FILE=/etc/pass-sync/tokens.conf",
-            "EnvironmentFile=-/etc/pass-sync/pass-sync-server.env",
             "Environment=PASS_SYNC_LOG_LEVEL=INFO",
             "Environment=PASS_SYNC_RATE_LIMIT_PER_MINUTE=120",
             "Environment=PASS_SYNC_CLIENT_TIMEOUT_SECONDS=15",

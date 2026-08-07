@@ -636,6 +636,9 @@ fn service_text(endpoint: &Endpoint) -> String {
         "Group=pass".into(),
         "UMask=0077".into(),
         "WorkingDirectory=/opt/pass-sync-server".into(),
+        // Load legacy settings first; the generated deployment values below
+        // must win so an old env file cannot downgrade TLS or change ports.
+        "EnvironmentFile=-/etc/pass-sync/pass-sync-server.env".into(),
         format!(
             "Environment=PASS_SYNC_HOST={}",
             if endpoint.uses_tls {
@@ -647,7 +650,6 @@ fn service_text(endpoint: &Endpoint) -> String {
         format!("Environment=PASS_SYNC_PORT={}", endpoint.backend_port),
         "Environment=PASS_SYNC_DB_PATH=/var/lib/pass-sync/pass_sync.sqlite3".into(),
         "Environment=PASS_SYNC_BEARER_TOKENS_FILE=/etc/pass-sync/tokens.conf".into(),
-        "EnvironmentFile=-/etc/pass-sync/pass-sync-server.env".into(),
         "Environment=PASS_SYNC_LOG_LEVEL=INFO".into(),
         "Environment=PASS_SYNC_RATE_LIMIT_PER_MINUTE=120".into(),
         "Environment=PASS_SYNC_CLIENT_TIMEOUT_SECONDS=15".into(),
@@ -1325,7 +1327,9 @@ pub fn host_from_server_url(raw: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{host_key_lines_match, known_host_query, shell_quote};
+    use super::{
+        host_key_lines_match, known_host_query, parse_endpoint, service_text, shell_quote,
+    };
 
     #[test]
     fn known_host_query_uses_openssh_port_format() {
@@ -1357,5 +1361,21 @@ mod tests {
             shell_quote("/tmp/it's-a-key; rm -rf /"),
             "'/tmp/it'\"'\"'s-a-key; rm -rf /'"
         );
+    }
+
+    #[test]
+    fn generated_https_unit_overrides_legacy_environment_values() {
+        let endpoint = parse_endpoint("https://example.com:53334").expect("valid endpoint");
+        assert!(endpoint.uses_tls);
+        let unit = service_text(&endpoint);
+        let env_file = unit.find("EnvironmentFile=").expect("environment file");
+        let host = unit
+            .find("Environment=PASS_SYNC_HOST=0.0.0.0")
+            .expect("host");
+        let port = unit.find("Environment=PASS_SYNC_PORT=53334").expect("port");
+        let cert = unit
+            .find("Environment=PASS_SYNC_TLS_CERT=/etc/pass-sync/tls/server.crt")
+            .expect("cert");
+        assert!(env_file < host && host < port && port < cert);
     }
 }
