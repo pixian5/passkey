@@ -556,27 +556,50 @@ enum ServerProvisioningService {
         """
         set -eu
         if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
-        main_pid=0
-        if command -v systemctl >/dev/null 2>&1; then
-          main_pid=$($SUDO systemctl show pass-sync-server -p MainPID --value 2>/dev/null || true)
-        fi
-        if command -v ss >/dev/null 2>&1; then
-          listeners=$($SUDO ss -ltnpH "sport = :\(endpoint.backendPort)" 2>/dev/null || true)
-          if [ -n "$listeners" ] && ! { [ "$main_pid" != "0" ] && printf '%s\n' "$listeners" | grep -Fq "pid=$main_pid," && ! printf '%s\n' "$listeners" | grep -Fv "pid=$main_pid," | grep -q .; }; then
-            echo "同步服务端口 \(endpoint.backendPort) 已被其他进程占用；不会修改现有服务" >&2
+        check_port() {
+          allow_main_pid="$1"
+          if [ -n "$SUDO" ] && ! $SUDO true 2>/dev/null; then
+            echo "无法使用无交互 sudo 检查同步服务端口" >&2
             exit 1
           fi
-        elif command -v lsof >/dev/null 2>&1; then
-          listener_pids=$($SUDO lsof -nP -t -iTCP:\(endpoint.backendPort) -sTCP:LISTEN 2>/dev/null | sort -u || true)
-          if [ -n "$listener_pids" ] && { [ "$main_pid" = "0" ] || [ "$listener_pids" != "$main_pid" ]; }; then
-            echo "同步服务端口 \(endpoint.backendPort) 已被其他进程占用；不会修改现有服务" >&2
-            exit 1
+          main_pid=0
+          if command -v systemctl >/dev/null 2>&1; then
+            main_pid=$($SUDO systemctl show pass-sync-server -p MainPID --value 2>/dev/null || true)
           fi
-        fi
-        if [ "$main_pid" = "0" ] && command -v lsof >/dev/null 2>&1 && $SUDO lsof -nP -iTCP:\(endpoint.backendPort) -sTCP:LISTEN 2>/dev/null | tail -n +2 | grep -q .; then
-          echo "同步服务端口 \(endpoint.backendPort) 已被其他进程占用；不会修改现有服务" >&2
+          if command -v ss >/dev/null 2>&1; then
+            if listeners=$($SUDO ss -ltnpH "sport = :\(endpoint.backendPort)" 2>/dev/null); then
+              if [ -n "$listeners" ]; then
+                if [ "$allow_main_pid" = "1" ] && [ "$main_pid" != "0" ]; then
+                  if printf '%s\n' "$listeners" | grep -Fq "pid=$main_pid," && ! printf '%s\n' "$listeners" | grep -Fv "pid=$main_pid," | grep -q .; then
+                    return 0
+                  fi
+                fi
+                echo "同步服务端口 \(endpoint.backendPort) 已被其他进程占用；不会修改现有服务" >&2
+                exit 1
+              fi
+              return 0
+            fi
+          fi
+          if command -v lsof >/dev/null 2>&1; then
+            lsof_status=0
+            listener_pids=$($SUDO lsof -nP -t -iTCP:\(endpoint.backendPort) -sTCP:LISTEN 2>/dev/null | sort -u) || lsof_status=$?
+            if [ "$lsof_status" -gt 1 ]; then
+              echo "无法可靠检查同步服务端口 \(endpoint.backendPort)（lsof 失败）" >&2
+              exit 1
+            fi
+            if [ -n "$listener_pids" ]; then
+              if [ "$allow_main_pid" = "1" ] && [ "$main_pid" != "0" ] && [ "$listener_pids" = "$main_pid" ]; then
+                return 0
+              fi
+              echo "同步服务端口 \(endpoint.backendPort) 已被其他进程占用；不会修改现有服务" >&2
+              exit 1
+            fi
+            return 0
+          fi
+          echo "服务器缺少 ss 或 lsof，无法可靠检查同步服务端口 \(endpoint.backendPort)" >&2
           exit 1
-        fi
+        }
+        check_port 1
         $SUDO sh -c 'getent group pass >/dev/null 2>&1 || groupadd --system pass'
         $SUDO sh -c 'id -u pass >/dev/null 2>&1 || useradd --system --gid pass --home-dir /nonexistent --shell /usr/sbin/nologin pass'
         $SUDO install -d -m 0755 /opt/pass-sync-server /etc/pass-sync
@@ -601,6 +624,9 @@ enum ServerProvisioningService {
           $SUDO install -m 0644 -o pass -g pass /etc/bz/certs/server.crt /etc/pass-sync/tls/server.crt
           $SUDO install -m 0600 -o pass -g pass /etc/bz/certs/server.key /etc/pass-sync/tls/server.key
         fi
+        # Recheck immediately before changing systemd units to narrow the
+        # remaining race after the initial probe.
+        check_port 1
         $SUDO install -m 0644 '\(stage)/pass-sync-server.service' /etc/systemd/system/pass-sync-server.service
         $SUDO install -m 0644 '\(stage)/pass-sync-server-backup.service' /etc/systemd/system/pass-sync-server-backup.service
         $SUDO install -m 0644 '\(stage)/pass-sync-server-backup.timer' /etc/systemd/system/pass-sync-server-backup.timer

@@ -860,39 +860,93 @@ rm -rf '{stage}'
     )
 }
 
-fn port_preflight_command(port: u16) -> String {
+fn port_preflight_command(port: u16, allow_existing_pass_service: bool) -> String {
+    let allow_existing = if allow_existing_pass_service {
+        r#"
+  if [ "$main_pid" != "0" ]; then
+    if printf '%s\n' "$listeners" | grep -Fq "pid=$main_pid," && ! printf '%s\n' "$listeners" | grep -Fv "pid=$main_pid," | grep -q .; then
+      exit 0
+    fi
+  fi
+"#
+    } else {
+        ""
+    };
+    let allow_existing_lsof = if allow_existing_pass_service {
+        r#"
+    if [ "$main_pid" != "0" ] && [ "$listener_pids" = "$main_pid" ]; then
+      exit 0
+    fi
+"#
+    } else {
+        ""
+    };
     format!(
         r#"
 set -eu
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
+if [ -n "$SUDO" ] && ! $SUDO true 2>/dev/null; then
+  echo "无法使用无交互 sudo 检查同步服务端口" >&2
+  exit 1
+fi
 main_pid=0
 if command -v systemctl >/dev/null 2>&1; then
   main_pid=$($SUDO systemctl show pass-sync-server -p MainPID --value 2>/dev/null || true)
 fi
 if command -v ss >/dev/null 2>&1; then
-  listeners=$($SUDO ss -ltnpH "sport = :{port}" 2>/dev/null || true)
-  if [ -n "$listeners" ]; then
-    if [ "$main_pid" != "0" ] && printf '%s\n' "$listeners" | grep -Fq "pid=$main_pid," && ! printf '%s\n' "$listeners" | grep -Fv "pid=$main_pid," | grep -q .; then
-      exit 0
+  if listeners=$($SUDO ss -ltnpH "sport = :{port}" 2>/dev/null); then
+    if [ -n "$listeners" ]; then
+{allow_existing}      echo "同步服务端口 {port} 已被其他进程占用；不会修改现有服务" >&2
+      exit 1
     fi
+    exit 0
+  fi
+fi
+if command -v lsof >/dev/null 2>&1; then
+  lsof_status=0
+  listener_pids=$($SUDO lsof -nP -t -iTCP:{port} -sTCP:LISTEN 2>/dev/null | sort -u) || lsof_status=$?
+  if [ "$lsof_status" -gt 1 ]; then
+    echo "无法可靠检查同步服务端口 {port}（lsof 失败）" >&2
+    exit 1
+  fi
+  if [ -n "$listener_pids" ]; then
+{allow_existing_lsof}
     echo "同步服务端口 {port} 已被其他进程占用；不会修改现有服务" >&2
     exit 1
   fi
   exit 0
 fi
-if command -v lsof >/dev/null 2>&1; then
-  listener_pids=$($SUDO lsof -nP -t -iTCP:{port} -sTCP:LISTEN 2>/dev/null | sort -u || true)
-  if [ -n "$listener_pids" ]; then
-    if [ "$main_pid" != "0" ] && [ "$listener_pids" = "$main_pid" ]; then
-      exit 0
-    fi
-    echo "同步服务端口 {port} 已被其他进程占用；不会修改现有服务" >&2
-    exit 1
-  fi
-fi
+echo "服务器缺少 ss 或 lsof，无法可靠检查同步服务端口 {port}" >&2
+exit 1
 "#,
-        port = port
+        port = port,
+        allow_existing = allow_existing,
+        allow_existing_lsof = allow_existing_lsof
     )
+}
+
+fn stop_existing_command() -> &'static str {
+    r#"
+set -eu
+if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
+if command -v systemctl >/dev/null 2>&1; then
+  $SUDO systemctl stop pass-sync-server 2>/dev/null || true
+  $SUDO systemctl stop pass-sync-server-backup.timer 2>/dev/null || true
+  $SUDO systemctl stop pass-sync-server-backup.service 2>/dev/null || true
+fi
+"#
+}
+
+fn restore_existing_command() -> &'static str {
+    r#"
+set -eu
+if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
+if command -v systemctl >/dev/null 2>&1; then
+  $SUDO systemctl daemon-reload 2>/dev/null || true
+  $SUDO systemctl start pass-sync-server 2>/dev/null || true
+  $SUDO systemctl start pass-sync-server-backup.timer 2>/dev/null || true
+fi
+"#
 }
 
 fn resource_path(name: &str) -> Result<PathBuf, String> {
@@ -979,32 +1033,6 @@ fi
 if [ "$found" -eq 0 ]; then
   echo "none"
 fi
-"#
-}
-
-fn remove_existing_command() -> &'static str {
-    r#"
-set -eu
-if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
-if command -v systemctl >/dev/null 2>&1; then
-  $SUDO systemctl stop pass-sync-server 2>/dev/null || true
-  $SUDO systemctl stop pass-sync-server-backup.timer 2>/dev/null || true
-  $SUDO systemctl stop pass-sync-server-backup.service 2>/dev/null || true
-  $SUDO systemctl disable pass-sync-server pass-sync-server-backup.timer 2>/dev/null || true
-  $SUDO systemctl disable pass-sync-server-backup.service 2>/dev/null || true
-fi
-$SUDO rm -f /etc/systemd/system/pass-sync-server.service \
-  /etc/systemd/system/pass-sync-server-backup.service \
-  /etc/systemd/system/pass-sync-server-backup.timer 2>/dev/null || true
-if command -v systemctl >/dev/null 2>&1; then
-  $SUDO systemctl daemon-reload 2>/dev/null || true
-  $SUDO systemctl reset-failed pass-sync-server 2>/dev/null || true
-fi
-$SUDO rm -rf /opt/pass-sync-server 2>/dev/null || true
-# Keep /var/lib/pass-sync data; reinstall will backup DB again.
-$SUDO rm -f /etc/pass-sync/tokens.conf /etc/pass-sync/pass-sync-server.env 2>/dev/null || true
-$SUDO rm -rf /etc/pass-sync/tls 2>/dev/null || true
-echo "removed"
 "#
 }
 
@@ -1199,14 +1227,8 @@ pub fn provision_server(
         &credential,
         &endpoint,
         &temp,
-        &port_preflight_command(endpoint.backend_port),
+        &port_preflight_command(endpoint.backend_port, true),
     )?;
-
-    let mut removed_existing = false;
-    if exists && remove_existing {
-        ssh_run(&credential, &endpoint, &temp, remove_existing_command())?;
-        removed_existing = true;
-    }
 
     let stage = format!("/tmp/pass-sync-provision-{}", Uuid::new_v4());
     ssh_run(
@@ -1351,8 +1373,37 @@ pub fn provision_server(
         }
     }
 
+    let mut removed_existing = false;
+    let mut stopped_existing = false;
+    if exists && remove_existing {
+        if let Err(e) = ssh_run(&credential, &endpoint, &temp, stop_existing_command()) {
+            cleanup();
+            return Err(e);
+        }
+        stopped_existing = true;
+        removed_existing = true;
+    }
+
+    // Recheck after stopping the old service. This closes the previous window
+    // where another process could claim the port between preflight and removal.
+    if let Err(e) = ssh_run(
+        &credential,
+        &endpoint,
+        &temp,
+        &port_preflight_command(endpoint.backend_port, false),
+    ) {
+        if stopped_existing {
+            let _ = ssh_run(&credential, &endpoint, &temp, restore_existing_command());
+        }
+        cleanup();
+        return Err(e);
+    }
+
     let install = install_command(&stage, &endpoint, custom_tls);
     if let Err(e) = ssh_run(&credential, &endpoint, &temp, &install) {
+        if stopped_existing {
+            let _ = ssh_run(&credential, &endpoint, &temp, restore_existing_command());
+        }
         cleanup();
         return Err(e);
     }
@@ -1369,7 +1420,7 @@ pub fn provision_server(
         )
     };
     if removed_existing {
-        message = format!("已删除旧服务后重新创建。{message}");
+        message = format!("已停止并替换旧服务后重新创建。{message}");
     }
 
     Ok(ProvisionResult {
@@ -1387,6 +1438,8 @@ pub fn host_from_server_url(raw: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
+
     use super::{
         host_key_lines_match, known_host_query, parse_endpoint, port_preflight_command,
         service_text, shell_quote,
@@ -1452,9 +1505,29 @@ mod tests {
 
     #[test]
     fn port_preflight_allows_only_the_running_pass_service() {
-        let command = port_preflight_command(53334);
+        let command = port_preflight_command(53334, true);
         assert!(command.contains("systemctl show pass-sync-server -p MainPID"));
         assert!(command.contains("pid=$main_pid,"));
         assert!(command.contains("端口 53334 已被其他进程占用"));
+        assert!(command.contains("无法可靠检查同步服务端口 53334"));
+    }
+
+    #[test]
+    fn strict_port_preflight_does_not_allow_the_old_service() {
+        let command = port_preflight_command(53334, false);
+        assert!(!command.contains("pid=$main_pid,"));
+        assert!(command.contains("服务器缺少 ss 或 lsof"));
+    }
+
+    #[test]
+    fn generated_port_preflight_is_valid_posix_shell() {
+        for allow_existing in [true, false] {
+            let command = port_preflight_command(53334, allow_existing);
+            let result = Command::new("sh")
+                .args(["-n", "-c", command.as_str()])
+                .status()
+                .expect("shell available");
+            assert!(result.success(), "generated shell is invalid");
+        }
     }
 }
