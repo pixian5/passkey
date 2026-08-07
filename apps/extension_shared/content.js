@@ -1,4 +1,5 @@
 import { normalizeDomain } from "./account_core.js";
+import { filterFillChooserAccounts } from "./fill_chooser_filter.js";
 import { fillCredentialFields } from "./credential_fill_core.js";
 import { PASS_EXTENSION_VERSION } from "./extension_version.js";
 import { claimFillChooserActivation } from "./fill_chooser_activation.js";
@@ -167,6 +168,7 @@ function installPassContentBridge() {
   });
 
   document.addEventListener("focusin", onFillFieldFocusIn, true);
+  document.addEventListener("input", onFillChooserUserInput, true);
   document.addEventListener("pointerdown", onDocumentPointerDownForFillChooser, true);
   document.addEventListener("pointerdown", onFillChooserUserPointer, true);
   document.addEventListener("click", onFillChooserUserClick, true);
@@ -599,6 +601,12 @@ function findRelatedUsernameInput(passwordInput) {
   return candidates[0] || null;
 }
 
+function resolveFillChooserUsernameInput(input) {
+  if (!(input instanceof HTMLInputElement)) return null;
+  if (isPasswordInput(input)) return findRelatedUsernameInput(input);
+  return isUsernameLikeInput(input, { strict: false }) ? input : null;
+}
+
 function setNativeInputValue(input, value) {
   if (!(input instanceof HTMLInputElement)) return;
   try {
@@ -716,6 +724,10 @@ function renderFillChooser(accounts, input) {
   if (!Array.isArray(accounts) || accounts.length === 0) return;
   fillChooserLastAccounts = accounts;
   fillChooserActiveInput = input;
+  const visibleAccounts = filterFillChooserAccounts(
+    accounts,
+    resolveFillChooserUsernameInput(input)?.value || "",
+  );
   const shadow = ensureFillChooserHost();
 
   const root = document.createElement("div");
@@ -762,7 +774,17 @@ function renderFillChooser(accounts, input) {
   list.style.cursor = "default";
   list.setAttribute("data-pass-no-drag", "true");
 
-  for (const account of accounts) {
+  if (visibleAccounts.length === 0) {
+    const empty = document.createElement("div");
+    empty.textContent = "没有匹配的账号";
+    empty.style.padding = "18px 10px";
+    empty.style.textAlign = "center";
+    empty.style.color = "#4b6485";
+    empty.setAttribute("role", "status");
+    list.appendChild(empty);
+  }
+
+  for (const account of visibleAccounts) {
     const button = document.createElement("button");
     button.type = "button";
     button.style.display = "grid";
@@ -1048,6 +1070,14 @@ function onFillChooserUserPointer(event) {
   if (document.activeElement === input && !isFillChooserBlocked()) {
     void showFillChooserForInput(input, { userInitiated: true });
   }
+}
+
+function onFillChooserUserInput(event) {
+  if (!ownsPageUi() || !fillChooserHost || fillChooserApplying) return;
+  const target = event.target;
+  const usernameInput = resolveFillChooserUsernameInput(fillChooserActiveInput);
+  if (target !== usernameInput || fillChooserLastAccounts.length === 0) return;
+  renderFillChooser(fillChooserLastAccounts, fillChooserActiveInput);
 }
 
 function onFillChooserUserClick(event) {

@@ -139,6 +139,17 @@
     return value;
   }
 
+  // fill_chooser_filter.js
+  function normalizeFillChooserQuery(value) {
+    return String(value ?? "").trim().toLowerCase();
+  }
+  function filterFillChooserAccounts(accounts, query) {
+    if (!Array.isArray(accounts)) return [];
+    const normalizedQuery = normalizeFillChooserQuery(query);
+    if (!normalizedQuery) return accounts.slice();
+    return accounts.filter((account) => normalizeFillChooserQuery(account?.username).includes(normalizedQuery));
+  }
+
   // credential_fill_core.js
   function fillCredentialFields({
     activeInput,
@@ -185,7 +196,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.6.4";
+  var PASS_EXTENSION_VERSION = "1.6.5";
 
   // fill_chooser_activation.js
   var FILL_CHOOSER_ACTIVATION_DEDUPE_MS = 650;
@@ -508,6 +519,7 @@
       }
     });
     document.addEventListener("focusin", onFillFieldFocusIn, true);
+    document.addEventListener("input", onFillChooserUserInput, true);
     document.addEventListener("pointerdown", onDocumentPointerDownForFillChooser, true);
     document.addEventListener("pointerdown", onFillChooserUserPointer, true);
     document.addEventListener("click", onFillChooserUserClick, true);
@@ -858,6 +870,11 @@
     candidates.sort((left, right) => scoreUsernameCandidate(right, passwordInput) - scoreUsernameCandidate(left, passwordInput));
     return candidates[0] || null;
   }
+  function resolveFillChooserUsernameInput(input) {
+    if (!(input instanceof HTMLInputElement)) return null;
+    if (isPasswordInput(input)) return findRelatedUsernameInput(input);
+    return isUsernameLikeInput(input, { strict: false }) ? input : null;
+  }
   function setNativeInputValue(input, value) {
     if (!(input instanceof HTMLInputElement)) return;
     try {
@@ -969,6 +986,10 @@
     if (!Array.isArray(accounts) || accounts.length === 0) return;
     fillChooserLastAccounts = accounts;
     fillChooserActiveInput = input;
+    const visibleAccounts = filterFillChooserAccounts(
+      accounts,
+      resolveFillChooserUsernameInput(input)?.value || ""
+    );
     const shadow = ensureFillChooserHost();
     const root = document.createElement("div");
     root.style.background = "#ffffff";
@@ -1011,7 +1032,16 @@
     list.style.scrollbarGutter = "stable";
     list.style.cursor = "default";
     list.setAttribute("data-pass-no-drag", "true");
-    for (const account of accounts) {
+    if (visibleAccounts.length === 0) {
+      const empty = document.createElement("div");
+      empty.textContent = "\u6CA1\u6709\u5339\u914D\u7684\u8D26\u53F7";
+      empty.style.padding = "18px 10px";
+      empty.style.textAlign = "center";
+      empty.style.color = "#4b6485";
+      empty.setAttribute("role", "status");
+      list.appendChild(empty);
+    }
+    for (const account of visibleAccounts) {
       const button = document.createElement("button");
       button.type = "button";
       button.style.display = "grid";
@@ -1258,6 +1288,13 @@
     if (document.activeElement === input && !isFillChooserBlocked()) {
       void showFillChooserForInput(input, { userInitiated: true });
     }
+  }
+  function onFillChooserUserInput(event) {
+    if (!ownsPageUi() || !fillChooserHost || fillChooserApplying) return;
+    const target = event.target;
+    const usernameInput = resolveFillChooserUsernameInput(fillChooserActiveInput);
+    if (target !== usernameInput || fillChooserLastAccounts.length === 0) return;
+    renderFillChooser(fillChooserLastAccounts, fillChooserActiveInput);
   }
   function onFillChooserUserClick(event) {
     if (event.isTrusted === false || !ownsPageUi()) return;

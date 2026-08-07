@@ -14,6 +14,13 @@ test("网页内 Pass 提示隔离样式并固定在视口右上角", () => {
   assert.doesNotMatch(contentSource, /600 24px\/1\.4/);
 });
 
+test("用户名输入会筛选账号选择浮窗且无匹配时保留空状态", () => {
+  assert.match(contentSource, /document\.addEventListener\("input", onFillChooserUserInput, true\)/);
+  assert.match(contentSource, /filterFillChooserAccounts\(/);
+  assert.match(contentSource, /没有匹配的账号/);
+  assert.match(contentSource, /target !== usernameInput/);
+});
+
 test("保存密码使用常驻右上角浮窗并等待用户明确选择", () => {
   assert.doesNotMatch(contentSource, /window\.confirm\(/);
   assert.match(contentSource, /PASS_LOGIN_SAVE_PROMPT_ID/);
