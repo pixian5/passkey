@@ -56,7 +56,7 @@ current_runtime_environment=""
 if [[ "${service_was_active}" -eq 1 ]]; then
   current_main_pid="$(systemctl show pass-sync-server -p MainPID --value)"
   if [[ -n "${current_main_pid}" && "${current_main_pid}" != "0" && -r "/proc/${current_main_pid}/environ" ]]; then
-    current_runtime_environment="$(tr '\0' '\n' < "/proc/${current_main_pid}/environ" | sed -n '/^PASS_SYNC_\(HOST\|PORT\)=/p')"
+    current_runtime_environment="$(tr '\0' '\n' < "/proc/${current_main_pid}/environ" | sed -n '/^PASS_SYNC_\(HOST\|PORT\|TLS_CERT\|TLS_KEY\)=/p')"
   fi
 fi
 
@@ -141,6 +141,8 @@ persist_runtime_setting() {
 # Preserve customized listen settings that older service units stored inline.
 persist_runtime_setting PASS_SYNC_HOST
 persist_runtime_setting PASS_SYNC_PORT
+persist_runtime_setting PASS_SYNC_TLS_CERT
+persist_runtime_setting PASS_SYNC_TLS_KEY
 if [[ -f "${CONFIG_DIR}/pass-sync-server.env" ]]; then
   chown pass:pass "${CONFIG_DIR}/pass-sync-server.env"
   chmod 0600 "${CONFIG_DIR}/pass-sync-server.env"
@@ -150,12 +152,18 @@ if [[ -f /etc/bz/certs/server.crt && -f /etc/bz/certs/server.key ]]; then
   install -d -m 0750 -o pass -g pass "${CONFIG_DIR}/tls"
   install -m 0644 -o pass -g pass /etc/bz/certs/server.crt "${CONFIG_DIR}/tls/server.crt"
   install -m 0600 -o pass -g pass /etc/bz/certs/server.key "${CONFIG_DIR}/tls/server.key"
-  if [[ -f "${CONFIG_DIR}/pass-sync-server.env" ]]; then
-    sed -i \
-      -e 's#^PASS_SYNC_TLS_CERT=.*#PASS_SYNC_TLS_CERT=/etc/pass-sync/tls/server.crt#' \
-      -e 's#^PASS_SYNC_TLS_KEY=.*#PASS_SYNC_TLS_KEY=/etc/pass-sync/tls/server.key#' \
-      "${CONFIG_DIR}/pass-sync-server.env"
-  fi
+  tls_env_path="${CONFIG_DIR}/pass-sync-server.env"
+  for tls_setting in PASS_SYNC_TLS_CERT PASS_SYNC_TLS_KEY; do
+    case "${tls_setting}" in
+      PASS_SYNC_TLS_CERT) tls_value="/etc/pass-sync/tls/server.crt" ;;
+      PASS_SYNC_TLS_KEY) tls_value="/etc/pass-sync/tls/server.key" ;;
+    esac
+    if grep -q "^${tls_setting}=" "${tls_env_path}" 2>/dev/null; then
+      sed -i "s#^${tls_setting}=.*#${tls_setting}=${tls_value}#" "${tls_env_path}"
+    else
+      printf '%s=%s\n' "${tls_setting}" "${tls_value}" >> "${tls_env_path}"
+    fi
+  done
 fi
 
 if [[ -f "${CONFIG_DIR}/tls/server.crt" && -f "${CONFIG_DIR}/tls/server.key" ]]; then
