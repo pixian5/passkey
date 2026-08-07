@@ -80,7 +80,7 @@
 
 - 远端路径、证书路径、文件模式必须 shell quote，禁止直接拼进单引号字符串。
 - 部署后健康检查必须使用正常 TLS 校验，不能 `danger_accept_invalid_certs`。
-- SSH 首次连接自动扫描并写入应用私有 `known_hosts`，后续固定 `StrictHostKeyChecking=yes`。非 22 端口的扫描结果必须精确匹配 `[host]:port`，已保存主机密钥发生变化时必须拒绝连接。
+- SSH 首次连接自动扫描并写入应用私有 `known_hosts`，后续固定 `StrictHostKeyChecking=yes`。非 22 端口的扫描结果必须精确匹配 `[host]:port`，已保存主机密钥发生变化时必须拒绝连接。该无提示 TOFU 不能验证首次连接身份，可能在首次中间人攻击中泄露 SSH 密码、Bearer Token 或上传的 TLS 私钥；这是已接受的交互安全取舍，必须在文档中持续披露。
 - 同步数据库使用 `PRAGMA synchronous=FULL`。数据/备份目录为 `0700`，数据库、WAL、SHM、隔离文件和 Token 文件为 `0600`，systemd/备份进程使用 `UMask=0077`。
 - 空 Token 是受支持的开放模式：客户端不发送认证头，创建服务写空令牌文件；不得生成 Token，也不得写伪配置 `default=`。
 

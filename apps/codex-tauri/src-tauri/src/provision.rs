@@ -305,10 +305,26 @@ fn parse_endpoint(raw: &str) -> Result<Endpoint, String> {
     if !(path.is_empty() || path == "/") {
         return Err("服务器 URL 不要包含路径".into());
     }
-    let explicit_port = url.port();
+    // `Url::port()` drops default ports such as an explicitly written `:443`.
+    // Preserve those values so the provisioner can reject privileged listeners.
+    let explicit_default_port = trimmed
+        .split_once("://")
+        .and_then(|(_, rest)| rest.split('/').next())
+        .and_then(|authority| {
+            if authority.starts_with('[') {
+                authority
+                    .rsplit_once("]:")
+                    .and_then(|(_, port)| port.parse().ok())
+            } else {
+                authority
+                    .rsplit_once(':')
+                    .and_then(|(_, port)| port.parse().ok())
+            }
+        });
+    let explicit_port = url.port().or(explicit_default_port);
     let backend_port = explicit_port.unwrap_or(53333);
-    if backend_port == 0 {
-        return Err("端口无效".into());
+    if backend_port < 1024 {
+        return Err("同步服务不能监听 1-1023 特权端口（尤其是 80/443）；请使用 1024 以上的专用端口，并由反向代理负责 443".into());
     }
     let rendered_host = if host.contains(':') {
         format!("[{host}]")
@@ -773,8 +789,8 @@ fn install_command(stage: &str, endpoint: &Endpoint, custom_tls: bool) -> String
     };
     format!(
         r#"
-set -eu
-if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
+        set -eu
+        if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
 $SUDO sh -c 'getent group pass >/dev/null 2>&1 || groupadd --system pass'
 $SUDO sh -c 'id -u pass >/dev/null 2>&1 || useradd --system --gid pass --home-dir /nonexistent --shell /usr/sbin/nologin pass'
 $SUDO install -d -m 0755 /opt/pass-sync-server /etc/pass-sync
@@ -841,6 +857,41 @@ rm -rf '{stage}'
         port = port,
         health_host = health_host,
         tls_resolve = tls_resolve,
+    )
+}
+
+fn port_preflight_command(port: u16) -> String {
+    format!(
+        r#"
+set -eu
+if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
+main_pid=0
+if command -v systemctl >/dev/null 2>&1; then
+  main_pid=$($SUDO systemctl show pass-sync-server -p MainPID --value 2>/dev/null || true)
+fi
+if command -v ss >/dev/null 2>&1; then
+  listeners=$($SUDO ss -ltnpH "sport = :{port}" 2>/dev/null || true)
+  if [ -n "$listeners" ]; then
+    if [ "$main_pid" != "0" ] && printf '%s\n' "$listeners" | grep -Fq "pid=$main_pid," && ! printf '%s\n' "$listeners" | grep -Fv "pid=$main_pid," | grep -q .; then
+      exit 0
+    fi
+    echo "同步服务端口 {port} 已被其他进程占用；不会修改现有服务" >&2
+    exit 1
+  fi
+  exit 0
+fi
+if command -v lsof >/dev/null 2>&1; then
+  listener_pids=$($SUDO lsof -nP -t -iTCP:{port} -sTCP:LISTEN 2>/dev/null | sort -u || true)
+  if [ -n "$listener_pids" ]; then
+    if [ "$main_pid" != "0" ] && [ "$listener_pids" = "$main_pid" ]; then
+      exit 0
+    fi
+    echo "同步服务端口 {port} 已被其他进程占用；不会修改现有服务" >&2
+    exit 1
+  fi
+fi
+"#,
+        port = port
     )
 }
 
@@ -1142,6 +1193,15 @@ pub fn provision_server(
         ));
     }
 
+    // Check the target port while the old service is still intact. Its own
+    // listener is allowed; any unrelated listener aborts before removal.
+    ssh_run(
+        &credential,
+        &endpoint,
+        &temp,
+        &port_preflight_command(endpoint.backend_port),
+    )?;
+
     let mut removed_existing = false;
     if exists && remove_existing {
         ssh_run(&credential, &endpoint, &temp, remove_existing_command())?;
@@ -1328,7 +1388,8 @@ pub fn host_from_server_url(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        host_key_lines_match, known_host_query, parse_endpoint, service_text, shell_quote,
+        host_key_lines_match, known_host_query, parse_endpoint, port_preflight_command,
+        service_text, shell_quote,
     };
 
     #[test]
@@ -1377,5 +1438,23 @@ mod tests {
             .find("Environment=PASS_SYNC_TLS_CERT=/etc/pass-sync/tls/server.crt")
             .expect("cert");
         assert!(env_file < host && host < port && port < cert);
+    }
+
+    #[test]
+    fn privileged_sync_ports_are_rejected() {
+        let error = match parse_endpoint("https://example.com:443") {
+            Ok(_) => panic!("443 must be rejected"),
+            Err(error) => error,
+        };
+        assert!(error.contains("特权端口"));
+        assert!(parse_endpoint("https://example.com:53334").is_ok());
+    }
+
+    #[test]
+    fn port_preflight_allows_only_the_running_pass_service() {
+        let command = port_preflight_command(53334);
+        assert!(command.contains("systemctl show pass-sync-server -p MainPID"));
+        assert!(command.contains("pid=$main_pid,"));
+        assert!(command.contains("端口 53334 已被其他进程占用"));
     }
 }

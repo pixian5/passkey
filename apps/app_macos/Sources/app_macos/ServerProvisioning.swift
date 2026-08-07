@@ -38,6 +38,7 @@ struct ServerSSHHostKeyInspection: Equatable, Sendable {
 
 enum ServerProvisioningError: LocalizedError {
     case invalidEndpoint
+    case privilegedBackendPort
     case invalidSSHPort
     case invalidToken
     case missingCredential
@@ -48,6 +49,8 @@ enum ServerProvisioningError: LocalizedError {
         switch self {
         case .invalidEndpoint:
             return "服务器地址必须是 HTTPS URL，并包含有效主机名"
+        case .privilegedBackendPort:
+            return "同步服务不能监听 1-1023 特权端口（尤其是 80/443）；请使用 1024 以上的专用端口，并由反向代理负责 443"
         case .invalidSSHPort:
             return "SSH 端口必须是 1 到 65535 之间的数字"
         case .invalidToken:
@@ -328,10 +331,26 @@ enum ServerProvisioningService {
               components.path.isEmpty || components.path == "/"
         else { throw ServerProvisioningError.invalidEndpoint }
 
-        let explicitPort = components.port
+        // URLComponents drops an explicitly written default `:443`; recover it
+        // from the authority so it cannot accidentally become a listener.
+        let authorityStart = trimmed.index(trimmed.startIndex, offsetBy: 8)
+        let authorityEnd = trimmed[authorityStart...].firstIndex(of: "/") ?? trimmed.endIndex
+        let authority = String(trimmed[authorityStart..<authorityEnd])
+        let explicitDefaultPort: Int? = if components.port == nil {
+            if let marker = authority.range(of: "]:", options: .backwards) {
+                Int(authority[marker.upperBound...])
+            } else if let marker = authority.lastIndex(of: ":") {
+                Int(authority[authority.index(after: marker)...])
+            } else {
+                nil
+            }
+        } else {
+            nil
+        }
+        let explicitPort = components.port ?? explicitDefaultPort
         let backendPort = explicitPort ?? 53333
-        guard (1 ... 65535).contains(backendPort) else {
-            throw ServerProvisioningError.invalidEndpoint
+        guard (1024 ... 65535).contains(backendPort) else {
+            throw ServerProvisioningError.privilegedBackendPort
         }
         let renderedHost = host.contains(":") ? "[\(host)]" : host
         let endpoint = "https://\(renderedHost)\(explicitPort.map { ":\($0)" } ?? "")"
@@ -537,6 +556,27 @@ enum ServerProvisioningService {
         """
         set -eu
         if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
+        main_pid=0
+        if command -v systemctl >/dev/null 2>&1; then
+          main_pid=$($SUDO systemctl show pass-sync-server -p MainPID --value 2>/dev/null || true)
+        fi
+        if command -v ss >/dev/null 2>&1; then
+          listeners=$($SUDO ss -ltnpH "sport = :\(endpoint.backendPort)" 2>/dev/null || true)
+          if [ -n "$listeners" ] && ! { [ "$main_pid" != "0" ] && printf '%s\n' "$listeners" | grep -Fq "pid=$main_pid," && ! printf '%s\n' "$listeners" | grep -Fv "pid=$main_pid," | grep -q .; }; then
+            echo "同步服务端口 \(endpoint.backendPort) 已被其他进程占用；不会修改现有服务" >&2
+            exit 1
+          fi
+        elif command -v lsof >/dev/null 2>&1; then
+          listener_pids=$($SUDO lsof -nP -t -iTCP:\(endpoint.backendPort) -sTCP:LISTEN 2>/dev/null | sort -u || true)
+          if [ -n "$listener_pids" ] && { [ "$main_pid" = "0" ] || [ "$listener_pids" != "$main_pid" ]; }; then
+            echo "同步服务端口 \(endpoint.backendPort) 已被其他进程占用；不会修改现有服务" >&2
+            exit 1
+          fi
+        fi
+        if [ "$main_pid" = "0" ] && command -v lsof >/dev/null 2>&1 && $SUDO lsof -nP -iTCP:\(endpoint.backendPort) -sTCP:LISTEN 2>/dev/null | tail -n +2 | grep -q .; then
+          echo "同步服务端口 \(endpoint.backendPort) 已被其他进程占用；不会修改现有服务" >&2
+          exit 1
+        fi
         $SUDO sh -c 'getent group pass >/dev/null 2>&1 || groupadd --system pass'
         $SUDO sh -c 'id -u pass >/dev/null 2>&1 || useradd --system --gid pass --home-dir /nonexistent --shell /usr/sbin/nologin pass'
         $SUDO install -d -m 0755 /opt/pass-sync-server /etc/pass-sync
