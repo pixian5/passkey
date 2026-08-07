@@ -445,13 +445,27 @@ function findUsernameInput(inputs, passwordInput) {
 }
 
 function resumeSubmit(form, submitter) {
-  form.dataset.passResubmitting = "1";
+  // A page may replace its login form while the persistent confirmation prompt is open.
+  // requestSubmit() throws for a detached form, so abandon the replay instead of surfacing
+  // an uncaught browser error after the page has already canceled that submission.
+  if (!(form instanceof HTMLFormElement) || !form.isConnected) return;
 
-  if (submitter instanceof HTMLElement && typeof form.requestSubmit === "function") {
-    form.requestSubmit(submitter);
+  if (
+    submitter instanceof HTMLElement &&
+    submitter.isConnected &&
+    submitter.form === form &&
+    typeof HTMLFormElement.prototype.requestSubmit === "function"
+  ) {
+    form.dataset.passResubmitting = "1";
+    try {
+      HTMLFormElement.prototype.requestSubmit.call(form, submitter);
+    } finally {
+      // Constraint validation can cancel before a submit event consumes the marker.
+      if (form.dataset.passResubmitting === "1") delete form.dataset.passResubmitting;
+    }
     return;
   }
-  form.submit();
+  HTMLFormElement.prototype.submit.call(form);
 }
 
 function isVisible(input) {

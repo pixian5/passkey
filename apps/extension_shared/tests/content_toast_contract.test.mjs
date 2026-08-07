@@ -29,3 +29,12 @@ test("保存密码使用常驻右上角浮窗并等待用户明确选择", () =>
   assert.match(contentSource, /if \(loginSavePromptHost\) \{\s*event\.preventDefault\(\);\s*return;/);
   assert.doesNotMatch(contentSource, /setTimeout\(resumeOnce, 800\)/);
 });
+
+test("恢复提交会忽略已脱离文档的表单并校验提交按钮归属", () => {
+  assert.match(contentSource, /if \(\!\(form instanceof HTMLFormElement\) \|\| \!form\.isConnected\) return;/);
+  assert.match(contentSource, /submitter\.isConnected/);
+  assert.match(contentSource, /submitter\.form === form/);
+  assert.match(contentSource, /HTMLFormElement\.prototype\.requestSubmit\.call\(form, submitter\)/);
+  assert.match(contentSource, /HTMLFormElement\.prototype\.submit\.call\(form\)/);
+  assert.match(contentSource, /if \(form\.dataset\.passResubmitting === "1"\) delete form\.dataset\.passResubmitting;/);
+});

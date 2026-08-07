@@ -185,7 +185,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.6.3";
+  var PASS_EXTENSION_VERSION = "1.6.4";
 
   // fill_chooser_activation.js
   var FILL_CHOOSER_ACTIVATION_DEDUPE_MS = 650;
@@ -746,12 +746,17 @@
     return fallback[0] || null;
   }
   function resumeSubmit(form, submitter) {
-    form.dataset.passResubmitting = "1";
-    if (submitter instanceof HTMLElement && typeof form.requestSubmit === "function") {
-      form.requestSubmit(submitter);
+    if (!(form instanceof HTMLFormElement) || !form.isConnected) return;
+    if (submitter instanceof HTMLElement && submitter.isConnected && submitter.form === form && typeof HTMLFormElement.prototype.requestSubmit === "function") {
+      form.dataset.passResubmitting = "1";
+      try {
+        HTMLFormElement.prototype.requestSubmit.call(form, submitter);
+      } finally {
+        if (form.dataset.passResubmitting === "1") delete form.dataset.passResubmitting;
+      }
       return;
     }
-    form.submit();
+    HTMLFormElement.prototype.submit.call(form);
   }
   function isVisible(input) {
     if (!(input instanceof HTMLElement)) return false;

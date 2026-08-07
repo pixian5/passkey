@@ -1,6 +1,6 @@
 # 浏览器扩展网页内浮窗交互
 
-> 状态：当前实现（版本 1.6.3；完成本轮全项目文档同步后随仓库版本递增）。本文只描述 `apps/extension_shared/content.js` 注入登录页后的账号选择和保存/更新确认交互；Chrome 管理页、工具栏 popup 与 WebAuthn 的完整协议不在本文范围。
+> 状态：当前实现（版本 1.6.4；完成本轮全项目文档同步后随仓库版本递增）。本文只描述 `apps/extension_shared/content.js` 注入登录页后的账号选择和保存/更新确认交互；Chrome 管理页、工具栏 popup 与 WebAuthn 的完整协议不在本文范围。
 
 ## 1. 目标与边界
 
@@ -38,6 +38,10 @@ cd ../..
 ## 3. 浮窗通用约束
 
 所有此处定义的网页内浮窗由 content script 创建宿主元素，挂接 closed Shadow DOM，再写入最小且带 `!important` 的关键定位样式。这样页面无法通过选择器读取 Shadow DOM 内的账号按钮或确认按钮，也不能依赖全局 `font-size`、`transform`、`position` 等规则破坏布局。
+
+## 3.1 提交恢复与页面重渲染
+
+拦截登录表单后，页面可能在等待用户决定期间重新渲染并替换或移除原表单。恢复提交前必须同时确认原表单仍为 `HTMLFormElement` 且 `isConnected`，提交按钮仍连接到文档并且 `submitter.form === form`；否则直接放弃恢复，不向页面抛出 Chrome 的“Form submission canceled because the form is not connected”错误。恢复调用使用 `HTMLFormElement.prototype.submit.call(form)` 作为无提交按钮或竞态失败时的兜底，避免页面中的 `name="submit"` 字段覆盖原生方法。
 
 宿主优先使用 `popover="manual"` 和 `showPopover()` 进入浏览器 top layer；浏览器不支持时保留 `position: fixed` 回退。初始位置均为距右上角 14px，最大宽度为 `min(360px, calc(100vw - 28px))`。
 
