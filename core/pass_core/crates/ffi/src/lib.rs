@@ -5,7 +5,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-static VERSION_STR: &[u8] = b"1.7.0\0";
+static VERSION_STR: &[u8] = b"1.7.2\0";
 static HEALTH_STR_OK: &[u8] = b"ok\0";
 static HEALTH_STR_NOT_READY: &[u8] = b"not_initialized\0";
 static INITIALIZED: AtomicBool = AtomicBool::new(false);

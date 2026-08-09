@@ -44,6 +44,22 @@ run_step() {
   fi
 }
 
+check_macos_swift_sources() {
+  local source_path source_type
+  while IFS= read -r -d '' source_path; do
+    source_type="$(file -b "$source_path")"
+    case "$source_type" in
+      *text*) ;;
+      *)
+        printf '非文本 Swift 源文件：%s (%s)\n' "$source_path" "$source_type" >&2
+        return 1
+        ;;
+    esac
+  done < <(find "$ROOT/apps/app_macos/Sources" "$ROOT/apps/app_macos/AutofillExtension" -type f -name '*.swift' -print0)
+}
+
+run_step "macOS Swift 源文件文本完整性检查" check_macos_swift_sources
+
 require_command() {
   local command_name="$1"
   local step_name="$2"
