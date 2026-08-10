@@ -1,6 +1,5 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
 }
 
 android {
@@ -16,13 +15,9 @@ android {
         applicationId = "com.pass.credentialprovider"
         minSdk = 34
         targetSdk = 36
-        versionCode = 172
-        versionName = "1.7.2"
+        versionCode = 173
+        versionName = "1.7.3"
     }
-}
-
-kotlin {
-    jvmToolchain(17)
 }
 
 dependencies {
