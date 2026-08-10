@@ -80,7 +80,7 @@ Schema (do **not** put real passwords in the query-phase demo file):
 
    ```bash
    cd apps/android_credential_provider
-   # AGP 8.x requires JDK 17. Install Android SDK Platform 36 first.
+   # Use JDK 25 LTS. Install Android SDK Platform 36 first.
    ./gradlew testDebugUnitTest :app:assembleDebug
    adb install -r app/build/outputs/apk/debug/app-debug.apk
    ```

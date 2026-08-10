@@ -1,6 +1,6 @@
 {
   "name": "pass-extension-shared",
-  "version": "1.7.3",
+  "version": "1.7.4",
   "private": true,
   "type": "module",
   "description": "Shared build pipeline for Pass browser extensions.",
