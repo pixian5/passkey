@@ -135,9 +135,11 @@ fn save(data_dir: &Path, items: &[SyncOutboxItem]) -> Result<(), String> {
 
 pub fn retry_context(item: &SyncOutboxItem) -> SyncRetryContext {
     SyncRetryContext {
-        idempotency_key: item.idempotency_key.clone(),
+        // 每次重新对账都使用新幂等键；旧的远端提交结果会先通过 pull 核对。
+        idempotency_key: format!("pass-tauri-{}", Uuid::new_v4()),
         sync_session_id: item.sync_session_id.clone(),
         operation_id: item.operation_id.clone(),
+        reconcile_remote: true,
     }
 }
 
@@ -183,6 +185,7 @@ pub fn new_context(_payload: &SyncPayload) -> SyncRetryContext {
         idempotency_key: format!("pass-tauri-{}", Uuid::new_v4()),
         sync_session_id: format!("sync-{}", Uuid::new_v4()),
         operation_id: format!("op-{}", Uuid::new_v4()),
+        reconcile_remote: false,
     }
 }
 
@@ -310,10 +313,11 @@ mod tests {
         let loaded = matching_item(&path, "server|https://sync", &payload)
             .unwrap()
             .unwrap();
-        assert_eq!(
-            retry_context(&loaded).idempotency_key,
-            context.idempotency_key
-        );
+        let retry = retry_context(&loaded);
+        assert_ne!(retry.idempotency_key, context.idempotency_key);
+        assert!(retry.reconcile_remote);
+        assert_eq!(retry.sync_session_id, context.sync_session_id);
+        assert_eq!(retry.operation_id, context.operation_id);
         let mut changed = payload.clone();
         changed.accounts.push(Default::default());
         assert!(matching_item(&path, "server|https://sync", &changed)

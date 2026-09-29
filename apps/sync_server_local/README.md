@@ -1,6 +1,6 @@
 # Pass 本地同步服务器
 
-适用于 macOS 开发/可信网络的一键同步服务器。服务可以监听局域网地址，但当前 Tauri 和 Chrome 只允许回环地址使用明文 HTTP；跨设备访问必须在服务前配置 HTTPS 反向代理。
+适用于 macOS 开发/可信网络的同步服务器。默认只监听本机回环地址；当前 Tauri 和 Chrome 只允许回环地址使用明文 HTTP，跨设备访问必须配置 HTTPS 反向代理和 Bearer Token。
 
 当前生产协议和安全边界见 [`../../docs/cross-platform-sync-backends-v2-zh.md`](../../docs/cross-platform-sync-backends-v2-zh.md) 与 [`../sync_server_ubuntu/README.md`](../sync_server_ubuntu/README.md)。本目录只是本机开发启动/launchd 包装，不维护另一套服务实现。
 
@@ -11,20 +11,21 @@
 - 客户端配置**同步加密密钥**时，用 AES-256-GCM 加密整个同步包；所有客户端必须使用同一密钥
 - 同步密钥留空时，默认允许保存明文 `pass.sync.bundle.v2`；此时服务端数据库可以读到密码和软件 Passkey 材料，只能用于可信链路
 - 设置 `PASS_SYNC_ALLOW_PLAINTEXT=0` 可拒绝明文同步包，但这不会替客户端生成或保存同步密钥
-- 可选 Bearer Token 认证，ETag + If-Match 做并发冲突保护
+- Bearer Token 认证，ETag + If-Match 做并发冲突保护
+- 明确设置 `PASS_SYNC_ALLOW_OPEN=1` 才允许无 Token 的本机开发模式
 
 ## 快速启动（前台/手动）
 
 ```bash
 cd /Users/x/code/pass/apps/sync_server_local
-./start.sh
+# 本机开发且明确接受无认证时；正常使用应先配置 Bearer Token
+PASS_SYNC_ALLOW_OPEN=1 ./start.sh
 ```
 
 脚本会自动：
-1. 检测本机局域网 IP
-2. 读取用户显式设置的 Bearer Token；留空时进入开放模式
-3. 监听 `0.0.0.0:53333`，让局域网内其他设备可访问
-4. 打印客户端需要的地址和认证模式
+1. 默认监听 `127.0.0.1:53333`
+2. 要求 Bearer Token，或用户显式设置 `PASS_SYNC_ALLOW_OPEN=1`
+3. 打印本机地址和认证模式
 
 脚本不会把已配置的 Bearer Token 原样打印到终端；需要在客户端使用时，应从原配置来源读取。
 
@@ -50,7 +51,7 @@ cd /Users/x/code/pass/apps/sync_server_local
 这会：
 - 在 `~/Library/LaunchAgents` 创建 plist
 - 设置开机自动启动、崩溃自动重启
-- 保存安装时的 `PASS_SYNC_BEARER_TOKENS` 和 `PASS_SYNC_ALLOW_PLAINTEXT` 配置
+- 保存安装时的 `PASS_SYNC_BEARER_TOKENS`、`PASS_SYNC_ALLOW_OPEN` 和 `PASS_SYNC_ALLOW_PLAINTEXT` 配置
 - 日志写入 `~/Library/Logs/pass-sync-server.log`
 
 卸载开机自启：
@@ -65,7 +66,7 @@ cd /Users/x/code/pass/apps/sync_server_local
 
 - **同一台 Mac**: `http://127.0.0.1:53333` 或 `http://localhost:53333`
 - **其它设备**: 通过 Caddy/Nginx 暴露的 `https://你的域名`；不要直接填写 `http://局域网IP:53333`
-- **访问令牌**: 可留空；需要认证时在启动前显式设置 `PASS_SYNC_BEARER_TOKENS`
+- **访问令牌**: 对外 HTTPS 服务必须设置 `PASS_SYNC_BEARER_TOKENS`；仅本机开发可显式设置 `PASS_SYNC_ALLOW_OPEN=1`
 - **同步加密密钥**: 可留空；需要加密时在所有客户端填写同一枚 256 位密钥
 
 > 注意：Tauri 和 Chrome Web 扩展都要求非回环同步地址使用 HTTPS。本脚本打印的 `http://局域网IP` 只是服务监听/健康检查地址，不代表客户端会接受；跨设备同步应配置本地 HTTPS 反向代理（如 `mkcert` + Caddy）或使用正式 HTTPS 自建服务。
@@ -74,9 +75,10 @@ cd /Users/x/code/pass/apps/sync_server_local
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `PASS_SYNC_HOST` | `0.0.0.0` | 监听地址 |
+| `PASS_SYNC_HOST` | `127.0.0.1` | 监听地址 |
 | `PASS_SYNC_PORT` | `53333` | 监听端口 |
-| `PASS_SYNC_BEARER_TOKENS` | 留空 | 可选，`default=TOKEN` 格式；项目不会自动生成 |
+| `PASS_SYNC_BEARER_TOKENS` | 留空 | `default=TOKEN` 格式；对外服务必须配置，项目不会自动生成 |
+| `PASS_SYNC_ALLOW_OPEN` | `0` | 仅明确接受无认证访问时设为 `1`；不应对公网开放 |
 | `PASS_SYNC_ALLOW_PLAINTEXT` | `1` | `1` 允许空同步密钥产生的明文包；`0` 只接受加密信封 |
 | `PASS_SYNC_LOG_LEVEL` | `INFO` | 日志级别 |
 

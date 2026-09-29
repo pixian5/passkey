@@ -73,7 +73,7 @@ pass/
 - 关系：文件夹归属、站点别名、passkey 关联使用关系状态/墓碑。
 - 顺序：顶层 `allRegularAccountIds`、`folderOrderIds`，文件夹内 `regularAccountIds`。
 - 并发：客户端合并，服务器用 `ETag` / `If-Match` 阻止静默覆盖。
-- Token 与同步密钥均允许留空；项目不会自动生成 Bearer Token。
+- 同步密钥留空时直接使用明文同步，不额外确认；Bearer Token 留空时服务端默认拒绝启动，只有显式配置 `PASS_SYNC_ALLOW_OPEN=1` 才开放访问。
 
 ## 6. 平台能力
 

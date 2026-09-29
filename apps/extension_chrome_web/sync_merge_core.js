@@ -921,6 +921,40 @@ export function evaluateSyncSafety({ local, remote, merged, mode = "merge" }, he
   const remoteSummary = remote == null ? null : summarizeSyncPayload(remote, helpers);
   const mergedSummary = summarizeSyncPayload(merged, helpers);
   const reasons = [];
+  const h = resolveHelpers(helpers);
+  const tombstoneIds = (payload, kind) => {
+    const rawRecords = Array.isArray(payload?.[kind]) ? payload[kind] : [];
+    const normalize = kind === "accounts"
+      ? h.normalizeAccountShape
+      : kind === "folders"
+        ? h.normalizeFolderShape
+        : h.normalizePasskeyShape;
+    const records = rawRecords.map(normalize);
+    return new Set(records.filter((item) => item?.isPermanentlyDeleted).map((item) => {
+      if (kind === "accounts") return asString(item?.recordId || item?.id || item?.accountId).trim().toLowerCase();
+      if (kind === "folders") return h.normalizeFolderId(item?.id);
+      return asString(item?.credentialIdB64u || item?.id).trim();
+    }).filter(Boolean));
+  };
+  const mergedTombstones = {
+    accounts: tombstoneIds(merged, "accounts"),
+    folders: tombstoneIds(merged, "folders"),
+    passkeys: tombstoneIds(merged, "passkeys"),
+  };
+  const requiredTombstones = {
+    accounts: tombstoneIds(local, "accounts"),
+    folders: tombstoneIds(local, "folders"),
+    passkeys: tombstoneIds(local, "passkeys"),
+  };
+  if (remote != null) {
+    for (const kind of ["accounts", "folders", "passkeys"]) {
+      for (const id of tombstoneIds(remote, kind)) requiredTombstones[kind].add(id);
+    }
+  }
+  if (["accounts", "folders", "passkeys"].some((kind) =>
+    [...requiredTombstones[kind]].some((id) => !mergedTombstones[kind].has(id)))) {
+    reasons.push("PERMANENT_TOMBSTONES_DROPPED");
+  }
   const localNonEmpty = localSummary.accounts + localSummary.folders + localSummary.passkeys > 0;
   const remoteNonEmpty = Boolean(remoteSummary) && (
     remoteSummary.accounts + remoteSummary.folders + remoteSummary.passkeys > 0
@@ -991,7 +1025,7 @@ export function evaluateSyncSafety({ local, remote, merged, mode = "merge" }, he
   }
 
   return {
-    safe: true,
+    safe: reasons.length === 0,
     reasons,
     local: { ...localSummary, accountIds: undefined, folderIds: undefined, passkeyIds: undefined },
     remote: remoteSummary

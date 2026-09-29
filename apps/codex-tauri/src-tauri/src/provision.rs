@@ -710,11 +710,12 @@ RandomizedDelaySec=15m
 WantedBy=timers.target
 "#;
 
-fn environment_text(sync_encryption_key: &str) -> String {
+fn environment_text(sync_encryption_key: &str, allow_open: bool) -> String {
     let configured = !sync_encryption_key.trim().is_empty();
     format!(
-        "# 由 PassDesktop「在服务器创建服务」生成\nPASS_SYNC_ALLOW_PLAINTEXT={}\n",
-        if configured { "0" } else { "1" }
+        "# 由 PassDesktop「在服务器创建服务」生成\nPASS_SYNC_ALLOW_PLAINTEXT={}\nPASS_SYNC_ALLOW_OPEN={}\n",
+        if configured { "0" } else { "1" },
+        if allow_open { "1" } else { "0" }
     )
 }
 
@@ -1115,7 +1116,10 @@ pub fn provision_server(
     let tls_certificate = tls_certificate.trim();
     let tls_private_key = tls_private_key.trim();
     let custom_tls = !tls_certificate.is_empty() || !tls_private_key.is_empty();
-    // Token is optional: empty means provision an open server (no bearer auth).
+    // 公网 TLS 监听必须认证；仅本机回环部署允许显式留空 Token。
+    if endpoint.uses_tls && token.is_empty() {
+        return Err("公网 HTTPS 同步服务必须配置 Bearer Token；若需无认证开发服务，请使用本机 HTTP 回环地址".into());
+    }
     if token.contains(',') || token.contains('\n') || token.contains('\r') {
         return Err("访问令牌不能包含逗号、换行或回车".into());
     }
@@ -1317,7 +1321,7 @@ pub fn provision_server(
         &endpoint,
         &temp,
         &format!("{stage}/pass-sync-server.env"),
-        environment_text(sync_encryption_key).as_bytes(),
+        environment_text(sync_encryption_key, token.is_empty()).as_bytes(),
         "0600",
     ) {
         cleanup();
@@ -1441,8 +1445,8 @@ mod tests {
     use std::process::Command;
 
     use super::{
-        host_key_lines_match, known_host_query, parse_endpoint, port_preflight_command,
-        service_text, shell_quote,
+        environment_text, host_key_lines_match, known_host_query, parse_endpoint,
+        port_preflight_command, service_text, shell_quote,
     };
 
     #[test]
@@ -1491,6 +1495,17 @@ mod tests {
             .find("Environment=PASS_SYNC_TLS_CERT=/etc/pass-sync/tls/server.crt")
             .expect("cert");
         assert!(env_file < host && host < port && port < cert);
+    }
+
+    #[test]
+    fn generated_environment_keeps_plaintext_choice_independent_from_open_auth() {
+        let local_open = environment_text("", true);
+        assert!(local_open.contains("PASS_SYNC_ALLOW_PLAINTEXT=1"));
+        assert!(local_open.contains("PASS_SYNC_ALLOW_OPEN=1"));
+
+        let authenticated_encrypted = environment_text("valid-key", false);
+        assert!(authenticated_encrypted.contains("PASS_SYNC_ALLOW_PLAINTEXT=0"));
+        assert!(authenticated_encrypted.contains("PASS_SYNC_ALLOW_OPEN=0"));
     }
 
     #[test]

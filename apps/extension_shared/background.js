@@ -686,6 +686,17 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
     if (target.isPrimary && persistedContext?.operationId) {
       primaryOperationId = persistedContext.operationId;
     }
+    if (target.remotePayload && syncPayloadEquals(
+      normalizeSyncPayloadShape(target.remotePayload),
+      candidatePayload,
+    )) {
+      outboxByTarget.delete(targetKey);
+      logSyncFlow("push-skipped-remote-already-matches", {
+        label: target.label,
+        url: target.url,
+      });
+      continue;
+    }
     if (persistedContext && !forceOutboxRetry && !isSyncOutboxReady(persistedContext)) {
       const paused = pendingOutbox.status === "paused";
       const waitSeconds = Math.max(1, Math.ceil((pendingOutbox.nextRetryAtMs - Date.now()) / 1000));
@@ -709,7 +720,9 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
     const operationId = persistedContext?.operationId
       || (target.isPrimary ? reportOperationId : createSyncIdempotencyKey());
     if (target.isPrimary) primaryOperationId = operationId;
-    const idempotencyKey = persistedContext?.idempotencyKey || createSyncIdempotencyKey();
+    // Every recomputed request body gets a fresh idempotency key. A prior
+    // uncertain PUT is reconciled by the remote-payload comparison above.
+    const idempotencyKey = createSyncIdempotencyKey();
     try {
       result = await pushRemotePayloadWithMode(target, {
         ...candidatePayload,

@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -308,29 +309,61 @@ class PassSyncServerTests(unittest.TestCase):
         self.assertEqual(context.exception.code, 401)
         context.exception.close()
 
-    def test_allows_payload_requests_without_token_configuration(self) -> None:
+    def test_open_mode_requires_explicit_configuration(self) -> None:
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)
 
+        with self.assertRaisesRegex(RuntimeError, "PASS_SYNC_ALLOW_OPEN=1"):
+            build_server(AppConfig(
+                host="127.0.0.1",
+                port=0,
+                db_path=Path(self.temp_dir.name) / "implicit-open.sqlite3",
+                token_scopes={},
+            ))
+
         config = AppConfig(
             host="127.0.0.1",
             port=0,
-            db_path=Path(self.temp_dir.name) / "unauthenticated.sqlite3",
+            db_path=Path(self.temp_dir.name) / "explicit-open.sqlite3",
             token_scopes={},
+            allow_open=True,
         )
         self.server = build_server(config)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}"
 
-        # Empty token configuration is the explicit open-server mode used by
-        # the desktop provisioning UI.  An empty database still returns 404,
-        # but the request reaches payload handling instead of AUTH_NOT_CONFIGURED.
+        # An explicitly open server reaches payload handling; an empty database
+        # still returns 404 rather than rejecting requests for missing tokens.
         with self.assertRaises(urllib.error.HTTPError) as context:
             self.request("GET", "/v1/sync/payload")
         self.assertEqual(context.exception.code, 404)
         context.exception.close()
+
+    def test_load_config_fails_closed_without_token_or_explicit_open_mode(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "PASS_SYNC_BEARER_TOKENS": "",
+                "PASS_SYNC_BEARER_TOKENS_FILE": "",
+                "PASS_SYNC_ALLOW_OPEN": "0",
+            },
+        ):
+            with self.assertRaisesRegex(RuntimeError, "PASS_SYNC_ALLOW_OPEN=1"):
+                load_config()
+
+        with patch.dict(
+            os.environ,
+            {
+                "PASS_SYNC_BEARER_TOKENS": "",
+                "PASS_SYNC_BEARER_TOKENS_FILE": "",
+                "PASS_SYNC_ALLOW_OPEN": "1",
+            },
+        ):
+            config = load_config()
+        self.assertTrue(config.allow_open)
+        self.assertFalse(config.auth_enabled)
 
     def test_put_then_get_roundtrip(self) -> None:
         with self.request(

@@ -34,6 +34,7 @@ class AppConfig:
     token_scopes: dict[str, str]
     max_body_bytes: int = 2 * 1024 * 1024
     allow_plaintext: bool = True
+    allow_open: bool = False
     tls_cert_path: Path | None = None
     tls_key_path: Path | None = None
     rate_limit_per_minute: int = 120
@@ -1173,10 +1174,7 @@ class PassSyncHTTPServer(ThreadingHTTPServer):
 
     def resolve_scope(self, authorization_header: str | None) -> str:
         if not self.config.auth_enabled:
-            # An empty token configuration is an explicit open-server mode.
-            # The desktop provisioning UI supports leaving the token blank;
-            # use one stable scope so payloads remain isolated from any
-            # future token-enabled deployment.
+            # 启动配置已要求显式启用 PASS_SYNC_ALLOW_OPEN。
             return "default"
         if not authorization_header:
             raise RequestError(HTTPStatus.UNAUTHORIZED, "AUTH_REQUIRED", "缺少 Bearer Token。")
@@ -1292,10 +1290,16 @@ def load_config() -> AppConfig:
                 raise RuntimeError(f"PASS_SYNC_BEARER_TOKENS_FILE 权限必须为 0600 或更严格: {token_path}")
             token_value = token_path.read_text(encoding="utf-8").strip()
         elif not token_value:
-            # A missing optional token file and an empty environment value mean
-            # explicit open mode; no token is generated implicitly.
-            LOGGER.warning("令牌文件不存在，服务将以开放模式启动: %s", token_path)
+            LOGGER.warning("令牌文件不存在: %s", token_path)
     token_scopes = parse_token_scopes(token_value)
+    allow_open = os.environ.get("PASS_SYNC_ALLOW_OPEN", "0").strip().lower() in {"1", "true", "yes"}
+    if not token_scopes and not allow_open:
+        raise RuntimeError(
+            "未配置 Bearer Token；请设置 PASS_SYNC_BEARER_TOKENS / PASS_SYNC_BEARER_TOKENS_FILE，"
+            "或显式设置 PASS_SYNC_ALLOW_OPEN=1 接受无认证访问"
+        )
+    if not token_scopes:
+        LOGGER.warning("已显式启用无 Bearer Token 的开放访问模式")
     allowed_origins = tuple(
         sorted({origin.strip() for origin in os.environ.get("PASS_SYNC_ALLOWED_ORIGINS", "").split(",") if origin.strip()})
     )
@@ -1313,6 +1317,7 @@ def load_config() -> AppConfig:
         client_timeout_seconds=max(1.0, float(os.environ.get("PASS_SYNC_CLIENT_TIMEOUT_SECONDS", "15"))),
         max_concurrent_requests=max(1, int(os.environ.get("PASS_SYNC_MAX_CONCURRENT_REQUESTS", "32"))),
         allow_plaintext=os.environ.get("PASS_SYNC_ALLOW_PLAINTEXT", "1").strip().lower() in {"1", "true", "yes"},
+        allow_open=allow_open,
         tls_cert_path=Path(cert_value).expanduser() if cert_value else None,
         tls_key_path=Path(key_value).expanduser() if key_value else None,
         allowed_origins=allowed_origins,
@@ -1320,6 +1325,10 @@ def load_config() -> AppConfig:
 
 
 def build_server(config: AppConfig) -> PassSyncHTTPServer:
+    if not config.token_scopes and not config.allow_open:
+        raise RuntimeError(
+            "未配置 Bearer Token；仅在明确接受无认证访问时设置 PASS_SYNC_ALLOW_OPEN=1"
+        )
     server = PassSyncHTTPServer((config.host, config.port), SyncRequestHandler, config)
     if config.tls_cert_path and config.tls_key_path:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

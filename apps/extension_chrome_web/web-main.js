@@ -477,6 +477,11 @@ const applyUiPrefs = () => {
 
 let deviceNameSaveTimer = null;
 const saveDeviceName = async ({ quiet = true } = {}) => {
+  if (lockState.enabled && lockState.locked) {
+    clearTimeout(deviceNameSaveTimer);
+    deviceNameSaveTimer = null;
+    return;
+  }
   const deviceName = (els.deviceName?.value || "").trim();
   if (!deviceName) return;
   try {
@@ -490,6 +495,7 @@ const saveDeviceName = async ({ quiet = true } = {}) => {
 };
 
 const scheduleSaveDeviceName = () => {
+  if (lockState.enabled && lockState.locked) return;
   clearTimeout(deviceNameSaveTimer);
   deviceNameSaveTimer = setTimeout(() => saveDeviceName(), 450);
 };
@@ -2634,11 +2640,7 @@ const isVisibleSyncAccount = (account) => !account?.isPermanentlyDeleted;
 const isVisibleSyncFolder = (folder) => !folder?.isPermanentlyDeleted;
 const isVisibleSyncPasskey = (passkey) => !passkey?.isPermanentlyDeleted;
 const confirmPlaintextSync = () => {
-  const key = (els.syncEncKey?.value || "").trim();
-  if (key) return true;
-  return window.confirm(
-    "当前未配置同步加密密钥，将使用明文同步包（可能包含密码、TOTP、备注）。\n\n仅建议在可信网络/自建环境临时使用。确定继续？"
-  );
+  return true;
 };
 const confirmOverwriteSync = (mode) => {
   if (mode === "merge") return true;

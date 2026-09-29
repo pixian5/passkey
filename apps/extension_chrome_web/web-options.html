@@ -677,7 +677,7 @@
           <div class="form-row">
             <span class="form-label">访问令牌</span>
             <span class="secret-field grow">
-              <input id="provisionToken" type="password" placeholder="可选；留空则服务端不校验 Token" autocomplete="off" />
+              <input id="provisionToken" type="password" placeholder="公网 HTTPS 必填；本机开放模式需显式配置 PASS_SYNC_ALLOW_OPEN=1" autocomplete="off" />
               <button type="button" class="icon-btn secret-toggle" data-toggle-secret="provisionToken" title="显示">◎</button>
             </span>
             <button type="button" id="btn-gen-provision-token">生成</button>
@@ -685,11 +685,11 @@
           <div class="form-row">
             <span class="form-label">同步加密密钥</span>
             <span class="secret-field grow">
-              <input id="provisionEncKey" type="password" placeholder="留空则允许明文同步" autocomplete="off" />
+              <input id="provisionEncKey" type="password" placeholder="留空则直接使用明文同步" autocomplete="off" />
               <button type="button" class="icon-btn secret-toggle" data-toggle-secret="provisionEncKey" title="显示">◎</button>
             </span>
           </div>
-          <p class="hint">访问令牌与同步加密密钥均可留空。令牌为空则服务端不启用 Bearer 校验；加密密钥为空则允许明文同步包（PASS_SYNC_ALLOW_PLAINTEXT=1）。HTTPS 创建时证书优先从 <code>/root/.acme.sh/sbbz.tech_ecc/</code> 复制（兼容 fullchain.cer / sbbz.tech.key），其次 acme.sh RSA 目录与 <code>/etc/bz/certs/</code>。创建前会备份服务器现有同步数据库。</p>
+          <p class="hint">Bearer Token 用于服务器访问认证；通过 HTTPS 对外部署时必须配置。同步加密密钥可留空：有密钥时使用 AES-256-GCM，没有密钥时按协议明文同步（PASS_SYNC_ALLOW_PLAINTEXT=1），不额外弹确认框。HTTPS 创建时证书优先从 <code>/root/.acme.sh/sbbz.tech_ecc/</code> 复制（兼容 fullchain.cer / sbbz.tech.key），其次 acme.sh RSA 目录与 <code>/etc/bz/certs/</code>。创建前会备份服务器现有同步数据库。</p>
           <div id="provisionProgress" class="provision-progress" hidden>
             <span class="spinner"></span>
             <span class="progress-text"><span id="provisionProgressText">正在处理…</span><br><span id="provisionProgressElapsed" class="progress-elapsed"></span></span>

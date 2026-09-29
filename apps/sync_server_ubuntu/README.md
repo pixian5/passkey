@@ -24,7 +24,7 @@
 - 每次成功 PUT/restore 只新增 1 个版本；revision 与成功写入次数一致，不会重复插入旧快照
 - 每个 scope 审计最多保留 5000 条操作记录
 - 限流按客户端 IP 计数，并清理过期窗口，避免内存无限增长
-- 可选 Bearer Token 认证
+- Bearer Token 认证；无 Token 时仅可通过 `PASS_SYNC_ALLOW_OPEN=1` 显式启用开放模式
 - 返回 `ETag`，并支持 `If-Match` 并发保护
 - `GET /healthz` 健康检查
 - `GET /metrics`（需要 Bearer Token）返回请求数、限流数、数据库大小等运维指标
@@ -45,10 +45,12 @@
 
 ```bash
 cd /Users/x/code/pass/apps/sync_server_ubuntu
-./start.sh
+# 本机临时开发且明确接受无认证访问时：
+PASS_SYNC_ALLOW_OPEN=1 ./start.sh
+# 正常认证使用：先配置 PASS_SYNC_BEARER_TOKENS / PASS_SYNC_BEARER_TOKENS_FILE，再执行 ./start.sh
 ```
 
-脚本监听 `0.0.0.0:53333` 并打印配置信息。未显式配置 Token 时进入开放模式，不会自动生成 Bearer Token；设置 `PASS_SYNC_BEARER_TOKENS` 或令牌文件后才启用认证。
+脚本默认只监听 `127.0.0.1:53333`。未配置 Bearer Token 时服务拒绝启动；仅本机开发且明确接受无认证访问时设置 `PASS_SYNC_ALLOW_OPEN=1`。需要跨设备访问时应配置 Bearer Token，并通过 HTTPS 反向代理或 TLS 监听对外提供服务。
 
 ```bash
 ./stop.sh    # 停止服务
@@ -57,10 +59,12 @@ cd /Users/x/code/pass/apps/sync_server_ubuntu
 也可以直接运行 Python 文件：
 
 ```bash
-python3 pass_sync_server.py
+PASS_SYNC_ALLOW_OPEN=1 python3 pass_sync_server.py
 ```
 
-默认仅监听 `127.0.0.1:53333`，数据库位于：
+以上无 Token 命令仅供本机开发；对外服务必须配置 Bearer Token。
+
+直接运行默认监听 `127.0.0.1:53333`；数据库位于：
 
 ```text
 ./data/pass_sync.sqlite3
@@ -75,14 +79,16 @@ python3 pass_sync_server.py
 - `PASS_SYNC_DB_PATH`
   - 默认 `./data/pass_sync.sqlite3`
 - `PASS_SYNC_BEARER_TOKENS`
-  - 可选；未配置时进入开放模式，`/v2/sync/state`（以及兼容的 `/v1/sync/payload`）不要求 Bearer Token。生产环境建议配置令牌
+  - 同步 API 的 Bearer Token；未配置时服务默认拒绝启动
   - 支持：
     - `token-value`
     - `default=token-value`
     - `family=token-a,work=token-b`
 - `PASS_SYNC_BEARER_TOKENS_FILE`
-  - 可选；从权限为 `0600` 的文件读取同样的 `scope=token` 列表，便于轮换令牌
-  - 文件不存在时会回退到 `PASS_SYNC_BEARER_TOKENS`；两者都未配置时进入开放模式
+  - 从权限为 `0600` 的文件读取同样的 `scope=token` 列表，便于轮换令牌
+  - 文件不存在时会回退到 `PASS_SYNC_BEARER_TOKENS`；两者都未配置时服务拒绝启动
+- `PASS_SYNC_ALLOW_OPEN`
+  - 默认 `0`；只有明确接受无认证访问时设为 `1`。仅建议在本机回环开发环境使用；对外服务应配置 Bearer Token
 - `PASS_SYNC_LOG_LEVEL`
   - 默认 `INFO`
 - `PASS_SYNC_MAX_BODY_BYTES`
@@ -90,6 +96,7 @@ python3 pass_sync_server.py
 - `PASS_SYNC_ALLOW_PLAINTEXT`
   - 默认开启（`1`），允许客户端在同步密钥为空时上传明文 `pass.sync.bundle.v2`
   - 如需强制端到端加密，设置为 `0`；此时所有客户端都必须配置 256 位同步密钥
+  - 客户端未设置同步加密密钥时会按明文协议工作，不另行要求确认；Bearer Token 认证仍独立生效
 - `PASS_SYNC_PURGE_LEGACY`
   - 默认关闭；发现未知 schema 时只隔离不删除
   - 确认隔离文件后设为 `1` 才允许启动时 purge
@@ -123,11 +130,12 @@ https://your-domain.example/v2/sync/state
 
 ## 建议部署
 
-生产环境建议：
+生产环境要求：
 
 - 用 `Caddy` 或 `Nginx` 反向代理，统一提供 HTTPS
 - 只开放 `443`
 - 通过 `systemd` 管理进程
+- 对外服务必须先创建权限为 `0600` 的 `/etc/pass-sync/tokens.conf`；缺失 Token 时服务拒绝启动
 - 定期备份 `pass_sync.sqlite3`
 - 备份脚本会执行 SQLite `integrity_check`，校验失败时以非零状态退出
 - `payload_versions` 表保存最近 50 个快照；每次成功写入只追加当前新状态，备份时应同时保留整个 SQLite 文件
@@ -148,15 +156,16 @@ https://your-domain.example/v2/sync/state
 ```bash
 sudo cp pass-sync-server.service /etc/systemd/system/
 sudo editor /etc/systemd/system/pass-sync-server.service
-# 修改 PASS_SYNC_BEARER_TOKENS 和路径
+# 服务缺少 Token 时会拒绝启动；先写入权限为 0600 的令牌文件
 sudo systemctl daemon-reload
-sudo systemctl enable --now pass-sync-server
 
 # 写入用户已有的新令牌；脚本不会生成或回显 Token
 read -r -s PASS_SYNC_NEW_BEARER_TOKEN
 export PASS_SYNC_NEW_BEARER_TOKEN
 sudo --preserve-env=PASS_SYNC_NEW_BEARER_TOKEN ./rotate_token.sh /etc/pass-sync/tokens.conf default
 unset PASS_SYNC_NEW_BEARER_TOKEN
+
+sudo systemctl enable --now pass-sync-server
 
 # 安装每日数据库备份（推荐）
 sudo cp pass-sync-server-backup.service pass-sync-server-backup.timer /etc/systemd/system/

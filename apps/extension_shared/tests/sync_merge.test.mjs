@@ -622,6 +622,45 @@ test("合并结果缺少远端稳定 ID 时必须阻止写入", () => {
   assert.deepEqual(safety.reasons, ["REMOTE_ACCOUNTS_DROPPED"]);
 });
 
+test("覆盖模式不能丢弃任一侧的永久删除墓碑", () => {
+  const tombstone = helpers.normalizeAccountShape({
+    recordId: "record-permanent-delete",
+    isDeleted: true,
+    isPermanentlyDeleted: true,
+    deletedAtMs: 20,
+  });
+  const active = helpers.normalizeAccountShape({
+    recordId: "record-permanent-delete",
+    password: "old-secret",
+  });
+
+  const remoteOverwrite = evaluateSyncSafety({
+    local: { accounts: [tombstone] },
+    remote: { accounts: [active] },
+    merged: { accounts: [active] },
+    mode: "remoteOverwriteLocal",
+  }, helpers);
+  assert.equal(remoteOverwrite.safe, false);
+  assert.ok(remoteOverwrite.reasons.includes("PERMANENT_TOMBSTONES_DROPPED"));
+
+  const localOverwrite = evaluateSyncSafety({
+    local: { accounts: [active] },
+    remote: { accounts: [tombstone] },
+    merged: { accounts: [active] },
+    mode: "localOverwriteRemote",
+  }, helpers);
+  assert.equal(localOverwrite.safe, false);
+  assert.ok(localOverwrite.reasons.includes("PERMANENT_TOMBSTONES_DROPPED"));
+
+  const preserved = evaluateSyncSafety({
+    local: { accounts: [tombstone] },
+    remote: { accounts: [active] },
+    merged: { accounts: [tombstone] },
+    mode: "remoteOverwriteLocal",
+  }, helpers);
+  assert.equal(preserved.safe, true);
+});
+
 test("两份独立客户端数据合并后可往返收敛并保留字段、墓碑和排序", () => {
   const baseAccount = helpers.normalizeAccountShape({
     accountId: "example-user",

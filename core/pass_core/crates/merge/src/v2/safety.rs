@@ -17,6 +17,9 @@ struct PayloadSummary {
     account_ids: std::collections::BTreeSet<String>,
     folder_ids: std::collections::BTreeSet<String>,
     passkey_ids: std::collections::BTreeSet<String>,
+    permanent_account_ids: std::collections::BTreeSet<String>,
+    permanent_folder_ids: std::collections::BTreeSet<String>,
+    permanent_passkey_ids: std::collections::BTreeSet<String>,
 }
 
 fn account_identity(account: &PasswordAccount) -> String {
@@ -81,18 +84,31 @@ fn summarize(payload: &SyncPayload) -> PayloadSummary {
         let id = account_identity(account);
         if !id.is_empty() {
             summary.account_ids.insert(id);
+            if account.is_permanently_deleted {
+                summary
+                    .permanent_account_ids
+                    .insert(account_identity(account));
+            }
         }
     }
     for folder in &folders {
         let id = folder_identity(folder);
         if !id.is_empty() {
             summary.folder_ids.insert(id);
+            if folder.is_permanently_deleted {
+                summary.permanent_folder_ids.insert(folder_identity(folder));
+            }
         }
     }
     for passkey in &passkeys {
         let id = passkey_identity(passkey);
         if !id.is_empty() {
             summary.passkey_ids.insert(id);
+            if passkey.is_permanently_deleted {
+                summary
+                    .permanent_passkey_ids
+                    .insert(passkey_identity(passkey));
+            }
         }
     }
     summary
@@ -129,6 +145,22 @@ pub fn evaluate_sync_safety(
     let remote_summary = remote.map(summarize);
     let merged_summary = summarize(merged);
     let mut reasons = Vec::new();
+
+    // 覆盖模式也必须保留永久删除墓碑，否则旧设备可能把活动记录复活。
+    let mut required_account_tombstones = local_summary.permanent_account_ids.clone();
+    let mut required_folder_tombstones = local_summary.permanent_folder_ids.clone();
+    let mut required_passkey_tombstones = local_summary.permanent_passkey_ids.clone();
+    if let Some(remote_summary) = remote_summary.as_ref() {
+        required_account_tombstones.extend(remote_summary.permanent_account_ids.iter().cloned());
+        required_folder_tombstones.extend(remote_summary.permanent_folder_ids.iter().cloned());
+        required_passkey_tombstones.extend(remote_summary.permanent_passkey_ids.iter().cloned());
+    }
+    if !required_account_tombstones.is_subset(&merged_summary.permanent_account_ids)
+        || !required_folder_tombstones.is_subset(&merged_summary.permanent_folder_ids)
+        || !required_passkey_tombstones.is_subset(&merged_summary.permanent_passkey_ids)
+    {
+        reasons.push("PERMANENT_TOMBSTONES_DROPPED".to_string());
+    }
 
     let local_non_empty =
         local_summary.accounts + local_summary.folders + local_summary.passkeys > 0;
@@ -214,5 +246,46 @@ mod tests {
         assert!(report
             .reasons
             .contains(&"REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL".to_string()));
+    }
+
+    #[test]
+    fn overwrite_modes_cannot_drop_permanent_delete_tombstones() {
+        let tombstone = PasswordAccount {
+            record_id: Some("record-tombstone".into()),
+            is_deleted: true,
+            is_permanently_deleted: true,
+            deleted_at_ms: Some(20),
+            ..Default::default()
+        };
+        let active = PasswordAccount {
+            record_id: Some("record-tombstone".into()),
+            password: "old secret".into(),
+            ..Default::default()
+        };
+        let local = SyncPayload {
+            accounts: vec![tombstone.clone()],
+            ..SyncPayload::default()
+        };
+        let remote = SyncPayload {
+            accounts: vec![active.clone()],
+            ..SyncPayload::default()
+        };
+
+        let remote_overwrite =
+            evaluate_sync_safety(&local, Some(&remote), &remote, "remoteOverwriteLocal");
+        assert!(!remote_overwrite.safe);
+        assert!(remote_overwrite
+            .reasons
+            .contains(&"PERMANENT_TOMBSTONES_DROPPED".to_string()));
+
+        let local_overwrite =
+            evaluate_sync_safety(&remote, Some(&local), &remote, "localOverwriteRemote");
+        assert!(!local_overwrite.safe);
+        assert!(local_overwrite
+            .reasons
+            .contains(&"PERMANENT_TOMBSTONES_DROPPED".to_string()));
+
+        let preserved = evaluate_sync_safety(&local, Some(&remote), &local, "remoteOverwriteLocal");
+        assert!(preserved.safe, "{:?}", preserved.reasons);
     }
 }

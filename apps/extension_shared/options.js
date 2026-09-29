@@ -841,10 +841,7 @@ function normalizeSyncPrimarySource(value) {
 
 
 function confirmPlaintextSync(encryptionKey) {
-  if (String(encryptionKey || "").trim()) return true;
-  return window.confirm(
-    "当前未配置同步加密密钥，将使用明文同步包（可能包含密码、TOTP、备注）。\n\n仅建议在可信网络/自建环境临时使用。确定继续？"
-  );
+  return true;
 }
 
 function confirmOverwriteSync(mode) {
@@ -1824,12 +1821,12 @@ async function performSyncNowWithRemote(
     }
   }
 
-  if (normalizedSyncMode === SYNC_MODE_MERGE && primaryRemotePayload) {
+  {
     const safety = validateSyncSafety(
       localPayload,
       primaryRemotePayload,
       mergedPayload,
-      SYNC_MODE_MERGE
+      normalizedSyncMode
     );
     if (!safety.safe) {
       setStatus(`同步已停止，安全检查未通过：${safety.reasons.join("、")}`);
@@ -1859,12 +1856,20 @@ async function performSyncNowWithRemote(
       const candidateHash = await syncPayloadSha256(candidatePayload);
       const pendingItems = await getSyncOutbox();
       const pending = pendingItems.find((item) => item.targetKey === syncTargetKey(target) && item.payloadSha256 === candidateHash);
+      if (target.remotePayload && syncPayloadEquals(
+        normalizeSyncPayloadShape(target.remotePayload),
+        candidatePayload,
+      )) {
+        await clearSyncOutbox(target);
+        continue;
+      }
       const result = await pushRemotePayloadWithMode(target, {
         ...candidatePayload,
       }, normalizedSyncMode, {
         syncSessionId: pending?.syncSessionId || syncSessionId,
         operationId: pending?.operationId || "",
-        idempotencyKey: pending?.idempotencyKey || "",
+        // outbox 项已在本轮重新拉取过远端；若仍需写入，就是新的请求体/ETag 组合。
+        idempotencyKey: pending ? createSyncIdempotencyKey() : "",
       });
       mergedPayload = normalizeSyncPayloadShape(result.payload);
       await clearSyncOutbox(target);

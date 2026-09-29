@@ -8,7 +8,7 @@ DATA_DIR="${SCRIPT_DIR}/data"
 LOG_FILE="${SCRIPT_DIR}/pass-sync-server.log"
 PID_FILE="/tmp/pass-sync-server.pid"
 PORT="${PASS_SYNC_PORT:-53333}"
-HOST="${PASS_SYNC_HOST:-0.0.0.0}"
+HOST="${PASS_SYNC_HOST:-127.0.0.1}"
 
 mkdir -p "${DATA_DIR}"
 chmod 0700 "${DATA_DIR}"
@@ -29,6 +29,14 @@ export PASS_SYNC_HOST="${HOST}"
 export PASS_SYNC_PORT="${PORT}"
 export PASS_SYNC_DB_PATH="${DATA_DIR}/pass_sync.sqlite3"
 export PASS_SYNC_LOG_LEVEL="${PASS_SYNC_LOG_LEVEL:-INFO}"
+case "${PASS_SYNC_ALLOW_OPEN:-0}" in
+  1|true|TRUE|yes|YES) allow_open=1 ;;
+  *) allow_open=0 ;;
+esac
+if [[ -z "${PASS_SYNC_BEARER_TOKENS:-}" && -z "${PASS_SYNC_BEARER_TOKENS_FILE:-}" && "${allow_open}" != "1" ]]; then
+  echo "未配置 Bearer Token。仅本地开发且明确接受无认证访问时，请设置 PASS_SYNC_ALLOW_OPEN=1。" >&2
+  exit 1
+fi
 
 nohup python3 "${SERVER_PY}" > "${LOG_FILE}" 2>&1 &
 PID=$!
@@ -50,7 +58,11 @@ echo "数据库   : ${DATA_DIR}/pass_sync.sqlite3"
 echo "日志文件 : ${LOG_FILE}"
 echo "同步接口 : http://${HOST}:${PORT}/v2/sync/state"
 echo ""
-if [[ -z "${PASS_SYNC_BEARER_TOKENS:-}" && -z "${PASS_SYNC_BEARER_TOKENS_FILE:-}" ]]; then
+case "${PASS_SYNC_ALLOW_OPEN:-0}" in
+  1|true|TRUE|yes|YES) allow_open=1 ;;
+  *) allow_open=0 ;;
+esac
+if [[ -z "${PASS_SYNC_BEARER_TOKENS:-}" && -z "${PASS_SYNC_BEARER_TOKENS_FILE:-}" && "${allow_open}" == "1" ]]; then
   echo "认证模式 : 开放（未配置 Bearer Token）"
 else
   echo "认证模式 : 已使用显式 Bearer Token 配置"

@@ -4,6 +4,18 @@
 
 > 当前事实入口：[`docs/current-app-extension-implementation-reference-zh.md`](docs/current-app-extension-implementation-reference-zh.md)。完整文档索引见 [`docs/README.md`](docs/README.md)。
 
+## 当前开发进度
+
+版本 `1.7.9`。本轮完成同步补偿对账闭环（PUT 结果不确定先回读远端、冲突后回读失败改为入队）、outbox 重算改用新幂等键、永久删除墓碑在覆盖模式下的保护、同步服务无 Token 默认拒绝启动（显式 `PASS_SYNC_ALLOW_OPEN=1` 仅限本机开发），并把“同步密钥留空即明文、不额外确认”的策略写进契约。本地门禁 `scripts/test_all.sh` 全绿。
+
+详细进度：[`docs/20260930004824-当前开发进度.md`](docs/20260930004824-当前开发进度.md)
+
+## 下一步待实现
+
+优先取真实证据：两台设备同一主源的合并/冲突/覆盖实测、服务端幂等“响应丢失只产生一个版本”实测、认证收口实测、Chrome 真实扩展加载；随后是 WebDAV 无 ETag 的部署期检测、补偿队列可视化、反向代理限流说明，以及三端同步编排下沉共享核心的债务清理。
+
+详细计划：[`docs/20260930004824-下一步待实现.md`](docs/20260930004824-下一步待实现.md)
+
 ## 当前入口
 
 | 入口 | 路径 | 当前角色 | 主要限制 |

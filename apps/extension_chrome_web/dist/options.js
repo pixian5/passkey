@@ -1,6 +1,6 @@
 (() => {
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.6.5";
+  var PASS_EXTENSION_VERSION = "1.7.9";
 
   // ../../core/pass_core/js/sync_policy.js
   var DEFAULT_DEVICE_NAME = "PassDevice";
@@ -1078,6 +1078,35 @@
     const remoteSummary = remote == null ? null : summarizeSyncPayload(remote, helpers);
     const mergedSummary = summarizeSyncPayload(merged, helpers);
     const reasons = [];
+    const h = resolveHelpers(helpers);
+    const tombstoneIds = (payload, kind) => {
+      const rawRecords = Array.isArray(payload?.[kind]) ? payload[kind] : [];
+      const normalize = kind === "accounts" ? h.normalizeAccountShape : kind === "folders" ? h.normalizeFolderShape : h.normalizePasskeyShape;
+      const records = rawRecords.map(normalize);
+      return new Set(records.filter((item) => item?.isPermanentlyDeleted).map((item) => {
+        if (kind === "accounts") return asString(item?.recordId || item?.id || item?.accountId).trim().toLowerCase();
+        if (kind === "folders") return h.normalizeFolderId(item?.id);
+        return asString(item?.credentialIdB64u || item?.id).trim();
+      }).filter(Boolean));
+    };
+    const mergedTombstones = {
+      accounts: tombstoneIds(merged, "accounts"),
+      folders: tombstoneIds(merged, "folders"),
+      passkeys: tombstoneIds(merged, "passkeys")
+    };
+    const requiredTombstones = {
+      accounts: tombstoneIds(local, "accounts"),
+      folders: tombstoneIds(local, "folders"),
+      passkeys: tombstoneIds(local, "passkeys")
+    };
+    if (remote != null) {
+      for (const kind of ["accounts", "folders", "passkeys"]) {
+        for (const id of tombstoneIds(remote, kind)) requiredTombstones[kind].add(id);
+      }
+    }
+    if (["accounts", "folders", "passkeys"].some((kind) => [...requiredTombstones[kind]].some((id) => !mergedTombstones[kind].has(id)))) {
+      reasons.push("PERMANENT_TOMBSTONES_DROPPED");
+    }
     const localNonEmpty = localSummary.accounts + localSummary.folders + localSummary.passkeys > 0;
     const remoteNonEmpty = Boolean(remoteSummary) && remoteSummary.accounts + remoteSummary.folders + remoteSummary.passkeys > 0;
     if (mode === "merge") {
@@ -1139,7 +1168,7 @@
       };
     }
     return {
-      safe: true,
+      safe: reasons.length === 0,
       reasons,
       local: { ...localSummary, accountIds: void 0, folderIds: void 0, passkeyIds: void 0 },
       remote: remoteSummary ? { ...remoteSummary, accountIds: void 0, folderIds: void 0, passkeyIds: void 0 } : null,
@@ -2778,10 +2807,7 @@
     return String(value || "").trim() === SYNC_PRIMARY_WEBDAV ? SYNC_PRIMARY_WEBDAV : SYNC_PRIMARY_SERVER;
   }
   function confirmPlaintextSync(encryptionKey) {
-    if (String(encryptionKey || "").trim()) return true;
-    return window.confirm(
-      "\u5F53\u524D\u672A\u914D\u7F6E\u540C\u6B65\u52A0\u5BC6\u5BC6\u94A5\uFF0C\u5C06\u4F7F\u7528\u660E\u6587\u540C\u6B65\u5305\uFF08\u53EF\u80FD\u5305\u542B\u5BC6\u7801\u3001TOTP\u3001\u5907\u6CE8\uFF09\u3002\n\n\u4EC5\u5EFA\u8BAE\u5728\u53EF\u4FE1\u7F51\u7EDC/\u81EA\u5EFA\u73AF\u5883\u4E34\u65F6\u4F7F\u7528\u3002\u786E\u5B9A\u7EE7\u7EED\uFF1F"
-    );
+    return true;
   }
   function confirmOverwriteSync(mode) {
     if (mode === "merge" || mode === SYNC_MODE_MERGE) return true;
@@ -3616,12 +3642,12 @@
         mergedPayload = normalizeSyncPayloadShape(primaryPayload || {});
       }
     }
-    if (normalizedSyncMode === SYNC_MODE_MERGE && primaryRemotePayload) {
+    {
       const safety = validateSyncSafety(
         localPayload,
         primaryRemotePayload,
         mergedPayload,
-        SYNC_MODE_MERGE
+        normalizedSyncMode
       );
       if (!safety.safe) {
         setStatus(`\u540C\u6B65\u5DF2\u505C\u6B62\uFF0C\u5B89\u5168\u68C0\u67E5\u672A\u901A\u8FC7\uFF1A${safety.reasons.join("\u3001")}`);
@@ -3647,12 +3673,20 @@
         const candidateHash = await syncPayloadSha256(candidatePayload);
         const pendingItems = await getSyncOutbox();
         const pending = pendingItems.find((item) => item.targetKey === syncTargetKey(target) && item.payloadSha256 === candidateHash);
+        if (target.remotePayload && syncPayloadEquals(
+          normalizeSyncPayloadShape(target.remotePayload),
+          candidatePayload
+        )) {
+          await clearSyncOutbox(target);
+          continue;
+        }
         const result = await pushRemotePayloadWithMode(target, {
           ...candidatePayload
         }, normalizedSyncMode, {
           syncSessionId: pending?.syncSessionId || syncSessionId,
           operationId: pending?.operationId || "",
-          idempotencyKey: pending?.idempotencyKey || ""
+          // outbox 项已在本轮重新拉取过远端；若仍需写入，就是新的请求体/ETag 组合。
+          idempotencyKey: pending ? createSyncIdempotencyKey() : ""
         });
         mergedPayload = normalizeSyncPayloadShape(result.payload);
         await clearSyncOutbox(target);

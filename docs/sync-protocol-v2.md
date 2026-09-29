@@ -10,8 +10,9 @@ does not imply full UI parity.
 - Plain bundle schema: `pass.sync.bundle.v2`.
 - Optional encrypted schema: `pass.sync.encrypted.v1`.
 - With a non-empty sync key, remote payloads are AES-256-GCM envelopes. With an
-  empty sync key, clients send plaintext `pass.sync.bundle.v2` only when the
-  server allows plaintext. The server never decrypts business fields.
+  empty sync key, clients send plaintext `pass.sync.bundle.v2` without an extra
+  confirmation, only when the server allows plaintext. The server never decrypts
+  business fields.
 - The envelope authenticates the schema string `pass.sync.encrypted.v1` as
   additional authenticated data.
 
@@ -38,15 +39,20 @@ does not imply full UI parity.
   same-scope conflict is decided by the newer account side.
 - Permanent-delete tombstones remain in the payload and identity sets so stale
   clients cannot resurrect data, but they are excluded from user-visible
-  counts, previews, export/import summaries, and safety diagnostics.
+  counts, previews, export/import summaries, and safety diagnostics. Explicit
+  overwrite modes must not discard a tombstone from either side.
 
 ## Server concurrency
 
 - `GET /v2/sync/state` returns `ETag` and `X-Sync-Revision`.
+- Bearer Token is server authentication, independent from the optional sync encryption key. The server rejects missing-token startup by default; `PASS_SYNC_ALLOW_OPEN=1` is an explicit open-mode exception intended only for local development.
 - `PUT /v2/sync/state` must send `If-Match` when updating an existing state.
-- Clients send a unique `Idempotency-Key` for every logical write.
+- Clients send a unique `Idempotency-Key` for every logical write. An uncertain
+  write outcome is reconciled by reading the remote payload before a new logical
+  write is generated; a changed request body must never reuse an old key.
 - HTTP `412` and `428` mean the client must pull, merge, and retry from the new
-  ETag (or treat a missing precondition as a conflict).
+  ETag (or treat a missing precondition as a conflict). If the pull after a
+  conflict fails, an already-applied local candidate must remain in the outbox.
 - A successful write response is a receipt. Clients must verify JSON `ok`,
   `committed`, `scope`, `etag`, `payloadSha256`, `revision`, and
   `idempotencyKey`, and compare them with `ETag`, `X-Sync-Scope`,

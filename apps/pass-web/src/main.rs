@@ -1052,6 +1052,19 @@ fn extract_payload(value: Value) -> Result<SyncPayload, String> {
     serde_json::from_value(payload).map_err(|e| format!("解析同步 payload 失败：{e}"))
 }
 
+fn parse_remote_sync_payload(
+    body: Option<&[u8]>,
+    encryption_key: &str,
+    previous_key: &str,
+    device_name: &str,
+) -> Result<Option<SyncPayload>, String> {
+    body.map(|body| decrypt_sync_document_with_fallback(body, encryption_key, previous_key))
+        .transpose()?
+        .map(extract_payload)
+        .map(|result| result.map(|payload| canonicalize_sync_aliases(payload, device_name)))
+        .transpose()
+}
+
 fn bundle_document(v: &Vault) -> Value {
     json!({
         "schema": "pass.sync.bundle.v2",
@@ -1136,6 +1149,7 @@ struct SyncRetryContext {
     idempotency_key: String,
     sync_session_id: String,
     operation_id: String,
+    reconcile_remote: bool,
 }
 
 fn new_sync_trace_id(prefix: &str) -> String {
@@ -1180,6 +1194,7 @@ fn new_sync_retry_context() -> SyncRetryContext {
         idempotency_key: format!("pass-web-{}", Uuid::new_v4()),
         sync_session_id: new_sync_trace_id("sync"),
         operation_id: new_sync_trace_id("op"),
+        reconcile_remote: false,
     }
 }
 
@@ -1207,9 +1222,11 @@ fn sync_outbox_context_or_wait(
         return Ok(Err(item.clone()));
     }
     Ok(Ok(SyncRetryContext {
-        idempotency_key: item.idempotency_key.clone(),
+        // outbox 重试先核对远端，再以新幂等键提交重新计算的请求体。
+        idempotency_key: format!("pass-web-{}", Uuid::new_v4()),
         sync_session_id: item.sync_session_id.clone(),
         operation_id: item.operation_id.clone(),
+        reconcile_remote: true,
     }))
 }
 
@@ -1263,6 +1280,44 @@ fn clear_sync_outbox(v: &mut Vault, source_key: &str) {
     v.data
         .sync_outbox
         .retain(|item| item.source_key != source_key);
+}
+
+fn pending_sync_failure(
+    v: &mut Vault,
+    source_key: &str,
+    source: &str,
+    mode: SyncMode,
+    context: &SyncRetryContext,
+    payload: &SyncPayload,
+    local_count: usize,
+    remote_count: usize,
+    etag: Option<String>,
+    error: String,
+    stage: &str,
+) -> Value {
+    let (code, retryable) = classify_sync_error(&error);
+    record_sync_outbox_failure(v, source_key, payload, context, etag.clone(), &error);
+    json!({"report": SyncReport {
+        message: format!("本地已保留合并结果，远端同步待补偿：{error}"),
+        reasons: vec![error],
+        local_accounts: local_count,
+        remote_accounts: remote_count,
+        merged_accounts: visible_accounts(payload),
+        applied: true,
+        pending_retry: true,
+        retryable,
+        stage: stage.into(),
+        code: Some(code.into()),
+        etag,
+        ..sync_report_base(
+            mode,
+            false,
+            source,
+            true,
+            &context.sync_session_id,
+            &context.operation_id,
+        )
+    }})
 }
 
 fn sync_report_base(
@@ -1978,14 +2033,12 @@ fn run_webdav_sync(
         .to_string();
     let local = canonicalize_sync_aliases(v.payload(), &v.data.device_name);
     let fetched = webdav_get(base, path, username, password)?;
-    let mut remote = fetched
-        .body
-        .as_deref()
-        .map(|body| decrypt_sync_document_with_fallback(body, &key, &previous_key))
-        .transpose()?
-        .map(extract_payload)
-        .map(|result| result.map(|payload| canonicalize_sync_aliases(payload, &v.data.device_name)))
-        .transpose()?;
+    let mut remote = parse_remote_sync_payload(
+        fetched.body.as_deref(),
+        &key,
+        &previous_key,
+        &v.data.device_name,
+    )?;
     let remote_for_mode = remote.clone().unwrap_or_default();
     let merged = match mode {
         SyncMode::Merge => pass_merge::v2::merge_sync_payloads(local.clone(), remote_for_mode),
@@ -2063,6 +2116,31 @@ fn run_webdav_sync(
             }}));
         }
     };
+    if retry_context.reconcile_remote && remote.as_ref() == Some(&to_store) {
+        if local != to_store {
+            v.begin("WebDAV 补偿确认远端后写入本地");
+            v.apply_payload(to_store.clone());
+            let previous_persist = v.persist_enabled;
+            v.persist_enabled = true;
+            let save_result = v.save();
+            v.persist_enabled = previous_persist;
+            save_result
+                .map_err(|error| format!("WebDAV 已在远端提交，但本地确认写入失败：{error}"))?;
+        }
+        clear_sync_outbox(v, &source_key);
+        return Ok(json!({"report": SyncReport {
+            ok: true,
+            message: "WebDAV 远端已包含补偿任务的合并结果，已确认同步完成".into(),
+            local_accounts: local_count,
+            remote_accounts: remote_count,
+            merged_accounts: visible_accounts(&to_store),
+            applied: true,
+            pushed: true,
+            stage: "completed".into(),
+            etag: fetched.etag,
+            ..sync_report_base(mode, false, "webdav", true, &retry_context.sync_session_id, &retry_context.operation_id)
+        }}));
+    }
     let mut wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), &key)?;
     let mut current_etag = fetched.etag;
     let mut remote_count = remote.as_ref().map(visible_accounts).unwrap_or(0);
@@ -2107,19 +2185,48 @@ fn run_webdav_sync(
                 }}));
             }
             Err(error) if error == "PRECONDITION_FAILED" => {
-                let latest = webdav_get(base, path, username, password)?;
-                current_etag = latest.etag;
-                remote = latest
-                    .body
-                    .as_deref()
-                    .map(|body| decrypt_sync_document_with_fallback(body, &key, &previous_key))
-                    .transpose()?
-                    .map(extract_payload)
-                    .map(|result| {
-                        result
-                            .map(|payload| canonicalize_sync_aliases(payload, &v.data.device_name))
-                    })
-                    .transpose()?;
+                let latest = match webdav_get(base, path, username, password) {
+                    Ok(latest) => latest,
+                    Err(error) => {
+                        return Ok(pending_sync_failure(
+                            v,
+                            &source_key,
+                            "webdav",
+                            mode,
+                            &retry_context,
+                            &to_store,
+                            local_count,
+                            remote_count,
+                            current_etag.clone(),
+                            error,
+                            "pullingRemote",
+                        ));
+                    }
+                };
+                current_etag = latest.etag.clone();
+                remote = match parse_remote_sync_payload(
+                    latest.body.as_deref(),
+                    &key,
+                    &previous_key,
+                    &v.data.device_name,
+                ) {
+                    Ok(remote) => remote,
+                    Err(error) => {
+                        return Ok(pending_sync_failure(
+                            v,
+                            &source_key,
+                            "webdav",
+                            mode,
+                            &retry_context,
+                            &to_store,
+                            local_count,
+                            remote_count,
+                            current_etag.clone(),
+                            error,
+                            "pullingRemote",
+                        ));
+                    }
+                };
                 let remote_for_mode = remote.clone().unwrap_or_default();
                 let merged = match mode {
                     SyncMode::Merge => {
@@ -2152,29 +2259,43 @@ fn run_webdav_sync(
                 wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), &key)?;
             }
             Err(error) => {
-                let (code, retryable) = classify_sync_error(&error);
-                record_sync_outbox_failure(
+                if let Ok(probe) = webdav_get(base, path, username, password) {
+                    if let Ok(Some(remote)) = parse_remote_sync_payload(
+                        probe.body.as_deref(),
+                        &key,
+                        &previous_key,
+                        &v.data.device_name,
+                    ) {
+                        if remote == to_store {
+                            clear_sync_outbox(v, &source_key);
+                            return Ok(json!({"report": SyncReport {
+                                ok: true,
+                                message: "WebDAV 远端已提交本次合并结果，已通过回读确认".into(),
+                                local_accounts: local_count,
+                                remote_accounts: remote_count,
+                                merged_accounts: visible_accounts(&to_store),
+                                applied: true,
+                                pushed: true,
+                                stage: "completed".into(),
+                                etag: probe.etag,
+                                ..sync_report_base(mode, false, "webdav", true, &retry_context.sync_session_id, &retry_context.operation_id)
+                            }}));
+                        }
+                    }
+                }
+                return Ok(pending_sync_failure(
                     v,
                     &source_key,
-                    &to_store,
+                    "webdav",
+                    mode,
                     &retry_context,
+                    &to_store,
+                    local_count,
+                    remote_count,
                     current_etag.clone(),
-                    &error,
-                );
-                return Ok(json!({"report": SyncReport {
-                    message: format!("本地已更新为合并结果，但 WebDAV 推送失败，请重试同步：{error}"),
-                    reasons: vec![error],
-                    local_accounts: local_count,
-                    remote_accounts: remote_count,
-                    merged_accounts: visible_accounts(&to_store),
-                    applied: true,
-                    pending_retry: true,
-                    retryable,
-                    stage: "pushingRemote".into(),
-                    code: Some(code.into()),
-                    etag: current_etag.clone(),
-                    ..sync_report_base(mode, false, "webdav", true, &retry_context.sync_session_id, &retry_context.operation_id)
-                }}));
+                    error,
+                    "pushingRemote",
+                ));
             }
         }
     }
@@ -2239,14 +2360,12 @@ fn run_self_hosted_sync(
         .to_string();
     let local = canonicalize_sync_aliases(v.payload(), &v.data.device_name);
     let fetched = self_hosted_get(base, token)?;
-    let mut remote = fetched
-        .body
-        .as_deref()
-        .map(|body| decrypt_sync_document_with_fallback(body, key, &previous_key))
-        .transpose()?
-        .map(extract_payload)
-        .map(|result| result.map(|payload| canonicalize_sync_aliases(payload, &v.data.device_name)))
-        .transpose()?;
+    let mut remote = parse_remote_sync_payload(
+        fetched.body.as_deref(),
+        key,
+        &previous_key,
+        &v.data.device_name,
+    )?;
     let remote_for_mode = remote.clone().unwrap_or_default();
     let merged = match mode {
         SyncMode::Merge => pass_merge::v2::merge_sync_payloads(local.clone(), remote_for_mode),
@@ -2332,6 +2451,30 @@ fn run_self_hosted_sync(
             }}));
         }
     };
+    if retry_context.reconcile_remote && remote.as_ref() == Some(&to_store) {
+        if local != to_store {
+            v.begin("补偿确认远端后写入本地");
+            v.apply_payload(to_store.clone());
+            let previous_persist = v.persist_enabled;
+            v.persist_enabled = true;
+            let save_result = v.save();
+            v.persist_enabled = previous_persist;
+            save_result.map_err(|error| format!("远端已提交，但本地确认写入失败：{error}"))?;
+        }
+        clear_sync_outbox(v, &source_key);
+        return Ok(json!({"report": SyncReport {
+            ok: true,
+            message: "远端已包含补偿任务的合并结果，已确认同步完成".into(),
+            local_accounts: local_count,
+            remote_accounts: remote_count,
+            merged_accounts: visible_accounts(&to_store),
+            applied: true,
+            pushed: true,
+            stage: "completed".into(),
+            etag: fetched.etag,
+            ..sync_report_base(mode, false, "selfHosted", true, &retry_context.sync_session_id, &retry_context.operation_id)
+        }}));
+    }
     let mut wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), key)?;
     let mut attempt = 0;
     let mut current_etag = fetched.etag;
@@ -2375,19 +2518,48 @@ fn run_self_hosted_sync(
                 }));
             }
             Err(error) if error == "PRECONDITION_FAILED" && attempt < 5 => {
-                let latest = self_hosted_get(base, token)?;
-                current_etag = latest.etag;
-                remote = latest
-                    .body
-                    .as_deref()
-                    .map(|body| decrypt_sync_document_with_fallback(body, key, &previous_key))
-                    .transpose()?
-                    .map(extract_payload)
-                    .map(|result| {
-                        result
-                            .map(|payload| canonicalize_sync_aliases(payload, &v.data.device_name))
-                    })
-                    .transpose()?;
+                let latest = match self_hosted_get(base, token) {
+                    Ok(latest) => latest,
+                    Err(error) => {
+                        return Ok(pending_sync_failure(
+                            v,
+                            &source_key,
+                            "selfHosted",
+                            mode,
+                            &retry_context,
+                            &to_store,
+                            local_count,
+                            remote_count,
+                            current_etag.clone(),
+                            error,
+                            "pullingRemote",
+                        ));
+                    }
+                };
+                current_etag = latest.etag.clone();
+                remote = match parse_remote_sync_payload(
+                    latest.body.as_deref(),
+                    key,
+                    &previous_key,
+                    &v.data.device_name,
+                ) {
+                    Ok(remote) => remote,
+                    Err(error) => {
+                        return Ok(pending_sync_failure(
+                            v,
+                            &source_key,
+                            "selfHosted",
+                            mode,
+                            &retry_context,
+                            &to_store,
+                            local_count,
+                            remote_count,
+                            current_etag.clone(),
+                            error,
+                            "pullingRemote",
+                        ));
+                    }
+                };
                 let remote_for_mode = remote.clone().unwrap_or_default();
                 let merged = match mode {
                     SyncMode::Merge => {
@@ -2426,31 +2598,43 @@ fn run_self_hosted_sync(
                 wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), key)?;
             }
             Err(error) => {
-                let (code, retryable) = classify_sync_error(&error);
-                record_sync_outbox_failure(
+                if let Ok(probe) = self_hosted_get(base, token) {
+                    if let Ok(Some(remote)) = parse_remote_sync_payload(
+                        probe.body.as_deref(),
+                        key,
+                        &previous_key,
+                        &v.data.device_name,
+                    ) {
+                        if remote == to_store {
+                            clear_sync_outbox(v, &source_key);
+                            return Ok(json!({"report": SyncReport {
+                                ok: true,
+                                message: "远端已提交本次合并结果，已通过回读确认".into(),
+                                local_accounts: local_count,
+                                remote_accounts: remote_count,
+                                merged_accounts: visible_accounts(&to_store),
+                                applied: true,
+                                pushed: true,
+                                stage: "completed".into(),
+                                etag: probe.etag,
+                                ..sync_report_base(mode, false, "selfHosted", true, &retry_context.sync_session_id, &retry_context.operation_id)
+                            }}));
+                        }
+                    }
+                }
+                return Ok(pending_sync_failure(
                     v,
                     &source_key,
-                    &to_store,
+                    "selfHosted",
+                    mode,
                     &retry_context,
+                    &to_store,
+                    local_count,
+                    remote_count,
                     current_etag.clone(),
-                    &error,
-                );
-                return Ok(json!({
-                    "report": SyncReport {
-                        message: format!("本地已更新为合并结果，但推送远端失败，请重试同步：{error}"),
-                        reasons: vec![error],
-                        local_accounts: local_count,
-                        remote_accounts: remote_count,
-                        merged_accounts: visible_accounts(&to_store),
-                        applied: true,
-                        pending_retry: true,
-                        retryable,
-                        stage: "pushingRemote".into(),
-                        code: Some(code.into()),
-                        etag: current_etag.clone(),
-                        ..sync_report_base(mode, false, "selfHosted", true, &retry_context.sync_session_id, &retry_context.operation_id)
-                    }
-                }));
+                    error,
+                    "pushingRemote",
+                ));
             }
         }
     }
@@ -4597,11 +4781,95 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outbox_retry_uses_fresh_idempotency_key_and_reconciles_remote() {
+        let dir = std::env::temp_dir().join(format!("pass-web-sync-outbox-{}", Uuid::new_v4()));
+        let mut vault = Vault::open(dir.clone()).unwrap();
+        let source_key = "server|https://sync.example";
+        let payload = vault.payload();
+        let original = new_sync_retry_context();
+        record_sync_outbox_failure(
+            &mut vault,
+            source_key,
+            &payload,
+            &original,
+            Some("etag-old".into()),
+            "connection reset",
+        );
+
+        let retry = sync_outbox_context_or_wait(&mut vault, source_key, &payload, true)
+            .unwrap()
+            .unwrap();
+        assert_ne!(retry.idempotency_key, original.idempotency_key);
+        assert_eq!(retry.sync_session_id, original.sync_session_id);
+        assert_eq!(retry.operation_id, original.operation_id);
+        assert!(retry.reconcile_remote);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn pending_sync_failure_persists_an_already_applied_candidate() {
+        let dir = std::env::temp_dir().join(format!("pass-web-pending-sync-{}", Uuid::new_v4()));
+        let mut vault = Vault::open(dir.clone()).unwrap();
+        let payload = vault.payload();
+        let source_key = "server|https://sync.example";
+        let context = new_sync_retry_context();
+        let result = pending_sync_failure(
+            &mut vault,
+            source_key,
+            "selfHosted",
+            SyncMode::Merge,
+            &context,
+            &payload,
+            visible_accounts(&payload),
+            0,
+            Some("etag-before-conflict".into()),
+            "GET unavailable".into(),
+            "pullingRemote",
+        );
+
+        assert_eq!(result["report"]["pendingRetry"], true);
+        assert_eq!(result["report"]["applied"], true);
+        assert_eq!(result["report"]["stage"], "pullingRemote");
+        assert_eq!(vault.data.sync_outbox.len(), 1);
+        assert_eq!(
+            vault.data.sync_outbox[0].payload_sha256,
+            sync_outbox_payload_sha256(&payload)
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
     #[test]
     fn creates_empty_vault_and_fixed_folder() {
         let dir = std::env::temp_dir().join(format!("pass-web-test-{}", Uuid::new_v4()));
         let vault = Vault::open(dir.clone()).unwrap();
         assert!(vault.data.folders.iter().any(|f| f.id == FIXED_FOLDER_ID));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn outbox_reconciliation_uses_a_fresh_idempotency_key() {
+        let dir = std::env::temp_dir().join(format!("pass-web-sync-outbox-{}", Uuid::new_v4()));
+        let mut vault = Vault::open(dir.clone()).unwrap();
+        let source_key = "server|https://sync.example";
+        let payload = vault.payload();
+        let original = new_sync_retry_context();
+        record_sync_outbox_failure(
+            &mut vault,
+            source_key,
+            &payload,
+            &original,
+            Some("etag-old".into()),
+            "connection reset",
+        );
+
+        let retry = sync_outbox_context_or_wait(&mut vault, source_key, &payload, true)
+            .unwrap()
+            .unwrap();
+        assert_ne!(retry.idempotency_key, original.idempotency_key);
+        assert_eq!(retry.sync_session_id, original.sync_session_id);
+        assert_eq!(retry.operation_id, original.operation_id);
+        assert!(retry.reconcile_remote);
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -4701,7 +4969,10 @@ mod tests {
         let resumed = sync_outbox_context_or_wait(&mut vault, source_key, &payload, true)
             .unwrap()
             .unwrap();
-        assert_eq!(resumed.idempotency_key, context.idempotency_key);
+        assert_ne!(resumed.idempotency_key, context.idempotency_key);
+        assert_eq!(resumed.sync_session_id, context.sync_session_id);
+        assert_eq!(resumed.operation_id, context.operation_id);
+        assert!(resumed.reconcile_remote);
         let item = vault.data.sync_outbox.first().unwrap();
         assert_eq!(item.status, "pendingRetry");
         assert_eq!(item.attempts, 0);

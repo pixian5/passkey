@@ -46,6 +46,8 @@ pub struct SyncRetryContext {
     pub idempotency_key: String,
     pub sync_session_id: String,
     pub operation_id: String,
+    /// 已有补偿任务必须先核对远端，再用新幂等键重新计算写入。
+    pub reconcile_remote: bool,
 }
 
 fn new_trace_id(prefix: &str) -> String {
@@ -158,6 +160,16 @@ pub fn local_payload_from_vault(
     passkeys: &[pass_merge::v2::Passkey],
     device_name: &str,
 ) -> SyncPayload {
+    local_payload_from_vault_at(accounts, folders, passkeys, device_name, now_ms())
+}
+
+fn local_payload_from_vault_at(
+    accounts: &[pass_merge::v2::PasswordAccount],
+    folders: &[pass_merge::v2::Folder],
+    passkeys: &[pass_merge::v2::Passkey],
+    device_name: &str,
+    alias_now_ms: i64,
+) -> SyncPayload {
     let mut payload = SyncPayload {
         accounts: accounts.to_vec(),
         folders: folders.to_vec(),
@@ -165,7 +177,7 @@ pub fn local_payload_from_vault(
         ..Default::default()
     };
     ensure_field_clocks(&mut payload, device_name);
-    let _ = sync_alias_groups(&mut payload.accounts, now_ms(), device_name);
+    let _ = sync_alias_groups(&mut payload.accounts, alias_now_ms, device_name);
     payload
 }
 
@@ -182,7 +194,37 @@ pub fn local_payload_from_vault_with_order(
     folder_order_updated_at_ms: i64,
     folder_order_updated_device_name: String,
 ) -> SyncPayload {
-    let mut payload = local_payload_from_vault(accounts, folders, passkeys, device_name);
+    local_payload_from_vault_with_order_at(
+        accounts,
+        folders,
+        passkeys,
+        device_name,
+        all_regular_account_ids,
+        all_regular_order_updated_at_ms,
+        all_regular_order_updated_device_name,
+        folder_order_ids,
+        folder_order_updated_at_ms,
+        folder_order_updated_device_name,
+        now_ms(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)] // Stable vault/order conversion boundary.
+pub fn local_payload_from_vault_with_order_at(
+    accounts: &[pass_merge::v2::PasswordAccount],
+    folders: &[pass_merge::v2::Folder],
+    passkeys: &[pass_merge::v2::Passkey],
+    device_name: &str,
+    all_regular_account_ids: Vec<String>,
+    all_regular_order_updated_at_ms: i64,
+    all_regular_order_updated_device_name: String,
+    folder_order_ids: Vec<String>,
+    folder_order_updated_at_ms: i64,
+    folder_order_updated_device_name: String,
+    alias_now_ms: i64,
+) -> SyncPayload {
+    let mut payload =
+        local_payload_from_vault_at(accounts, folders, passkeys, device_name, alias_now_ms);
     payload.all_regular_account_ids = all_regular_account_ids;
     payload.all_regular_order_updated_at_ms = all_regular_order_updated_at_ms;
     payload.all_regular_order_updated_device_name = all_regular_order_updated_device_name;
@@ -398,12 +440,40 @@ where
     } else {
         retry_context.operation_id.clone()
     };
+    let mut last_etag: Option<String> = None;
     loop {
         attempt += 1;
-        let (remote_opt, etag) = pull()?;
+        let (remote_opt, etag) = match pull() {
+            Ok(result) => result,
+            Err(error) if last_applied.is_some() || retry_context.reconcile_remote => {
+                let (code, retryable) = classify_sync_error(&error);
+                let mut failure = report_base(mode, false, source);
+                failure.sync_session_id = sync_session_id.clone();
+                failure.operation_id = operation_id.clone();
+                failure.message =
+                    format!("本地已保留合并结果，但冲突后重新拉取失败，已加入补偿队列：{error}");
+                failure.set_safety(true);
+                failure.reasons = vec![error];
+                failure.local_accounts = visible_account_count(&local);
+                failure.merged_accounts =
+                    visible_account_count(last_applied.as_ref().unwrap_or(&local));
+                failure.applied = last_applied.is_some() || retry_context.reconcile_remote;
+                failure.pending_retry = true;
+                failure.retryable = retryable;
+                failure.stage = "pullingRemote".into();
+                failure.code = Some(code.into());
+                failure.etag = last_etag.clone();
+                return Ok((
+                    failure,
+                    last_applied.clone().unwrap_or_else(|| local.clone()),
+                ));
+            }
+            Err(error) => return Err(error),
+        };
+        last_etag = etag.clone();
         let local_count = visible_account_count(&local);
         let remote_count = remote_opt.as_ref().map(visible_account_count).unwrap_or(0);
-        let (merged, report) = decide_merged(mode, local.clone(), remote_opt, device_name);
+        let (merged, report) = decide_merged(mode, local.clone(), remote_opt.clone(), device_name);
         let merged_count = visible_account_count(&merged);
         if !report.safe {
             let mut failure = report_base(mode, false, source);
@@ -431,6 +501,30 @@ where
         };
         ensure_field_clocks(&mut to_store, device_name);
         let _ = sync_alias_groups(&mut to_store.accounts, now_ms(), device_name);
+        if retry_context.reconcile_remote
+            && remote_opt
+                .as_ref()
+                .is_some_and(|remote| remote == &to_store)
+        {
+            if local != to_store {
+                apply_local(&to_store)?;
+            }
+            let mut success = report_base(mode, false, source);
+            success.sync_session_id = sync_session_id.clone();
+            success.operation_id = operation_id.clone();
+            success.ok = true;
+            success.message = "远端已包含补偿任务的合并结果，已确认同步完成".into();
+            success.set_safety(true);
+            success.local_accounts = local_count;
+            success.remote_accounts = remote_count;
+            success.merged_accounts = visible_account_count(&to_store);
+            success.applied = true;
+            success.pushed = true;
+            success.remote_pulled = true;
+            success.stage = "completed".into();
+            success.etag = etag;
+            return Ok((success, to_store));
+        }
         // Apply locally before remote push so a failed push never creates
         // "remote updated / local stale" split-brain. A failed push leaves the
         // merged local vault intact for the next retry.
@@ -464,6 +558,28 @@ where
             }
             Err(e) if e == "PRECONDITION_FAILED" && attempt < MAX_CONFLICT_RETRIES => continue,
             Err(e) => {
+                // 写请求可能已经提交，只是回执在网络中丢失。先读回远端，
+                // 若业务载荷已一致，就按成功收敛，避免重新加密后复用旧幂等键。
+                if let Ok((Some(remote), probe_etag)) = pull() {
+                    if remote == to_store {
+                        let mut success = report_base(mode, false, source);
+                        success.sync_session_id = sync_session_id.clone();
+                        success.operation_id = operation_id.clone();
+                        success.ok = true;
+                        success.message = "远端已提交本次合并结果，已通过回读确认".into();
+                        success.set_safety(true);
+                        success.local_accounts = local_count;
+                        success.remote_accounts = remote_count;
+                        success.merged_accounts = visible_account_count(&to_store);
+                        success.applied = true;
+                        success.pushed = true;
+                        success.remote_pulled = true;
+                        success.stage = "completed".into();
+                        success.etag = probe_etag;
+                        return Ok((success, to_store));
+                    }
+                    last_etag = probe_etag;
+                }
                 let (code, retryable) = classify_sync_error(&e);
                 let mut failure = report_base(mode, false, source);
                 failure.sync_session_id = sync_session_id.clone();
@@ -480,7 +596,7 @@ where
                 failure.retryable = retryable;
                 failure.stage = "pushingRemote".into();
                 failure.code = Some(code.into());
-                failure.etag = etag;
+                failure.etag = last_etag;
                 return Ok((failure, to_store));
             }
         }
@@ -570,6 +686,7 @@ mod tests {
             idempotency_key: "idem-existing".into(),
             sync_session_id: "sync-existing".into(),
             operation_id: "op-existing".into(),
+            reconcile_remote: false,
         };
         let (report, _) = run_sync_with_transport_context(
             SyncMode::Merge,
@@ -591,5 +708,161 @@ mod tests {
         assert_eq!(report.sync_session_id, "sync-existing");
         assert_eq!(report.operation_id, "op-existing");
         assert!(report.pushed);
+    }
+
+    #[test]
+    fn outbox_retry_confirms_already_committed_payload_without_second_put() {
+        let put_count = RefCell::new(0);
+        let apply_count = RefCell::new(0);
+        let context = SyncRetryContext {
+            idempotency_key: "fresh-reconciliation-key".into(),
+            sync_session_id: "sync-existing".into(),
+            operation_id: "op-existing".into(),
+            reconcile_remote: true,
+        };
+        let committed_payload =
+            pass_merge::v2::merge_sync_payloads(SyncPayload::default(), SyncPayload::default());
+        let (report, _) = run_sync_with_transport_context(
+            SyncMode::Merge,
+            SyncPayload::default(),
+            "test-device",
+            "test",
+            "",
+            "selfHosted",
+            Some(context),
+            || {
+                Ok((
+                    Some(committed_payload.clone()),
+                    Some("etag-committed".into()),
+                ))
+            },
+            |_| {
+                *apply_count.borrow_mut() += 1;
+                Ok(())
+            },
+            |_, _, _| {
+                *put_count.borrow_mut() += 1;
+                Ok("unexpected-etag".into())
+            },
+        )
+        .unwrap();
+        assert!(report.ok);
+        assert!(report.pushed);
+        assert_eq!(*put_count.borrow(), 0);
+        assert_eq!(*apply_count.borrow(), 1);
+    }
+
+    #[test]
+    fn conflict_followup_pull_failure_is_returned_as_pending_retry() {
+        let pull_count = RefCell::new(0);
+        let apply_count = RefCell::new(0);
+        let (report, _) = run_sync_with_transport_context(
+            SyncMode::Merge,
+            SyncPayload::default(),
+            "test-device",
+            "test",
+            "",
+            "selfHosted",
+            None,
+            || {
+                let mut count = pull_count.borrow_mut();
+                *count += 1;
+                if *count == 1 {
+                    Ok((None, None))
+                } else {
+                    Err("拉取同步状态失败 HTTP 503".into())
+                }
+            },
+            |_| {
+                *apply_count.borrow_mut() += 1;
+                Ok(())
+            },
+            |_, _, _| Err("PRECONDITION_FAILED".into()),
+        )
+        .unwrap();
+        assert!(report.pending_retry);
+        assert!(report.applied);
+        assert_eq!(report.stage, "pullingRemote");
+        assert_eq!(*apply_count.borrow(), 1);
+    }
+
+    #[test]
+    fn lost_success_response_is_resolved_by_remote_probe() {
+        let pull_count = RefCell::new(0);
+        let put_count = RefCell::new(0);
+        let (report, _) = run_sync_with_transport_context(
+            SyncMode::Merge,
+            SyncPayload::default(),
+            "test-device",
+            "test",
+            "",
+            "selfHosted",
+            None,
+            || {
+                let mut count = pull_count.borrow_mut();
+                *count += 1;
+                if *count == 1 {
+                    Ok((None, None))
+                } else {
+                    Ok((Some(SyncPayload::default()), Some("etag-committed".into())))
+                }
+            },
+            |_| Ok(()),
+            |_, _, _| {
+                *put_count.borrow_mut() += 1;
+                Err("推送同步状态失败: connection reset".into())
+            },
+        )
+        .unwrap();
+        assert!(report.ok);
+        assert!(report.pushed);
+        assert_eq!(*put_count.borrow(), 1);
+    }
+
+    #[test]
+    fn fixed_alias_clock_keeps_local_payload_stable() {
+        let accounts = vec![
+            PasswordAccount {
+                sites: vec!["login.example.com".into()],
+                updated_at_ms: 1,
+                ..Default::default()
+            },
+            PasswordAccount {
+                sites: vec!["api.example.com".into()],
+                updated_at_ms: 2,
+                ..Default::default()
+            },
+        ];
+        let first = local_payload_from_vault_with_order_at(
+            &accounts,
+            &[],
+            &[],
+            "test-device",
+            vec![],
+            0,
+            String::new(),
+            vec![],
+            0,
+            String::new(),
+            1234,
+        );
+        let second = local_payload_from_vault_with_order_at(
+            &accounts,
+            &[],
+            &[],
+            "test-device",
+            vec![],
+            0,
+            String::new(),
+            vec![],
+            0,
+            String::new(),
+            1234,
+        );
+        assert_eq!(first, second);
+        assert!(first
+            .accounts
+            .iter()
+            .all(|account| account.updated_at_ms == 1234));
     }
 }

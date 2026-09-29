@@ -96,6 +96,22 @@ class OptionalBearerScriptTests(unittest.TestCase):
         self.assertIn('1|true|yes) ALLOW_PLAINTEXT_CONFIG="1"', source)
         self.assertIn('0|false|no) ALLOW_PLAINTEXT_CONFIG="0"', source)
         self.assertIn("<key>PASS_SYNC_ALLOW_PLAINTEXT</key>", source)
+        self.assertIn("<key>PASS_SYNC_ALLOW_OPEN</key>", source)
+        self.assertIn("ALLOW_OPEN_CONFIG", source)
+        self.assertIn('PASS_SYNC_HOST', source)
+
+    def test_server_start_scripts_require_explicit_open_mode_without_token(self) -> None:
+        for script in (
+            ROOT / "apps" / "sync_server_local" / "start.sh",
+            ROOT / "apps" / "sync_server_ubuntu" / "start.sh",
+        ):
+            source = script.read_text(encoding="utf-8")
+            self.assertIn("PASS_SYNC_ALLOW_OPEN", source, script)
+            self.assertIn("PASS_SYNC_BEARER_TOKENS", source, script)
+        local = (ROOT / "apps" / "sync_server_local" / "start.sh").read_text(encoding="utf-8")
+        ubuntu = (ROOT / "apps" / "sync_server_ubuntu" / "start.sh").read_text(encoding="utf-8")
+        self.assertIn('HOST="${PASS_SYNC_HOST:-127.0.0.1}"', local)
+        self.assertIn('HOST="${PASS_SYNC_HOST:-127.0.0.1}"', ubuntu)
 
     def test_scripts_have_valid_shell_syntax(self) -> None:
         for script in SCRIPTS:

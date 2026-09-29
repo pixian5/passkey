@@ -1755,7 +1755,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.6.5";
+  var PASS_EXTENSION_VERSION = "1.7.9";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 40;
@@ -3078,6 +3078,35 @@
     const remoteSummary = remote == null ? null : summarizeSyncPayload(remote, helpers);
     const mergedSummary = summarizeSyncPayload(merged, helpers);
     const reasons = [];
+    const h = resolveHelpers(helpers);
+    const tombstoneIds = (payload, kind) => {
+      const rawRecords = Array.isArray(payload?.[kind]) ? payload[kind] : [];
+      const normalize = kind === "accounts" ? h.normalizeAccountShape : kind === "folders" ? h.normalizeFolderShape : h.normalizePasskeyShape;
+      const records = rawRecords.map(normalize);
+      return new Set(records.filter((item) => item?.isPermanentlyDeleted).map((item) => {
+        if (kind === "accounts") return asString(item?.recordId || item?.id || item?.accountId).trim().toLowerCase();
+        if (kind === "folders") return h.normalizeFolderId(item?.id);
+        return asString(item?.credentialIdB64u || item?.id).trim();
+      }).filter(Boolean));
+    };
+    const mergedTombstones = {
+      accounts: tombstoneIds(merged, "accounts"),
+      folders: tombstoneIds(merged, "folders"),
+      passkeys: tombstoneIds(merged, "passkeys")
+    };
+    const requiredTombstones = {
+      accounts: tombstoneIds(local, "accounts"),
+      folders: tombstoneIds(local, "folders"),
+      passkeys: tombstoneIds(local, "passkeys")
+    };
+    if (remote != null) {
+      for (const kind of ["accounts", "folders", "passkeys"]) {
+        for (const id of tombstoneIds(remote, kind)) requiredTombstones[kind].add(id);
+      }
+    }
+    if (["accounts", "folders", "passkeys"].some((kind) => [...requiredTombstones[kind]].some((id) => !mergedTombstones[kind].has(id)))) {
+      reasons.push("PERMANENT_TOMBSTONES_DROPPED");
+    }
     const localNonEmpty = localSummary.accounts + localSummary.folders + localSummary.passkeys > 0;
     const remoteNonEmpty = Boolean(remoteSummary) && remoteSummary.accounts + remoteSummary.folders + remoteSummary.passkeys > 0;
     if (mode === "merge") {
@@ -3139,7 +3168,7 @@
       };
     }
     return {
-      safe: true,
+      safe: reasons.length === 0,
       reasons,
       local: { ...localSummary, accountIds: void 0, folderIds: void 0, passkeyIds: void 0 },
       remote: remoteSummary ? { ...remoteSummary, accountIds: void 0, folderIds: void 0, passkeyIds: void 0 } : null,
@@ -3887,6 +3916,17 @@
       if (target.isPrimary && persistedContext?.operationId) {
         primaryOperationId = persistedContext.operationId;
       }
+      if (target.remotePayload && syncPayloadEquals(
+        normalizeSyncPayloadShape(target.remotePayload),
+        candidatePayload
+      )) {
+        outboxByTarget.delete(targetKey);
+        logSyncFlow("push-skipped-remote-already-matches", {
+          label: target.label,
+          url: target.url
+        });
+        continue;
+      }
       if (persistedContext && !forceOutboxRetry && !isSyncOutboxReady(persistedContext)) {
         const paused = pendingOutbox.status === "paused";
         const waitSeconds = Math.max(1, Math.ceil((pendingOutbox.nextRetryAtMs - Date.now()) / 1e3));
@@ -3907,7 +3947,7 @@
       let result;
       const operationId = persistedContext?.operationId || (target.isPrimary ? reportOperationId : createSyncIdempotencyKey());
       if (target.isPrimary) primaryOperationId = operationId;
-      const idempotencyKey = persistedContext?.idempotencyKey || createSyncIdempotencyKey();
+      const idempotencyKey = createSyncIdempotencyKey();
       try {
         result = await pushRemotePayloadWithMode(target, {
           ...candidatePayload
