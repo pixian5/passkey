@@ -1,4 +1,4 @@
-use super::pipeline::SyncRetryContext;
+use super::pipeline::{SyncMode, SyncRetryContext};
 use crate::local_vault;
 use pass_merge::v2::SyncPayload;
 use serde::{Deserialize, Serialize};
@@ -18,11 +18,17 @@ fn default_status() -> String {
     "pendingRetry".into()
 }
 
+fn default_mode() -> String {
+    "merge".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncOutboxItem {
     pub source_key: String,
     pub payload: SyncPayload,
+    #[serde(default = "default_mode")]
+    pub mode: String,
     pub payload_sha256: String,
     pub expected_etag: Option<String>,
     pub expected_revision: Option<i64>,
@@ -43,6 +49,7 @@ pub struct SyncOutboxItem {
 #[serde(rename_all = "camelCase")]
 pub struct SyncOutboxSummary {
     pub source_key: String,
+    pub mode: String,
     pub created_at_ms: i64,
     pub attempts: u32,
     pub next_retry_at_ms: i64,
@@ -135,6 +142,7 @@ fn save(data_dir: &Path, items: &[SyncOutboxItem]) -> Result<(), String> {
 
 pub fn retry_context(item: &SyncOutboxItem) -> SyncRetryContext {
     SyncRetryContext {
+        mode: SyncMode::parse(&item.mode),
         // 每次重新对账都使用新幂等键；旧的远端提交结果会先通过 pull 核对。
         idempotency_key: format!("pass-tauri-{}", Uuid::new_v4()),
         sync_session_id: item.sync_session_id.clone(),
@@ -171,6 +179,7 @@ pub fn summaries(data_dir: &Path) -> Result<Vec<SyncOutboxSummary>, String> {
         .into_iter()
         .map(|item| SyncOutboxSummary {
             source_key: item.source_key,
+            mode: item.mode,
             created_at_ms: item.created_at_ms,
             attempts: item.attempts,
             next_retry_at_ms: item.next_retry_at_ms,
@@ -180,8 +189,9 @@ pub fn summaries(data_dir: &Path) -> Result<Vec<SyncOutboxSummary>, String> {
         .collect())
 }
 
-pub fn new_context(_payload: &SyncPayload) -> SyncRetryContext {
+pub fn new_context(_payload: &SyncPayload, mode: SyncMode) -> SyncRetryContext {
     SyncRetryContext {
+        mode,
         idempotency_key: format!("pass-tauri-{}", Uuid::new_v4()),
         sync_session_id: format!("sync-{}", Uuid::new_v4()),
         operation_id: format!("op-{}", Uuid::new_v4()),
@@ -201,9 +211,11 @@ pub fn record_failure(
     let hash = payload_sha256(payload);
     let source_key = normalize_source_key(source_key);
     let mut items = load(data_dir)?;
-    let previous = items
-        .iter()
-        .find(|item| item.source_key == source_key && item.payload_sha256 == hash);
+    let previous = items.iter().find(|item| {
+        item.source_key == source_key
+            && item.payload_sha256 == hash
+            && SyncMode::parse(&item.mode) == context.mode
+    });
     let now = now_ms();
     let attempts = previous
         .map(|item| item.attempts + 1)
@@ -221,6 +233,7 @@ pub fn record_failure(
     let item = SyncOutboxItem {
         source_key: source_key.clone(),
         payload: payload.clone(),
+        mode: context.mode.as_str().into(),
         payload_sha256: hash,
         expected_etag: expected_etag
             .or_else(|| previous.and_then(|item| item.expected_etag.clone())),
@@ -299,7 +312,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("pass-tauri-outbox-{}", Uuid::new_v4()));
         fs::create_dir_all(&path).unwrap();
         let payload = SyncPayload::default();
-        let context = new_context(&payload);
+        let context = new_context(&payload, SyncMode::Merge);
         record_failure(
             &path,
             "server|https://sync",
@@ -335,7 +348,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("pass-tauri-outbox-{}", Uuid::new_v4()));
         fs::create_dir_all(&path).unwrap();
         let payload = SyncPayload::default();
-        let context = new_context(&payload);
+        let context = new_context(&payload, SyncMode::Merge);
         for _ in 0..MAX_ATTEMPTS {
             record_failure(
                 &path,
@@ -365,5 +378,52 @@ mod tests {
         assert_eq!(resumed.attempts, 0);
         assert_eq!(resumed.next_retry_at_ms, 0);
         let _ = fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn saved_mode_survives_restart_and_new_mode_resets_failure_count() {
+        let path = std::env::temp_dir().join(format!("pass-tauri-outbox-mode-{}", Uuid::new_v4()));
+        fs::create_dir_all(&path).unwrap();
+        let payload = SyncPayload::default();
+        let context = new_context(&payload, SyncMode::LocalOverwriteRemote);
+        for _ in 0..2 {
+            record_failure(
+                &path,
+                "server|https://sync.example",
+                &payload,
+                &context,
+                None,
+                None,
+                "offline",
+            )
+            .unwrap();
+        }
+        let item = load(&path).unwrap().remove(0);
+        assert_eq!(item.mode, "localOverwriteRemote");
+        assert_eq!(retry_context(&item).mode, SyncMode::LocalOverwriteRemote);
+        assert_eq!(item.attempts, 2);
+        let merge_context = new_context(&payload, SyncMode::Merge);
+        record_failure(
+            &path,
+            "server|https://sync.example",
+            &payload,
+            &merge_context,
+            None,
+            None,
+            "offline",
+        )
+        .unwrap();
+        let item = load(&path).unwrap().remove(0);
+        assert_eq!(item.mode, "merge");
+        assert_eq!(item.attempts, 1);
+        let mut legacy = serde_json::to_value(&item).unwrap();
+        legacy.as_object_mut().unwrap().remove("mode");
+        assert_eq!(
+            serde_json::from_value::<SyncOutboxItem>(legacy)
+                .unwrap()
+                .mode,
+            "merge"
+        );
+        fs::remove_dir_all(path).unwrap();
     }
 }

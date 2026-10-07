@@ -1,4 +1,7 @@
-use super::crypto::{decrypt_wire_body_with_fallback, encrypt_bundle_document, PLAINTEXT_SCHEMA};
+use super::crypto::{
+    decrypt_wire_body_with_fallback, encrypt_bundle_document, wire_matches_current_key,
+    PLAINTEXT_SCHEMA,
+};
 use super::http::{get_sync_state, put_sync_state};
 use super::settings::SyncSettings;
 use chrono::Utc;
@@ -10,8 +13,9 @@ use uuid::Uuid;
 
 const MAX_CONFLICT_RETRIES: u32 = 5;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SyncMode {
+    #[default]
     Merge,
     RemoteOverwriteLocal,
     LocalOverwriteRemote,
@@ -43,11 +47,39 @@ pub type SyncReport = SyncOperationReport;
 
 #[derive(Debug, Clone, Default)]
 pub struct SyncRetryContext {
+    pub mode: SyncMode,
     pub idempotency_key: String,
     pub sync_session_id: String,
     pub operation_id: String,
     /// 已有补偿任务必须先核对远端，再用新幂等键重新计算写入。
     pub reconcile_remote: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RemoteSnapshot {
+    pub payload: Option<SyncPayload>,
+    pub etag: Option<String>,
+    pub encryption_matches: bool,
+}
+
+pub fn decode_remote_snapshot(
+    body: Option<&[u8]>,
+    etag: Option<String>,
+    key: &str,
+    previous_key: &str,
+) -> Result<RemoteSnapshot, String> {
+    let Some(body) = body.filter(|body| !body.is_empty()) else {
+        return Ok(RemoteSnapshot {
+            etag,
+            ..Default::default()
+        });
+    };
+    let doc = decrypt_wire_body_with_fallback(body, key, previous_key)?;
+    Ok(RemoteSnapshot {
+        payload: Some(extract_payload(&doc)?),
+        etag,
+        encryption_matches: wire_matches_current_key(body, key),
+    })
 }
 
 fn new_trace_id(prefix: &str) -> String {
@@ -308,7 +340,7 @@ pub fn preview_sync(
     platform: &str,
 ) -> Result<(SyncReport, SyncPayload), String> {
     let mode = SyncMode::parse(&settings.mode);
-    let (remote_opt, _) = pull_remote(settings)?;
+    let remote_opt = pull_remote(settings)?.payload;
     let local_count = visible_account_count(&local);
     let remote_count = remote_opt.as_ref().map(visible_account_count).unwrap_or(0);
     let (merged, report) = decide_merged(mode, local.clone(), remote_opt, device_name);
@@ -350,9 +382,13 @@ pub fn preview_with_transport<P>(
     mut pull: P,
 ) -> Result<(SyncReport, SyncPayload), String>
 where
-    P: FnMut() -> Result<(Option<SyncPayload>, Option<String>), String>,
+    P: FnMut() -> Result<RemoteSnapshot, String>,
 {
-    let (remote_opt, etag) = pull()?;
+    let RemoteSnapshot {
+        payload: remote_opt,
+        etag,
+        ..
+    } = pull()?;
     let local_count = visible_account_count(&local);
     let remote_count = remote_opt.as_ref().map(visible_account_count).unwrap_or(0);
     let (merged, safety) = decide_merged(mode, local.clone(), remote_opt, device_name);
@@ -381,24 +417,24 @@ where
     Ok((report, merged))
 }
 
-fn pull_remote(settings: &SyncSettings) -> Result<(Option<SyncPayload>, Option<String>), String> {
+fn pull_remote(settings: &SyncSettings) -> Result<RemoteSnapshot, String> {
     if !settings.enabled {
-        return Ok((None, None));
+        return Ok(RemoteSnapshot::default());
     }
     if settings.base_url.trim().is_empty() {
         return Err("请先配置同步服务器 URL（访问令牌与加密密钥可留空）".into());
     }
     let fetched = get_sync_state(&settings.base_url, &settings.auth_token)?;
-    if fetched.empty || fetched.body.is_none() {
-        return Ok((None, fetched.etag));
-    }
-    let doc = decrypt_wire_body_with_fallback(
-        fetched.body.as_ref().unwrap(),
+    decode_remote_snapshot(
+        if fetched.empty {
+            None
+        } else {
+            fetched.body.as_deref()
+        },
+        fetched.etag,
         &settings.encryption_key,
         &settings.previous_encryption_key,
-    )?;
-    let payload = extract_payload(&doc)?;
-    Ok((Some(payload), fetched.etag))
+    )
 }
 
 /// Shared merge/safety/write loop for non-server transports such as WebDAV.
@@ -418,7 +454,7 @@ pub(crate) fn run_sync_with_transport_context<P, U, A>(
     mut push: U,
 ) -> Result<(SyncReport, SyncPayload), String>
 where
-    P: FnMut() -> Result<(Option<SyncPayload>, Option<String>), String>,
+    P: FnMut() -> Result<RemoteSnapshot, String>,
     A: FnMut(&SyncPayload) -> Result<(), String>,
     U: FnMut(&[u8], Option<&str>, &str) -> Result<String, String>,
 {
@@ -443,7 +479,11 @@ where
     let mut last_etag: Option<String> = None;
     loop {
         attempt += 1;
-        let (remote_opt, etag) = match pull() {
+        let RemoteSnapshot {
+            payload: remote_opt,
+            etag,
+            encryption_matches,
+        } = match pull() {
             Ok(result) => result,
             Err(error) if last_applied.is_some() || retry_context.reconcile_remote => {
                 let (code, retryable) = classify_sync_error(&error);
@@ -473,7 +513,10 @@ where
         last_etag = etag.clone();
         let local_count = visible_account_count(&local);
         let remote_count = remote_opt.as_ref().map(visible_account_count).unwrap_or(0);
-        let (merged, report) = decide_merged(mode, local.clone(), remote_opt.clone(), device_name);
+        // 后续冲突必须以最近已落盘结果为基线，不能丢掉本轮接收的墓碑。
+        let baseline = last_applied.as_ref().unwrap_or(&local);
+        let (merged, report) =
+            decide_merged(mode, baseline.clone(), remote_opt.clone(), device_name);
         let merged_count = visible_account_count(&merged);
         if !report.safe {
             let mut failure = report_base(mode, false, source);
@@ -502,6 +545,7 @@ where
         ensure_field_clocks(&mut to_store, device_name);
         let _ = sync_alias_groups(&mut to_store.accounts, now_ms(), device_name);
         if retry_context.reconcile_remote
+            && encryption_matches
             && remote_opt
                 .as_ref()
                 .is_some_and(|remote| remote == &to_store)
@@ -560,8 +604,13 @@ where
             Err(e) => {
                 // 写请求可能已经提交，只是回执在网络中丢失。先读回远端，
                 // 若业务载荷已一致，就按成功收敛，避免重新加密后复用旧幂等键。
-                if let Ok((Some(remote), probe_etag)) = pull() {
-                    if remote == to_store {
+                if let Ok(RemoteSnapshot {
+                    payload: Some(remote),
+                    etag: probe_etag,
+                    encryption_matches,
+                }) = pull()
+                {
+                    if encryption_matches && remote == to_store {
                         let mut success = report_base(mode, false, source);
                         success.sync_session_id = sync_session_id.clone();
                         success.operation_id = operation_id.clone();
@@ -683,6 +732,7 @@ mod tests {
     fn retry_context_reuses_trace_and_idempotency_ids() {
         let seen_key = RefCell::new(String::new());
         let context = SyncRetryContext {
+            mode: SyncMode::Merge,
             idempotency_key: "idem-existing".into(),
             sync_session_id: "sync-existing".into(),
             operation_id: "op-existing".into(),
@@ -696,7 +746,7 @@ mod tests {
             "",
             "selfHosted",
             Some(context),
-            || Ok((None, None)),
+            || Ok(RemoteSnapshot::default()),
             |_| Ok(()),
             |_, _, key| {
                 *seen_key.borrow_mut() = key.to_string();
@@ -715,6 +765,7 @@ mod tests {
         let put_count = RefCell::new(0);
         let apply_count = RefCell::new(0);
         let context = SyncRetryContext {
+            mode: SyncMode::Merge,
             idempotency_key: "fresh-reconciliation-key".into(),
             sync_session_id: "sync-existing".into(),
             operation_id: "op-existing".into(),
@@ -731,10 +782,11 @@ mod tests {
             "selfHosted",
             Some(context),
             || {
-                Ok((
-                    Some(committed_payload.clone()),
-                    Some("etag-committed".into()),
-                ))
+                Ok(RemoteSnapshot {
+                    payload: Some(committed_payload.clone()),
+                    etag: Some("etag-committed".into()),
+                    encryption_matches: true,
+                })
             },
             |_| {
                 *apply_count.borrow_mut() += 1;
@@ -768,7 +820,7 @@ mod tests {
                 let mut count = pull_count.borrow_mut();
                 *count += 1;
                 if *count == 1 {
-                    Ok((None, None))
+                    Ok(RemoteSnapshot::default())
                 } else {
                     Err("拉取同步状态失败 HTTP 503".into())
                 }
@@ -802,9 +854,13 @@ mod tests {
                 let mut count = pull_count.borrow_mut();
                 *count += 1;
                 if *count == 1 {
-                    Ok((None, None))
+                    Ok(RemoteSnapshot::default())
                 } else {
-                    Ok((Some(SyncPayload::default()), Some("etag-committed".into())))
+                    Ok(RemoteSnapshot {
+                        payload: Some(SyncPayload::default()),
+                        etag: Some("etag-committed".into()),
+                        encryption_matches: true,
+                    })
                 }
             },
             |_| Ok(()),
@@ -864,5 +920,142 @@ mod tests {
             .accounts
             .iter()
             .all(|account| account.updated_at_ms == 1234));
+    }
+
+    #[test]
+    fn conflict_retry_preserves_tombstones_already_applied_this_round() {
+        for mode in [SyncMode::Merge, SyncMode::RemoteOverwriteLocal] {
+            let active = PasswordAccount {
+                record_id: Some("00000000-0000-4000-8000-000000000001".into()),
+                account_id: "synthetic-active".into(),
+                sites: vec!["active.test".into()],
+                password: "synthetic".into(),
+                created_at_ms: 100,
+                updated_at_ms: 100,
+                ..Default::default()
+            };
+            let tombstone_id = "00000000-0000-4000-8000-000000000002";
+            let tombstone = PasswordAccount {
+                record_id: Some(tombstone_id.into()),
+                account_id: "synthetic-deleted".into(),
+                is_deleted: true,
+                is_permanently_deleted: true,
+                deleted_at_ms: Some(200),
+                ..Default::default()
+            };
+            let local = SyncPayload {
+                accounts: vec![active.clone()],
+                ..Default::default()
+            };
+            let first_remote = SyncPayload {
+                accounts: vec![active, tombstone],
+                ..Default::default()
+            };
+            let pulls = RefCell::new(0);
+            let puts = RefCell::new(0);
+            let applied = RefCell::new(Vec::<SyncPayload>::new());
+            let (report, result) = run_sync_with_transport_context(
+                mode,
+                local.clone(),
+                "test-device",
+                "test",
+                "",
+                "selfHosted",
+                None,
+                || {
+                    *pulls.borrow_mut() += 1;
+                    Ok(RemoteSnapshot {
+                        payload: Some(if *pulls.borrow() == 1 {
+                            first_remote.clone()
+                        } else {
+                            local.clone()
+                        }),
+                        etag: Some(format!("etag-{}", pulls.borrow())),
+                        encryption_matches: true,
+                    })
+                },
+                |payload| {
+                    applied.borrow_mut().push(payload.clone());
+                    Ok(())
+                },
+                |_, _, _| {
+                    *puts.borrow_mut() += 1;
+                    if *puts.borrow() <= 2 {
+                        Err("PRECONDITION_FAILED".into())
+                    } else {
+                        Ok("committed".into())
+                    }
+                },
+            )
+            .unwrap();
+            assert!(result
+                .accounts
+                .iter()
+                .any(|a| a.resolved_record_id() == tombstone_id && a.is_permanently_deleted));
+            assert!(applied.borrow().iter().all(|payload| payload
+                .accounts
+                .iter()
+                .any(|a| a.resolved_record_id() == tombstone_id && a.is_permanently_deleted)));
+            if mode == SyncMode::Merge {
+                assert!(report.ok);
+                assert_eq!(*puts.borrow(), 3);
+            } else {
+                assert_eq!(report.code.as_deref(), Some("SAFETY_BLOCKED"));
+                assert_eq!(*puts.borrow(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn key_rotation_requires_current_key_for_outbox_and_lost_receipt_reconciliation() {
+        let old_key = super::super::crypto::generate_sync_key();
+        let new_key = super::super::crypto::generate_sync_key();
+        let payload = SyncPayload::default();
+        let wire = RefCell::new(
+            encrypt_bundle_document(&build_bundle_document(&payload, "test", "test"), &old_key)
+                .unwrap(),
+        );
+        let puts = RefCell::new(0);
+        let run = |fail: bool| {
+            run_sync_with_transport_context(
+                SyncMode::LocalOverwriteRemote,
+                payload.clone(),
+                "test",
+                "test",
+                &new_key,
+                "selfHosted",
+                Some(SyncRetryContext {
+                    mode: SyncMode::LocalOverwriteRemote,
+                    reconcile_remote: true,
+                    ..Default::default()
+                }),
+                || {
+                    decode_remote_snapshot(
+                        Some(&wire.borrow()),
+                        Some("etag-old".into()),
+                        &new_key,
+                        &old_key,
+                    )
+                },
+                |_| Ok(()),
+                |body, _, _| {
+                    *puts.borrow_mut() += 1;
+                    if fail {
+                        return Err("HTTP 503".into());
+                    }
+                    *wire.borrow_mut() = body.to_vec();
+                    Ok("etag-new".into())
+                },
+            )
+        };
+        let (failed, _) = run(true).unwrap();
+        assert!(!failed.ok);
+        assert!(failed.pending_retry);
+        assert_eq!(*puts.borrow(), 1);
+        let (success, _) = run(false).unwrap();
+        assert!(success.ok);
+        assert_eq!(*puts.borrow(), 2);
+        assert!(super::super::crypto::decrypt_wire_body(&wire.borrow(), &new_key).is_ok());
+        assert!(super::super::crypto::decrypt_wire_body(&wire.borrow(), &old_key).is_err());
     }
 }

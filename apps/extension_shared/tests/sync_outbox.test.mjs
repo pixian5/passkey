@@ -85,6 +85,21 @@ test("相同 payload 摘要会保留幂等、会话与操作上下文", () => {
   assert.equal(second[0].operationId, "operation-1");
 });
 
+test("相同载荷但不同模式属于新的逻辑操作，不能沿用旧退避和上下文", () => {
+  const targetKey = "server|https://sync.example";
+  const fields = { targetKey, payload: { accounts: [] }, payloadSha256: "a".repeat(64), error: "offline" };
+  let items = upsertSyncOutbox([], { ...fields, mode: "localOverwriteRemote", operationId: "old-op", nowMs: 1 });
+  items = upsertSyncOutbox(items, { ...fields, mode: "localOverwriteRemote", nowMs: 2 });
+  assert.equal(items[0].attempts, 2);
+  assert.equal(matchingSyncOutboxItem(items[0], fields.payloadSha256, "merge"), null);
+  items = upsertSyncOutbox(items, { ...fields, mode: "merge", nowMs: 3 });
+  assert.equal(items[0].mode, "merge");
+  assert.equal(items[0].attempts, 1);
+  assert.equal(items[0].operationId, "");
+  assert.equal(items[0].createdAtMs, 3);
+  assert.equal(normalizeSyncOutbox([{ ...fields }])[0].mode, "merge");
+});
+
 test("补偿任务达到最大次数后暂停，手动恢复会从零开始", () => {
   const targetKey = "server|https://paused.example";
   const payloadSha256 = "b".repeat(64);

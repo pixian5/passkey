@@ -128,6 +128,9 @@
   function syncTargetKey(target) {
     return `${String(target?.kind || "").trim()}|${String(target?.url || "").trim()}`;
   }
+  function normalizeSyncMode(mode) {
+    return ["remoteOverwriteLocal", "localOverwriteRemote"].includes(mode) ? mode : "merge";
+  }
   function canonicalJson(value) {
     if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
     if (value && typeof value === "object") {
@@ -152,6 +155,7 @@
     return {
       targetKey,
       payload,
+      mode: normalizeSyncMode(item?.mode),
       payloadSha256: String(item?.payloadSha256 || "").trim().toLowerCase(),
       expectedEtag: String(item?.expectedEtag || "").trim(),
       expectedRevision: Math.floor(nonNegativeNumber(item?.expectedRevision, 0)),
@@ -181,13 +185,14 @@
   function isSyncOutboxReady(item, nowMs = Date.now()) {
     return !item || String(item.status || "pendingRetry") !== "paused" && Number(item.nextRetryAtMs || 0) <= nowMs;
   }
-  function matchingSyncOutboxItem(item, payloadSha256) {
+  function matchingSyncOutboxItem(item, payloadSha256, mode = null) {
     const hash = String(payloadSha256 || "").trim().toLowerCase();
-    return item && hash && String(item.payloadSha256 || "").trim().toLowerCase() === hash ? item : null;
+    return item && hash && String(item.payloadSha256 || "").trim().toLowerCase() === hash && (mode == null || normalizeSyncMode(item.mode) === normalizeSyncMode(mode)) ? item : null;
   }
   function upsertSyncOutbox(value, {
     targetKey,
     payload,
+    mode = "merge",
     error,
     payloadSha256 = "",
     expectedEtag = "",
@@ -203,7 +208,7 @@
     const current = normalizeSyncOutbox(value, nowMs);
     const previous = current.find((item) => item.targetKey === targetKey);
     const normalizedHash = String(payloadSha256 || "").trim().toLowerCase();
-    const sameLogicalWrite = Boolean(previous && normalizedHash && previous.payloadSha256 === normalizedHash);
+    const sameLogicalWrite = Boolean(matchingSyncOutboxItem(previous, normalizedHash, mode));
     const wasPaused = previous?.status === "paused";
     const attempts = Math.min(
       SYNC_OUTBOX_MAX_ATTEMPTS,
@@ -212,6 +217,7 @@
     const next = normalizeSyncOutboxItem({
       targetKey,
       payload,
+      mode,
       payloadSha256: normalizedHash,
       expectedEtag,
       expectedRevision,
@@ -247,6 +253,8 @@
   var COLLECTION_SYNC_SECRETS = "syncSecrets";
   var COLLECTION_SYNC_SAFETY_SNAPSHOTS = "syncSafetySnapshots";
   var COLLECTION_SYNC_OUTBOX = "syncOutbox";
+  var BUSINESS_REVISION_KEY = "businessRevision";
+  var BUSINESS_COLLECTIONS = [COLLECTION_ACCOUNTS, COLLECTION_PASSKEYS, COLLECTION_FOLDERS, COLLECTION_LAYOUT];
   var HISTORY_MAX_ENTRIES = 500;
   var SAFETY_SNAPSHOT_MAX_ENTRIES = 5;
   var LEGACY_STORAGE_KEY_ACCOUNTS = "pass.accounts";
@@ -342,6 +350,11 @@
       await writeCollection(key, row.value);
       return row.value;
     }
+    return decodeCollectionRow(key, row);
+  }
+  async function decodeCollectionRow(key, row) {
+    if (!row) return [];
+    if (Array.isArray(row.value)) return row.value;
     if (Number(row.version) !== 1 || !row.nonceBase64 || !row.ciphertextBase64) {
       throw new Error(`IndexedDB \u96C6\u5408\u683C\u5F0F\u65E0\u6548: ${key}`);
     }
@@ -379,16 +392,35 @@
       ciphertextBase64: bytesToBase64(new Uint8Array(ciphertext))
     };
   }
-  async function writeCollectionRows(entries) {
+  async function writeCollectionRows(entries, expectedRevision = null) {
     const rows = await Promise.all(entries.map((entry) => encryptCollectionRow(entry.key, entry.value)));
     const db = await openDatabase();
     const tx = db.transaction(STORE_COLLECTIONS, "readwrite");
     const store = tx.objectStore(STORE_COLLECTIONS);
-    for (const row of rows) store.put(row);
-    await new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve();
+    const changesBusinessData = entries.some((entry) => BUSINESS_COLLECTIONS.includes(entry.key));
+    let revision = null;
+    let conflict = null;
+    return await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve(revision);
       tx.onerror = () => reject(tx.error || new Error("IndexedDB transaction failed"));
-      tx.onabort = () => reject(tx.error || new Error("IndexedDB transaction aborted"));
+      tx.onabort = () => reject(conflict || tx.error || new Error("IndexedDB transaction aborted"));
+      if (!changesBusinessData) {
+        for (const row of rows) store.put(row);
+        return;
+      }
+      const request = store.get(BUSINESS_REVISION_KEY);
+      request.onsuccess = () => {
+        const current = Number(request.result?.revision) || 0;
+        if (expectedRevision != null && current !== expectedRevision) {
+          conflict = new Error("\u540C\u6B65\u671F\u95F4\u672C\u5730\u6570\u636E\u5DF2\u53D8\u5316\uFF0C\u5DF2\u4FDD\u7559\u6700\u65B0\u7F16\u8F91\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65");
+          conflict.code = "LOCAL_CHANGED";
+          tx.abort();
+          return;
+        }
+        revision = current + 1;
+        for (const row of rows) store.put(row);
+        store.put({ key: BUSINESS_REVISION_KEY, revision });
+      };
     });
   }
   async function loadOrCreateEncryptionKey() {
@@ -750,15 +782,19 @@
     await touchDataBump(COLLECTION_PASSKEYS);
   }
   async function getAllData() {
+    return (await getAllDataSnapshot()).payload;
+  }
+  async function getAllDataSnapshot() {
     await ensureDataStorageReady();
-    const [accounts, passkeys, folders, layoutRows] = await Promise.all([
-      readCollection(COLLECTION_ACCOUNTS),
-      readCollection(COLLECTION_PASSKEYS),
-      readCollection(COLLECTION_FOLDERS),
-      readCollection(COLLECTION_LAYOUT)
-    ]);
+    const db = await openDatabase();
+    const tx = db.transaction(STORE_COLLECTIONS, "readonly");
+    const store = tx.objectStore(STORE_COLLECTIONS);
+    const rows = await Promise.all([...BUSINESS_COLLECTIONS, BUSINESS_REVISION_KEY].map((key) => requestAsPromise(store.get(key))));
+    const [accounts, passkeys, folders, layoutRows] = await Promise.all(
+      BUSINESS_COLLECTIONS.map((key, index) => decodeCollectionRow(key, rows[index]))
+    );
     const layout = layoutRows[0] && typeof layoutRows[0] === "object" ? layoutRows[0] : {};
-    return {
+    const payload = {
       accounts,
       passkeys,
       folders,
@@ -770,6 +806,7 @@
       folderOrderUpdatedDeviceName: String(layout.folderOrderUpdatedDeviceName || ""),
       deviceName: String(layout.deviceName || "")
     };
+    return { payload, revision: Number(rows[BUSINESS_COLLECTIONS.length]?.revision) || 0 };
   }
   async function setAllData({
     accounts,
@@ -782,13 +819,13 @@
     folderOrderUpdatedAtMs = 0,
     folderOrderUpdatedDeviceName = "",
     deviceName = ""
-  }) {
+  }, { expectedRevision = null } = {}) {
     try {
       await ensureDataStorageReady();
     } catch (error) {
       if (String(error?.name || "") !== "OperationError") throw error;
     }
-    await writeCollectionRows([
+    const revision = await writeCollectionRows([
       { key: COLLECTION_ACCOUNTS, value: accounts },
       { key: COLLECTION_PASSKEYS, value: passkeys },
       { key: COLLECTION_FOLDERS, value: folders },
@@ -804,8 +841,9 @@
           deviceName: String(deviceName || "")
         }]
       }
-    ]);
+    ], expectedRevision);
     await touchDataBump("all");
+    return revision;
   }
   function normalizeSyncSecrets(value) {
     const source = value && typeof value === "object" ? value : {};
@@ -1755,7 +1793,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.7.9";
+  var PASS_EXTENSION_VERSION = "1.8.0";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 40;
@@ -3621,12 +3659,13 @@
     });
   }
   async function runAutoSync() {
-    return runManagedSync({ automatic: true });
+    return runManagedSync({ automatic: true, resumeOutbox: true });
   }
   async function runManagedSync({
     mode = SYNC_MODE_MERGE,
     dryRun = false,
     forceOutboxRetry = false,
+    resumeOutbox = false,
     automatic = false
   } = {}) {
     if (autoSyncInFlight) {
@@ -3642,397 +3681,292 @@
         if (automatic) return null;
         throw new Error("\u5DF2\u6709\u540C\u6B65\u4EFB\u52A1\u6B63\u5728\u8FDB\u884C\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5");
       }
-      return await runAutoSyncInternal(lockOwner, { mode, dryRun, forceOutboxRetry, automatic });
+      return await runAutoSyncInternal(lockOwner, { mode, dryRun, forceOutboxRetry, resumeOutbox, automatic });
     } finally {
       await releaseSyncOperationLock(lockOwner);
       autoSyncInFlight = false;
     }
   }
   async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), options = {}) {
-    const mode = ["remoteOverwriteLocal", "localOverwriteRemote"].includes(options.mode) ? options.mode : SYNC_MODE_MERGE;
+    let mode = ["remoteOverwriteLocal", "localOverwriteRemote"].includes(options.mode) ? options.mode : SYNC_MODE_MERGE;
     const dryRun = Boolean(options.dryRun);
     const forceOutboxRetry = Boolean(options.forceOutboxRetry);
     const automatic = Boolean(options.automatic);
     const reportOperationId = createSyncIdempotencyKey();
     const lockStatus = await getBackgroundLockStatus();
     if (lockStatus.locked) {
-      logSyncFlow("auto-sync-skipped-locked");
       if (automatic) return null;
       throw new Error("\u6269\u5C55\u5DF2\u9501\u5B9A\uFF0C\u8BF7\u5148\u89E3\u9501");
     }
     const targets = await buildRemoteSyncTargetsFromStorage();
-    if (!targets || targets.length === 0) {
+    if (!targets?.length) {
       if (automatic) return null;
       throw new Error("\u8BF7\u5148\u542F\u7528\u5E76\u914D\u7F6E\u540C\u6B65\u6765\u6E90");
     }
     const primaryTarget = targets.find((target) => target.isPrimary) || targets[0];
     const primaryReportSource = primaryTarget.kind === "server" ? "selfHosted" : primaryTarget.kind;
-    const encryptionKey = await getOrCreateSyncEncryptionKey();
-    logSyncFlow("auto-sync-start", {
-      targetLabels: targets.map((item) => item.label),
-      targetUrls: targets.map((item) => item.url),
-      encrypted: Boolean(encryptionKey),
-      online: typeof navigator !== "undefined" ? navigator.onLine : null
-    });
-    const localStored = await readBusinessDataFromStore();
-    const localAccounts = Array.isArray(localStored.accounts) ? localStored.accounts.map(normalizeAccountShape) : [];
-    const localStoredPasskeys = Array.isArray(localStored.passkeys) ? localStored.passkeys.map(normalizePasskeyShape) : [];
-    const localPasskeys = buildUnifiedPasskeys(localAccounts, localStoredPasskeys);
-    const localFolders = Array.isArray(localStored.folders) ? localStored.folders.map(normalizeFolderShape) : [];
-    let mergedAccounts = localAccounts;
-    let mergedPasskeys = localPasskeys;
-    let mergedFolders = localFolders;
-    let finalPayload = null;
+    const encryptionKeyId = await syncEncryptionKeyId(await getOrCreateSyncEncryptionKey());
+    const initialSnapshot = await getAllDataSnapshot();
+    const localPayload = normalizeSyncPayloadShape(initialSnapshot.payload);
+    const initialOutbox = await getSyncOutbox();
+    const pendingPrimary = matchingSyncOutboxItem(
+      initialOutbox.find((item) => item.targetKey === syncTargetKey(primaryTarget)),
+      await syncPayloadSha256(localPayload)
+    );
+    if (options.resumeOutbox && pendingPrimary) {
+      mode = ["remoteOverwriteLocal", "localOverwriteRemote"].includes(pendingPrimary.mode) ? pendingPrimary.mode : SYNC_MODE_MERGE;
+    }
     let primaryRemotePayload = null;
+    let finalPayload = localPayload;
+    let expectedRevision = initialSnapshot.revision;
+    let lastAppliedPayload = localPayload;
+    let applied = false;
+    let primaryOperationId = reportOperationId;
     const pullErrors = [];
+    const makeReport = (fields) => buildSyncOperationReport({
+      mode,
+      dryRun,
+      safe: true,
+      source: primaryReportSource,
+      syncSessionId,
+      operationId: primaryOperationId,
+      localAccounts: visibleSyncCount(localPayload.accounts),
+      remoteAccounts: visibleSyncCount(primaryRemotePayload?.accounts),
+      mergedAccounts: visibleSyncCount(finalPayload.accounts),
+      applied,
+      remotePulled: true,
+      ...fields
+    });
+    const localChangedError = () => Object.assign(
+      new Error("\u540C\u6B65\u671F\u95F4\u672C\u5730\u6570\u636E\u5DF2\u53D8\u5316\uFF0C\u5DF2\u4FDD\u7559\u6700\u65B0\u7F16\u8F91\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65"),
+      { code: "LOCAL_CHANGED" }
+    );
+    const assertLocalUnchanged = async () => {
+      if ((await getAllDataSnapshot()).revision !== expectedRevision) throw localChangedError();
+    };
+    const applyCandidate = async (payload) => {
+      await assertLocalUnchanged();
+      const next = normalizeSyncPayloadShape(payload);
+      if (syncPayloadEquals(lastAppliedPayload, next)) {
+        finalPayload = next;
+        return;
+      }
+      await saveLocalSafetySnapshot(automatic ? "\u81EA\u52A8\u540C\u6B65\u524D\u81EA\u52A8\u5907\u4EFD" : "\u540C\u6B65\u5199\u5165\u672C\u5730\u524D\u81EA\u52A8\u5907\u4EFD", lastAppliedPayload);
+      expectedRevision = await setAllData(next, { expectedRevision });
+      lastAppliedPayload = next;
+      finalPayload = next;
+      applied = true;
+      await broadcastWebBridgeData(next);
+    };
+    logSyncFlow("auto-sync-start", { mode, targetLabels: targets.map((item) => item.label), encrypted: Boolean(encryptionKeyId) });
     for (const target of targets) {
-      logSyncFlow("pull-start", {
-        label: target.label,
-        url: target.url,
-        hasAuthHeader: Boolean(target.authHeader)
-      });
-      let remoteResponse;
       try {
-        remoteResponse = await pullRemotePayload(target);
-      } catch (error) {
-        logSyncFlow("auto-sync-pull-failed", {
-          label: target.label,
-          message: error?.message || String(error || "")
-        });
-        const queued = await advancePendingOutboxAfterPullFailure(target, error, forceOutboxRetry);
-        if (target.isPrimary) {
-          return {
-            report: buildSyncOperationReport({
-              ok: false,
-              safe: true,
-              reasons: [error?.message || String(error || "")],
-              safety: "notEvaluated",
-              dryRun,
-              mode,
-              message: `${target.label}\u62C9\u53D6\u5931\u8D25\uFF1A${error?.message || String(error || "")}`,
-              localAccounts: visibleSyncCount(localAccounts),
-              remoteAccounts: 0,
-              mergedAccounts: visibleSyncCount(localAccounts),
-              applied: false,
-              pushed: false,
-              remotePulled: false,
-              pendingRetry: queued,
-              retryable: true,
-              stage: "pullingRemote",
-              source: target.kind === "server" ? "selfHosted" : target.kind,
-              syncSessionId,
-              operationId: reportOperationId
-            })
-          };
+        const response = await pullRemotePayload(target);
+        updateRemoteConcurrencyState(target, response.etag, response.revision);
+        target.remotePayload = response.payload;
+        target.remoteEncrypted = response.encrypted;
+        target.remoteKeyId = response.keyId || "";
+        if (target.kind === "webdav" && response.payload && !String(response.etag || "").trim()) {
+          throw new Error("WebDAV \u8FDC\u7AEF\u5DF2\u6709\u540C\u6B65\u5305\u4F46\u672A\u8FD4\u56DE ETag\uFF0C\u65E0\u6CD5\u5B89\u5168\u505A\u6761\u4EF6\u5199\u5165");
         }
-        pullErrors.push(`${target.label}: ${error?.message || String(error || "")}`);
-        continue;
-      }
-      logSyncFlow("pull-success", {
-        label: target.label,
-        url: target.url,
-        hasPayload: Boolean(remoteResponse.payload),
-        etag: remoteResponse.etag
-      });
-      updateRemoteConcurrencyState(target, remoteResponse.etag, remoteResponse.revision);
-      target.remotePayload = remoteResponse.payload;
-      target.remoteEncrypted = remoteResponse.encrypted;
-      const remotePayload = remoteResponse.payload;
-      if (target.kind === "webdav" && remotePayload && !String(remoteResponse.etag || "").trim()) {
-        throw new Error(
-          "WebDAV \u8FDC\u7AEF\u5DF2\u6709\u540C\u6B65\u5305\u4F46\u672A\u8FD4\u56DE ETag\uFF0C\u65E0\u6CD5\u5B89\u5168\u505A\u6761\u4EF6\u5199\u5165\u3002\u8BF7\u6539\u7528\u652F\u6301 ETag \u7684 WebDAV\uFF0C\u6216\u6539\u7528\u81EA\u5EFA\u670D\u52A1\u5668\u4F5C\u4E3A\u4E3B\u6E90\u3002"
-        );
-      }
-      if (target.isPrimary) {
-        primaryRemotePayload = remotePayload ? normalizeSyncPayloadShape(remotePayload) : null;
+        if (target === primaryTarget) {
+          primaryRemotePayload = response.payload ? normalizeSyncPayloadShape(response.payload) : null;
+        }
+      } catch (error) {
+        target.pullFailed = true;
+        const queued = !dryRun && await advancePendingOutboxAfterPullFailure(target, error, forceOutboxRetry);
+        if (target === primaryTarget) {
+          return { report: makeReport({
+            ok: false,
+            safety: "notEvaluated",
+            reasons: [error.message],
+            message: `${target.label}\u62C9\u53D6\u5931\u8D25\uFF1A${error.message}`,
+            remotePulled: false,
+            pendingRetry: queued,
+            retryable: true,
+            stage: "pullingRemote"
+          }) };
+        }
+        pullErrors.push(`${target.label}: ${error.message}`);
       }
     }
-    const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
-    const pulledLocalPayload = {
-      ...currentPayload,
-      accounts: localAccounts,
-      folders: localFolders,
-      passkeys: localPasskeys
-    };
-    if (!syncPayloadEquals(currentPayload, pulledLocalPayload)) {
-      logSyncFlow("auto-sync-aborted-local-changed-during-pull");
-      return {
-        report: buildSyncOperationReport({
-          ok: false,
-          safe: true,
-          safety: "notEvaluated",
-          reasons: ["\u62C9\u53D6\u8FDC\u7AEF\u6570\u636E\u671F\u95F4\u672C\u5730\u5185\u5BB9\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65"],
-          dryRun,
-          mode,
-          message: "\u62C9\u53D6\u8FDC\u7AEF\u6570\u636E\u671F\u95F4\u672C\u5730\u5185\u5BB9\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65",
-          localAccounts: visibleSyncCount(currentPayload.accounts),
-          remoteAccounts: visibleSyncCount(primaryRemotePayload?.accounts),
-          mergedAccounts: visibleSyncCount(currentPayload.accounts),
-          applied: false,
-          pushed: false,
-          remotePulled: true,
-          pendingRetry: false,
-          retryable: true,
-          stage: "checkingLocalConcurrency",
-          source: primaryReportSource,
-          syncSessionId,
-          operationId: reportOperationId
-        }),
-        localPayload: currentPayload,
-        payload: currentPayload
-      };
+    try {
+      await assertLocalUnchanged();
+    } catch (error) {
+      return { report: makeReport({
+        ok: false,
+        code: error.code,
+        safety: "notEvaluated",
+        reasons: [error.message],
+        message: error.message,
+        retryable: true,
+        stage: "checkingLocalConcurrency"
+      }) };
     }
     if (primaryRemotePayload && mode === SYNC_MODE_MERGE) {
-      const canonicalLocalPayload = {
-        ...pulledLocalPayload,
-        accounts: syncAliasGroups2(pulledLocalPayload.accounts)
-      };
-      const canonicalRemotePayload = {
-        ...primaryRemotePayload,
-        accounts: syncAliasGroups2(primaryRemotePayload.accounts)
-      };
-      const mergedPayload = mergeSyncPayloads(
-        canonicalLocalPayload,
-        canonicalRemotePayload,
+      finalPayload = mergeSyncPayloads(
+        { ...localPayload, accounts: syncAliasGroups2(localPayload.accounts) },
+        { ...primaryRemotePayload, accounts: syncAliasGroups2(primaryRemotePayload.accounts) },
         syncMergeHelpers()
       );
-      mergedPayload.accounts = syncAliasGroups2(mergedPayload.accounts);
-      ({ accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys } = mergedPayload);
-      finalPayload = mergedPayload;
+      finalPayload.accounts = syncAliasGroups2(finalPayload.accounts);
+      finalPayload = normalizeSyncPayloadShape(finalPayload);
     } else if (mode === "remoteOverwriteLocal") {
-      finalPayload = normalizeSyncPayloadShape(primaryRemotePayload || {
-        accounts: [],
-        folders: [],
-        passkeys: [],
-        allRegularAccountIds: [],
-        folderOrderIds: []
-      });
-      ({ accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys } = finalPayload);
-    } else {
-      finalPayload = currentPayload;
+      finalPayload = normalizeSyncPayloadShape(primaryRemotePayload || {});
     }
-    if (primaryRemotePayload || mode === "remoteOverwriteLocal") {
-      const safety = validateSyncSafety(
-        { accounts: syncAliasGroups2(localAccounts), folders: localFolders, passkeys: localPasskeys },
-        { ...primaryRemotePayload || {}, accounts: syncAliasGroups2(primaryRemotePayload?.accounts || []) },
-        { accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys },
-        mode
-      );
-      if (!safety.safe) {
-        logSyncFlow("auto-sync-aborted-safety-check", {
-          reasons: safety.reasons,
-          local: safety.local,
-          remote: safety.remote,
-          merged: safety.merged
-        });
-        return {
-          report: buildSyncOperationReport({
-            ok: false,
-            safe: false,
-            reasons: safety.reasons,
-            dryRun,
-            mode,
-            message: `\u540C\u6B65\u5B89\u5168\u68C0\u67E5\u672A\u901A\u8FC7\uFF1A${safety.reasons.join("\u3001")}`,
-            localAccounts: visibleSyncCount(localAccounts),
-            remoteAccounts: visibleSyncCount(primaryRemotePayload?.accounts),
-            mergedAccounts: visibleSyncCount(mergedAccounts),
-            applied: false,
-            pushed: false,
-            remotePulled: true,
-            pendingRetry: false,
-            retryable: false,
-            stage: "safetyChecking",
-            source: primaryReportSource,
-            syncSessionId,
-            operationId: reportOperationId
-          }),
-          localPayload: currentPayload,
-          payload: finalPayload
-        };
-      }
-    }
-    if (dryRun) {
+    const safety = validateSyncSafety(localPayload, primaryRemotePayload, finalPayload, mode);
+    if (!safety.safe) {
       return {
-        report: buildSyncOperationReport({
-          ok: true,
-          safe: true,
-          reasons: [],
-          dryRun: true,
-          mode,
-          message: "\u9884\u89C8\u5B8C\u6210\uFF08\u672A\u5199\u5165\uFF09",
-          localAccounts: visibleSyncCount(localAccounts),
-          remoteAccounts: visibleSyncCount(primaryRemotePayload?.accounts),
-          mergedAccounts: visibleSyncCount(mergedAccounts),
-          applied: false,
-          pushed: false,
-          remotePulled: true,
-          pendingRetry: false,
-          retryable: false,
-          stage: "completed",
-          source: primaryReportSource,
-          syncSessionId,
-          operationId: reportOperationId
+        report: makeReport({
+          ok: false,
+          safe: false,
+          code: "SAFETY_BLOCKED",
+          reasons: safety.reasons,
+          message: `\u540C\u6B65\u5B89\u5168\u68C0\u67E5\u672A\u901A\u8FC7\uFF1A${safety.reasons.join("\u3001")}`,
+          stage: "safetyChecking"
         }),
-        localPayload: currentPayload,
+        localPayload,
         payload: finalPayload
       };
     }
-    try {
-      await saveLocalSafetySnapshot(automatic ? "\u81EA\u52A8\u540C\u6B65\u524D\u81EA\u52A8\u5907\u4EFD" : "\u540C\u6B65\u5199\u5165\u672C\u5730\u524D\u81EA\u52A8\u5907\u4EFD");
-    } catch (error) {
-      logSyncFlow("auto-sync-aborted-backup-failed", { message: error?.message || String(error || "") });
-      throw new Error(`\u540C\u6B65\u524D\u672C\u5730\u5B89\u5168\u5FEB\u7167\u5931\u8D25\uFF1A${error?.message || String(error || "")}`);
+    if (dryRun) {
+      const mirrorReasons = targets.filter((target) => target !== primaryTarget && !target.pullFailed).flatMap((target) => validateSyncSafety(finalPayload, target.remotePayload, finalPayload, "localOverwriteRemote").reasons);
+      return {
+        report: makeReport({
+          ok: !pullErrors.length && !mirrorReasons.length,
+          safe: !mirrorReasons.length,
+          reasons: [...pullErrors, ...mirrorReasons],
+          message: mirrorReasons.length ? `\u955C\u50CF\u5B89\u5168\u68C0\u67E5\u672A\u901A\u8FC7\uFF1A${mirrorReasons.join("\u3001")}` : "\u9884\u89C8\u5B8C\u6210\uFF08\u672A\u5199\u5165\uFF09",
+          stage: mirrorReasons.length ? "safetyChecking" : "completed"
+        }),
+        localPayload,
+        payload: finalPayload
+      };
     }
     if (mode !== "localOverwriteRemote") {
-      await writeBusinessDataToStore({
-        ...finalPayload,
-        accounts: mergedAccounts,
-        passkeys: mergedPasskeys,
-        folders: mergedFolders
-      });
+      try {
+        await applyCandidate(finalPayload);
+      } catch (error) {
+        if (error.code !== "LOCAL_CHANGED") throw error;
+        return { report: makeReport({
+          ok: false,
+          code: error.code,
+          reasons: [error.message],
+          message: error.message,
+          retryable: true,
+          stage: "checkingLocalConcurrency"
+        }) };
+      }
     }
-    const pushTargets = [...targets].sort(
-      (left, right) => Number(right.isPrimary) - Number(left.isPrimary) || Number(right.supportsEtag) - Number(left.supportsEtag)
-    );
+    const pushTargets = [...targets].sort((left, right) => Number(right === primaryTarget) - Number(left === primaryTarget));
     const pushErrors = [...pullErrors];
-    let primaryPushFailed = false;
-    let primaryOperationId = reportOperationId;
     const outboxByTarget = new Map((await getSyncOutbox()).map((item) => [item.targetKey, item]));
+    let primaryPushFailed = false;
+    let concurrencyError = null;
+    let safetyBlocked = false;
+    let confirmedTargets = 0;
     for (const target of pushTargets) {
-      if (primaryPushFailed && target.isPrimary === false) {
+      if (target.pullFailed) continue;
+      if (primaryPushFailed && target !== primaryTarget) {
         pushErrors.push(`${target.label}: \u4E3B\u540C\u6B65\u6E90\u4E0A\u4F20\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\u955C\u50CF\u5199\u5165`);
         continue;
       }
+      try {
+        await assertLocalUnchanged();
+      } catch (error) {
+        concurrencyError = error;
+        break;
+      }
       const targetKey = syncTargetKey(target);
-      const pendingOutbox = outboxByTarget.get(targetKey);
-      const candidatePayload = {
-        ...finalPayload,
-        accounts: mergedAccounts,
-        passkeys: mergedPasskeys,
-        folders: mergedFolders
-      };
+      const targetMode = target === primaryTarget ? mode : "localOverwriteRemote";
+      const candidatePayload = finalPayload;
       const candidateHash = await syncPayloadSha256(candidatePayload);
-      const persistedContext = matchingSyncOutboxItem(pendingOutbox, candidateHash);
-      if (target.isPrimary && persistedContext?.operationId) {
-        primaryOperationId = persistedContext.operationId;
-      }
-      if (target.remotePayload && syncPayloadEquals(
-        normalizeSyncPayloadShape(target.remotePayload),
-        candidatePayload
-      )) {
-        outboxByTarget.delete(targetKey);
-        logSyncFlow("push-skipped-remote-already-matches", {
-          label: target.label,
-          url: target.url
-        });
-        continue;
-      }
-      if (persistedContext && !forceOutboxRetry && !isSyncOutboxReady(persistedContext)) {
-        const paused = pendingOutbox.status === "paused";
-        const waitSeconds = Math.max(1, Math.ceil((pendingOutbox.nextRetryAtMs - Date.now()) / 1e3));
-        pushErrors.push(paused ? `${target.label}: \u8865\u507F\u4EFB\u52A1\u5DF2\u6682\u505C\uFF0C\u7B49\u5F85\u7528\u6237\u624B\u52A8\u91CD\u8BD5` : `${target.label}: \u8865\u507F\u4EFB\u52A1\u5C06\u5728 ${waitSeconds} \u79D2\u540E\u91CD\u8BD5`);
-        logSyncFlow(paused ? "push-skipped-paused" : "push-skipped-backoff", {
-          label: target.label,
-          nextRetryAtMs: pendingOutbox.nextRetryAtMs,
-          attempts: pendingOutbox.attempts
-        });
-        continue;
-      }
-      logSyncFlow("push-start", {
-        label: target.label,
-        url: target.url,
-        supportsEtag: Boolean(target.supportsEtag),
-        remoteEtag: target.remoteEtag
-      });
-      let result;
-      const operationId = persistedContext?.operationId || (target.isPrimary ? reportOperationId : createSyncIdempotencyKey());
-      if (target.isPrimary) primaryOperationId = operationId;
+      const persistedContext = matchingSyncOutboxItem(outboxByTarget.get(targetKey), candidateHash, targetMode);
+      const operationId = persistedContext?.operationId || (target === primaryTarget ? reportOperationId : createSyncIdempotencyKey());
+      if (target === primaryTarget) primaryOperationId = operationId;
       const idempotencyKey = createSyncIdempotencyKey();
       try {
-        result = await pushRemotePayloadWithMode(target, {
-          ...candidatePayload
-        }, target.isPrimary ? mode : "localOverwriteRemote", {
+        const targetSafety = validateSyncSafety(candidatePayload, target.remotePayload, candidatePayload, targetMode);
+        if (!targetSafety.safe) {
+          throw Object.assign(new Error(`\u540C\u6B65\u5B89\u5168\u68C0\u67E5\u672A\u901A\u8FC7\uFF1A${targetSafety.reasons.join("\u3001")}`), { code: "SAFETY_BLOCKED" });
+        }
+        if (target.remotePayload && target.remoteKeyId === encryptionKeyId && Boolean(target.remoteEncrypted) === Boolean(encryptionKeyId) && syncPayloadEquals(target.remotePayload, candidatePayload)) {
+          outboxByTarget.delete(targetKey);
+          confirmedTargets += 1;
+          logSyncFlow("push-skipped-remote-already-matches", { label: target.label, operationId });
+          continue;
+        }
+        if (persistedContext && !forceOutboxRetry && !isSyncOutboxReady(persistedContext)) {
+          pushErrors.push(`${target.label}: \u8865\u507F\u4EFB\u52A1${persistedContext.status === "paused" ? "\u5DF2\u6682\u505C\uFF0C\u7B49\u5F85\u624B\u52A8\u91CD\u8BD5" : "\u6B63\u5728\u7B49\u5F85\u9000\u907F\u91CD\u8BD5"}`);
+          if (target === primaryTarget) primaryPushFailed = true;
+          continue;
+        }
+        const result = await pushRemotePayloadWithMode(target, candidatePayload, targetMode, {
           syncSessionId: persistedContext?.syncSessionId || syncSessionId,
           operationId,
-          idempotencyKey
+          idempotencyKey,
+          assertLocalUnchanged,
+          applyCandidate: target === primaryTarget && mode !== "localOverwriteRemote" ? applyCandidate : null
         });
+        if (target === primaryTarget) finalPayload = normalizeSyncPayloadShape(result.payload);
+        outboxByTarget.delete(targetKey);
+        confirmedTargets += 1;
+        logSyncFlow("push-success", { label: target.label, mode: targetMode, operationId });
       } catch (error) {
-        pushErrors.push(`${target.label}: ${error?.message || String(error || "")}`);
-        if (target.isPrimary) primaryPushFailed = true;
-        const nextOutbox = upsertSyncOutbox([...outboxByTarget.values()], {
-          targetKey,
-          payload: candidatePayload,
-          error,
-          payloadSha256: candidateHash,
-          expectedEtag: error?.expectedEtag || target.remoteEtag || "",
-          expectedRevision: error?.expectedRevision || target.remoteRevision || 0,
-          idempotencyKey: error?.idempotencyKey || idempotencyKey,
-          syncSessionId: error?.syncSessionId || syncSessionId,
-          operationId: error?.operationId || operationId,
-          sourceType: target.kind,
-          scope: target.scope || "",
-          forceResume: forceOutboxRetry
-        });
-        outboxByTarget.clear();
-        for (const item of nextOutbox) outboxByTarget.set(item.targetKey, item);
-        logSyncFlow("auto-sync-push-failed", {
-          label: target.label,
-          message: error?.message || String(error || "")
-        });
-        continue;
-      }
-      outboxByTarget.delete(targetKey);
-      logSyncFlow("push-success", {
-        label: target.label,
-        url: target.url,
-        itemCounts: {
-          accounts: visibleSyncCount(result?.payload?.accounts),
-          passkeys: visibleSyncCount(result?.payload?.passkeys),
-          folders: visibleSyncCount(result?.payload?.folders)
+        pushErrors.push(`${target.label}: ${error.message}`);
+        if (target === primaryTarget) primaryPushFailed = true;
+        if (error.code === "LOCAL_CHANGED" || error.code === "SAFETY_BLOCKED") {
+          outboxByTarget.delete(targetKey);
+          safetyBlocked ||= error.code === "SAFETY_BLOCKED";
+          if (error.code === "LOCAL_CHANGED") {
+            concurrencyError = error;
+            break;
+          }
+        } else {
+          const failedPayload = error.payload || candidatePayload;
+          const nextOutbox = upsertSyncOutbox([...outboxByTarget.values()], {
+            targetKey,
+            mode: targetMode,
+            payload: failedPayload,
+            error,
+            payloadSha256: await syncPayloadSha256(failedPayload),
+            expectedEtag: error.expectedEtag || target.remoteEtag || "",
+            expectedRevision: error.expectedRevision || target.remoteRevision || 0,
+            idempotencyKey: error.idempotencyKey || idempotencyKey,
+            syncSessionId: error.syncSessionId || syncSessionId,
+            operationId: error.operationId || operationId,
+            sourceType: target.kind,
+            scope: target.scope || "",
+            forceResume: forceOutboxRetry
+          });
+          outboxByTarget.clear();
+          for (const item of nextOutbox) outboxByTarget.set(item.targetKey, item);
         }
-      });
-      mergedAccounts = result.payload.accounts.map(normalizeAccountShape);
-      mergedFolders = result.payload.folders.map(normalizeFolderShape);
-      mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, result.payload.passkeys);
+        logSyncFlow("auto-sync-push-failed", { label: target.label, code: error.code, message: error.message });
+      }
     }
     await setSyncOutbox([...outboxByTarget.values()]);
-    await writeBusinessDataToStore({
-      ...finalPayload,
-      accounts: mergedAccounts,
-      passkeys: mergedPasskeys,
-      folders: mergedFolders
-    });
-    await appendHistoryEntry({
-      action: pushErrors.length > 0 ? `${automatic ? "\u81EA\u52A8\u540C\u6B65" : "\u540C\u6B65"}\u90E8\u5206\u5B8C\u6210\uFF08${pushErrors.join("\uFF1B")}\uFF09` : `${automatic ? "\u81EA\u52A8\u540C\u6B65" : "\u540C\u6B65"}\u5B8C\u6210\uFF08${targets.map((item) => item.label).join(" + ")}\uFF09`,
-      timestampMs: Date.now()
-    });
-    logSyncFlow("auto-sync-complete", {
-      targetLabels: targets.map((item) => item.label),
-      pushErrors
-    });
-    return {
-      report: buildSyncOperationReport({
-        ok: pushErrors.length === 0,
-        safe: true,
-        reasons: pushErrors,
-        dryRun: false,
-        mode,
-        message: pushErrors.length > 0 ? `\u540C\u6B65\u90E8\u5206\u5B8C\u6210\uFF1A${pushErrors.join("\uFF1B")}` : "\u540C\u6B65\u5B8C\u6210",
-        localAccounts: visibleSyncCount(localAccounts),
-        remoteAccounts: visibleSyncCount(primaryRemotePayload?.accounts),
-        mergedAccounts: visibleSyncCount(mergedAccounts),
-        applied: mode !== "localOverwriteRemote",
-        pushed: pushErrors.length === 0,
-        remotePulled: true,
-        pendingRetry: pushErrors.length > 0,
-        retryable: pushErrors.length > 0,
-        stage: pushErrors.length > 0 ? "pushingRemote" : "completed",
-        source: primaryReportSource,
-        syncSessionId,
-        operationId: primaryOperationId,
-        etag: primaryTarget.remoteEtag
-      })
-    };
+    try {
+      await assertLocalUnchanged();
+    } catch (error) {
+      concurrencyError = error;
+    }
+    if (concurrencyError && !pushErrors.includes(concurrencyError.message)) pushErrors.push(concurrencyError.message);
+    const message = pushErrors.length ? `\u540C\u6B65\u90E8\u5206\u5B8C\u6210\uFF1A${pushErrors.join("\uFF1B")}` : "\u540C\u6B65\u5B8C\u6210";
+    await appendHistoryEntry({ action: message, timestampMs: Date.now() });
+    logSyncFlow("auto-sync-complete", { mode, applied, confirmedTargets, pushErrors });
+    return { report: makeReport({
+      ok: !pushErrors.length,
+      safe: !safetyBlocked,
+      reasons: pushErrors,
+      message,
+      code: concurrencyError ? "LOCAL_CHANGED" : safetyBlocked ? "SAFETY_BLOCKED" : null,
+      pushed: confirmedTargets === targets.length,
+      pendingRetry: outboxByTarget.size > 0,
+      retryable: Boolean(concurrencyError) || pushErrors.length > 0 && !safetyBlocked,
+      stage: concurrencyError ? "checkingLocalConcurrency" : safetyBlocked ? "safetyChecking" : pushErrors.length ? "pushingRemote" : "completed",
+      etag: primaryTarget.remoteEtag
+    }) };
   }
   async function readBusinessDataFromStore() {
     const stored = await getAllData();
@@ -4049,8 +3983,8 @@
       deviceName: String(stored.deviceName || "")
     };
   }
-  async function saveLocalSafetySnapshot(reason) {
-    const payload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+  async function saveLocalSafetySnapshot(reason, sourcePayload = null) {
+    const payload = normalizeSyncPayloadShape(sourcePayload || await readBusinessDataFromStore());
     const snapshots = await getSafetySnapshots();
     snapshots.unshift({ id: `sync-snapshot-${secureRandomUuid()}`, createdAtMs: Date.now(), reason: String(reason || "\u540C\u6B65\u524D\u5907\u4EFD"), payload });
     await setSafetySnapshots(snapshots);
@@ -4249,6 +4183,7 @@
               mode: message.payload?.mode,
               dryRun: Boolean(message.payload?.dryRun),
               forceOutboxRetry: Boolean(message.payload?.forceOutboxRetry),
+              resumeOutbox: Boolean(message.payload?.resumeOutbox),
               automatic: false
             })
           });
@@ -4671,6 +4606,7 @@
   async function getSyncOutboxSummaries() {
     return (await getSyncOutbox()).map((item) => ({
       sourceKey: item.targetKey,
+      mode: item.mode,
       createdAtMs: item.createdAtMs,
       attempts: item.attempts,
       nextRetryAtMs: item.nextRetryAtMs,
@@ -4697,6 +4633,7 @@
     await setSyncOutbox(upsertSyncOutbox(items, {
       targetKey,
       payload: pending.payload,
+      mode: pending.mode,
       error,
       payloadSha256: pending.payloadSha256,
       expectedEtag: pending.expectedEtag,
@@ -5259,6 +5196,9 @@
       name: safeName,
       matchedSites: normalizeSites(item?.matchedSites || []),
       autoAddMatchingSites: Boolean(item?.autoAddMatchingSites),
+      regularAccountIds: [...new Set((Array.isArray(item?.regularAccountIds) ? item.regularAccountIds : []).map((id2) => String(id2 || "").trim().toLowerCase()).filter(Boolean))],
+      regularOrderUpdatedAtMs: Number(item?.regularOrderUpdatedAtMs) || 0,
+      regularOrderUpdatedDeviceName: String(item?.regularOrderUpdatedDeviceName || "").trim(),
       isDeleted: Boolean(item?.isDeleted),
       isPermanentlyDeleted: Boolean(item?.isPermanentlyDeleted),
       deletedAtMs: item?.deletedAtMs == null ? null : Number(item.deletedAtMs),
@@ -5468,7 +5408,8 @@
       payload,
       etag: response.headers.get("ETag"),
       revision: Number(response.headers.get("X-Sync-Revision")) || 0,
-      encrypted
+      encrypted,
+      keyId: encrypted ? String(envelope?.keyId || "") : ""
     };
   }
   function updateRemoteConcurrencyState(target, etag, revision = 0) {
@@ -5487,7 +5428,10 @@
     };
   }
   function annotateSyncRetryError(error, target, operation) {
-    const annotated = error instanceof Error ? error : new Error(String(error || "\u540C\u6B65\u5931\u8D25"));
+    const annotated = error instanceof Error ? error : Object.assign(
+      new Error(String(error?.message || error || "\u540C\u6B65\u5931\u8D25")),
+      { code: error?.code, status: error?.status }
+    );
     annotated.idempotencyKey = operation.idempotencyKey;
     annotated.syncSessionId = operation.syncSessionId;
     annotated.operationId = operation.operationId;
@@ -5516,9 +5460,6 @@
     return etag;
   }
   async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey = null) {
-    if (target.remoteEncrypted && target.remotePayload && syncPayloadEquals(target.remotePayload, payload)) {
-      return { etag: target.remoteEtag, skipped: true };
-    }
     const bundle = await buildSyncBundleFromPayload(payload);
     const encryptedBundle = await encryptSyncBundleDocument(bundle, await getOrCreateSyncEncryptionKey());
     const headers = {
@@ -5564,8 +5505,9 @@
     }
     const confirmedEtag = target.kind === "server" ? await verifySelfHostedWriteReceipt(response, idempotencyKey) : response.headers.get("ETag");
     target.remotePayload = payload;
-    target.remoteEncrypted = true;
-    return { etag: confirmedEtag };
+    target.remoteEncrypted = encryptedBundle.schema === "pass.sync.encrypted.v1";
+    target.remoteKeyId = target.remoteEncrypted ? encryptedBundle.keyId : "";
+    return { etag: confirmedEtag, revision: Number(response.headers.get("X-Sync-Revision")) || 0 };
   }
   async function getOrCreateSyncEncryptionKey() {
     const secrets = await migrateLegacySyncSecrets();
@@ -5578,89 +5520,77 @@
     return previous && previous !== current ? [previous] : [];
   }
   async function pushRemotePayloadWithRetry(target, payload, context = {}) {
-    let candidate = payload;
+    let candidate = normalizeSyncPayloadShape(payload);
+    const mode = context.mode || SYNC_MODE_MERGE;
     const operation = createSyncOperationContext(context);
     target.syncSessionId = operation.syncSessionId;
     target.operationId = operation.operationId;
-    const { idempotencyKey } = operation;
-    for (let attempt = 0; attempt < SYNC_PUSH_CONFLICT_MAX_ATTEMPTS; attempt += 1) {
-      try {
-        const pushResult = await pushRemotePayload(target, candidate, target.remoteEtag, idempotencyKey);
-        updateRemoteConcurrencyState(target, pushResult.etag);
-        target.remotePayload = candidate;
-        target.remoteEncrypted = true;
-        return { payload: candidate };
-      } catch (error) {
-        if (error?.status !== 412 && error?.status !== 428) {
-          try {
-            const probe = await pullRemotePayload(target);
-            if (probe.payload && syncPayloadEquals(probe.payload, candidate)) {
-              updateRemoteConcurrencyState(target, probe.etag);
-              target.remotePayload = candidate;
-              target.remoteEncrypted = true;
-              return { payload: candidate };
-            }
-          } catch (_) {
-          }
-          throw annotateSyncRetryError(error, target, operation);
+    const updateFromPull = (response) => {
+      updateRemoteConcurrencyState(target, response.etag, response.revision);
+      target.remotePayload = response.payload;
+      target.remoteEncrypted = response.encrypted;
+      target.remoteKeyId = response.keyId || "";
+    };
+    const remoteMatches = async () => {
+      const keyId = await syncEncryptionKeyId(await getOrCreateSyncEncryptionKey());
+      return target.remotePayload && Boolean(target.remoteEncrypted) === Boolean(keyId) && target.remoteKeyId === keyId && syncPayloadEquals(target.remotePayload, candidate);
+    };
+    try {
+      for (let attempt = 0; attempt < SYNC_PUSH_CONFLICT_MAX_ATTEMPTS; attempt += 1) {
+        await context.assertLocalUnchanged?.();
+        const safety = validateSyncSafety(candidate, target.remotePayload, candidate, mode);
+        if (!safety.safe) {
+          throw Object.assign(new Error(`\u540C\u6B65\u5B89\u5168\u68C0\u67E5\u672A\u901A\u8FC7\uFF1A${safety.reasons.join("\u3001")}`), { code: "SAFETY_BLOCKED" });
         }
-        if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw annotateSyncRetryError(error, target, operation);
+        if (await remoteMatches()) return { payload: candidate };
+        try {
+          const result = await pushRemotePayload(target, candidate, target.remoteEtag, operation.idempotencyKey);
+          updateRemoteConcurrencyState(target, result.etag, result.revision);
+          return { payload: candidate };
+        } catch (error) {
+          if (error.status !== 412 && error.status !== 428) {
+            try {
+              updateFromPull(await pullRemotePayload(target));
+              if (await remoteMatches()) return { payload: candidate };
+            } catch {
+            }
+            throw error;
+          }
+          if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw error;
+        }
+        const latest = await pullRemotePayload(target);
+        updateFromPull(latest);
+        await context.assertLocalUnchanged?.();
+        const remote = latest.payload ? normalizeSyncPayloadShape(latest.payload) : null;
+        let next = candidate;
+        if (mode === SYNC_MODE_MERGE && remote) {
+          next = mergeSyncPayloads(
+            { ...candidate, accounts: syncAliasGroups2(candidate.accounts) },
+            { ...remote, accounts: syncAliasGroups2(remote.accounts) },
+            syncMergeHelpers()
+          );
+          next.accounts = syncAliasGroups2(next.accounts);
+          next = normalizeSyncPayloadShape(next);
+        } else if (mode === "remoteOverwriteLocal") {
+          next = normalizeSyncPayloadShape(remote || {});
+        }
+        const retrySafety = validateSyncSafety(candidate, remote, next, mode);
+        if (!retrySafety.safe) {
+          throw Object.assign(new Error(`\u5E76\u53D1\u91CD\u8BD5\u88AB\u5B89\u5168\u68C0\u67E5\u963B\u6B62\uFF1A${retrySafety.reasons.join("\u3001")}`), { code: "SAFETY_BLOCKED" });
+        }
+        if (!syncPayloadEquals(candidate, next)) await context.applyCandidate?.(next);
+        candidate = next;
+        operation.idempotencyKey = createSyncIdempotencyKey();
       }
-      const latestResponse = await pullRemotePayload(target);
-      updateRemoteConcurrencyState(target, latestResponse.etag);
-      target.remotePayload = latestResponse.payload;
-      target.remoteEncrypted = latestResponse.encrypted;
-      if (target.isPrimary === false) {
-        continue;
-      }
-      const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
-      const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
-      if (!syncPayloadEquals(currentLocalPayload, candidate)) {
-        throw new Error("\u672C\u5730\u6570\u636E\u5728\u8FDC\u7AEF\u51B2\u7A81\u91CD\u8BD5\u671F\u95F4\u53D1\u751F\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u5199\u5165\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65");
-      }
-      const localAccounts = Array.isArray(candidate.accounts) ? candidate.accounts.map(normalizeAccountShape) : [];
-      const localPasskeys = buildUnifiedPasskeys(localAccounts, Array.isArray(candidate.passkeys) ? candidate.passkeys.map(normalizePasskeyShape) : []);
-      const localFolders = Array.isArray(candidate.folders) ? candidate.folders.map(normalizeFolderShape) : [];
-      const remoteAccounts = syncAliasGroups2(remotePayload.accounts.map(normalizeAccountShape));
-      const canonicalLocalAccounts = syncAliasGroups2(localAccounts);
-      const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys);
-      const remoteFolders = remotePayload.folders.map(normalizeFolderShape);
-      if (target.isPrimary !== false) {
-        candidate = mergeSyncPayloads(
-          { ...candidate, accounts: canonicalLocalAccounts, passkeys: localPasskeys, folders: localFolders },
-          { ...remotePayload, accounts: remoteAccounts, passkeys: remotePasskeys, folders: remoteFolders },
-          syncMergeHelpers()
-        );
-        candidate.accounts = syncAliasGroups2(candidate.accounts);
-      }
-      const safety = validateSyncSafety(
-        { ...candidate, accounts: canonicalLocalAccounts, folders: localFolders, passkeys: localPasskeys },
-        { ...remotePayload, accounts: remoteAccounts },
-        candidate,
-        SYNC_MODE_MERGE
-      );
-      if (!safety.safe) {
-        logSyncFlow("push-retry-aborted-safety-check", { reasons: safety.reasons });
-        throw new Error(`\u5E76\u53D1\u91CD\u8BD5\u5408\u5E76\u88AB\u5B89\u5168\u68C0\u67E5\u963B\u6B62: ${safety.reasons.join(",")}`);
-      }
-      if (target.isPrimary !== false) {
-        await writeBusinessDataToStore(candidate);
-      }
+      throw new Error("\u8FDC\u7AEF\u5E76\u53D1\u51B2\u7A81\u91CD\u8BD5\u6B21\u6570\u5DF2\u7528\u5C3D");
+    } catch (error) {
+      const annotated = annotateSyncRetryError(error, target, operation);
+      annotated.payload = candidate;
+      throw annotated;
     }
-    throw new Error("\u8FDC\u7AEF\u5E76\u53D1\u51B2\u7A81\u91CD\u8BD5\u6B21\u6570\u5DF2\u7528\u5C3D");
   }
   async function pushRemotePayloadWithMode(target, payload, syncMode, context = {}) {
-    if (syncMode !== SYNC_MODE_MERGE) {
-      const operation = createSyncOperationContext(context);
-      target.syncSessionId = operation.syncSessionId;
-      target.operationId = operation.operationId;
-      const pushResult = await pushRemotePayload(target, payload, target.remoteEtag, operation.idempotencyKey);
-      updateRemoteConcurrencyState(target, pushResult.etag);
-      target.remotePayload = payload;
-      target.remoteEncrypted = true;
-      return { payload };
-    }
-    return pushRemotePayloadWithRetry(target, payload, context);
+    return pushRemotePayloadWithRetry(target, payload, { ...context, mode: syncMode });
   }
   function createAccount({ site, username, password, createdAtMs, deviceName }) {
     const normalizedSite = normalizeDomain(site);

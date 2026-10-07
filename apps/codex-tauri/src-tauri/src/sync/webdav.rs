@@ -15,7 +15,6 @@ use url::Url;
 
 use super::http::FetchResult;
 use super::{
-    crypto::decrypt_wire_body_with_fallback,
     pipeline,
     pipeline::{SyncMode, SyncRetryContext},
 };
@@ -222,23 +221,12 @@ where
                 &settings.password,
             )?;
             require_etag_for_existing(&fetched.body, &fetched.etag)?;
-            let etag = fetched.etag;
-            let payload = match fetched.body {
-                Some(body) => {
-                    let document = decrypt_wire_body_with_fallback(
-                        &body,
-                        encryption_key,
-                        &settings.previous_encryption_key,
-                    )?;
-                    let value = document.get("payload").cloned().unwrap_or(document);
-                    Some(
-                        serde_json::from_value(value)
-                            .map_err(|e| format!("解析 WebDAV payload 失败: {e}"))?,
-                    )
-                }
-                None => None,
-            };
-            Ok((payload, etag))
+            pipeline::decode_remote_snapshot(
+                fetched.body.as_deref(),
+                fetched.etag,
+                encryption_key,
+                &settings.previous_encryption_key,
+            )
         },
         apply_local,
         |wire, etag, idempotency_key| {
@@ -274,23 +262,12 @@ pub fn preview(
             &settings.password,
         )?;
         require_etag_for_existing(&fetched.body, &fetched.etag)?;
-        let etag = fetched.etag;
-        let payload = match fetched.body {
-            Some(body) => {
-                let document = decrypt_wire_body_with_fallback(
-                    &body,
-                    encryption_key,
-                    &settings.previous_encryption_key,
-                )?;
-                let value = document.get("payload").cloned().unwrap_or(document);
-                Some(
-                    serde_json::from_value(value)
-                        .map_err(|e| format!("解析 WebDAV payload 失败: {e}"))?,
-                )
-            }
-            None => None,
-        };
-        Ok((payload, etag))
+        pipeline::decode_remote_snapshot(
+            fetched.body.as_deref(),
+            fetched.etag,
+            encryption_key,
+            &settings.previous_encryption_key,
+        )
     })
 }
 

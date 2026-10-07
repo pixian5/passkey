@@ -108,6 +108,8 @@ struct LocalSnapshotSummary {
 struct SyncOutboxItem {
     source_key: String,
     payload: SyncPayload,
+    #[serde(default = "default_sync_mode")]
+    mode: String,
     payload_sha256: String,
     expected_etag: Option<String>,
     #[serde(default)]
@@ -127,10 +129,15 @@ fn default_sync_outbox_status() -> String {
     "pendingRetry".into()
 }
 
+fn default_sync_mode() -> String {
+    "merge".into()
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SyncOutboxSummary {
     source_key: String,
+    mode: String,
     created_at_ms: i64,
     attempts: u32,
     next_retry_at_ms: i64,
@@ -1146,6 +1153,7 @@ type SyncReport = SyncOperationReport;
 
 #[derive(Debug, Clone)]
 struct SyncRetryContext {
+    mode: SyncMode,
     idempotency_key: String,
     sync_session_id: String,
     operation_id: String,
@@ -1189,8 +1197,9 @@ fn sync_outbox_source_key(kind: &str, raw: &str) -> Result<String, String> {
     Ok(format!("{}|{}", kind.trim(), normalized))
 }
 
-fn new_sync_retry_context() -> SyncRetryContext {
+fn new_sync_retry_context(mode: SyncMode) -> SyncRetryContext {
     SyncRetryContext {
+        mode,
         idempotency_key: format!("pass-web-{}", Uuid::new_v4()),
         sync_session_id: new_sync_trace_id("sync"),
         operation_id: new_sync_trace_id("op"),
@@ -1203,15 +1212,15 @@ fn sync_outbox_context_or_wait(
     source_key: &str,
     payload: &SyncPayload,
     force: bool,
+    mode: SyncMode,
 ) -> Result<Result<SyncRetryContext, SyncOutboxItem>, String> {
     let hash = sync_outbox_payload_sha256(payload);
-    let Some(item) = v
-        .data
-        .sync_outbox
-        .iter_mut()
-        .find(|item| item.source_key == source_key && item.payload_sha256 == hash)
-    else {
-        return Ok(Ok(new_sync_retry_context()));
+    let Some(item) = v.data.sync_outbox.iter_mut().find(|item| {
+        item.source_key == source_key
+            && item.payload_sha256 == hash
+            && SyncMode::parse(&item.mode) == mode
+    }) else {
+        return Ok(Ok(new_sync_retry_context(mode)));
     };
     if force && item.status == "paused" {
         item.status = "pendingRetry".into();
@@ -1222,6 +1231,7 @@ fn sync_outbox_context_or_wait(
         return Ok(Err(item.clone()));
     }
     Ok(Ok(SyncRetryContext {
+        mode,
         // outbox 重试先核对远端，再以新幂等键提交重新计算的请求体。
         idempotency_key: format!("pass-web-{}", Uuid::new_v4()),
         sync_session_id: item.sync_session_id.clone(),
@@ -1240,11 +1250,11 @@ fn record_sync_outbox_failure(
 ) {
     let hash = sync_outbox_payload_sha256(payload);
     let now = now_ms();
-    let previous = v
-        .data
-        .sync_outbox
-        .iter()
-        .find(|item| item.source_key == source_key && item.payload_sha256 == hash);
+    let previous = v.data.sync_outbox.iter().find(|item| {
+        item.source_key == source_key
+            && item.payload_sha256 == hash
+            && SyncMode::parse(&item.mode) == context.mode
+    });
     let attempts = previous
         .map(|item| item.attempts.saturating_add(1))
         .unwrap_or(1)
@@ -1252,6 +1262,7 @@ fn record_sync_outbox_failure(
     let item = SyncOutboxItem {
         source_key: source_key.into(),
         payload: payload.clone(),
+        mode: context.mode.as_str().into(),
         payload_sha256: hash,
         expected_etag: expected_etag
             .or_else(|| previous.and_then(|item| item.expected_etag.clone())),
@@ -1280,6 +1291,27 @@ fn clear_sync_outbox(v: &mut Vault, source_key: &str) {
     v.data
         .sync_outbox
         .retain(|item| item.source_key != source_key);
+}
+
+fn sync_mode_for_request(
+    v: &Vault,
+    source_key: &str,
+    local: &SyncPayload,
+    requested: SyncMode,
+    resume: bool,
+) -> SyncMode {
+    if resume {
+        let hash = sync_outbox_payload_sha256(local);
+        if let Some(item) = v
+            .data
+            .sync_outbox
+            .iter()
+            .find(|item| item.source_key == source_key && item.payload_sha256 == hash)
+        {
+            return SyncMode::parse(&item.mode);
+        }
+    }
+    requested
 }
 
 fn pending_sync_failure(
@@ -1458,6 +1490,35 @@ fn encrypt_sync_document(doc: &Value, key_text: &str) -> Result<Vec<u8>, String>
         "ciphertextBase64": STANDARD.encode(encrypted),
     }))
     .map_err(|e| e.to_string())
+}
+
+/// 仅在成功解密后用于收敛判定；旧密钥解开的内容不代表新密钥已写入。
+fn sync_wire_matches_key(body: Option<&[u8]>, key_text: &str) -> bool {
+    let Some(body) = body else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(body) else {
+        return false;
+    };
+    let schema = value.get("schema").and_then(Value::as_str).unwrap_or("");
+    if key_text.trim().is_empty() {
+        return (schema == "pass.sync.bundle.v2" || schema.is_empty())
+            && value.get("cipher").is_none();
+    }
+    let Ok(key) = decode_sync_key(key_text) else {
+        return false;
+    };
+    let digest = Sha256::digest(key);
+    let expected = format!(
+        "k1-{}",
+        digest
+            .iter()
+            .take(8)
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    );
+    schema == "pass.sync.encrypted.v1"
+        && value.get("keyId").and_then(Value::as_str) == Some(expected.as_str())
 }
 
 #[cfg(test)]
@@ -1992,6 +2053,7 @@ fn run_webdav_sync(
     mode: SyncMode,
     dry_run: bool,
     force_outbox_retry: bool,
+    resume_outbox: bool,
 ) -> Result<Value, String> {
     let sync_session_id = new_sync_trace_id("sync");
     let operation_id = new_sync_trace_id("op");
@@ -2032,6 +2094,8 @@ fn run_webdav_sync(
         .unwrap_or("")
         .to_string();
     let local = canonicalize_sync_aliases(v.payload(), &v.data.device_name);
+    let source_key = sync_outbox_source_key("webdav", &webdav_resource_url(base, path)?)?;
+    let mode = sync_mode_for_request(v, &source_key, &local, mode, resume_outbox && !dry_run);
     let fetched = webdav_get(base, path, username, password)?;
     let mut remote = parse_remote_sync_payload(
         fetched.body.as_deref(),
@@ -2089,12 +2153,12 @@ fn run_webdav_sync(
     } else {
         merged.clone()
     };
-    let source_key = sync_outbox_source_key("webdav", &webdav_resource_url(base, path)?)?;
     let retry_context = match sync_outbox_context_or_wait(
         v,
         &source_key,
         &to_store,
         force_outbox_retry,
+        mode,
     )? {
         Ok(context) => context,
         Err(item) => {
@@ -2116,7 +2180,10 @@ fn run_webdav_sync(
             }}));
         }
     };
-    if retry_context.reconcile_remote && remote.as_ref() == Some(&to_store) {
+    if retry_context.reconcile_remote
+        && sync_wire_matches_key(fetched.body.as_deref(), &key)
+        && remote.as_ref() == Some(&to_store)
+    {
         if local != to_store {
             v.begin("WebDAV 补偿确认远端后写入本地");
             v.apply_payload(to_store.clone());
@@ -2153,6 +2220,12 @@ fn run_webdav_sync(
                 v.begin("WebDAV 同步写入本地前自动备份");
             }
             v.apply_payload(to_store.clone());
+            // 队列与上传内容必须记录实际落盘后的排序，避免重启后摘要失配而丢失原模式。
+            let stored = v.payload();
+            if stored != to_store {
+                to_store = stored;
+                wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), &key)?;
+            }
             let previous_persist = v.persist_enabled;
             v.persist_enabled = true;
             let save_result = v.save();
@@ -2184,7 +2257,7 @@ fn run_webdav_sync(
                     ..sync_report_base(mode, false, "webdav", true, &retry_context.sync_session_id, &retry_context.operation_id)
                 }}));
             }
-            Err(error) if error == "PRECONDITION_FAILED" => {
+            Err(error) if error == "PRECONDITION_FAILED" && _attempt < 4 => {
                 let latest = match webdav_get(base, path, username, password) {
                     Ok(latest) => latest,
                     Err(error) => {
@@ -2230,12 +2303,13 @@ fn run_webdav_sync(
                 let remote_for_mode = remote.clone().unwrap_or_default();
                 let merged = match mode {
                     SyncMode::Merge => {
-                        pass_merge::v2::merge_sync_payloads(local.clone(), remote_for_mode)
+                        pass_merge::v2::merge_sync_payloads(to_store.clone(), remote_for_mode)
                     }
                     SyncMode::RemoteOverwriteLocal => remote_for_mode,
                     SyncMode::LocalOverwriteRemote => local.clone(),
                 };
-                let safety = evaluate_sync_safety(&local, remote.as_ref(), &merged, mode.as_str());
+                let safety =
+                    evaluate_sync_safety(&to_store, remote.as_ref(), &merged, mode.as_str());
                 if !safety.safe {
                     return Ok(json!({"report": SyncReport {
                         message: format!("WebDAV 同步停止：安全检查未通过（{}）", safety.reasons.join("、")),
@@ -2266,7 +2340,8 @@ fn run_webdav_sync(
                         &previous_key,
                         &v.data.device_name,
                     ) {
-                        if remote == to_store {
+                        if sync_wire_matches_key(probe.body.as_deref(), &key) && remote == to_store
+                        {
                             clear_sync_outbox(v, &source_key);
                             return Ok(json!({"report": SyncReport {
                                 ok: true,
@@ -2328,6 +2403,7 @@ fn run_self_hosted_sync(
     mode: SyncMode,
     dry_run: bool,
     force_outbox_retry: bool,
+    resume_outbox: bool,
 ) -> Result<Value, String> {
     let sync_session_id = new_sync_trace_id("sync");
     let operation_id = new_sync_trace_id("op");
@@ -2359,6 +2435,8 @@ fn run_self_hosted_sync(
         .unwrap_or("")
         .to_string();
     let local = canonicalize_sync_aliases(v.payload(), &v.data.device_name);
+    let source_key = sync_outbox_source_key("server", base)?;
+    let mode = sync_mode_for_request(v, &source_key, &local, mode, resume_outbox && !dry_run);
     let fetched = self_hosted_get(base, token)?;
     let mut remote = parse_remote_sync_payload(
         fetched.body.as_deref(),
@@ -2424,12 +2502,12 @@ fn run_self_hosted_sync(
         }
     }
     let _ = sync_alias_groups(&mut to_store.accounts, now_ms(), &device);
-    let source_key = sync_outbox_source_key("server", base)?;
     let retry_context = match sync_outbox_context_or_wait(
         v,
         &source_key,
         &to_store,
         force_outbox_retry,
+        mode,
     )? {
         Ok(context) => context,
         Err(item) => {
@@ -2451,7 +2529,10 @@ fn run_self_hosted_sync(
             }}));
         }
     };
-    if retry_context.reconcile_remote && remote.as_ref() == Some(&to_store) {
+    if retry_context.reconcile_remote
+        && sync_wire_matches_key(fetched.body.as_deref(), &key)
+        && remote.as_ref() == Some(&to_store)
+    {
         if local != to_store {
             v.begin("补偿确认远端后写入本地");
             v.apply_payload(to_store.clone());
@@ -2486,6 +2567,12 @@ fn run_self_hosted_sync(
                 v.begin("同步写入本地前自动备份");
             }
             v.apply_payload(to_store.clone());
+            // 与 WebDAV 一致，保持落盘、上传和补偿队列使用同一个完整候选。
+            let stored = v.payload();
+            if stored != to_store {
+                to_store = stored;
+                wire = encrypt_sync_document(&sync_bundle_document(v, &to_store), key)?;
+            }
             let previous_persist = v.persist_enabled;
             v.persist_enabled = true;
             let save_result = v.save();
@@ -2563,12 +2650,13 @@ fn run_self_hosted_sync(
                 let remote_for_mode = remote.clone().unwrap_or_default();
                 let merged = match mode {
                     SyncMode::Merge => {
-                        pass_merge::v2::merge_sync_payloads(local.clone(), remote_for_mode)
+                        pass_merge::v2::merge_sync_payloads(to_store.clone(), remote_for_mode)
                     }
                     SyncMode::RemoteOverwriteLocal => remote_for_mode,
                     SyncMode::LocalOverwriteRemote => local.clone(),
                 };
-                let safety = evaluate_sync_safety(&local, remote.as_ref(), &merged, mode.as_str());
+                let safety =
+                    evaluate_sync_safety(&to_store, remote.as_ref(), &merged, mode.as_str());
                 if !safety.safe {
                     return Ok(json!({"report": SyncReport {
                         message: format!("同步停止：安全检查未通过（{}）", safety.reasons.join("、")),
@@ -2605,7 +2693,8 @@ fn run_self_hosted_sync(
                         &previous_key,
                         &v.data.device_name,
                     ) {
-                        if remote == to_store {
+                        if sync_wire_matches_key(probe.body.as_deref(), &key) && remote == to_store
+                        {
                             clear_sync_outbox(v, &source_key);
                             return Ok(json!({"report": SyncReport {
                                 ok: true,
@@ -3115,6 +3204,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
         "get_sync_outbox_status" => Ok(serde_json::to_value(
             v.data.sync_outbox.iter().map(|item| SyncOutboxSummary {
                 source_key: item.source_key.clone(),
+                mode: item.mode.clone(),
                 created_at_ms: item.created_at_ms,
                 attempts: item.attempts,
                 next_retry_at_ms: item.next_retry_at_ms,
@@ -4244,16 +4334,16 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                         .and_then(Value::as_bool)
                         .unwrap_or(false));
             if use_webdav {
-                run_webdav_sync(v, mode, true, false)
+                run_webdav_sync(v, mode, true, false, false)
             } else if v.data
                 .sync_settings
                 .get("enabled")
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
             {
-                run_self_hosted_sync(v, mode, true, false)
+                run_self_hosted_sync(v, mode, true, false, false)
             } else {
-                run_webdav_sync(v, mode, true, false)
+                run_webdav_sync(v, mode, true, false, false)
             }
         }
         "sync_now" | "sync_now_mode" => {
@@ -4272,7 +4362,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 .get("forceOutboxRetry")
                 .and_then(Value::as_bool)
                 .unwrap_or(true);
-            run_self_hosted_sync(v, mode, false, force_outbox_retry)
+            run_self_hosted_sync(v, mode, false, force_outbox_retry, args.get("resumeOutbox").and_then(Value::as_bool).unwrap_or(false))
         }
         "sync_webdav_now_mode" => {
             let mode = SyncMode::parse(&arg::<String>(&args, "mode")?);
@@ -4280,7 +4370,7 @@ fn do_command(v: &mut Vault, command: &str, args: Value) -> Result<Value, String
                 .get("forceOutboxRetry")
                 .and_then(Value::as_bool)
                 .unwrap_or(true);
-            run_webdav_sync(v, mode, false, force_outbox_retry)
+            run_webdav_sync(v, mode, false, force_outbox_retry, args.get("resumeOutbox").and_then(Value::as_bool).unwrap_or(false))
         }
         "list_server_versions" => {
             let settings = &v.data.sync_settings;
@@ -4788,7 +4878,7 @@ mod tests {
         let mut vault = Vault::open(dir.clone()).unwrap();
         let source_key = "server|https://sync.example";
         let payload = vault.payload();
-        let original = new_sync_retry_context();
+        let original = new_sync_retry_context(SyncMode::Merge);
         record_sync_outbox_failure(
             &mut vault,
             source_key,
@@ -4798,9 +4888,10 @@ mod tests {
             "connection reset",
         );
 
-        let retry = sync_outbox_context_or_wait(&mut vault, source_key, &payload, true)
-            .unwrap()
-            .unwrap();
+        let retry =
+            sync_outbox_context_or_wait(&mut vault, source_key, &payload, true, SyncMode::Merge)
+                .unwrap()
+                .unwrap();
         assert_ne!(retry.idempotency_key, original.idempotency_key);
         assert_eq!(retry.sync_session_id, original.sync_session_id);
         assert_eq!(retry.operation_id, original.operation_id);
@@ -4814,7 +4905,7 @@ mod tests {
         let mut vault = Vault::open(dir.clone()).unwrap();
         let payload = vault.payload();
         let source_key = "server|https://sync.example";
-        let context = new_sync_retry_context();
+        let context = new_sync_retry_context(SyncMode::Merge);
         let result = pending_sync_failure(
             &mut vault,
             source_key,
@@ -4853,7 +4944,7 @@ mod tests {
         let mut vault = Vault::open(dir.clone()).unwrap();
         let source_key = "server|https://sync.example";
         let payload = vault.payload();
-        let original = new_sync_retry_context();
+        let original = new_sync_retry_context(SyncMode::Merge);
         record_sync_outbox_failure(
             &mut vault,
             source_key,
@@ -4863,9 +4954,10 @@ mod tests {
             "connection reset",
         );
 
-        let retry = sync_outbox_context_or_wait(&mut vault, source_key, &payload, true)
-            .unwrap()
-            .unwrap();
+        let retry =
+            sync_outbox_context_or_wait(&mut vault, source_key, &payload, true, SyncMode::Merge)
+                .unwrap()
+                .unwrap();
         assert_ne!(retry.idempotency_key, original.idempotency_key);
         assert_eq!(retry.sync_session_id, original.sync_session_id);
         assert_eq!(retry.operation_id, original.operation_id);
@@ -4952,7 +5044,7 @@ mod tests {
         let mut vault = Vault::open(dir.clone()).unwrap();
         let payload = SyncPayload::default();
         let source_key = "server|https://sync.example";
-        let context = new_sync_retry_context();
+        let context = new_sync_retry_context(SyncMode::Merge);
         for _ in 0..SYNC_OUTBOX_MAX_ATTEMPTS {
             record_sync_outbox_failure(
                 &mut vault, source_key, &payload, &context, None, "HTTP 503",
@@ -4961,14 +5053,19 @@ mod tests {
         let paused = vault.data.sync_outbox.first().unwrap().clone();
         assert_eq!(paused.attempts, SYNC_OUTBOX_MAX_ATTEMPTS);
         assert_eq!(paused.status, "paused");
-        assert!(
-            sync_outbox_context_or_wait(&mut vault, source_key, &payload, false)
+        assert!(sync_outbox_context_or_wait(
+            &mut vault,
+            source_key,
+            &payload,
+            false,
+            SyncMode::Merge
+        )
+        .unwrap()
+        .is_err());
+        let resumed =
+            sync_outbox_context_or_wait(&mut vault, source_key, &payload, true, SyncMode::Merge)
                 .unwrap()
-                .is_err()
-        );
-        let resumed = sync_outbox_context_or_wait(&mut vault, source_key, &payload, true)
-            .unwrap()
-            .unwrap();
+                .unwrap();
         assert_ne!(resumed.idempotency_key, context.idempotency_key);
         assert_eq!(resumed.sync_session_id, context.sync_session_id);
         assert_eq!(resumed.operation_id, context.operation_id);
@@ -5215,3 +5312,6 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 }
+
+#[cfg(test)]
+mod sync_regression_tests;

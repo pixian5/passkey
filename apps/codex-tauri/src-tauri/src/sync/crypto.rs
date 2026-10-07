@@ -69,6 +69,19 @@ pub fn key_id(raw: &str) -> String {
     format!("k1-{prefix}")
 }
 
+/// 在成功解密后核对写入策略；旧密钥回退只能读取，不能证明密钥轮换已提交。
+pub fn wire_matches_current_key(body: &[u8], key: &str) -> bool {
+    let Ok(value) = serde_json::from_slice::<Value>(body) else {
+        return false;
+    };
+    let schema = value.get("schema").and_then(Value::as_str).unwrap_or("");
+    if key.trim().is_empty() {
+        return (schema == PLAINTEXT_SCHEMA || schema.is_empty()) && value.get("cipher").is_none();
+    }
+    schema == ENCRYPTED_SCHEMA
+        && value.get("keyId").and_then(Value::as_str) == Some(key_id(key).as_str())
+}
+
 /// Encrypt a JSON bundle document (object) into envelope JSON bytes.
 /// Empty key → returns original document bytes unchanged.
 pub fn encrypt_bundle_document(document: &Value, key_string: &str) -> Result<Vec<u8>, String> {

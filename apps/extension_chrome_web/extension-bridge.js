@@ -879,6 +879,7 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
             mode: text(args.mode) || "merge",
             dryRun: false,
             forceOutboxRetry: Boolean(args.forceOutboxRetry),
+            resumeOutbox: Boolean(args.resumeOutbox),
           },
         });
         return response.result;
@@ -891,6 +892,7 @@ import { softDeleteAccount, permanentlyDeleteAccount, permanentlyDeleteFolder, r
             mode: args.mode || "merge",
             dryRun: false,
             forceOutboxRetry: Boolean(args.forceOutboxRetry),
+            resumeOutbox: Boolean(args.resumeOutbox),
           },
         });
         return response.result;

@@ -36,6 +36,7 @@ const {
   disableDataEncryption,
   getAccounts,
   getAllData,
+  getAllDataSnapshot,
   getFolders,
   getPasskeys,
   getSafetySnapshots,
@@ -48,6 +49,7 @@ const {
   setSyncSecrets,
   setSafetySnapshots,
   setAllData,
+  setAccounts,
   setSyncOutbox,
   sanitizeHistoryAction,
   unlockDataEncryption,
@@ -253,6 +255,66 @@ test("完整写入会在同一快照中保存全局与文件夹顺序", async ()
   assert.deepEqual(data.folderOrderIds, ["folder-1"]);
   assert.equal(data.allRegularOrderUpdatedAtMs, 10);
   assert.equal(data.folderOrderUpdatedAtMs, 11);
+});
+
+test("同步旧快照不能覆盖期间保存的账号或排序", async () => {
+  await setAllData({ accounts: [{ accountId: "a", note: "初始" }], folders: [], passkeys: [] });
+  const initial = await getAllDataSnapshot();
+  await setAccounts([{ accountId: "a", note: "用户刚编辑" }]);
+  await assert.rejects(
+    setAllData(initial.payload, { expectedRevision: initial.revision }),
+    { code: "LOCAL_CHANGED" },
+  );
+  const edited = await getAllDataSnapshot();
+  assert.equal(edited.payload.accounts[0].note, "用户刚编辑");
+  await setAllData({ ...edited.payload, allRegularAccountIds: ["b", "a"], allRegularOrderUpdatedAtMs: 100 });
+  await assert.rejects(
+    setAllData(edited.payload, { expectedRevision: edited.revision }),
+    { code: "LOCAL_CHANGED" },
+  );
+  assert.deepEqual((await getAllData()).allRegularAccountIds, ["b", "a"]);
+});
+
+test("同一业务版本的两个并发提交只允许一个成功", async () => {
+  const initial = await getAllDataSnapshot();
+  const results = await Promise.allSettled(["甲", "乙"].map((note) => setAllData({
+    ...initial.payload,
+    accounts: [{ accountId: note }],
+    folders: [{ id: note }],
+    allRegularAccountIds: [note],
+  }, { expectedRevision: initial.revision })));
+  assert.equal(results.filter((item) => item.status === "fulfilled").length, 1);
+  const rejected = results.find((item) => item.status === "rejected");
+  assert.equal(rejected.reason.code, "LOCAL_CHANGED");
+  const saved = await getAllDataSnapshot();
+  assert.equal(saved.revision, initial.revision + 1);
+  assert.equal(saved.payload.accounts[0].accountId, saved.payload.folders[0].id);
+  assert.equal(saved.payload.accounts[0].accountId, saved.payload.allRegularAccountIds[0]);
+});
+
+test("辅助队列和安全快照写入不会使业务比较交换失效", async () => {
+  const initial = await getAllDataSnapshot();
+  await setSyncOutbox([]);
+  await setSafetySnapshots([]);
+  await setSyncSecrets({ encryptionKey: "" });
+  assert.equal((await getAllDataSnapshot()).revision, initial.revision);
+  const revision = await setAllData({ ...initial.payload, accounts: [{ accountId: "a" }] }, {
+    expectedRevision: initial.revision,
+  });
+  assert.equal(revision, initial.revision + 1);
+});
+
+test("读取快照与全量写入并发时不会拼接不同版本的集合", async () => {
+  const payload = (id) => ({ accounts: [{ accountId: id }], folders: [{ id }], passkeys: [], allRegularAccountIds: [id] });
+  await setAllData(payload("初始"));
+  const reads = await Promise.all(Array.from({ length: 12 }, async (_, index) => {
+    await setAllData(payload(String(index)));
+    return getAllDataSnapshot();
+  }));
+  for (const { payload: snapshot } of reads) {
+    assert.equal(snapshot.accounts[0].accountId, snapshot.folders[0].id);
+    assert.equal(snapshot.accounts[0].accountId, snapshot.allRegularAccountIds[0]);
+  }
 });
 
 test("正确主密码解开 v2 后会立即迁移并重包为 v4", async () => {

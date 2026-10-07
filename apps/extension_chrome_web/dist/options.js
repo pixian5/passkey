@@ -1,7 +1,4 @@
 (() => {
-  // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.7.9";
-
   // ../../core/pass_core/js/sync_policy.js
   var DEFAULT_DEVICE_NAME = "PassDevice";
   var FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
@@ -37,13 +34,7 @@
     "com.ua"
   ];
   var SYNC_OUTBOX_MAX_ATTEMPTS = 12;
-  var SYNC_OUTBOX_BASE_DELAY_MS = 5e3;
   var SYNC_OUTBOX_MAX_DELAY_MS = 60 * 60 * 1e3;
-  var SYNC_PUSH_CONFLICT_MAX_ATTEMPTS = 5;
-  function syncOutboxRetryDelayMs(attempts) {
-    const exponent = Math.max(0, Math.min(Number(attempts || 1) - 1, 8));
-    return Math.min(SYNC_OUTBOX_MAX_DELAY_MS, SYNC_OUTBOX_BASE_DELAY_MS * 2 ** exponent);
-  }
   function normalizeDeviceName(value, fallback = DEFAULT_DEVICE_NAME) {
     const trimmed = String(value || "").trim();
     return trimmed || fallback;
@@ -1258,18 +1249,8 @@
   function syncTargetKey(target) {
     return `${String(target?.kind || "").trim()}|${String(target?.url || "").trim()}`;
   }
-  function canonicalJson(value) {
-    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-    if (value && typeof value === "object") {
-      return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
-    }
-    return JSON.stringify(value ?? null);
-  }
-  async function syncPayloadSha256(payload, cryptoApi = globalThis.crypto) {
-    if (!cryptoApi?.subtle?.digest) throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u540C\u6B65 payload \u6458\u8981\u8BA1\u7B97");
-    const bytes = new TextEncoder().encode(canonicalJson(payload));
-    const digest = new Uint8Array(await cryptoApi.subtle.digest("SHA-256", bytes));
-    return Array.from(digest, (value) => value.toString(16).padStart(2, "0")).join("");
+  function normalizeSyncMode(mode) {
+    return ["remoteOverwriteLocal", "localOverwriteRemote"].includes(mode) ? mode : "merge";
   }
   function normalizeSyncOutboxItem(item, nowMs = Date.now()) {
     const targetKey = String(item?.targetKey || "").trim();
@@ -1282,6 +1263,7 @@
     return {
       targetKey,
       payload,
+      mode: normalizeSyncMode(item?.mode),
       payloadSha256: String(item?.payloadSha256 || "").trim().toLowerCase(),
       expectedEtag: String(item?.expectedEtag || "").trim(),
       expectedRevision: Math.floor(nonNegativeNumber(item?.expectedRevision, 0)),
@@ -1308,51 +1290,6 @@
     }
     return [...byTarget.values()].sort((left, right) => left.createdAtMs - right.createdAtMs);
   }
-  function upsertSyncOutbox(value, {
-    targetKey,
-    payload,
-    error,
-    payloadSha256 = "",
-    expectedEtag = "",
-    expectedRevision = 0,
-    idempotencyKey = "",
-    syncSessionId = "",
-    operationId = "",
-    sourceType = "",
-    scope = "",
-    forceResume = false,
-    nowMs = Date.now()
-  }) {
-    const current = normalizeSyncOutbox(value, nowMs);
-    const previous = current.find((item) => item.targetKey === targetKey);
-    const normalizedHash = String(payloadSha256 || "").trim().toLowerCase();
-    const sameLogicalWrite = Boolean(previous && normalizedHash && previous.payloadSha256 === normalizedHash);
-    const wasPaused = previous?.status === "paused";
-    const attempts = Math.min(
-      SYNC_OUTBOX_MAX_ATTEMPTS,
-      (sameLogicalWrite ? forceResume && wasPaused ? 0 : Number(previous?.attempts || 0) : 0) + 1
-    );
-    const next = normalizeSyncOutboxItem({
-      targetKey,
-      payload,
-      payloadSha256: normalizedHash,
-      expectedEtag,
-      expectedRevision,
-      idempotencyKey: idempotencyKey || (sameLogicalWrite ? previous.idempotencyKey : ""),
-      syncSessionId: syncSessionId || (sameLogicalWrite ? previous.syncSessionId : ""),
-      operationId: operationId || (sameLogicalWrite ? previous.operationId : ""),
-      sourceType,
-      scope,
-      status: attempts >= SYNC_OUTBOX_MAX_ATTEMPTS ? "paused" : "pendingRetry",
-      createdAtMs: sameLogicalWrite ? previous.createdAtMs : nowMs,
-      attempts,
-      lastAttemptAtMs: nowMs,
-      nextRetryAtMs: nowMs + syncOutboxRetryDelayMs(attempts),
-      lastErrorCode: String(error?.code || ""),
-      lastError: String(error?.message || error || "")
-    }, nowMs);
-    return normalizeSyncOutbox(current.filter((item) => item.targetKey !== targetKey).concat(next), nowMs);
-  }
   function removeOrphanedSyncOutbox(value, activeTargetKeys) {
     const active = new Set(Array.from(activeTargetKeys || [], (item) => String(item || "").trim()).filter(Boolean));
     return normalizeSyncOutbox(value).filter((item) => active.has(item.targetKey));
@@ -1370,6 +1307,8 @@
   var COLLECTION_SYNC_SECRETS = "syncSecrets";
   var COLLECTION_SYNC_SAFETY_SNAPSHOTS = "syncSafetySnapshots";
   var COLLECTION_SYNC_OUTBOX = "syncOutbox";
+  var BUSINESS_REVISION_KEY = "businessRevision";
+  var BUSINESS_COLLECTIONS = [COLLECTION_ACCOUNTS, COLLECTION_PASSKEYS, COLLECTION_FOLDERS, COLLECTION_LAYOUT];
   var HISTORY_MAX_ENTRIES = 500;
   var SAFETY_SNAPSHOT_MAX_ENTRIES = 5;
   var LEGACY_STORAGE_KEY_ACCOUNTS = "pass.accounts";
@@ -1459,6 +1398,11 @@
       await writeCollection(key, row.value);
       return row.value;
     }
+    return decodeCollectionRow(key, row);
+  }
+  async function decodeCollectionRow(key, row) {
+    if (!row) return [];
+    if (Array.isArray(row.value)) return row.value;
     if (Number(row.version) !== 1 || !row.nonceBase64 || !row.ciphertextBase64) {
       throw new Error(`IndexedDB \u96C6\u5408\u683C\u5F0F\u65E0\u6548: ${key}`);
     }
@@ -1496,16 +1440,35 @@
       ciphertextBase64: bytesToBase64(new Uint8Array(ciphertext))
     };
   }
-  async function writeCollectionRows(entries) {
+  async function writeCollectionRows(entries, expectedRevision = null) {
     const rows = await Promise.all(entries.map((entry) => encryptCollectionRow(entry.key, entry.value)));
     const db = await openDatabase();
     const tx = db.transaction(STORE_COLLECTIONS, "readwrite");
     const store = tx.objectStore(STORE_COLLECTIONS);
-    for (const row of rows) store.put(row);
-    await new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve();
+    const changesBusinessData = entries.some((entry) => BUSINESS_COLLECTIONS.includes(entry.key));
+    let revision = null;
+    let conflict = null;
+    return await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve(revision);
       tx.onerror = () => reject(tx.error || new Error("IndexedDB transaction failed"));
-      tx.onabort = () => reject(tx.error || new Error("IndexedDB transaction aborted"));
+      tx.onabort = () => reject(conflict || tx.error || new Error("IndexedDB transaction aborted"));
+      if (!changesBusinessData) {
+        for (const row of rows) store.put(row);
+        return;
+      }
+      const request = store.get(BUSINESS_REVISION_KEY);
+      request.onsuccess = () => {
+        const current = Number(request.result?.revision) || 0;
+        if (expectedRevision != null && current !== expectedRevision) {
+          conflict = new Error("\u540C\u6B65\u671F\u95F4\u672C\u5730\u6570\u636E\u5DF2\u53D8\u5316\uFF0C\u5DF2\u4FDD\u7559\u6700\u65B0\u7F16\u8F91\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65");
+          conflict.code = "LOCAL_CHANGED";
+          tx.abort();
+          return;
+        }
+        revision = current + 1;
+        for (const row of rows) store.put(row);
+        store.put({ key: BUSINESS_REVISION_KEY, revision });
+      };
     });
   }
   async function loadOrCreateEncryptionKey() {
@@ -1699,15 +1662,19 @@
     await touchDataBump(COLLECTION_FOLDERS);
   }
   async function getAllData() {
+    return (await getAllDataSnapshot()).payload;
+  }
+  async function getAllDataSnapshot() {
     await ensureDataStorageReady();
-    const [accounts, passkeys, folders, layoutRows] = await Promise.all([
-      readCollection(COLLECTION_ACCOUNTS),
-      readCollection(COLLECTION_PASSKEYS),
-      readCollection(COLLECTION_FOLDERS),
-      readCollection(COLLECTION_LAYOUT)
-    ]);
+    const db = await openDatabase();
+    const tx = db.transaction(STORE_COLLECTIONS, "readonly");
+    const store = tx.objectStore(STORE_COLLECTIONS);
+    const rows = await Promise.all([...BUSINESS_COLLECTIONS, BUSINESS_REVISION_KEY].map((key) => requestAsPromise(store.get(key))));
+    const [accounts, passkeys, folders, layoutRows] = await Promise.all(
+      BUSINESS_COLLECTIONS.map((key, index) => decodeCollectionRow(key, rows[index]))
+    );
     const layout = layoutRows[0] && typeof layoutRows[0] === "object" ? layoutRows[0] : {};
-    return {
+    const payload = {
       accounts,
       passkeys,
       folders,
@@ -1719,6 +1686,7 @@
       folderOrderUpdatedDeviceName: String(layout.folderOrderUpdatedDeviceName || ""),
       deviceName: String(layout.deviceName || "")
     };
+    return { payload, revision: Number(rows[BUSINESS_COLLECTIONS.length]?.revision) || 0 };
   }
   async function setAllData({
     accounts,
@@ -1731,13 +1699,13 @@
     folderOrderUpdatedAtMs = 0,
     folderOrderUpdatedDeviceName = "",
     deviceName = ""
-  }) {
+  }, { expectedRevision = null } = {}) {
     try {
       await ensureDataStorageReady();
     } catch (error) {
       if (String(error?.name || "") !== "OperationError") throw error;
     }
-    await writeCollectionRows([
+    const revision = await writeCollectionRows([
       { key: COLLECTION_ACCOUNTS, value: accounts },
       { key: COLLECTION_PASSKEYS, value: passkeys },
       { key: COLLECTION_FOLDERS, value: folders },
@@ -1753,8 +1721,9 @@
           deviceName: String(deviceName || "")
         }]
       }
-    ]);
+    ], expectedRevision);
     await touchDataBump("all");
+    return revision;
   }
   function normalizeSyncSecrets(value) {
     const source = value && typeof value === "object" ? value : {};
@@ -2135,8 +2104,6 @@
   var STORAGE_KEY_SYNC_PRIMARY_SOURCE = "pass.sync.primarySource.v1";
   var STORAGE_KEY_SYNC_AUTO_INTERVAL_MINUTES = "pass.sync.autoIntervalMinutes.v1";
   var STORAGE_KEY_SYNC_DEVICE_ID = "pass.sync.deviceId.v1";
-  var STORAGE_KEY_SYNC_OPERATION_LOCK = "pass.sync.operationLock.v1";
-  var SYNC_OPERATION_LOCK_TTL_MS = 10 * 60 * 1e3;
   var DEFAULT_SELF_HOSTED_SERVER_BASE_URL = "https://uk.sbbz.tech:5443";
   var SYNC_MODE_MERGE = "merge";
   var SYNC_MODE_REMOTE_OVERWRITE_LOCAL = "remoteOverwriteLocal";
@@ -2323,27 +2290,6 @@
   var syncInFlight = false;
   var optionsLocked = false;
   var enqueueLockStateTransition = createLockStateTransitionQueue();
-  async function acquireSyncOperationLock(owner) {
-    const storage = chrome.storage?.session;
-    if (!storage) return owner;
-    const now = Date.now();
-    const current = await storage.get([STORAGE_KEY_SYNC_OPERATION_LOCK]);
-    const lock = current[STORAGE_KEY_SYNC_OPERATION_LOCK];
-    if (lock && Number(lock.expiresAtMs) > now && lock.owner !== owner) return null;
-    await storage.set({
-      [STORAGE_KEY_SYNC_OPERATION_LOCK]: { owner, expiresAtMs: now + SYNC_OPERATION_LOCK_TTL_MS }
-    });
-    const verified = await storage.get([STORAGE_KEY_SYNC_OPERATION_LOCK]);
-    return verified[STORAGE_KEY_SYNC_OPERATION_LOCK]?.owner === owner ? owner : null;
-  }
-  async function releaseSyncOperationLock(owner) {
-    const storage = chrome.storage?.session;
-    if (!storage) return;
-    const current = await storage.get([STORAGE_KEY_SYNC_OPERATION_LOCK]);
-    if (current[STORAGE_KEY_SYNC_OPERATION_LOCK]?.owner === owner) {
-      await storage.remove(STORAGE_KEY_SYNC_OPERATION_LOCK);
-    }
-  }
   var AUTO_SYNC_INTERVAL_OPTIONS = /* @__PURE__ */ new Set(["0", "1", "3", "5", "10", "15", "30", "60"]);
   init().catch((error) => {
     console.error("[Pass options] \u521D\u59CB\u5316\u5931\u8D25", error);
@@ -2361,7 +2307,7 @@
     await refresh();
     startTotpRefreshTicker();
     dom.syncMergeBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE));
-    dom.syncRetryOutboxBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE, true));
+    dom.syncRetryOutboxBtn.addEventListener("click", () => syncNowWithRemote(SYNC_MODE_MERGE, true, true));
     dom.syncClearOrphanedOutboxBtn.addEventListener("click", () => void clearOrphanedSyncOutbox());
     dom.storageSelfCheckBtn.addEventListener("click", () => void runStorageSelfCheck());
     dom.exportDiagnosticsBtn.addEventListener("click", () => void exportStorageDiagnostics());
@@ -2692,22 +2638,6 @@
       folders: [...payload?.folders || []].sort((lhs, rhs) => compare(lhs, rhs, ["id"]))
     };
   }
-  function countSyncAccountConflicts(localAccounts, remoteAccounts) {
-    const localByKey = /* @__PURE__ */ new Map();
-    for (const account of localAccounts || []) {
-      const key = String(account?.recordId || account?.id || account?.accountId || "").trim().toLowerCase();
-      if (key) localByKey.set(key, account);
-    }
-    const fields = ["username", "password", "totpSecret", "recoveryCodes", "note", "isDeleted"];
-    let count = 0;
-    for (const remote of remoteAccounts || []) {
-      const key = String(remote?.recordId || remote?.id || remote?.accountId || "").trim().toLowerCase();
-      const local = localByKey.get(key);
-      if (!local) continue;
-      count += fields.filter((field) => String(local[field] ?? "") !== String(remote[field] ?? "")).length;
-    }
-    return count;
-  }
   async function writeBusinessDataToStore(payload = {}) {
     const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
     const nextPayload = normalizeSyncPayloadShape({ ...currentPayload, ...payload || {} });
@@ -2885,31 +2815,6 @@
     } catch (error) {
       setStatus(`\u6E05\u7406\u540C\u6B65\u8865\u507F\u4EFB\u52A1\u5931\u8D25\uFF1A${error.message}`);
     }
-  }
-  async function recordSyncOutboxFailure(target, payload, error, forceResume = false) {
-    const targetKey = syncTargetKey(target);
-    const items = await getSyncOutbox();
-    const payloadSha256 = await syncPayloadSha256(payload);
-    await setSyncOutbox(upsertSyncOutbox(items, {
-      targetKey,
-      payload: normalizeSyncPayloadShape(payload),
-      error,
-      payloadSha256,
-      expectedEtag: error?.expectedEtag || target.remoteEtag || "",
-      expectedRevision: error?.expectedRevision || target.remoteRevision || 0,
-      idempotencyKey: error?.idempotencyKey || "",
-      syncSessionId: error?.syncSessionId || "",
-      operationId: error?.operationId || "",
-      sourceType: target.kind,
-      scope: error?.scope || "",
-      forceResume
-    }));
-  }
-  async function clearSyncOutbox(target) {
-    const targetKey = syncTargetKey(target);
-    const items = await getSyncOutbox();
-    if (!items.some((item) => item.targetKey === targetKey)) return;
-    await setSyncOutbox(items.filter((item) => item.targetKey !== targetKey));
   }
   async function loadLockSettings() {
     const result = await chrome.storage.local.get([
@@ -3550,165 +3455,34 @@
       dom.syncPreviewStatus.textContent = `\u9884\u89C8\u5931\u8D25\uFF1A${error.message}`;
     }
   }
-  async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE, forceOutboxRetry = false) {
+  async function syncNowWithRemote(syncMode = SYNC_MODE_MERGE, forceOutboxRetry = false, resumeOutbox = false) {
     if (syncInFlight) {
       setStatus("\u540C\u6B65\u8FDB\u884C\u4E2D\uFF0C\u8BF7\u7A0D\u5019\uFF1B\u672C\u6B21\u8BF7\u6C42\u672A\u91CD\u590D\u6267\u884C");
       return false;
     }
-    const lockOwner = createSyncIdempotencyKey();
-    if (!await acquireSyncOperationLock(lockOwner)) {
-      setStatus("\u5DF2\u6709\u540C\u6B65\u4EFB\u52A1\u6B63\u5728\u8FD0\u884C\uFF0C\u8BF7\u7A0D\u5019\uFF1B\u672C\u6B21\u8BF7\u6C42\u672A\u91CD\u590D\u6267\u884C");
-      return false;
-    }
     syncInFlight = true;
     try {
-      return await performSyncNowWithRemote(syncMode, lockOwner, forceOutboxRetry);
+      if (!await saveSyncSettings()) return false;
+      const normalizedSyncMode = normalizeSyncMode2(syncMode);
+      const encryptionKey = normalizeSyncEncryptionKey(dom.syncEncryptionKey?.value || "");
+      if (!confirmPlaintextSync(encryptionKey) || !confirmOverwriteSync(normalizedSyncMode)) return false;
+      const response = await chrome.runtime.sendMessage({
+        type: "PASS_SYNC_RUN",
+        payload: { mode: normalizedSyncMode, forceOutboxRetry, resumeOutbox, dryRun: false }
+      });
+      if (!response?.ok || !response.result?.report) throw new Error(response?.error || "\u540E\u53F0\u672A\u8FD4\u56DE\u540C\u6B65\u7ED3\u679C");
+      const report = response.result.report;
+      editingAccountId = null;
+      await refresh({ silent: true });
+      await refreshSyncOutboxStatus();
+      setStatus(report.message || (report.ok ? "\u540C\u6B65\u5B8C\u6210" : "\u540C\u6B65\u672A\u5B8C\u6210"));
+      return report.ok;
+    } catch (error) {
+      setStatus(`\u540C\u6B65\u5931\u8D25\uFF1A${error.message}`);
+      return false;
     } finally {
       syncInFlight = false;
-      await releaseSyncOperationLock(lockOwner);
     }
-  }
-  async function performSyncNowWithRemote(syncMode = SYNC_MODE_MERGE, syncSessionId = createSyncIdempotencyKey(), forceOutboxRetry = false) {
-    if (!await saveSyncSettings()) return;
-    const targets = buildRemoteSyncTargetsFromDom();
-    if (!targets || targets.length === 0) return;
-    const normalizedSyncMode = normalizeSyncMode(syncMode);
-    const encryptionKey = normalizeSyncEncryptionKey(dom.syncEncryptionKey?.value || "");
-    if (!confirmPlaintextSync(encryptionKey)) return;
-    if (!confirmOverwriteSync(normalizedSyncMode)) return;
-    const localStored = await readBusinessDataFromStore();
-    const localPayload = normalizeSyncPayloadShape(localStored);
-    const localAccounts = localPayload.accounts;
-    const localPasskeys = localPayload.passkeys;
-    const localFolders = localPayload.folders;
-    try {
-      await saveLocalSafetySnapshot(`\u540C\u6B65\u524D\u81EA\u52A8\u5907\u4EFD\uFF08${getSyncModeHistoryLabel(normalizedSyncMode)}\uFF09`);
-    } catch (error) {
-      setStatus(`\u540C\u6B65\u5DF2\u505C\u6B62\uFF0C\u65E0\u6CD5\u521B\u5EFA\u672C\u5730\u5B89\u5168\u5907\u4EFD\uFF1A${error.message}`);
-      return;
-    }
-    let mergedPayload = localPayload;
-    let conflictCount = 0;
-    let primaryRemotePayload = null;
-    const pullErrors = [];
-    {
-      for (const target of targets) {
-        let remotePayload = null;
-        try {
-          const remoteResponse = await pullRemotePayload(target);
-          updateRemoteConcurrencyState(target, remoteResponse.etag);
-          target.remotePayload = remoteResponse.payload;
-          target.remoteEncrypted = remoteResponse.encrypted;
-          remotePayload = remoteResponse.payload;
-          if (target.kind === "webdav" && remotePayload && !String(remoteResponse.etag || "").trim()) {
-            throw new Error(
-              "WebDAV \u8FDC\u7AEF\u5DF2\u6709\u540C\u6B65\u5305\u4F46\u672A\u8FD4\u56DE ETag\uFF0C\u65E0\u6CD5\u5B89\u5168\u505A\u6761\u4EF6\u5199\u5165\u3002\u8BF7\u6539\u7528\u652F\u6301 ETag \u7684 WebDAV\uFF0C\u6216\u6539\u7528\u81EA\u5EFA\u670D\u52A1\u5668\u4F5C\u4E3A\u4E3B\u6E90\u3002"
-            );
-          }
-        } catch (error) {
-          if (target.isPrimary) {
-            setStatus(`${target.label} \u62C9\u53D6\u5931\u8D25: ${error.message}`);
-            return;
-          }
-          pullErrors.push(`${target.label}: ${error.message}`);
-          continue;
-        }
-        if (target.isPrimary) {
-          primaryRemotePayload = remotePayload ? normalizeSyncPayloadShape(remotePayload) : null;
-        }
-      }
-      const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
-      if (!syncPayloadEquals(currentLocalPayload, localPayload)) {
-        setStatus("\u540C\u6B65\u671F\u95F4\u672C\u5730\u6570\u636E\u5DF2\u53D8\u5316\uFF0C\u672C\u6B21\u540C\u6B65\u5DF2\u53D6\u6D88\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65");
-        return;
-      }
-      const primaryTarget = targets.find((target) => target.isPrimary) || targets[0];
-      if (normalizedSyncMode === SYNC_MODE_MERGE) {
-        if (primaryRemotePayload) {
-          conflictCount = countSyncAccountConflicts(localAccounts, primaryRemotePayload.accounts);
-          if (conflictCount > 0) {
-            await saveLocalSafetySnapshot("\u540C\u6B65\u51B2\u7A81\u4E3B\u6E90\u5907\u4EFD", primaryRemotePayload);
-          }
-          mergedPayload = mergeSyncPayloads2(localPayload, primaryRemotePayload);
-        }
-      } else if (normalizedSyncMode === SYNC_MODE_REMOTE_OVERWRITE_LOCAL) {
-        const primaryPayload = primaryTarget?.remotePayload || null;
-        const remoteIsEmpty = !primaryPayload || visibleSyncCount(primaryPayload.accounts) === 0 && visibleSyncCount(primaryPayload.passkeys) === 0 && visibleSyncCount(primaryPayload.folders) === 0;
-        const localIsNonEmpty = visibleSyncCount(localAccounts) > 0 || visibleSyncCount(localPasskeys) > 0 || visibleSyncCount(localFolders) > 0;
-        if (remoteIsEmpty && localIsNonEmpty) {
-          setStatus("\u4E91\u7AEF\u8986\u76D6\u672C\u5730\u5DF2\u505C\u6B62\uFF1A\u4E3B\u540C\u6B65\u6E90\u4E3A\u7A7A\uFF0C\u907F\u514D\u6E05\u7A7A\u672C\u5730\u6570\u636E");
-          return;
-        }
-        mergedPayload = normalizeSyncPayloadShape(primaryPayload || {});
-      }
-    }
-    {
-      const safety = validateSyncSafety(
-        localPayload,
-        primaryRemotePayload,
-        mergedPayload,
-        normalizedSyncMode
-      );
-      if (!safety.safe) {
-        setStatus(`\u540C\u6B65\u5DF2\u505C\u6B62\uFF0C\u5B89\u5168\u68C0\u67E5\u672A\u901A\u8FC7\uFF1A${safety.reasons.join("\u3001")}`);
-        return;
-      }
-    }
-    await writeBusinessDataToStore(mergedPayload);
-    await appendHistory(
-      `${getSyncModeHistoryLabel(normalizedSyncMode)}\uFF1A\u8D26\u53F7 ${visibleSyncCount(localAccounts)}->${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPasskeys)}->${visibleSyncCount(mergedPayload.passkeys)}` + (conflictCount > 0 ? `\uFF0C\u68C0\u6D4B\u5230 ${conflictCount} \u4E2A\u5B57\u6BB5\u51B2\u7A81\u5E76\u6309\u65F6\u95F4/\u8BBE\u5907\u89C4\u5219\u88C1\u51B3` : "")
-    );
-    const pushErrors = [...pullErrors];
-    let primaryPushFailed = false;
-    const pushTargets = [...targets].sort(
-      (left, right) => Number(right.isPrimary) - Number(left.isPrimary) || Number(right.supportsEtag) - Number(left.supportsEtag)
-    );
-    for (const target of pushTargets) {
-      if (primaryPushFailed && target.isPrimary === false) {
-        pushErrors.push(`${target.label}: \u4E3B\u540C\u6B65\u6E90\u4E0A\u4F20\u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\u955C\u50CF\u5199\u5165`);
-        continue;
-      }
-      try {
-        const candidatePayload = { ...mergedPayload };
-        const candidateHash = await syncPayloadSha256(candidatePayload);
-        const pendingItems = await getSyncOutbox();
-        const pending = pendingItems.find((item) => item.targetKey === syncTargetKey(target) && item.payloadSha256 === candidateHash);
-        if (target.remotePayload && syncPayloadEquals(
-          normalizeSyncPayloadShape(target.remotePayload),
-          candidatePayload
-        )) {
-          await clearSyncOutbox(target);
-          continue;
-        }
-        const result = await pushRemotePayloadWithMode(target, {
-          ...candidatePayload
-        }, normalizedSyncMode, {
-          syncSessionId: pending?.syncSessionId || syncSessionId,
-          operationId: pending?.operationId || "",
-          // outbox 项已在本轮重新拉取过远端；若仍需写入，就是新的请求体/ETag 组合。
-          idempotencyKey: pending ? createSyncIdempotencyKey() : ""
-        });
-        mergedPayload = normalizeSyncPayloadShape(result.payload);
-        await clearSyncOutbox(target);
-      } catch (error) {
-        pushErrors.push(`${target.label}: ${error.message}`);
-        await recordSyncOutboxFailure(target, mergedPayload, error, forceOutboxRetry);
-        if (target.isPrimary) primaryPushFailed = true;
-      }
-    }
-    editingAccountId = null;
-    await refresh({ silent: true });
-    await refreshSyncOutboxStatus();
-    const sourceSummary = targets.map((item) => item.label).join(" + ");
-    if (pushErrors.length > 0) {
-      setStatus(
-        `${getSyncModeStatusLabel(normalizedSyncMode)}\uFF0C\u4F46\u90E8\u5206\u6E90\u4E0A\u4F20\u5931\u8D25\uFF08${sourceSummary}\uFF09\uFF1A${pushErrors.join("\uFF1B")}\uFF08\u8D26\u53F7 ${visibleSyncCount(localAccounts)}->${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPasskeys)}->${visibleSyncCount(mergedPayload.passkeys)}\uFF0C\u6587\u4EF6\u5939 ${visibleSyncCount(localFolders)}->${visibleSyncCount(mergedPayload.folders)}\uFF09`
-      );
-      return;
-    }
-    setStatus(
-      `${getSyncModeStatusLabel(normalizedSyncMode)}\uFF08${sourceSummary}\uFF09\uFF1A\u8D26\u53F7 ${visibleSyncCount(localAccounts)}->${visibleSyncCount(mergedPayload.accounts)}\uFF0C\u901A\u884C\u5BC6\u94A5 ${visibleSyncCount(localPasskeys)}->${visibleSyncCount(mergedPayload.passkeys)}\uFF0C\u6587\u4EF6\u5939 ${visibleSyncCount(localPayload.folders)}->${visibleSyncCount(mergedPayload.folders)}` + (conflictCount > 0 ? `\uFF0C\u5B57\u6BB5\u51B2\u7A81 ${conflictCount} \u4E2A` : "")
-    );
   }
   async function confirmRemoteOverwriteLocalIfNeeded() {
     const targets = buildRemoteSyncTargetsFromDom();
@@ -4007,13 +3781,6 @@
       dom.syncVersionsStatus.textContent = `\u6062\u590D\u5931\u8D25\uFF1A${error.message}`;
     }
   }
-  function updateRemoteConcurrencyState(target, etag) {
-    const normalizedEtag = typeof etag === "string" && etag.trim() ? etag : null;
-    target.remoteEtag = normalizedEtag;
-    if (target.kind === "webdav") {
-      target.supportsEtag = Boolean(normalizedEtag);
-    }
-  }
   async function verifySelfHostedWriteReceipt(response, idempotencyKey) {
     const scope = response.headers.get("X-Sync-Scope");
     const etag = response.headers.get("ETag");
@@ -4034,218 +3801,7 @@
     }
     return etag;
   }
-  async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey = null) {
-    if (target.remoteEncrypted && target.remotePayload && syncPayloadEquals(target.remotePayload, payload)) {
-      return { etag: target.remoteEtag, skipped: true };
-    }
-    const bundle = await buildSyncBundleFromPayload(payload);
-    const encryptedBundle = await encryptSyncBundleDocument(bundle, dom.syncEncryptionKey.value);
-    const headers = {
-      "Content-Type": "application/json",
-      Accept: "application/json"
-    };
-    if (target.authHeader) {
-      headers.Authorization = target.authHeader;
-    }
-    if (ifMatch) {
-      headers["If-Match"] = ifMatch;
-    } else if (target.kind === "webdav") {
-      headers["If-None-Match"] = "*";
-    }
-    if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
-    if (target.syncSessionId) headers["X-Sync-Session-Id"] = target.syncSessionId;
-    if (target.operationId) headers["X-Sync-Operation-Id"] = target.operationId;
-    headers["X-Sync-Client-Version"] = PASS_EXTENSION_VERSION;
-    const response = await fetchWithSyncTimeout(target.url, {
-      method: "PUT",
-      headers,
-      body: JSON.stringify(encryptedBundle, null, 2)
-    });
-    if (!response.ok) {
-      const error = new Error(`HTTP ${response.status}`);
-      error.status = response.status;
-      throw error;
-    }
-    const confirmedEtag = target.kind === "server" ? await verifySelfHostedWriteReceipt(response, idempotencyKey) : response.headers.get("ETag");
-    target.remotePayload = payload;
-    target.remoteEncrypted = true;
-    return {
-      etag: confirmedEtag
-    };
-  }
-  function annotateSyncRetryError(error, target, context) {
-    const annotated = error instanceof Error ? error : new Error(String(error || "\u540C\u6B65\u5931\u8D25"));
-    annotated.idempotencyKey = context.idempotencyKey;
-    annotated.syncSessionId = context.syncSessionId;
-    annotated.operationId = context.operationId;
-    annotated.expectedEtag = target.remoteEtag || "";
-    annotated.expectedRevision = target.remoteRevision || 0;
-    return annotated;
-  }
-  function createSyncOperationContext(context = {}) {
-    return {
-      syncSessionId: String(context.syncSessionId || createSyncIdempotencyKey()),
-      operationId: String(context.operationId || createSyncIdempotencyKey()),
-      idempotencyKey: String(context.idempotencyKey || createSyncIdempotencyKey())
-    };
-  }
-  async function pushRemotePayloadWithRetry(target, payload, context = {}) {
-    let candidate = payload;
-    const operation = createSyncOperationContext(context);
-    target.syncSessionId = operation.syncSessionId;
-    target.operationId = operation.operationId;
-    const { idempotencyKey } = operation;
-    for (let attempt = 0; attempt < SYNC_PUSH_CONFLICT_MAX_ATTEMPTS; attempt += 1) {
-      try {
-        const pushResult = await pushRemotePayload(target, candidate, target.remoteEtag, idempotencyKey);
-        updateRemoteConcurrencyState(target, pushResult.etag);
-        target.remotePayload = candidate;
-        target.remoteEncrypted = true;
-        return { payload: candidate };
-      } catch (error) {
-        if (error?.status !== 412 && error?.status !== 428) {
-          try {
-            const probe = await pullRemotePayload(target);
-            if (probe.payload && syncPayloadEquals(probe.payload, candidate)) {
-              updateRemoteConcurrencyState(target, probe.etag);
-              target.remotePayload = candidate;
-              target.remoteEncrypted = true;
-              return { payload: candidate };
-            }
-          } catch (_) {
-          }
-          throw annotateSyncRetryError(error, target, operation);
-        }
-        if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) {
-          throw annotateSyncRetryError(error, target, operation);
-        }
-      }
-      const latestResponse = await pullRemotePayload(target);
-      updateRemoteConcurrencyState(target, latestResponse.etag);
-      target.remotePayload = latestResponse.payload;
-      target.remoteEncrypted = latestResponse.encrypted;
-      if (target.isPrimary === false) {
-        continue;
-      }
-      const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
-      const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
-      if (!syncPayloadEquals(currentLocalPayload, candidate)) {
-        throw annotateSyncRetryError(new Error("\u672C\u5730\u6570\u636E\u5728\u8FDC\u7AEF\u51B2\u7A81\u91CD\u8BD5\u671F\u95F4\u53D1\u751F\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u5199\u5165\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65"), target, operation);
-      }
-      const localAccounts = Array.isArray(candidate.accounts) ? candidate.accounts.map(normalizeAccountShape) : [];
-      const localPasskeys = buildUnifiedPasskeys(
-        localAccounts,
-        Array.isArray(candidate.passkeys) ? candidate.passkeys.map(normalizePasskeyShape) : []
-      );
-      const localFolders = Array.isArray(candidate.folders) ? candidate.folders.map(normalizeFolderShape) : [];
-      const localBeforeMerge = {
-        ...candidate,
-        accounts: localAccounts,
-        passkeys: localPasskeys,
-        folders: localFolders
-      };
-      if (target.isPrimary !== false) {
-        candidate = mergeSyncPayloads2(localBeforeMerge, remotePayload);
-      }
-      const safety = validateSyncSafety(
-        localBeforeMerge,
-        remotePayload,
-        candidate,
-        SYNC_MODE_MERGE
-      );
-      if (!safety.safe) {
-        throw annotateSyncRetryError(new Error(`\u5E76\u53D1\u91CD\u8BD5\u5408\u5E76\u88AB\u5B89\u5168\u68C0\u67E5\u963B\u6B62\uFF1A${safety.reasons.join("\u3001")}`), target, operation);
-      }
-      if (target.isPrimary !== false) {
-        await writeBusinessDataToStore(candidate);
-      }
-    }
-    throw annotateSyncRetryError(new Error("\u8FDC\u7AEF\u5E76\u53D1\u51B2\u7A81\u91CD\u8BD5\u6B21\u6570\u5DF2\u7528\u5C3D"), target, operation);
-  }
-  async function pushRemotePayloadRemotePreferred(target, payload, context = {}) {
-    let candidate = payload;
-    const operation = createSyncOperationContext(context);
-    target.syncSessionId = operation.syncSessionId;
-    target.operationId = operation.operationId;
-    const { idempotencyKey } = operation;
-    for (let attempt = 0; attempt < SYNC_PUSH_CONFLICT_MAX_ATTEMPTS; attempt += 1) {
-      try {
-        const pushResult = await pushRemotePayload(target, candidate, target.remoteEtag, idempotencyKey);
-        updateRemoteConcurrencyState(target, pushResult.etag);
-        target.remotePayload = candidate;
-        return { payload: candidate };
-      } catch (error) {
-        if (error?.status !== 412 && error?.status !== 428) {
-          try {
-            const probe = await pullRemotePayload(target);
-            if (probe.payload && syncPayloadEquals(probe.payload, candidate)) {
-              updateRemoteConcurrencyState(target, probe.etag);
-              target.remotePayload = candidate;
-              target.remoteEncrypted = true;
-              return { payload: candidate };
-            }
-          } catch (_) {
-          }
-          throw annotateSyncRetryError(error, target, operation);
-        }
-        if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) {
-          throw annotateSyncRetryError(error, target, operation);
-        }
-      }
-      const latestResponse = await pullRemotePayload(target);
-      updateRemoteConcurrencyState(target, latestResponse.etag);
-      if (target.isPrimary === false) {
-        target.remotePayload = latestResponse.payload;
-        target.remoteEncrypted = latestResponse.encrypted;
-        continue;
-      }
-      const latestPayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
-      const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
-      if (!syncPayloadEquals(currentLocalPayload, candidate)) {
-        throw annotateSyncRetryError(new Error("\u672C\u5730\u6570\u636E\u5728\u8FDC\u7AEF\u51B2\u7A81\u91CD\u8BD5\u671F\u95F4\u53D1\u751F\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u5199\u5165\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65"), target, operation);
-      }
-      const safety = validateSyncSafety(
-        candidate,
-        latestPayload,
-        latestPayload,
-        SYNC_MODE_REMOTE_OVERWRITE_LOCAL
-      );
-      if (!safety.safe) {
-        throw annotateSyncRetryError(new Error(`\u5E76\u53D1\u91CD\u8BD5\u7684\u4E91\u7AEF\u8986\u76D6\u88AB\u5B89\u5168\u68C0\u67E5\u963B\u6B62: ${safety.reasons.join(",")}`), target, operation);
-      }
-      if (target.isPrimary !== false) {
-        candidate = latestPayload;
-      }
-      target.remotePayload = candidate;
-      target.remoteEncrypted = true;
-      if (target.isPrimary !== false) {
-        await writeBusinessDataToStore(candidate);
-      }
-    }
-    throw annotateSyncRetryError(new Error("\u8FDC\u7AEF\u5E76\u53D1\u51B2\u7A81\u91CD\u8BD5\u6B21\u6570\u5DF2\u7528\u5C3D"), target, operation);
-  }
-  async function pushRemotePayloadWithMode(target, payload, syncMode, context = {}) {
-    switch (syncMode) {
-      case SYNC_MODE_LOCAL_OVERWRITE_REMOTE: {
-        const operation = createSyncOperationContext(context);
-        target.syncSessionId = operation.syncSessionId;
-        target.operationId = operation.operationId;
-        try {
-          const pushResult = await pushRemotePayload(target, payload, target.remoteEtag, operation.idempotencyKey);
-          updateRemoteConcurrencyState(target, pushResult.etag);
-          return { payload };
-        } catch (error) {
-          throw annotateSyncRetryError(error, target, operation);
-        }
-      }
-      case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:
-        return pushRemotePayloadRemotePreferred(target, payload, context);
-      case SYNC_MODE_MERGE:
-      default:
-        return pushRemotePayloadWithRetry(target, payload, context);
-    }
-  }
-  function normalizeSyncMode(value) {
+  function normalizeSyncMode2(value) {
     switch (String(value || "").trim()) {
       case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:
         return SYNC_MODE_REMOTE_OVERWRITE_LOCAL;
@@ -4255,53 +3811,6 @@
       default:
         return SYNC_MODE_MERGE;
     }
-  }
-  function getSyncModeHistoryLabel(syncMode) {
-    switch (syncMode) {
-      case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:
-        return "\u4E91\u7AEF\u8986\u76D6\u672C\u5730";
-      case SYNC_MODE_LOCAL_OVERWRITE_REMOTE:
-        return "\u672C\u5730\u8986\u76D6\u4E91\u7AEF";
-      case SYNC_MODE_MERGE:
-      default:
-        return "\u8FDC\u7AEF\u540C\u6B65\u5408\u5E76";
-    }
-  }
-  function getSyncModeStatusLabel(syncMode) {
-    switch (syncMode) {
-      case SYNC_MODE_REMOTE_OVERWRITE_LOCAL:
-        return "\u4E91\u7AEF\u8986\u76D6\u672C\u5730\u5B8C\u6210";
-      case SYNC_MODE_LOCAL_OVERWRITE_REMOTE:
-        return "\u672C\u5730\u8986\u76D6\u4E91\u7AEF\u5B8C\u6210";
-      case SYNC_MODE_MERGE:
-      default:
-        return "\u8FDC\u7AEF\u540C\u6B65\u5B8C\u6210";
-    }
-  }
-  async function buildSyncBundleFromPayload(payload) {
-    const [deviceName, deviceId] = await Promise.all([getDeviceName(), getOrCreateSyncDeviceId()]);
-    const accounts = Array.isArray(payload?.accounts) ? payload.accounts.map(normalizeAccountShape) : [];
-    const rawPasskeys = Array.isArray(payload?.passkeys) ? payload.passkeys.map(normalizePasskeyShape) : [];
-    const passkeys = buildUnifiedPasskeys(accounts, rawPasskeys);
-    const folders = Array.isArray(payload?.folders) ? payload.folders.map(normalizeFolderShape) : [];
-    return {
-      schema: SYNC_BUNDLE_SCHEMA_V2,
-      exportedAtMs: Date.now(),
-      source: {
-        app: "pass-extension",
-        platform: "chrome-extension",
-        deviceName,
-        deviceId,
-        logicalClockMs: Date.now(),
-        formatVersion: 2
-      },
-      payload: sortSyncPayloadCollections({
-        ...normalizeSyncPayloadShape(payload),
-        accounts,
-        passkeys,
-        folders
-      })
-    };
   }
   function base64EncodeUtf8(input) {
     const bytes = new TextEncoder().encode(String(input || ""));
@@ -6313,6 +5822,9 @@
       name: safeName,
       matchedSites: normalizeSites(item?.matchedSites || []),
       autoAddMatchingSites: Boolean(item?.autoAddMatchingSites),
+      regularAccountIds: [...new Set((Array.isArray(item?.regularAccountIds) ? item.regularAccountIds : []).map((id2) => String(id2 || "").trim().toLowerCase()).filter(Boolean))],
+      regularOrderUpdatedAtMs: Number(item?.regularOrderUpdatedAtMs) || 0,
+      regularOrderUpdatedDeviceName: String(item?.regularOrderUpdatedDeviceName || "").trim(),
       isDeleted: Boolean(item?.isDeleted),
       isPermanentlyDeleted: Boolean(item?.isPermanentlyDeleted),
       deletedAtMs: item?.deletedAtMs == null ? null : Number(item.deletedAtMs),

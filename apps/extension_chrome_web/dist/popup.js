@@ -409,7 +409,10 @@
   var COLLECTION_ACCOUNTS = "accounts";
   var COLLECTION_PASSKEYS = "passkeys";
   var COLLECTION_FOLDERS = "folders";
+  var COLLECTION_LAYOUT = "layout";
   var COLLECTION_HISTORY = "history";
+  var BUSINESS_REVISION_KEY = "businessRevision";
+  var BUSINESS_COLLECTIONS = [COLLECTION_ACCOUNTS, COLLECTION_PASSKEYS, COLLECTION_FOLDERS, COLLECTION_LAYOUT];
   var HISTORY_MAX_ENTRIES = 500;
   var LEGACY_STORAGE_KEY_ACCOUNTS = "pass.accounts";
   var LEGACY_STORAGE_KEY_PASSKEYS = "pass.passkeys";
@@ -494,6 +497,11 @@
       await writeCollection(key, row.value);
       return row.value;
     }
+    return decodeCollectionRow(key, row);
+  }
+  async function decodeCollectionRow(key, row) {
+    if (!row) return [];
+    if (Array.isArray(row.value)) return row.value;
     if (Number(row.version) !== 1 || !row.nonceBase64 || !row.ciphertextBase64) {
       throw new Error(`IndexedDB \u96C6\u5408\u683C\u5F0F\u65E0\u6548: ${key}`);
     }
@@ -531,16 +539,35 @@
       ciphertextBase64: bytesToBase64(new Uint8Array(ciphertext))
     };
   }
-  async function writeCollectionRows(entries) {
+  async function writeCollectionRows(entries, expectedRevision = null) {
     const rows = await Promise.all(entries.map((entry) => encryptCollectionRow(entry.key, entry.value)));
     const db = await openDatabase();
     const tx = db.transaction(STORE_COLLECTIONS, "readwrite");
     const store = tx.objectStore(STORE_COLLECTIONS);
-    for (const row of rows) store.put(row);
-    await new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve();
+    const changesBusinessData = entries.some((entry) => BUSINESS_COLLECTIONS.includes(entry.key));
+    let revision = null;
+    let conflict = null;
+    return await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve(revision);
       tx.onerror = () => reject(tx.error || new Error("IndexedDB transaction failed"));
-      tx.onabort = () => reject(tx.error || new Error("IndexedDB transaction aborted"));
+      tx.onabort = () => reject(conflict || tx.error || new Error("IndexedDB transaction aborted"));
+      if (!changesBusinessData) {
+        for (const row of rows) store.put(row);
+        return;
+      }
+      const request = store.get(BUSINESS_REVISION_KEY);
+      request.onsuccess = () => {
+        const current = Number(request.result?.revision) || 0;
+        if (expectedRevision != null && current !== expectedRevision) {
+          conflict = new Error("\u540C\u6B65\u671F\u95F4\u672C\u5730\u6570\u636E\u5DF2\u53D8\u5316\uFF0C\u5DF2\u4FDD\u7559\u6700\u65B0\u7F16\u8F91\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65");
+          conflict.code = "LOCAL_CHANGED";
+          tx.abort();
+          return;
+        }
+        revision = current + 1;
+        for (const row of rows) store.put(row);
+        store.put({ key: BUSINESS_REVISION_KEY, revision });
+      };
     });
   }
   async function loadOrCreateEncryptionKey() {

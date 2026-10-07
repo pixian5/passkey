@@ -2,19 +2,19 @@
 
 跨平台密码管理器 Monorepo。当前主管理面是 **Tauri 桌面**、**Docker Web** 和 **Chrome Web 扩展**：三端复用同一管理 UI 源码和 V2 同步契约，但存储、锁、系统能力和少数返回结构仍按平台适配。Rust `pass_core` 是合并权威；Chrome 的 JS 合并实现必须通过黄金向量与 Rust 对拍。
 
-> 当前事实入口：[`docs/current-app-extension-implementation-reference-zh.md`](docs/current-app-extension-implementation-reference-zh.md)。完整文档索引见 [`docs/README.md`](docs/README.md)。
+> 当前事实入口：[`docs/current-app-extension-implementation-reference-zh.md`](docs/current-app-extension-implementation-reference-zh.md)。逐项文档索引见 [`文档索引.md`](文档索引.md)，分类阅读导航见 [`docs/README.md`](docs/README.md)。
 
 ## 当前开发进度
 
-版本 `1.7.9`。本轮完成同步补偿对账闭环（PUT 结果不确定先回读远端、冲突后回读失败改为入队）、outbox 重算改用新幂等键、永久删除墓碑在覆盖模式下的保护、同步服务无 Token 默认拒绝启动（显式 `PASS_SYNC_ALLOW_OPEN=1` 仅限本机开发），并把“同步密钥留空即明文、不额外确认”的策略写进契约。本地门禁 `scripts/test_all.sh` 全绿。
+版本 `1.8.0`。已修复同步上传覆盖新编辑、镜像丢失永久删除墓碑、连续冲突丢失墓碑、密钥轮换被跳过、补偿改变覆盖模式及两类排序丢失问题。352 项本地自动化测试通过；Chrome 测试版和 Firefox 各 10 个真实扩展场景、Safari 网页端 3 个同步场景通过。桌面应用已安装启动；Safari 扩展新版安装受签名团队不匹配阻碍。
 
-详细进度：[`docs/20260930004824-当前开发进度.md`](docs/20260930004824-当前开发进度.md)
+详细进度：[`docs/20261007-2200-当前开发进度-GPT-6.md`](docs/20261007-2200-当前开发进度-GPT-6.md)
 
 ## 下一步待实现
 
-优先取真实证据：两台设备同一主源的合并/冲突/覆盖实测、服务端幂等“响应丢失只产生一个版本”实测、认证收口实测、Chrome 真实扩展加载；随后是 WebDAV 无 ETag 的部署期检测、补偿队列可视化、反向代理限流说明，以及三端同步编排下沉共享核心的债务清理。
+优先补齐 Safari 扩展签名与实机验证、两台设备同一主源的并发/覆盖/密钥轮换实测，以及 Ubuntu 容器部署验收。后续优化包括 WebDAV 无 ETag 的部署检测、反向代理限流说明和三端同步编排共用核心；现有“密钥留空即明文、不额外确认”策略保持不变。
 
-详细计划：[`docs/20260930004824-下一步待实现.md`](docs/20260930004824-下一步待实现.md)
+详细计划：[`docs/20261007-2200-下一步待实现-GPT-6.md`](docs/20261007-2200-下一步待实现-GPT-6.md)
 
 ## 当前入口
 

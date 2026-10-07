@@ -14,6 +14,10 @@ export function syncTargetKey(target) {
   return `${String(target?.kind || "").trim()}|${String(target?.url || "").trim()}`;
 }
 
+export function normalizeSyncMode(mode) {
+  return ["remoteOverwriteLocal", "localOverwriteRemote"].includes(mode) ? mode : "merge";
+}
+
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value && typeof value === "object") {
@@ -40,6 +44,7 @@ export function normalizeSyncOutboxItem(item, nowMs = Date.now()) {
   return {
     targetKey,
     payload,
+    mode: normalizeSyncMode(item?.mode),
     payloadSha256: String(item?.payloadSha256 || "").trim().toLowerCase(),
     expectedEtag: String(item?.expectedEtag || "").trim(),
     expectedRevision: Math.floor(nonNegativeNumber(item?.expectedRevision, 0)),
@@ -74,9 +79,10 @@ export function isSyncOutboxReady(item, nowMs = Date.now()) {
       && Number(item.nextRetryAtMs || 0) <= nowMs);
 }
 
-export function matchingSyncOutboxItem(item, payloadSha256) {
+export function matchingSyncOutboxItem(item, payloadSha256, mode = null) {
   const hash = String(payloadSha256 || "").trim().toLowerCase();
   return item && hash && String(item.payloadSha256 || "").trim().toLowerCase() === hash
+    && (mode == null || normalizeSyncMode(item.mode) === normalizeSyncMode(mode))
     ? item
     : null;
 }
@@ -106,6 +112,7 @@ export function resumeSyncOutbox(value, targetKey, payloadSha256 = "") {
 export function upsertSyncOutbox(value, {
   targetKey,
   payload,
+  mode = "merge",
   error,
   payloadSha256 = "",
   expectedEtag = "",
@@ -121,7 +128,7 @@ export function upsertSyncOutbox(value, {
   const current = normalizeSyncOutbox(value, nowMs);
   const previous = current.find((item) => item.targetKey === targetKey);
   const normalizedHash = String(payloadSha256 || "").trim().toLowerCase();
-  const sameLogicalWrite = Boolean(previous && normalizedHash && previous.payloadSha256 === normalizedHash);
+  const sameLogicalWrite = Boolean(matchingSyncOutboxItem(previous, normalizedHash, mode));
   const wasPaused = previous?.status === "paused";
   const attempts = Math.min(
     SYNC_OUTBOX_MAX_ATTEMPTS,
@@ -130,6 +137,7 @@ export function upsertSyncOutbox(value, {
   const next = normalizeSyncOutboxItem({
     targetKey,
     payload,
+    mode,
     payloadSha256: normalizedHash,
     expectedEtag,
     expectedRevision,

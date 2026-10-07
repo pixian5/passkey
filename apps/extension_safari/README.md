@@ -27,8 +27,13 @@ xcodebuild -project PassSafari.xcodeproj -scheme PassSafari -configuration Debug
 Built app:
 - `/Users/x/code/pass/apps/extension_safari/PassSafari/build/Build/Products/Debug/PassSafari.app`
 
-## Apple Development signing
-For local development on this Mac, use the bundled script:
+## Apple Development 签名
+带签名安装需要 Xcode 项目的 `PSTNW3UN4R` 团队在本机钥匙串中有可用的
+`Apple Development` 证书和私钥。脚本会先检查该条件，避免把无签名产物误报为
+可安装的 Safari 扩展：
+
+团队按证书主题的 `OU` 字段识别，证书名称末尾的开发者标识不能代替团队。
+当前环境的证书团队不匹配，因此 1.8.0 已通过无签名编译，但尚未安装和实测新版扩展。
 
 ```bash
 cd /Users/x/code/pass/apps/extension_safari
@@ -42,6 +47,17 @@ What it does:
 - installs the built app to `/Applications/PassSafari.app`
 - re-registers it with LaunchServices
 - launches the new app
+
+只有需要验证编译时，使用无签名模式：
+
+```bash
+cd /Users/x/code/pass/apps/extension_safari
+./scripts/build_signed_safari.sh --unsigned
+```
+
+无签名模式不会修改 `/Applications/PassSafari.app`，其产物也不能用于 Safari
+扩展实机验证。若签名检查失败，请在 Xcode 中登录 `PSTNW3UN4R` 团队并下载或创建
+该团队的开发证书及私钥；不要用另一团队的证书替换项目团队配置。
 
 ## Enable in Safari
 1. Build and run `PassSafari.app` once.

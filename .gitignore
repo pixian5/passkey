@@ -60,6 +60,7 @@ playwright-report/
 # Runtime data and process files
 apps/pass-web/data/
 apps/sync_server_ubuntu/data/
+.test-backups/
 *.log
 *.pid
 *.enc

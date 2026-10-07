@@ -18,6 +18,9 @@ const COLLECTION_HISTORY = "history";
 const COLLECTION_SYNC_SECRETS = "syncSecrets";
 const COLLECTION_SYNC_SAFETY_SNAPSHOTS = "syncSafetySnapshots";
 const COLLECTION_SYNC_OUTBOX = "syncOutbox";
+// 业务版本与账号、排序等集合在同一事务提交，不受日志和队列写入影响。
+const BUSINESS_REVISION_KEY = "businessRevision";
+const BUSINESS_COLLECTIONS = [COLLECTION_ACCOUNTS, COLLECTION_PASSKEYS, COLLECTION_FOLDERS, COLLECTION_LAYOUT];
 const HISTORY_MAX_ENTRIES = 500;
 const SAFETY_SNAPSHOT_MAX_ENTRIES = 5;
 
@@ -125,6 +128,12 @@ async function readCollection(key) {
     await writeCollection(key, row.value);
     return row.value;
   }
+  return decodeCollectionRow(key, row);
+}
+
+async function decodeCollectionRow(key, row) {
+  if (!row) return [];
+  if (Array.isArray(row.value)) return row.value;
   if (Number(row.version) !== 1 || !row.nonceBase64 || !row.ciphertextBase64) {
     throw new Error(`IndexedDB 集合格式无效: ${key}`);
   }
@@ -167,16 +176,35 @@ async function encryptCollectionRow(key, value) {
   };
 }
 
-async function writeCollectionRows(entries) {
+async function writeCollectionRows(entries, expectedRevision = null) {
   const rows = await Promise.all(entries.map((entry) => encryptCollectionRow(entry.key, entry.value)));
   const db = await openDatabase();
   const tx = db.transaction(STORE_COLLECTIONS, "readwrite");
   const store = tx.objectStore(STORE_COLLECTIONS);
-  for (const row of rows) store.put(row);
-  await new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
+  const changesBusinessData = entries.some((entry) => BUSINESS_COLLECTIONS.includes(entry.key));
+  let revision = null;
+  let conflict = null;
+  return await new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve(revision);
     tx.onerror = () => reject(tx.error || new Error("IndexedDB transaction failed"));
-    tx.onabort = () => reject(tx.error || new Error("IndexedDB transaction aborted"));
+    tx.onabort = () => reject(conflict || tx.error || new Error("IndexedDB transaction aborted"));
+    if (!changesBusinessData) {
+      for (const row of rows) store.put(row);
+      return;
+    }
+    const request = store.get(BUSINESS_REVISION_KEY);
+    request.onsuccess = () => {
+      const current = Number(request.result?.revision) || 0;
+      if (expectedRevision != null && current !== expectedRevision) {
+        conflict = new Error("同步期间本地数据已变化，已保留最新编辑，请重新同步");
+        conflict.code = "LOCAL_CHANGED";
+        tx.abort();
+        return;
+      }
+      revision = current + 1;
+      for (const row of rows) store.put(row);
+      store.put({ key: BUSINESS_REVISION_KEY, revision });
+    };
   });
 }
 
@@ -625,15 +653,22 @@ export async function setFolders(folders) {
 }
 
 export async function getAllData() {
+  return (await getAllDataSnapshot()).payload;
+}
+
+export async function getAllDataSnapshot() {
   await ensureDataStorageReady();
-  const [accounts, passkeys, folders, layoutRows] = await Promise.all([
-    readCollection(COLLECTION_ACCOUNTS),
-    readCollection(COLLECTION_PASSKEYS),
-    readCollection(COLLECTION_FOLDERS),
-    readCollection(COLLECTION_LAYOUT),
-  ]);
+  // 一次只读事务取得全部密文及版本，解密在事务结束后执行。
+  const db = await openDatabase();
+  const tx = db.transaction(STORE_COLLECTIONS, "readonly");
+  const store = tx.objectStore(STORE_COLLECTIONS);
+  const rows = await Promise.all([...BUSINESS_COLLECTIONS, BUSINESS_REVISION_KEY]
+    .map((key) => requestAsPromise(store.get(key))));
+  const [accounts, passkeys, folders, layoutRows] = await Promise.all(
+    BUSINESS_COLLECTIONS.map((key, index) => decodeCollectionRow(key, rows[index]))
+  );
   const layout = layoutRows[0] && typeof layoutRows[0] === "object" ? layoutRows[0] : {};
-  return {
+  const payload = {
     accounts,
     passkeys,
     folders,
@@ -645,6 +680,7 @@ export async function getAllData() {
     folderOrderUpdatedDeviceName: String(layout.folderOrderUpdatedDeviceName || ""),
     deviceName: String(layout.deviceName || ""),
   };
+  return { payload, revision: Number(rows[BUSINESS_COLLECTIONS.length]?.revision) || 0 };
 }
 
 export async function setAllData({
@@ -658,7 +694,7 @@ export async function setAllData({
   folderOrderUpdatedAtMs = 0,
   folderOrderUpdatedDeviceName = "",
   deviceName = "",
-}) {
+}, { expectedRevision = null } = {}) {
   try {
     await ensureDataStorageReady();
   } catch (error) {
@@ -668,7 +704,7 @@ export async function setAllData({
     // instead of blocking forever in the migration read path.
     if (String(error?.name || "") !== "OperationError") throw error;
   }
-  await writeCollectionRows([
+  const revision = await writeCollectionRows([
     { key: COLLECTION_ACCOUNTS, value: accounts },
     { key: COLLECTION_PASSKEYS, value: passkeys },
     { key: COLLECTION_FOLDERS, value: folders },
@@ -684,8 +720,9 @@ export async function setAllData({
         deviceName: String(deviceName || ""),
       }],
     },
-  ]);
+  ], expectedRevision);
   await touchDataBump("all");
+  return revision;
 }
 
 function normalizeSyncSecrets(value) {

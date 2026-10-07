@@ -29,6 +29,7 @@ import {
   disableDataEncryption,
   ensureDataStorageReady,
   getAllData as getAllDataFromDataStore,
+  getAllDataSnapshot as getAllDataSnapshotFromDataStore,
   getAccounts as getAccountsFromDataStore,
   getSafetySnapshots,
   getSyncOutbox,
@@ -69,6 +70,7 @@ import {
   encryptSyncBundleDocument,
   generateSyncEncryptionKey,
   normalizeSyncEncryptionKey,
+  syncEncryptionKeyId,
 } from "./sync_crypto.js";
 import { isTrustedExtensionMessageSender } from "./message_security.js";
 import { createSyncIdempotencyKey, secureRandomUuid } from "./secure_random.js";
@@ -402,13 +404,14 @@ async function scheduleAutoSyncAlarm() {
 }
 
 async function runAutoSync() {
-  return runManagedSync({ automatic: true });
+  return runManagedSync({ automatic: true, resumeOutbox: true });
 }
 
 async function runManagedSync({
   mode = SYNC_MODE_MERGE,
   dryRun = false,
   forceOutboxRetry = false,
+  resumeOutbox = false,
   automatic = false,
 } = {}) {
   if (autoSyncInFlight) {
@@ -424,7 +427,7 @@ async function runManagedSync({
       if (automatic) return null;
       throw new Error("已有同步任务正在进行，请稍后重试");
     }
-    return await runAutoSyncInternal(lockOwner, { mode, dryRun, forceOutboxRetry, automatic });
+    return await runAutoSyncInternal(lockOwner, { mode, dryRun, forceOutboxRetry, resumeOutbox, automatic });
   } finally {
     await releaseSyncOperationLock(lockOwner);
     autoSyncInFlight = false;
@@ -432,386 +435,257 @@ async function runManagedSync({
 }
 
 async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), options = {}) {
-  const mode = ["remoteOverwriteLocal", "localOverwriteRemote"].includes(options.mode)
-    ? options.mode
-    : SYNC_MODE_MERGE;
+  let mode = ["remoteOverwriteLocal", "localOverwriteRemote"].includes(options.mode)
+    ? options.mode : SYNC_MODE_MERGE;
   const dryRun = Boolean(options.dryRun);
   const forceOutboxRetry = Boolean(options.forceOutboxRetry);
   const automatic = Boolean(options.automatic);
   const reportOperationId = createSyncIdempotencyKey();
   const lockStatus = await getBackgroundLockStatus();
   if (lockStatus.locked) {
-    logSyncFlow("auto-sync-skipped-locked");
     if (automatic) return null;
     throw new Error("扩展已锁定，请先解锁");
   }
   const targets = await buildRemoteSyncTargetsFromStorage();
-  if (!targets || targets.length === 0) {
+  if (!targets?.length) {
     if (automatic) return null;
     throw new Error("请先启用并配置同步来源");
   }
   const primaryTarget = targets.find((target) => target.isPrimary) || targets[0];
   const primaryReportSource = primaryTarget.kind === "server" ? "selfHosted" : primaryTarget.kind;
-  const encryptionKey = await getOrCreateSyncEncryptionKey();
-  logSyncFlow("auto-sync-start", {
-    targetLabels: targets.map((item) => item.label),
-    targetUrls: targets.map((item) => item.url),
-    encrypted: Boolean(encryptionKey),
-    online: typeof navigator !== "undefined" ? navigator.onLine : null,
-  });
-
-  const localStored = await readBusinessDataFromStore();
-  const localAccounts = Array.isArray(localStored.accounts)
-    ? localStored.accounts.map(normalizeAccountShape)
-    : [];
-  const localStoredPasskeys = Array.isArray(localStored.passkeys)
-    ? localStored.passkeys.map(normalizePasskeyShape)
-    : [];
-  const localPasskeys = buildUnifiedPasskeys(localAccounts, localStoredPasskeys);
-  const localFolders = Array.isArray(localStored.folders)
-    ? localStored.folders.map(normalizeFolderShape)
-    : [];
-
-  let mergedAccounts = localAccounts;
-  let mergedPasskeys = localPasskeys;
-  let mergedFolders = localFolders;
-  let finalPayload = null;
+  const encryptionKeyId = await syncEncryptionKeyId(await getOrCreateSyncEncryptionKey());
+  const initialSnapshot = await getAllDataSnapshotFromDataStore();
+  const localPayload = normalizeSyncPayloadShape(initialSnapshot.payload);
+  const initialOutbox = await getSyncOutbox();
+  // 只有明确恢复补偿任务且本地未变时才恢复原模式；新的手动同步遵循本次选择。
+  const pendingPrimary = matchingSyncOutboxItem(
+    initialOutbox.find((item) => item.targetKey === syncTargetKey(primaryTarget)),
+    await syncPayloadSha256(localPayload),
+  );
+  if (options.resumeOutbox && pendingPrimary) {
+    mode = ["remoteOverwriteLocal", "localOverwriteRemote"].includes(pendingPrimary.mode)
+      ? pendingPrimary.mode : SYNC_MODE_MERGE;
+  }
   let primaryRemotePayload = null;
+  let finalPayload = localPayload;
+  let expectedRevision = initialSnapshot.revision;
+  let lastAppliedPayload = localPayload;
+  let applied = false;
+  let primaryOperationId = reportOperationId;
   const pullErrors = [];
-
-  for (const target of targets) {
-    logSyncFlow("pull-start", {
-      label: target.label,
-      url: target.url,
-      hasAuthHeader: Boolean(target.authHeader),
-    });
-    let remoteResponse;
-    try {
-      remoteResponse = await pullRemotePayload(target);
-    } catch (error) {
-      logSyncFlow("auto-sync-pull-failed", {
-        label: target.label,
-        message: error?.message || String(error || ""),
-      });
-      const queued = await advancePendingOutboxAfterPullFailure(target, error, forceOutboxRetry);
-      if (target.isPrimary) {
-        return {
-          report: buildSyncOperationReport({
-            ok: false, safe: true, reasons: [error?.message || String(error || "")],
-            safety: "notEvaluated",
-            dryRun, mode, message: `${target.label}拉取失败：${error?.message || String(error || "")}`,
-            localAccounts: visibleSyncCount(localAccounts), remoteAccounts: 0,
-            mergedAccounts: visibleSyncCount(localAccounts), applied: false, pushed: false,
-            remotePulled: false, pendingRetry: queued, retryable: true, stage: "pullingRemote",
-            source: target.kind === "server" ? "selfHosted" : target.kind,
-            syncSessionId, operationId: reportOperationId,
-          }),
-        };
-      }
-      pullErrors.push(`${target.label}: ${error?.message || String(error || "")}`);
-      continue;
+  const makeReport = (fields) => buildSyncOperationReport({
+    mode, dryRun, safe: true, source: primaryReportSource, syncSessionId,
+    operationId: primaryOperationId,
+    localAccounts: visibleSyncCount(localPayload.accounts),
+    remoteAccounts: visibleSyncCount(primaryRemotePayload?.accounts),
+    mergedAccounts: visibleSyncCount(finalPayload.accounts),
+    applied, remotePulled: true, ...fields,
+  });
+  const localChangedError = () => Object.assign(
+    new Error("同步期间本地数据已变化，已保留最新编辑，请重新同步"),
+    { code: "LOCAL_CHANGED" },
+  );
+  const assertLocalUnchanged = async () => {
+    if ((await getAllDataSnapshotFromDataStore()).revision !== expectedRevision) throw localChangedError();
+  };
+  const applyCandidate = async (payload) => {
+    await assertLocalUnchanged();
+    const next = normalizeSyncPayloadShape(payload);
+    if (syncPayloadEquals(lastAppliedPayload, next)) {
+      finalPayload = next;
+      return;
     }
-    logSyncFlow("pull-success", {
-      label: target.label,
-      url: target.url,
-      hasPayload: Boolean(remoteResponse.payload),
-      etag: remoteResponse.etag,
-    });
-    updateRemoteConcurrencyState(target, remoteResponse.etag, remoteResponse.revision);
-    target.remotePayload = remoteResponse.payload;
-    target.remoteEncrypted = remoteResponse.encrypted;
-    const remotePayload = remoteResponse.payload;
-      if (
-        target.kind === "webdav"
-        && remotePayload
-        && !String(remoteResponse.etag || "").trim()
-      ) {
-        throw new Error(
-          "WebDAV 远端已有同步包但未返回 ETag，无法安全做条件写入。请改用支持 ETag 的 WebDAV，或改用自建服务器作为主源。"
-        );
+    await saveLocalSafetySnapshot(automatic ? "自动同步前自动备份" : "同步写入本地前自动备份", lastAppliedPayload);
+    // 版本检查和全部集合写入在同一 IndexedDB 事务完成，关闭读取后的竞态窗口。
+    expectedRevision = await setAllDataToDataStore(next, { expectedRevision });
+    lastAppliedPayload = next;
+    finalPayload = next;
+    applied = true;
+    await broadcastWebBridgeData(next);
+  };
+
+  logSyncFlow("auto-sync-start", { mode, targetLabels: targets.map((item) => item.label), encrypted: Boolean(encryptionKeyId) });
+  for (const target of targets) {
+    try {
+      const response = await pullRemotePayload(target);
+      updateRemoteConcurrencyState(target, response.etag, response.revision);
+      target.remotePayload = response.payload;
+      target.remoteEncrypted = response.encrypted;
+      target.remoteKeyId = response.keyId || "";
+      if (target.kind === "webdav" && response.payload && !String(response.etag || "").trim()) {
+        throw new Error("WebDAV 远端已有同步包但未返回 ETag，无法安全做条件写入");
       }
-    if (target.isPrimary) {
-      primaryRemotePayload = remotePayload
-        ? normalizeSyncPayloadShape(remotePayload)
-        : null;
+      if (target === primaryTarget) {
+        primaryRemotePayload = response.payload ? normalizeSyncPayloadShape(response.payload) : null;
+      }
+    } catch (error) {
+      target.pullFailed = true;
+      const queued = !dryRun && await advancePendingOutboxAfterPullFailure(target, error, forceOutboxRetry);
+      if (target === primaryTarget) {
+        return { report: makeReport({
+          ok: false, safety: "notEvaluated", reasons: [error.message],
+          message: `${target.label}拉取失败：${error.message}`, remotePulled: false,
+          pendingRetry: queued, retryable: true, stage: "pullingRemote",
+        }) };
+      }
+      pullErrors.push(`${target.label}: ${error.message}`);
     }
   }
-
-  const currentPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
-  const pulledLocalPayload = {
-    ...currentPayload,
-    accounts: localAccounts,
-    folders: localFolders,
-    passkeys: localPasskeys,
-  };
-  if (!syncPayloadEquals(currentPayload, pulledLocalPayload)) {
-    logSyncFlow("auto-sync-aborted-local-changed-during-pull");
-    return {
-      report: buildSyncOperationReport({
-        ok: false,
-        safe: true,
-        safety: "notEvaluated",
-        reasons: ["拉取远端数据期间本地内容已变化，请重新同步"],
-        dryRun,
-        mode,
-        message: "拉取远端数据期间本地内容已变化，请重新同步",
-        localAccounts: visibleSyncCount(currentPayload.accounts),
-        remoteAccounts: visibleSyncCount(primaryRemotePayload?.accounts),
-        mergedAccounts: visibleSyncCount(currentPayload.accounts),
-        applied: false,
-        pushed: false,
-        remotePulled: true,
-        pendingRetry: false,
-        retryable: true,
-        stage: "checkingLocalConcurrency",
-        source: primaryReportSource,
-        syncSessionId,
-        operationId: reportOperationId,
-      }),
-      localPayload: currentPayload,
-      payload: currentPayload,
-    };
+  try {
+    await assertLocalUnchanged();
+  } catch (error) {
+    return { report: makeReport({
+      ok: false, code: error.code, safety: "notEvaluated", reasons: [error.message],
+      message: error.message, retryable: true, stage: "checkingLocalConcurrency",
+    }) };
   }
   if (primaryRemotePayload && mode === SYNC_MODE_MERGE) {
-    const canonicalLocalPayload = {
-      ...pulledLocalPayload,
-      accounts: syncAliasGroups(pulledLocalPayload.accounts),
-    };
-    const canonicalRemotePayload = {
-      ...primaryRemotePayload,
-      accounts: syncAliasGroups(primaryRemotePayload.accounts),
-    };
-    const mergedPayload = mergeSyncPayloadsCore(
-      canonicalLocalPayload,
-      canonicalRemotePayload,
+    finalPayload = mergeSyncPayloadsCore(
+      { ...localPayload, accounts: syncAliasGroups(localPayload.accounts) },
+      { ...primaryRemotePayload, accounts: syncAliasGroups(primaryRemotePayload.accounts) },
       syncMergeHelpers(),
     );
-    mergedPayload.accounts = syncAliasGroups(mergedPayload.accounts);
-    ({ accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys } = mergedPayload);
-    finalPayload = mergedPayload;
+    finalPayload.accounts = syncAliasGroups(finalPayload.accounts);
+    finalPayload = normalizeSyncPayloadShape(finalPayload);
   } else if (mode === "remoteOverwriteLocal") {
-    finalPayload = normalizeSyncPayloadShape(primaryRemotePayload || {
-      accounts: [], folders: [], passkeys: [], allRegularAccountIds: [], folderOrderIds: [],
-    });
-    ({ accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys } = finalPayload);
-  } else {
-    finalPayload = currentPayload;
+    finalPayload = normalizeSyncPayloadShape(primaryRemotePayload || {});
   }
-
-  if (primaryRemotePayload || mode === "remoteOverwriteLocal") {
-    const safety = validateSyncSafety(
-      { accounts: syncAliasGroups(localAccounts), folders: localFolders, passkeys: localPasskeys },
-      { ...(primaryRemotePayload || {}), accounts: syncAliasGroups(primaryRemotePayload?.accounts || []) },
-      { accounts: mergedAccounts, folders: mergedFolders, passkeys: mergedPasskeys },
-      mode
-    );
-    if (!safety.safe) {
-      logSyncFlow("auto-sync-aborted-safety-check", {
-        reasons: safety.reasons,
-        local: safety.local,
-        remote: safety.remote,
-        merged: safety.merged,
-      });
-      return {
-        report: buildSyncOperationReport({
-          ok: false, safe: false, reasons: safety.reasons, dryRun, mode,
-          message: `同步安全检查未通过：${safety.reasons.join("、")}`,
-          localAccounts: visibleSyncCount(localAccounts),
-          remoteAccounts: visibleSyncCount(primaryRemotePayload?.accounts),
-          mergedAccounts: visibleSyncCount(mergedAccounts),
-          applied: false, pushed: false, remotePulled: true, pendingRetry: false, retryable: false,
-          stage: "safetyChecking", source: primaryReportSource, syncSessionId, operationId: reportOperationId,
-        }),
-        localPayload: currentPayload,
-        payload: finalPayload,
-      };
+  const safety = validateSyncSafety(localPayload, primaryRemotePayload, finalPayload, mode);
+  if (!safety.safe) {
+    return {
+      report: makeReport({ ok: false, safe: false, code: "SAFETY_BLOCKED", reasons: safety.reasons,
+        message: `同步安全检查未通过：${safety.reasons.join("、")}`, stage: "safetyChecking" }),
+      localPayload, payload: finalPayload,
+    };
+  }
+  if (dryRun) {
+    const mirrorReasons = targets.filter((target) => target !== primaryTarget && !target.pullFailed)
+      .flatMap((target) => validateSyncSafety(finalPayload, target.remotePayload, finalPayload, "localOverwriteRemote").reasons);
+    return {
+      report: makeReport({
+        ok: !pullErrors.length && !mirrorReasons.length, safe: !mirrorReasons.length,
+        reasons: [...pullErrors, ...mirrorReasons], message: mirrorReasons.length
+          ? `镜像安全检查未通过：${mirrorReasons.join("、")}` : "预览完成（未写入）",
+        stage: mirrorReasons.length ? "safetyChecking" : "completed",
+      }),
+      localPayload, payload: finalPayload,
+    };
+  }
+  if (mode !== "localOverwriteRemote") {
+    try {
+      await applyCandidate(finalPayload);
+    } catch (error) {
+      if (error.code !== "LOCAL_CHANGED") throw error;
+      return { report: makeReport({ ok: false, code: error.code, reasons: [error.message],
+        message: error.message, retryable: true, stage: "checkingLocalConcurrency" }) };
     }
   }
 
-  if (dryRun) {
-    return {
-      report: buildSyncOperationReport({
-        ok: true, safe: true, reasons: [], dryRun: true, mode,
-        message: "预览完成（未写入）",
-        localAccounts: visibleSyncCount(localAccounts),
-        remoteAccounts: visibleSyncCount(primaryRemotePayload?.accounts),
-        mergedAccounts: visibleSyncCount(mergedAccounts),
-        applied: false, pushed: false, remotePulled: true, pendingRetry: false, retryable: false,
-        stage: "completed", source: primaryReportSource, syncSessionId, operationId: reportOperationId,
-      }),
-      localPayload: currentPayload,
-      payload: finalPayload,
-    };
-  }
-
-  try {
-    await saveLocalSafetySnapshot(automatic ? "自动同步前自动备份" : "同步写入本地前自动备份");
-  } catch (error) {
-    logSyncFlow("auto-sync-aborted-backup-failed", { message: error?.message || String(error || "") });
-    throw new Error(`同步前本地安全快照失败：${error?.message || String(error || "")}`);
-  }
-
-  if (mode !== "localOverwriteRemote") {
-    await writeBusinessDataToStore({
-      ...finalPayload,
-      accounts: mergedAccounts,
-      passkeys: mergedPasskeys,
-      folders: mergedFolders,
-    });
-  }
-
-  const pushTargets = [...targets].sort((left, right) =>
-    Number(right.isPrimary) - Number(left.isPrimary)
-      || Number(right.supportsEtag) - Number(left.supportsEtag)
-  );
+  const pushTargets = [...targets].sort((left, right) => Number(right === primaryTarget) - Number(left === primaryTarget));
   const pushErrors = [...pullErrors];
-  let primaryPushFailed = false;
-  let primaryOperationId = reportOperationId;
   const outboxByTarget = new Map((await getSyncOutbox()).map((item) => [item.targetKey, item]));
+  let primaryPushFailed = false;
+  let concurrencyError = null;
+  let safetyBlocked = false;
+  let confirmedTargets = 0;
   for (const target of pushTargets) {
-    if (primaryPushFailed && target.isPrimary === false) {
+    if (target.pullFailed) continue;
+    if (primaryPushFailed && target !== primaryTarget) {
       pushErrors.push(`${target.label}: 主同步源上传失败，已跳过镜像写入`);
       continue;
     }
+    try {
+      await assertLocalUnchanged();
+    } catch (error) {
+      concurrencyError = error;
+      break;
+    }
     const targetKey = syncTargetKey(target);
-    const pendingOutbox = outboxByTarget.get(targetKey);
-    const candidatePayload = {
-      ...finalPayload,
-      accounts: mergedAccounts,
-      passkeys: mergedPasskeys,
-      folders: mergedFolders,
-    };
+    const targetMode = target === primaryTarget ? mode : "localOverwriteRemote";
+    const candidatePayload = finalPayload;
     const candidateHash = await syncPayloadSha256(candidatePayload);
-    const persistedContext = matchingSyncOutboxItem(pendingOutbox, candidateHash);
-    if (target.isPrimary && persistedContext?.operationId) {
-      primaryOperationId = persistedContext.operationId;
-    }
-    if (target.remotePayload && syncPayloadEquals(
-      normalizeSyncPayloadShape(target.remotePayload),
-      candidatePayload,
-    )) {
-      outboxByTarget.delete(targetKey);
-      logSyncFlow("push-skipped-remote-already-matches", {
-        label: target.label,
-        url: target.url,
-      });
-      continue;
-    }
-    if (persistedContext && !forceOutboxRetry && !isSyncOutboxReady(persistedContext)) {
-      const paused = pendingOutbox.status === "paused";
-      const waitSeconds = Math.max(1, Math.ceil((pendingOutbox.nextRetryAtMs - Date.now()) / 1000));
-      pushErrors.push(paused
-        ? `${target.label}: 补偿任务已暂停，等待用户手动重试`
-        : `${target.label}: 补偿任务将在 ${waitSeconds} 秒后重试`);
-      logSyncFlow(paused ? "push-skipped-paused" : "push-skipped-backoff", {
-        label: target.label,
-        nextRetryAtMs: pendingOutbox.nextRetryAtMs,
-        attempts: pendingOutbox.attempts,
-      });
-      continue;
-    }
-    logSyncFlow("push-start", {
-      label: target.label,
-      url: target.url,
-      supportsEtag: Boolean(target.supportsEtag),
-      remoteEtag: target.remoteEtag,
-    });
-    let result;
+    const persistedContext = matchingSyncOutboxItem(outboxByTarget.get(targetKey), candidateHash, targetMode);
     const operationId = persistedContext?.operationId
-      || (target.isPrimary ? reportOperationId : createSyncIdempotencyKey());
-    if (target.isPrimary) primaryOperationId = operationId;
-    // Every recomputed request body gets a fresh idempotency key. A prior
-    // uncertain PUT is reconciled by the remote-payload comparison above.
+      || (target === primaryTarget ? reportOperationId : createSyncIdempotencyKey());
+    if (target === primaryTarget) primaryOperationId = operationId;
     const idempotencyKey = createSyncIdempotencyKey();
     try {
-      result = await pushRemotePayloadWithMode(target, {
-        ...candidatePayload,
-      }, target.isPrimary ? mode : "localOverwriteRemote", {
+      // 镜像也必须检查墓碑；无法读取的镜像不会进行盲写。
+      const targetSafety = validateSyncSafety(candidatePayload, target.remotePayload, candidatePayload, targetMode);
+      if (!targetSafety.safe) {
+        throw Object.assign(new Error(`同步安全检查未通过：${targetSafety.reasons.join("、")}`), { code: "SAFETY_BLOCKED" });
+      }
+      if (target.remotePayload && target.remoteKeyId === encryptionKeyId
+          && Boolean(target.remoteEncrypted) === Boolean(encryptionKeyId)
+          && syncPayloadEquals(target.remotePayload, candidatePayload)) {
+        outboxByTarget.delete(targetKey);
+        confirmedTargets += 1;
+        logSyncFlow("push-skipped-remote-already-matches", { label: target.label, operationId });
+        continue;
+      }
+      if (persistedContext && !forceOutboxRetry && !isSyncOutboxReady(persistedContext)) {
+        pushErrors.push(`${target.label}: 补偿任务${persistedContext.status === "paused" ? "已暂停，等待手动重试" : "正在等待退避重试"}`);
+        if (target === primaryTarget) primaryPushFailed = true;
+        continue;
+      }
+      const result = await pushRemotePayloadWithMode(target, candidatePayload, targetMode, {
         syncSessionId: persistedContext?.syncSessionId || syncSessionId,
-        operationId,
-        idempotencyKey,
+        operationId, idempotencyKey, assertLocalUnchanged,
+        applyCandidate: target === primaryTarget && mode !== "localOverwriteRemote" ? applyCandidate : null,
       });
+      // 保留完整结果，包括顶层排序时钟；镜像不反向改写主源结果。
+      if (target === primaryTarget) finalPayload = normalizeSyncPayloadShape(result.payload);
+      outboxByTarget.delete(targetKey);
+      confirmedTargets += 1;
+      logSyncFlow("push-success", { label: target.label, mode: targetMode, operationId });
     } catch (error) {
-      pushErrors.push(`${target.label}: ${error?.message || String(error || "")}`);
-      if (target.isPrimary) primaryPushFailed = true;
-      const nextOutbox = upsertSyncOutbox([...outboxByTarget.values()], {
-        targetKey,
-        payload: candidatePayload,
-        error,
-        payloadSha256: candidateHash,
-        expectedEtag: error?.expectedEtag || target.remoteEtag || "",
-        expectedRevision: error?.expectedRevision || target.remoteRevision || 0,
-        idempotencyKey: error?.idempotencyKey || idempotencyKey,
-        syncSessionId: error?.syncSessionId || syncSessionId,
-        operationId: error?.operationId || operationId,
-        sourceType: target.kind,
-        scope: target.scope || "",
-        forceResume: forceOutboxRetry,
-      });
-      outboxByTarget.clear();
-      for (const item of nextOutbox) outboxByTarget.set(item.targetKey, item);
-      logSyncFlow("auto-sync-push-failed", {
-        label: target.label,
-        message: error?.message || String(error || ""),
-      });
-      continue;
+      pushErrors.push(`${target.label}: ${error.message}`);
+      if (target === primaryTarget) primaryPushFailed = true;
+      if (error.code === "LOCAL_CHANGED" || error.code === "SAFETY_BLOCKED") {
+        outboxByTarget.delete(targetKey);
+        safetyBlocked ||= error.code === "SAFETY_BLOCKED";
+        if (error.code === "LOCAL_CHANGED") {
+          concurrencyError = error;
+          break;
+        }
+      } else {
+        const failedPayload = error.payload || candidatePayload;
+        const nextOutbox = upsertSyncOutbox([...outboxByTarget.values()], {
+          targetKey, mode: targetMode, payload: failedPayload, error,
+          payloadSha256: await syncPayloadSha256(failedPayload),
+          expectedEtag: error.expectedEtag || target.remoteEtag || "",
+          expectedRevision: error.expectedRevision || target.remoteRevision || 0,
+          idempotencyKey: error.idempotencyKey || idempotencyKey,
+          syncSessionId: error.syncSessionId || syncSessionId,
+          operationId: error.operationId || operationId, sourceType: target.kind,
+          scope: target.scope || "", forceResume: forceOutboxRetry,
+        });
+        outboxByTarget.clear();
+        for (const item of nextOutbox) outboxByTarget.set(item.targetKey, item);
+      }
+      logSyncFlow("auto-sync-push-failed", { label: target.label, code: error.code, message: error.message });
     }
-    outboxByTarget.delete(targetKey);
-    logSyncFlow("push-success", {
-      label: target.label,
-      url: target.url,
-      itemCounts: {
-        accounts: visibleSyncCount(result?.payload?.accounts),
-        passkeys: visibleSyncCount(result?.payload?.passkeys),
-        folders: visibleSyncCount(result?.payload?.folders),
-      },
-    });
-    mergedAccounts = result.payload.accounts.map(normalizeAccountShape);
-    mergedFolders = result.payload.folders.map(normalizeFolderShape);
-    mergedPasskeys = buildUnifiedPasskeys(mergedAccounts, result.payload.passkeys);
   }
-
   await setSyncOutbox([...outboxByTarget.values()]);
-
-  await writeBusinessDataToStore({
-    ...finalPayload,
-    accounts: mergedAccounts,
-    passkeys: mergedPasskeys,
-    folders: mergedFolders,
-  });
-  await appendHistoryEntry({
-    action: pushErrors.length > 0
-      ? `${automatic ? "自动同步" : "同步"}部分完成（${pushErrors.join("；")}）`
-      : `${automatic ? "自动同步" : "同步"}完成（${targets.map((item) => item.label).join(" + ")}）`,
-    timestampMs: Date.now(),
-  });
-  logSyncFlow("auto-sync-complete", {
-    targetLabels: targets.map((item) => item.label),
-    pushErrors,
-  });
-  return {
-    report: buildSyncOperationReport({
-      ok: pushErrors.length === 0,
-      safe: true,
-      reasons: pushErrors,
-      dryRun: false,
-      mode,
-      message: pushErrors.length > 0 ? `同步部分完成：${pushErrors.join("；")}` : "同步完成",
-      localAccounts: visibleSyncCount(localAccounts),
-      remoteAccounts: visibleSyncCount(primaryRemotePayload?.accounts),
-      mergedAccounts: visibleSyncCount(mergedAccounts),
-      applied: mode !== "localOverwriteRemote",
-      pushed: pushErrors.length === 0,
-      remotePulled: true,
-      pendingRetry: pushErrors.length > 0,
-      retryable: pushErrors.length > 0,
-      stage: pushErrors.length > 0 ? "pushingRemote" : "completed",
-      source: primaryReportSource,
-      syncSessionId,
-      operationId: primaryOperationId,
-      etag: primaryTarget.remoteEtag,
-    }),
-  };
+  // 上传结束只检查版本，不把旧候选再次写回。期间的管理页编辑始终保留。
+  try {
+    await assertLocalUnchanged();
+  } catch (error) {
+    concurrencyError = error;
+  }
+  if (concurrencyError && !pushErrors.includes(concurrencyError.message)) pushErrors.push(concurrencyError.message);
+  const message = pushErrors.length ? `同步部分完成：${pushErrors.join("；")}` : "同步完成";
+  await appendHistoryEntry({ action: message, timestampMs: Date.now() });
+  logSyncFlow("auto-sync-complete", { mode, applied, confirmedTargets, pushErrors });
+  return { report: makeReport({
+    ok: !pushErrors.length, safe: !safetyBlocked, reasons: pushErrors, message,
+    code: concurrencyError ? "LOCAL_CHANGED" : safetyBlocked ? "SAFETY_BLOCKED" : null,
+    pushed: confirmedTargets === targets.length, pendingRetry: outboxByTarget.size > 0,
+    retryable: Boolean(concurrencyError) || (pushErrors.length > 0 && !safetyBlocked),
+    stage: concurrencyError ? "checkingLocalConcurrency" : safetyBlocked ? "safetyChecking"
+      : pushErrors.length ? "pushingRemote" : "completed",
+    etag: primaryTarget.remoteEtag,
+  }) };
 }
 
 async function readBusinessDataFromStore() {
@@ -830,8 +704,8 @@ async function readBusinessDataFromStore() {
   };
 }
 
-async function saveLocalSafetySnapshot(reason) {
-  const payload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
+async function saveLocalSafetySnapshot(reason, sourcePayload = null) {
+  const payload = normalizeSyncPayloadShape(sourcePayload || await readBusinessDataFromStore());
   const snapshots = await getSafetySnapshots();
   snapshots.unshift({ id: `sync-snapshot-${secureRandomUuid()}`, createdAtMs: Date.now(), reason: String(reason || "同步前备份"), payload });
   await setSafetySnapshots(snapshots);
@@ -1055,6 +929,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             mode: message.payload?.mode,
             dryRun: Boolean(message.payload?.dryRun),
             forceOutboxRetry: Boolean(message.payload?.forceOutboxRetry),
+            resumeOutbox: Boolean(message.payload?.resumeOutbox),
             automatic: false,
           }),
         });
@@ -1523,6 +1398,7 @@ async function configureWebSyncFromBridge(payload) {
 async function getSyncOutboxSummaries() {
   return (await getSyncOutbox()).map((item) => ({
     sourceKey: item.targetKey,
+    mode: item.mode,
     createdAtMs: item.createdAtMs,
     attempts: item.attempts,
     nextRetryAtMs: item.nextRetryAtMs,
@@ -1551,6 +1427,7 @@ async function advancePendingOutboxAfterPullFailure(target, error, forceResume =
   await setSyncOutbox(upsertSyncOutbox(items, {
     targetKey,
     payload: pending.payload,
+    mode: pending.mode,
     error,
     payloadSha256: pending.payloadSha256,
     expectedEtag: pending.expectedEtag,
@@ -2214,6 +2091,10 @@ function normalizeFolderShape(item) {
     name: safeName,
     matchedSites: normalizeSites(item?.matchedSites || []),
     autoAddMatchingSites: Boolean(item?.autoAddMatchingSites),
+    regularAccountIds: [...new Set((Array.isArray(item?.regularAccountIds) ? item.regularAccountIds : [])
+      .map((id) => String(id || "").trim().toLowerCase()).filter(Boolean))],
+    regularOrderUpdatedAtMs: Number(item?.regularOrderUpdatedAtMs) || 0,
+    regularOrderUpdatedDeviceName: String(item?.regularOrderUpdatedDeviceName || "").trim(),
     isDeleted: Boolean(item?.isDeleted),
     isPermanentlyDeleted: Boolean(item?.isPermanentlyDeleted),
     deletedAtMs: item?.deletedAtMs == null ? null : Number(item.deletedAtMs),
@@ -2452,6 +2333,7 @@ async function pullRemotePayload(target) {
     etag: response.headers.get("ETag"),
     revision: Number(response.headers.get("X-Sync-Revision")) || 0,
     encrypted,
+    keyId: encrypted ? String(envelope?.keyId || "") : "",
   };
 }
 
@@ -2473,7 +2355,10 @@ function createSyncOperationContext(context = {}) {
 }
 
 function annotateSyncRetryError(error, target, operation) {
-  const annotated = error instanceof Error ? error : new Error(String(error || "同步失败"));
+  const annotated = error instanceof Error ? error : Object.assign(
+    new Error(String(error?.message || error || "同步失败")),
+    { code: error?.code, status: error?.status },
+  );
   annotated.idempotencyKey = operation.idempotencyKey;
   annotated.syncSessionId = operation.syncSessionId;
   annotated.operationId = operation.operationId;
@@ -2511,9 +2396,6 @@ async function verifySelfHostedWriteReceipt(response, idempotencyKey) {
 }
 
 async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey = null) {
-  if (target.remoteEncrypted && target.remotePayload && syncPayloadEquals(target.remotePayload, payload)) {
-    return { etag: target.remoteEtag, skipped: true };
-  }
   const bundle = await buildSyncBundleFromPayload(payload);
   const encryptedBundle = await encryptSyncBundleDocument(bundle, await getOrCreateSyncEncryptionKey());
   const headers = {
@@ -2561,8 +2443,9 @@ async function pushRemotePayload(target, payload, ifMatch = null, idempotencyKey
     ? await verifySelfHostedWriteReceipt(response, idempotencyKey)
     : response.headers.get("ETag");
   target.remotePayload = payload;
-  target.remoteEncrypted = true;
-  return { etag: confirmedEtag };
+  target.remoteEncrypted = encryptedBundle.schema === "pass.sync.encrypted.v1";
+  target.remoteKeyId = target.remoteEncrypted ? encryptedBundle.keyId : "";
+  return { etag: confirmedEtag, revision: Number(response.headers.get("X-Sync-Revision")) || 0 };
 }
 
 async function getOrCreateSyncEncryptionKey() {
@@ -2578,89 +2461,81 @@ async function getSyncDecryptionFallbackKeys() {
 }
 
 async function pushRemotePayloadWithRetry(target, payload, context = {}) {
-  let candidate = payload;
+  let candidate = normalizeSyncPayloadShape(payload);
+  const mode = context.mode || SYNC_MODE_MERGE;
   const operation = createSyncOperationContext(context);
   target.syncSessionId = operation.syncSessionId;
   target.operationId = operation.operationId;
-  const { idempotencyKey } = operation;
-  for (let attempt = 0; attempt < SYNC_PUSH_CONFLICT_MAX_ATTEMPTS; attempt += 1) {
-    try {
-      const pushResult = await pushRemotePayload(target, candidate, target.remoteEtag, idempotencyKey);
-      updateRemoteConcurrencyState(target, pushResult.etag);
-      target.remotePayload = candidate;
-      target.remoteEncrypted = true;
-      return { payload: candidate };
-    } catch (error) {
-      if (error?.status !== 412 && error?.status !== 428) {
-        try {
-          const probe = await pullRemotePayload(target);
-          if (probe.payload && syncPayloadEquals(probe.payload, candidate)) {
-            updateRemoteConcurrencyState(target, probe.etag);
-            target.remotePayload = candidate;
-            target.remoteEncrypted = true;
-            return { payload: candidate };
-          }
-        } catch (_) {}
-        throw annotateSyncRetryError(error, target, operation);
+  const updateFromPull = (response) => {
+    updateRemoteConcurrencyState(target, response.etag, response.revision);
+    target.remotePayload = response.payload;
+    target.remoteEncrypted = response.encrypted;
+    target.remoteKeyId = response.keyId || "";
+  };
+  const remoteMatches = async () => {
+    const keyId = await syncEncryptionKeyId(await getOrCreateSyncEncryptionKey());
+    return target.remotePayload && Boolean(target.remoteEncrypted) === Boolean(keyId)
+      && target.remoteKeyId === keyId && syncPayloadEquals(target.remotePayload, candidate);
+  };
+  try {
+    for (let attempt = 0; attempt < SYNC_PUSH_CONFLICT_MAX_ATTEMPTS; attempt += 1) {
+      await context.assertLocalUnchanged?.();
+      const safety = validateSyncSafety(candidate, target.remotePayload, candidate, mode);
+      if (!safety.safe) {
+        throw Object.assign(new Error(`同步安全检查未通过：${safety.reasons.join("、")}`), { code: "SAFETY_BLOCKED" });
       }
-      if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw annotateSyncRetryError(error, target, operation);
+      if (await remoteMatches()) return { payload: candidate };
+      try {
+        const result = await pushRemotePayload(target, candidate, target.remoteEtag, operation.idempotencyKey);
+        updateRemoteConcurrencyState(target, result.etag, result.revision);
+        return { payload: candidate };
+      } catch (error) {
+        if (error.status !== 412 && error.status !== 428) {
+          try {
+            updateFromPull(await pullRemotePayload(target));
+            // 回执丢失的确认也要匹配密钥，旧密钥解出的相同业务内容不能证明轮换成功。
+            if (await remoteMatches()) return { payload: candidate };
+          } catch { /* 保留最初的上传错误与当前候选，交给补偿队列。 */ }
+          throw error;
+        }
+        if (attempt === SYNC_PUSH_CONFLICT_MAX_ATTEMPTS - 1) throw error;
+      }
+      const latest = await pullRemotePayload(target);
+      updateFromPull(latest);
+      await context.assertLocalUnchanged?.();
+      const remote = latest.payload ? normalizeSyncPayloadShape(latest.payload) : null;
+      let next = candidate;
+      if (mode === SYNC_MODE_MERGE && remote) {
+        next = mergeSyncPayloadsCore(
+          { ...candidate, accounts: syncAliasGroups(candidate.accounts) },
+          { ...remote, accounts: syncAliasGroups(remote.accounts) },
+          syncMergeHelpers(),
+        );
+        next.accounts = syncAliasGroups(next.accounts);
+        next = normalizeSyncPayloadShape(next);
+      } else if (mode === "remoteOverwriteLocal") {
+        next = normalizeSyncPayloadShape(remote || {});
+      }
+      // 每轮以最近候选为安全基线，已接收的墓碑不能被后续远端回滚抹除。
+      const retrySafety = validateSyncSafety(candidate, remote, next, mode);
+      if (!retrySafety.safe) {
+        throw Object.assign(new Error(`并发重试被安全检查阻止：${retrySafety.reasons.join("、")}`), { code: "SAFETY_BLOCKED" });
+      }
+      if (!syncPayloadEquals(candidate, next)) await context.applyCandidate?.(next);
+      candidate = next;
+      // 冲突后的请求体或条件可能改变，操作追踪保持不变，幂等键重新生成。
+      operation.idempotencyKey = createSyncIdempotencyKey();
     }
-    const latestResponse = await pullRemotePayload(target);
-    updateRemoteConcurrencyState(target, latestResponse.etag);
-    target.remotePayload = latestResponse.payload;
-    target.remoteEncrypted = latestResponse.encrypted;
-    if (target.isPrimary === false) {
-      continue;
-    }
-    const remotePayload = latestResponse.payload || { accounts: [], passkeys: [], folders: [] };
-    const currentLocalPayload = normalizeSyncPayloadShape(await readBusinessDataFromStore());
-    if (!syncPayloadEquals(currentLocalPayload, candidate)) {
-      throw new Error("本地数据在远端冲突重试期间发生变化，已停止写入，请重新同步");
-    }
-    const localAccounts = Array.isArray(candidate.accounts) ? candidate.accounts.map(normalizeAccountShape) : [];
-    const localPasskeys = buildUnifiedPasskeys(localAccounts, Array.isArray(candidate.passkeys) ? candidate.passkeys.map(normalizePasskeyShape) : []);
-    const localFolders = Array.isArray(candidate.folders) ? candidate.folders.map(normalizeFolderShape) : [];
-    const remoteAccounts = syncAliasGroups(remotePayload.accounts.map(normalizeAccountShape));
-    const canonicalLocalAccounts = syncAliasGroups(localAccounts);
-    const remotePasskeys = buildUnifiedPasskeys(remoteAccounts, remotePayload.passkeys);
-    const remoteFolders = remotePayload.folders.map(normalizeFolderShape);
-    if (target.isPrimary !== false) {
-      candidate = mergeSyncPayloadsCore(
-        { ...candidate, accounts: canonicalLocalAccounts, passkeys: localPasskeys, folders: localFolders },
-        { ...remotePayload, accounts: remoteAccounts, passkeys: remotePasskeys, folders: remoteFolders },
-        syncMergeHelpers(),
-      );
-      candidate.accounts = syncAliasGroups(candidate.accounts);
-    }
-    const safety = validateSyncSafety(
-      { ...candidate, accounts: canonicalLocalAccounts, folders: localFolders, passkeys: localPasskeys },
-      { ...remotePayload, accounts: remoteAccounts },
-      candidate,
-      SYNC_MODE_MERGE
-    );
-    if (!safety.safe) {
-      logSyncFlow("push-retry-aborted-safety-check", { reasons: safety.reasons });
-      throw new Error(`并发重试合并被安全检查阻止: ${safety.reasons.join(",")}`);
-    }
-    if (target.isPrimary !== false) {
-      await writeBusinessDataToStore(candidate);
-    }
+    throw new Error("远端并发冲突重试次数已用尽");
+  } catch (error) {
+    const annotated = annotateSyncRetryError(error, target, operation);
+    annotated.payload = candidate;
+    throw annotated;
   }
-  throw new Error("远端并发冲突重试次数已用尽");
 }
 
 async function pushRemotePayloadWithMode(target, payload, syncMode, context = {}) {
-  if (syncMode !== SYNC_MODE_MERGE) {
-    const operation = createSyncOperationContext(context);
-    target.syncSessionId = operation.syncSessionId;
-    target.operationId = operation.operationId;
-    const pushResult = await pushRemotePayload(target, payload, target.remoteEtag, operation.idempotencyKey);
-    updateRemoteConcurrencyState(target, pushResult.etag);
-    target.remotePayload = payload;
-    target.remoteEncrypted = true;
-    return { payload };
-  }
-  return pushRemotePayloadWithRetry(target, payload, context);
+  return pushRemotePayloadWithRetry(target, payload, { ...context, mode: syncMode });
 }
 
 function createAccount({ site, username, password, createdAtMs, deviceName }) {

@@ -51,7 +51,7 @@ use provision_settings::ProvisionDraft;
 use sync::crypto::key_id;
 use sync::outbox;
 use sync::pipeline::{
-    local_payload_from_vault_with_order, preview_sync, run_sync_with_context,
+    local_payload_from_vault_with_order_at, preview_sync, run_sync_with_context,
     visible_account_count, visible_folder_count, visible_passkey_count, SyncMode, SyncRetryContext,
 };
 use sync::settings::{load_sync_settings, save_sync_settings, SyncSettings};
@@ -1336,6 +1336,7 @@ async fn sync_now(
     state: tauri::State<'_, AppLockState>,
     sync_lock: tauri::State<'_, SyncInFlightState>,
     force_outbox_retry: Option<bool>,
+    resume_outbox: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let _sync_guard = sync_lock.acquire()?;
     let dir = app_data_dir(&app)?;
@@ -1354,7 +1355,8 @@ async fn sync_now(
     }
     settings.previous_encryption_key = load_ui_prefs(&dir).previous_encryption_key;
     let device = load_device_name(&conn)?;
-    let local = local_payload_from_conn(&conn, &device)?;
+    let alias_now_ms = now_ms();
+    let local = local_payload_from_conn_at(&conn, &device, alias_now_ms)?;
     let source_key = self_hosted_outbox_source_key(&settings)?;
     let retry_context = match prepare_outbox_attempt(
         &dir,
@@ -1363,12 +1365,14 @@ async fn sync_now(
         SyncMode::Merge,
         "selfHosted",
         force_outbox_retry.unwrap_or(false),
+        resume_outbox.unwrap_or(false),
     )? {
         OutboxAttempt::Ready(context) => context,
         OutboxAttempt::Waiting(report) => {
             return Ok(serde_json::json!({ "report": report }));
         }
     };
+    settings.mode = retry_context.mode.as_str().into();
     let platform = current_platform().to_string();
     let worker_app = app.clone();
     let worker_dir = dir.clone();
@@ -1402,7 +1406,7 @@ async fn sync_now(
                             local_for_apply.clone(),
                         )?;
                     }
-                    save_payload_if_unchanged(&mut conn, &device, expected, payload)?;
+                    save_payload_if_unchanged(&mut conn, &device, expected, payload, alias_now_ms)?;
                     if !snapshot_created {
                         commit_undo_point(
                             &worker_dir_for_apply,
@@ -1462,11 +1466,13 @@ async fn sync_now_mode(
     sync_lock: tauri::State<'_, SyncInFlightState>,
     mode: String,
     force_outbox_retry: Option<bool>,
+    resume_outbox: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let _sync_guard = sync_lock.acquire()?;
     let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
     let device = load_device_name(&conn)?;
-    let local = local_payload_from_conn(&conn, &device)?;
+    let alias_now_ms = now_ms();
+    let local = local_payload_from_conn_at(&conn, &device, alias_now_ms)?;
     let mode = SyncMode::parse(&mode);
     let source_key = self_hosted_outbox_source_key(&settings)?;
     let retry_context = match prepare_outbox_attempt(
@@ -1476,12 +1482,14 @@ async fn sync_now_mode(
         mode,
         "selfHosted",
         force_outbox_retry.unwrap_or(false),
+        resume_outbox.unwrap_or(false),
     )? {
         OutboxAttempt::Ready(context) => context,
         OutboxAttempt::Waiting(report) => {
             return Ok(serde_json::json!({ "report": report }));
         }
     };
+    let mode = retry_context.mode;
     let platform = current_platform().to_string();
     let worker_app = app.clone();
     let worker_dir = dir.clone();
@@ -1513,7 +1521,7 @@ async fn sync_now_mode(
                             local_for_apply.clone(),
                         )?;
                     }
-                    save_payload_if_unchanged(&mut conn, &device, expected, payload)?;
+                    save_payload_if_unchanged(&mut conn, &device, expected, payload, alias_now_ms)?;
                     if !snapshot_created {
                         commit_undo_point(
                             &worker_dir_for_apply,
@@ -1553,6 +1561,7 @@ async fn sync_webdav_now_mode(
     sync_lock: tauri::State<'_, SyncInFlightState>,
     mode: String,
     force_outbox_retry: Option<bool>,
+    resume_outbox: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let _sync_guard = sync_lock.acquire()?;
     let (dir, settings, conn) = load_settings_unlocked(&app, &state)?;
@@ -1566,7 +1575,8 @@ async fn sync_webdav_now_mode(
         previous_encryption_key: prefs.previous_encryption_key,
     };
     let device = load_device_name(&conn)?;
-    let local = local_payload_from_conn(&conn, &device)?;
+    let alias_now_ms = now_ms();
+    let local = local_payload_from_conn_at(&conn, &device, alias_now_ms)?;
     let parsed_mode = SyncMode::parse(&mode);
     let source_key = webdav_outbox_source_key(&webdav_settings)?;
     let retry_context = match prepare_outbox_attempt(
@@ -1576,12 +1586,14 @@ async fn sync_webdav_now_mode(
         parsed_mode,
         "webdav",
         force_outbox_retry.unwrap_or(false),
+        resume_outbox.unwrap_or(false),
     )? {
         OutboxAttempt::Ready(context) => context,
         OutboxAttempt::Waiting(report) => {
             return Ok(serde_json::json!({ "report": report }));
         }
     };
+    let parsed_mode = retry_context.mode;
     let platform = current_platform().to_string();
     let encryption_key = settings.encryption_key.clone();
     let worker_app = app.clone();
@@ -1615,7 +1627,7 @@ async fn sync_webdav_now_mode(
                             local_for_apply.clone(),
                         )?;
                     }
-                    save_payload_if_unchanged(&mut conn, &device, expected, payload)?;
+                    save_payload_if_unchanged(&mut conn, &device, expected, payload, alias_now_ms)?;
                     if !snapshot_created {
                         commit_undo_point(
                             &worker_dir_for_apply,
@@ -1670,9 +1682,18 @@ fn prepare_outbox_attempt(
     mode: SyncMode,
     source: &str,
     force: bool,
+    resume_outbox: bool,
 ) -> Result<OutboxAttempt, String> {
     let Some(item) = outbox::matching_item(data_dir, source_key, local)? else {
-        return Ok(OutboxAttempt::Ready(outbox::new_context(local)));
+        return Ok(OutboxAttempt::Ready(outbox::new_context(local, mode)));
+    };
+    if !resume_outbox && SyncMode::parse(&item.mode) != mode {
+        return Ok(OutboxAttempt::Ready(outbox::new_context(local, mode)));
+    }
+    let mode = if resume_outbox {
+        SyncMode::parse(&item.mode)
+    } else {
+        mode
     };
     if force && item.status == "paused" {
         outbox::resume(data_dir, source_key, local)?;
@@ -2916,12 +2937,20 @@ fn move_accounts_to_folder_top(
 }
 
 fn local_payload_from_conn(conn: &Connection, device: &str) -> Result<SyncPayload, String> {
+    local_payload_from_conn_at(conn, device, now_ms())
+}
+
+fn local_payload_from_conn_at(
+    conn: &Connection,
+    device: &str,
+    alias_now_ms: i64,
+) -> Result<SyncPayload, String> {
     let accounts = load_accounts(conn)?;
     let folders = load_folders(conn)?;
     let passkeys = load_passkeys(conn)?;
     let all_order = load_all_regular_order(conn)?;
     let folder_order = load_folder_order(conn)?;
-    Ok(local_payload_from_vault_with_order(
+    Ok(local_payload_from_vault_with_order_at(
         &accounts,
         &folders,
         &passkeys,
@@ -2932,6 +2961,7 @@ fn local_payload_from_conn(conn: &Connection, device: &str) -> Result<SyncPayloa
         folder_order.folder_ids,
         folder_order.updated_at_ms,
         folder_order.updated_device_name,
+        alias_now_ms,
     ))
 }
 
@@ -3098,11 +3128,12 @@ fn save_payload_if_unchanged(
     device: &str,
     expected: &SyncPayload,
     payload: &SyncPayload,
+    alias_now_ms: i64,
 ) -> Result<(), String> {
     let tx = conn
         .transaction()
         .map_err(|e| format!("开始同步 CAS 事务失败: {e}"))?;
-    let current = local_payload_from_conn(&tx, device)?;
+    let current = local_payload_from_conn_at(&tx, device, alias_now_ms)?;
     if &current != expected {
         return Err("同步期间本地数据已变化，已停止写入，请重新同步".into());
     }
@@ -4323,6 +4354,55 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outbox_retry_restores_mode_only_for_an_unchanged_explicit_resume() {
+        let dir = std::env::temp_dir().join(format!("pass-tauri-mode-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = "server|https://sync.example";
+        let local = SyncPayload::default();
+        let original = outbox::new_context(&local, SyncMode::LocalOverwriteRemote);
+        outbox::record_failure(&dir, source, &local, &original, None, None, "offline").unwrap();
+        for resume in [true, false] {
+            let OutboxAttempt::Ready(context) = prepare_outbox_attempt(
+                &dir,
+                source,
+                &local,
+                SyncMode::Merge,
+                "selfHosted",
+                true,
+                resume,
+            )
+            .unwrap() else {
+                panic!("手动重试应跳过退避");
+            };
+            assert_eq!(
+                context.mode,
+                if resume {
+                    SyncMode::LocalOverwriteRemote
+                } else {
+                    SyncMode::Merge
+                }
+            );
+            assert_eq!(context.operation_id == original.operation_id, resume);
+        }
+        let mut changed = local;
+        changed.accounts.push(Default::default());
+        let OutboxAttempt::Ready(context) = prepare_outbox_attempt(
+            &dir,
+            source,
+            &changed,
+            SyncMode::Merge,
+            "selfHosted",
+            true,
+            true,
+        )
+        .unwrap() else {
+            panic!("新本地内容不应被旧队列阻塞");
+        };
+        assert_eq!(context.mode, SyncMode::Merge);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     fn journal_test_connection(dir: &std::path::Path) -> Connection {
         let conn = Connection::open(dir.join("pass-tauri.db")).unwrap();

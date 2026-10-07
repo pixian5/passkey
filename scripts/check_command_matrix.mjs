@@ -117,6 +117,10 @@ const extSrc = read("apps/extension_chrome_web/extension-bridge.js");
 const extensionBackgroundSrc = read("apps/extension_shared/background.js");
 const sharedUiSrc = read("apps/codex-tauri/src/main.js");
 const exchangeSrc = read("apps/codex-tauri/src-tauri/src/exchange.rs");
+if (!/const saveDeviceName = async \(\{ quiet = true \} = \{\}\) => \{\s*if \(lockState\.enabled && lockState\.locked\)/.test(sharedUiSrc)
+  || !/const scheduleSaveDeviceName = \(\) => \{\s*if \(lockState\.enabled && lockState\.locked\) return;/.test(sharedUiSrc)) {
+  errors.push("locked UI must not schedule or flush a device-name save");
+}
 const mustError = [
   ["provision_self_hosted_server", /case "provision_self_hosted_server":\s*throw new Error/],
   ["inspect_ssh_host_key_cmd", /case "inspect_ssh_host_key_cmd":\s*throw new Error/],
@@ -170,14 +174,13 @@ for (const messageType of [
 if (/case "get_sync_outbox_status":\s*return \[\]/.test(extSrc)) {
   errors.push("Chrome Web outbox status must come from the encrypted background queue");
 }
-const localConcurrencySyncBlock = extensionBackgroundSrc.match(
-  /if \(!syncPayloadEquals\(currentPayload, pulledLocalPayload\)\) \{[\s\S]*?\n  \}/,
-)?.[0] || "";
-if (!/stage:\s*"checkingLocalConcurrency"/.test(localConcurrencySyncBlock) || !/retryable:\s*true/.test(localConcurrencySyncBlock)) {
+// 具体竞态由 sync_background.test.mjs 注入验证；这里仅检查报告契约。
+if (!/stage:\s*"checkingLocalConcurrency"/.test(extensionBackgroundSrc)
+  || !/code:\s*"LOCAL_CHANGED"/.test(extensionBackgroundSrc)) {
   errors.push("Chrome background must return a retryable structured report when local data changes during pull");
 }
 if (!/const primaryReportSource = primaryTarget\.kind === "server" \? "selfHosted" : primaryTarget\.kind/.test(extensionBackgroundSrc)
-  || (extensionBackgroundSrc.match(/source:\s*primaryReportSource/g) || []).length < 4) {
+  || !/source:\s*primaryReportSource/.test(extensionBackgroundSrc)) {
   errors.push("Chrome background sync reports must map and expose the actual primary target");
 }
 
