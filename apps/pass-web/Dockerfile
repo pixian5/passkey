@@ -19,7 +19,9 @@ COPY --from=web-assets /src/apps/codex-tauri/dist /src/apps/codex-tauri/dist
 RUN cargo build --manifest-path apps/pass-web/Cargo.toml --release
 
 FROM debian:bookworm-slim
+# 基础镜像可能早于安全补丁发布；刷新已有系统包，避免遗留 perl-base 等已修复漏洞。
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin passweb \
