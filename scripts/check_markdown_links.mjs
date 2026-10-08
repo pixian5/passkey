@@ -9,7 +9,8 @@ const markdownFiles = [];
 
 function collect(directory) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    if ([".git", "node_modules", "target", "dist", ".venv"].includes(entry.name)) continue;
+    // 本地测试备份中的文档副本保留原相对链接，不属于当前项目文档。
+    if ([".git", "node_modules", "target", "dist", ".venv", ".test-backups"].includes(entry.name)) continue;
     const fullPath = path.join(directory, entry.name);
     if (entry.isDirectory()) collect(fullPath);
     else if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) markdownFiles.push(fullPath);

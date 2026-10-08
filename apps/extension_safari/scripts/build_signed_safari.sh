@@ -44,7 +44,8 @@ if ! ${BUILD_UNSIGNED} && ! has_signing_identity_for_team; then
 无法执行带签名安装：钥匙串中没有团队 ${PROJECT_TEAM} 的 Apple Development 证书及私钥。
 请登录该 Apple Developer 团队并在 Xcode 下载/创建开发证书，再重新运行本脚本。
 仅验证源代码能否编译可使用：$0 --unsigned
-无签名产物不会安装到 /Applications，也不能用于 Safari 扩展实机验证。
+无签名 .app 不会安装到 /Applications，不能据此确认原团队扩展已更新。
+独立临时扩展测试需另行加载资源，并单独记录结果。
 EOF
   exit 1
 fi

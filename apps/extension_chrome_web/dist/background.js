@@ -1793,7 +1793,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.8.0";
+  var PASS_EXTENSION_VERSION = "1.8.1";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 40;
