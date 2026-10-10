@@ -346,8 +346,8 @@ Chrome、Swift、Tauri 与 Docker Web 的补偿队列都保存 payload 摘要、
 - [作用域账号排序](./scoped-account-order-design-zh.md)
 - [同步包与手动导入导出](./manual-sync-import-export-design-and-implementation-zh.md)
 - [跨平台同步后端契约](./cross-platform-sync-backends-v2-zh.md)
-- [本轮代码/文档审计](./audit-2026-07-26-zh.md)
-- [同步功能复核记录（2026-07-27）](./audit-2026-07-27-zh.md)
+- [本轮代码/文档审计](./20260726-0432-当前程序与文档一致性审计-GPT-6.md)
+- [同步功能复核记录（2026-07-27）](./20260727-0632-同步功能复核记录-GPT-6.md)
 
 ## 同步风险边界（1.2.8）
 
