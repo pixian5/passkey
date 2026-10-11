@@ -131,3 +131,6 @@ blob-report/
 
 # WorkBuddy 工作目录（项目记忆等，不入库）
 .workbuddy/
+*.pyc
+.vscode/
+*.egg-info/
