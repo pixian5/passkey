@@ -4871,7 +4871,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(TraceLayer::new_for_http());
     let listener = TcpListener::bind(format!("{host}:{port}")).await?;
     // 启动即打印版本，便于从容器日志确认线上实际运行的版本。
-    println!("[Pass v{}] pass-web ready: http://{host}:{port}", env!("CARGO_PKG_VERSION"));
+    println!(
+        "[Pass v{}] pass-web ready: http://{host}:{port}",
+        env!("CARGO_PKG_VERSION")
+    );
     axum::serve(listener, app).await?;
     Ok(())
 }

@@ -104,6 +104,16 @@ if require_command cargo "rust"; then
   fi
   export CARGO_TARGET_DIR="$target_dir"
   cleanup_target=$((1 - provided_target))
+  # 先跑格式检查：CI 的 quality-gates 对 rustfmt 一票否决，
+  # 本地基线如果不包含它，格式问题只能等 CI 变红才发现。
+  check_rust_fmt() {
+    local fmt_failed=0
+    cargo fmt --manifest-path "$ROOT/core/pass_core/Cargo.toml" --all --check || fmt_failed=1
+    cargo fmt --manifest-path "$ROOT/apps/pass-web/Cargo.toml" --check || fmt_failed=1
+    cargo fmt --manifest-path "$ROOT/apps/codex-tauri/src-tauri/Cargo.toml" --check || fmt_failed=1
+    return "$fmt_failed"
+  }
+  run_step "Rust 代码格式检查" check_rust_fmt
   run_step "pass-core Rust 测试" cargo test --manifest-path "$ROOT/core/pass_core/Cargo.toml" --workspace --locked
   run_step "pass-merge CLI 构建" cargo build --manifest-path "$ROOT/core/pass_core/Cargo.toml" -p pass-merge --bin pass-merge-cli --locked
   if [[ "$node_available" == "1" ]]; then
