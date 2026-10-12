@@ -1165,12 +1165,25 @@ function forwardWebAuthnPageDiagnostic(data) {
     origin: frameContext.origin,
     host: frameContext.host,
     details: data?.details,
+    // 页面自报版本 vs 本 content script 的版本：两者不一致说明同一文档里
+    // 混跑了两个版本（通常是扩展重载后页面没硬刷新）。
+    pageVersion: String(data?.pageVersion || ""),
+    contentVersion: PASS_EXTENSION_VERSION,
   };
   logPasskeyContent("page-diagnostic-forwarded", {
     operation: payload.operation,
     phase: payload.phase,
     diagnosticSessionId: payload.diagnosticSessionId,
+    contentVersion: payload.contentVersion,
+    pageVersion: payload.pageVersion,
   });
+  if (payload.pageVersion && payload.pageVersion !== PASS_EXTENSION_VERSION) {
+    console.warn(
+      `${PASSKEY_LOG_PREFIX} 页面注入脚本版本与 content script 不一致：`
+      + `page=${payload.pageVersion} content=${PASS_EXTENSION_VERSION}。`,
+      "请在目标标签页按 Cmd/Ctrl+Shift+R 硬刷新后再重试。",
+    );
+  }
   try {
     chrome.runtime.sendMessage({
       type: "PASS_PASSKEY_DIAGNOSTIC_EVENT",

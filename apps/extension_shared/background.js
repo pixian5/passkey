@@ -103,6 +103,16 @@ function logSyncFlow(event, details = {}) {
   }
 }
 
+// 后台 Service Worker 每次启动都打印版本，便于确认扩展实际运行的版本。
+// 注意：仅"重新加载扩展"不会更新已打开页面里的内容脚本，需同时硬刷新页面。
+try {
+  console.info(`[Pass v${PASS_EXTENSION_VERSION}] background ready`, {
+    version: PASS_EXTENSION_VERSION,
+  });
+} catch {
+  // Ignore logging failures.
+}
+
 function visibleSyncCount(values) {
   return (Array.isArray(values) ? values : [])
     .filter((item) => item?.isPermanentlyDeleted !== true)
@@ -1194,6 +1204,19 @@ async function recordPasskeyPageDiagnostic(payload) {
       operation: String(diagnostic?.operation || ""),
       diagnosticSessionId: String(diagnostic?.diagnosticSessionId || ""),
     });
+    const pageVersion = String(diagnostic?.pageVersion || "");
+    if (pageVersion && pageVersion !== PASS_EXTENSION_VERSION) {
+      logPasskeyFlow("version-mismatch", {
+        surface: "page-vs-background",
+        pageVersion,
+        backgroundVersion: PASS_EXTENSION_VERSION,
+        hint: "页面仍运行旧 content script，请在目标标签页硬刷新（Cmd/Ctrl+Shift+R）后重试",
+      });
+      console.warn(
+        `${PASSKEY_LOG_PREFIX} 页面注入脚本版本 ${pageVersion} 与 Service Worker 版本 `
+        + `${PASS_EXTENSION_VERSION} 不一致：重载扩展不会更新已打开标签页的内容脚本，请硬刷新标签页。`,
+      );
+    }
     return { ok: true };
   } catch (error) {
     logPasskeyFlow("page-diagnostic-record-failed", {

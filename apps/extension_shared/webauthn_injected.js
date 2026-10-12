@@ -70,6 +70,9 @@ import {
         diagnosticSessionId,
         phase,
         details,
+        // document_start 注入后如果扩展被重新加载，这里仍是旧版本，
+        // background 据此判断页面是否还停留在旧 content script。
+        pageVersion: String(window.__passInjectedVersion || PASS_EXTENSION_VERSION || ""),
       }, window.location.origin);
     } catch {
       // Diagnostics must never interfere with the RP's WebAuthn flow.

@@ -4177,6 +4177,8 @@ fn main() {
         .manage(AppLockState::default())
         .manage(SyncInFlightState::default())
         .setup(|app| {
+            // 启动即打印版本，便于从日志确认客户端实际运行的版本。
+            println!("[Pass v{}] tauri setup", app.package_info().version);
             if let Some(window) = app.get_webview_window("main") {
                 let state_window = window.clone();
                 window.on_window_event(move |event| {

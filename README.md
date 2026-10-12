@@ -6,9 +6,9 @@
 
 ## 当前开发进度
 
-版本 `1.8.3`。已为 Chrome Web 扩展实现 **WebAuthn PRF（hmac-secret）**：注册（create）时生成并保存每凭据 `hmacSecret` 并返回 `prf.enabled`，读取（get）时按 salt 计算 `HMAC-SHA-256` 输出 `prf.results`；同步合并层（JS 真源 + Rust `pass-merge`）与 `pass-data-v2` Schema 同步透传 `hmacSecretB64u`。1.8.3 修复了 PRF salt/结果经 `chrome.runtime.sendMessage` 的 JSON 序列化丢二进制问题（salt 出站转 base64url、结果入站还原 ArrayBuffer）。此前 Bitwarden 无密码解锁因 Pass 缺 PRF 被标为「不支持加密」并交还浏览器原生，修复后重注册即可真正用 Pass 解锁。扩展已构建 1.8.3，需在 `chrome://extensions` 重新加载、删除旧凭据后重注册。
+版本 `1.8.4`。继 1.8.3 修复 WebAuthn PRF 序列化后，本轮补齐**版本号与日志埋点**：扩展每个上下文（background / content / 注入脚本 / 弹窗 / 选项页）启动即打印 `[Pass v版本]` 日志，弹窗与选项页右下角显示版本号；页面注入脚本把 `pageVersion` 带进诊断，content script 与 Service Worker 发现「页面版本 ≠ 后台版本」时告警并提示硬刷新标签页——这是上一轮 PRF 排障踩到的最大坑（重载扩展不会更新已打开标签页的内容脚本）。客户端侧同步补齐：Tauri 桌面的 Rust 壳启动打印版本、三端共用管理 UI 标题栏与日志带版本（`app_version.js` 已纳入 `scripts/version.mjs` 的 65 处校验）；Docker Web 的 Rust 后端启动打印版本、`/healthz` 返回版本；同步服务启动日志与 `/healthz` 也带上版本。此前 Bitwarden 无密码解锁因 Pass 缺 PRF 被标为「不支持加密」，修复后重注册即可真正用 Pass 解锁。
 
-详细进度：[`docs/20261012-2244-WebAuthn-PRF实现与Bitwarden通行密钥解锁-Step-5-Preview.md`](docs/20261012-2244-WebAuthn-PRF实现与Bitwarden通行密钥解锁-Step-5-Preview.md)
+详细进度：[`docs/20261013-0021-版本与日志埋点补齐扩展与客户端-Step-5-Preview.md`](docs/20261013-0021-版本与日志埋点补齐扩展与客户端-Step-5-Preview.md)（PRF 实现见 [`docs/20261012-2244-WebAuthn-PRF实现与Bitwarden通行密钥解锁-Step-5-Preview.md`](docs/20261012-2244-WebAuthn-PRF实现与Bitwarden通行密钥解锁-Step-5-Preview.md)）
 
 ## 下一步待实现
 

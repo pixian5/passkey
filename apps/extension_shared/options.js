@@ -162,6 +162,7 @@ function isSecureSyncEndpointValue(value) {
 }
 
 const dom = {
+  optionsVersion: document.getElementById("optionsVersion"),
   deviceName: document.getElementById("deviceName"),
   syncEnableWebdav: document.getElementById("syncEnableWebdav"),
   syncEnableServer: document.getElementById("syncEnableServer"),
@@ -292,7 +293,28 @@ init().catch((error) => {
   setStatus(`初始化失败: ${detail || "未知错误，请查看扩展 Service Worker 控制台"}；数据未被修改`);
 });
 
+const OPTIONS_LOG_PREFIX = `[Pass v${PASS_EXTENSION_VERSION}]`;
+
+function logOptions(event, details = {}) {
+  try {
+    console.info(OPTIONS_LOG_PREFIX, event, details);
+  } catch {
+    // 控制台不可用时不影响功能。
+  }
+}
+
+function renderOptionsVersion() {
+  if (!dom.optionsVersion) return;
+  try {
+    dom.optionsVersion.textContent = `扩展版本 v${PASS_EXTENSION_VERSION}`;
+  } catch {
+    // 渲染失败不影响功能。
+  }
+}
+
 async function init() {
+  renderOptionsVersion();
+  logOptions("options ready", { version: PASS_EXTENSION_VERSION });
   chrome.runtime.onMessage.addListener(handleRuntimeMessage);
   await loadDeviceName();
   await loadLockSettings();

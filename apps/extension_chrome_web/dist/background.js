@@ -1853,7 +1853,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.8.3";
+  var PASS_EXTENSION_VERSION = "1.8.4";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 40;
@@ -2066,6 +2066,9 @@
     const diagnostic = {
       atMs: Date.now(),
       extensionVersion: safeString(extensionVersion),
+      // 页面侧（webauthn_injected.js）自报的版本，用于识别「扩展重新加载了、
+      // 但页面还留着旧 content script」的情况。
+      pageVersion: safeString(payload?.pageVersion),
       diagnosticSessionId: safeDiagnosticSessionId(payload?.diagnosticSessionId),
       phase,
       operation: safeString(payload?.operation),
@@ -3460,6 +3463,12 @@
     } catch {
     }
   }
+  try {
+    console.info(`[Pass v${PASS_EXTENSION_VERSION}] background ready`, {
+      version: PASS_EXTENSION_VERSION
+    });
+  } catch {
+  }
   function visibleSyncCount(values) {
     return (Array.isArray(values) ? values : []).filter((item) => item?.isPermanentlyDeleted !== true).length;
   }
@@ -4488,6 +4497,18 @@
         operation: String(diagnostic?.operation || ""),
         diagnosticSessionId: String(diagnostic?.diagnosticSessionId || "")
       });
+      const pageVersion = String(diagnostic?.pageVersion || "");
+      if (pageVersion && pageVersion !== PASS_EXTENSION_VERSION) {
+        logPasskeyFlow("version-mismatch", {
+          surface: "page-vs-background",
+          pageVersion,
+          backgroundVersion: PASS_EXTENSION_VERSION,
+          hint: "\u9875\u9762\u4ECD\u8FD0\u884C\u65E7 content script\uFF0C\u8BF7\u5728\u76EE\u6807\u6807\u7B7E\u9875\u786C\u5237\u65B0\uFF08Cmd/Ctrl+Shift+R\uFF09\u540E\u91CD\u8BD5"
+        });
+        console.warn(
+          `${PASSKEY_LOG_PREFIX2} \u9875\u9762\u6CE8\u5165\u811A\u672C\u7248\u672C ${pageVersion} \u4E0E Service Worker \u7248\u672C ${PASS_EXTENSION_VERSION} \u4E0D\u4E00\u81F4\uFF1A\u91CD\u8F7D\u6269\u5C55\u4E0D\u4F1A\u66F4\u65B0\u5DF2\u6253\u5F00\u6807\u7B7E\u9875\u7684\u5185\u5BB9\u811A\u672C\uFF0C\u8BF7\u786C\u5237\u65B0\u6807\u7B7E\u9875\u3002`
+        );
+      }
       return { ok: true };
     } catch (error) {
       logPasskeyFlow("page-diagnostic-record-failed", {

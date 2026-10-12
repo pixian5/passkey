@@ -196,7 +196,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.8.3";
+  var PASS_EXTENSION_VERSION = "1.8.4";
 
   // fill_chooser_activation.js
   var FILL_CHOOSER_ACTIVATION_DEDUPE_MS = 650;
@@ -1366,13 +1366,25 @@
       diagnosticSessionId: String(data?.diagnosticSessionId || ""),
       origin: frameContext.origin,
       host: frameContext.host,
-      details: data?.details
+      details: data?.details,
+      // 页面自报版本 vs 本 content script 的版本：两者不一致说明同一文档里
+      // 混跑了两个版本（通常是扩展重载后页面没硬刷新）。
+      pageVersion: String(data?.pageVersion || ""),
+      contentVersion: PASS_EXTENSION_VERSION
     };
     logPasskeyContent("page-diagnostic-forwarded", {
       operation: payload.operation,
       phase: payload.phase,
-      diagnosticSessionId: payload.diagnosticSessionId
+      diagnosticSessionId: payload.diagnosticSessionId,
+      contentVersion: payload.contentVersion,
+      pageVersion: payload.pageVersion
     });
+    if (payload.pageVersion && payload.pageVersion !== PASS_EXTENSION_VERSION) {
+      console.warn(
+        `${PASSKEY_LOG_PREFIX} \u9875\u9762\u6CE8\u5165\u811A\u672C\u7248\u672C\u4E0E content script \u4E0D\u4E00\u81F4\uFF1Apage=${payload.pageVersion} content=${PASS_EXTENSION_VERSION}\u3002`,
+        "\u8BF7\u5728\u76EE\u6807\u6807\u7B7E\u9875\u6309 Cmd/Ctrl+Shift+R \u786C\u5237\u65B0\u540E\u518D\u91CD\u8BD5\u3002"
+      );
+    }
     try {
       chrome.runtime.sendMessage({
         type: "PASS_PASSKEY_DIAGNOSTIC_EVENT",

@@ -1,4 +1,7 @@
 (() => {
+  // extension_version.js
+  var PASS_EXTENSION_VERSION = "1.8.4";
+
   // ../../core/pass_core/js/sync_policy.js
   var DEFAULT_DEVICE_NAME = "PassDevice";
   var FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
@@ -2175,6 +2178,7 @@
     }
   }
   var dom = {
+    optionsVersion: document.getElementById("optionsVersion"),
     deviceName: document.getElementById("deviceName"),
     syncEnableWebdav: document.getElementById("syncEnableWebdav"),
     syncEnableServer: document.getElementById("syncEnableServer"),
@@ -2297,7 +2301,23 @@
     const detail = [error?.name, error?.code, error?.message, String(error)].map((value) => String(value || "").trim()).filter((value, index, values) => value && values.indexOf(value) === index).join(" | ");
     setStatus(`\u521D\u59CB\u5316\u5931\u8D25: ${detail || "\u672A\u77E5\u9519\u8BEF\uFF0C\u8BF7\u67E5\u770B\u6269\u5C55 Service Worker \u63A7\u5236\u53F0"}\uFF1B\u6570\u636E\u672A\u88AB\u4FEE\u6539`);
   });
+  var OPTIONS_LOG_PREFIX = `[Pass v${PASS_EXTENSION_VERSION}]`;
+  function logOptions(event, details = {}) {
+    try {
+      console.info(OPTIONS_LOG_PREFIX, event, details);
+    } catch {
+    }
+  }
+  function renderOptionsVersion() {
+    if (!dom.optionsVersion) return;
+    try {
+      dom.optionsVersion.textContent = `\u6269\u5C55\u7248\u672C v${PASS_EXTENSION_VERSION}`;
+    } catch {
+    }
+  }
   async function init() {
+    renderOptionsVersion();
+    logOptions("options ready", { version: PASS_EXTENSION_VERSION });
     chrome.runtime.onMessage.addListener(handleRuntimeMessage);
     await loadDeviceName();
     await loadLockSettings();

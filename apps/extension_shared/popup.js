@@ -44,6 +44,7 @@ import {
   FIXED_NEW_ACCOUNT_FOLDER_ID,
   normalizeDeviceName,
 } from "../../core/pass_core/js/sync_policy.js";
+import { PASS_EXTENSION_VERSION } from "./extension_version.js";
 
 const STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
 const ACCOUNT_SEARCH_FIELD_KEYS = ["username", "sites", "note", "password"];
@@ -97,7 +98,12 @@ const dom = {
   passkeyList: document.getElementById("passkeyList"),
   accountList: document.getElementById("accountList"),
   status: document.getElementById("popupStatus"),
+  version: document.getElementById("popupVersion"),
 };
+
+// 弹窗每次打开都是一份全新的文档上下文，版本号必须显式渲染出来，
+// 排查时能一眼确认当前弹窗加载的是哪一份代码。
+const POPUP_LOG_PREFIX = `[Pass v${PASS_EXTENSION_VERSION}]`;
 
 let currentDomain = "";
 let accounts = [];
@@ -135,6 +141,12 @@ init().catch((error) => {
 });
 
 async function init() {
+  renderPopupVersion();
+  logPopup("popup ready", {
+    version: PASS_EXTENSION_VERSION,
+    // content script / background 的版本不匹配时，这里能第一时间看出来
+    runtimeId: safeRuntimeId(),
+  });
   await resolveCurrentDomain();
   await loadLockSettingsFromStorage();
   bindEvents();
@@ -152,6 +164,31 @@ async function init() {
     loadPasskeys(),
   ]);
   renderAccounts();
+}
+
+function safeRuntimeId() {
+  try {
+    return String(chrome.runtime?.id || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function logPopup(event, details = {}) {
+  try {
+    console.info(POPUP_LOG_PREFIX, event, details);
+  } catch {
+    // 控制台不可用时不影响功能。
+  }
+}
+
+function renderPopupVersion() {
+  if (!dom.version) return;
+  try {
+    dom.version.textContent = `v${PASS_EXTENSION_VERSION}`;
+  } catch {
+    // 渲染失败不影响功能。
+  }
 }
 
 function handleRuntimeMessage(message) {

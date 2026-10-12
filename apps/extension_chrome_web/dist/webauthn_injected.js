@@ -1,6 +1,6 @@
 (() => {
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.8.3";
+  var PASS_EXTENSION_VERSION = "1.8.4";
 
   // webauthn_client_data.js
   function normalizeHttpOrigin(value) {
@@ -217,7 +217,10 @@
           operation: "create",
           diagnosticSessionId,
           phase,
-          details
+          details,
+          // document_start 注入后如果扩展被重新加载，这里仍是旧版本，
+          // background 据此判断页面是否还停留在旧 content script。
+          pageVersion: String(window.__passInjectedVersion || PASS_EXTENSION_VERSION || "")
         }, window.location.origin);
       } catch {
       }

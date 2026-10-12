@@ -1,4 +1,15 @@
 import { syncOutboxSchedulerDelayMs } from "./sync_outbox_scheduler.js";
+import { APP_VERSION } from "./app_version.js";
+
+// 统一排障日志前缀：每条日志都带当前应用版本号，方便跨端定位问题来源。
+const LOG_PREFIX = `[Pass v${APP_VERSION}]`;
+const logInfo = (event, details = {}) => {
+  try {
+    console.info(LOG_PREFIX, event, details);
+  } catch {
+    // Ignore logging failures.
+  }
+};
 
 // This page is copied directly into the Tauri webview without a bundler, so a
 // bare npm import such as "@tauri-apps/api/core" cannot be resolved here.
@@ -4525,6 +4536,15 @@ els.btnLockNow?.addEventListener("click", doLockNow);
 els.btnLockNowSettings?.addEventListener("click", doLockNow);
 
 const boot = async () => {
+  // 版本信息：写入标题栏与 document.title，并在控制台输出，便于用户上报问题时自证版本。
+  try {
+    const titleEl = document.querySelector(".app-title");
+    if (titleEl) titleEl.textContent = `Pass v${APP_VERSION}`;
+    document.title = `Pass v${APP_VERSION}`;
+  } catch {
+    // Ignore UI stamping failures.
+  }
+  logInfo("boot", { version: APP_VERSION, surface: platformCapabilities.surface });
   try {
     const health = await invoke("health_check");
     applyPlatformCapabilities({
@@ -4539,6 +4559,7 @@ const boot = async () => {
       localSnapshots: health?.capabilities?.localSnapshots !== false,
       managedMultiSourceSync: Boolean(health?.capabilities?.managedMultiSourceSync),
     });
+    logInfo("surface-ready", { version: APP_VERSION, surface: platformCapabilities.surface });
   } catch (_) {
     applyPlatformCapabilities({});
   }

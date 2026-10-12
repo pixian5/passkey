@@ -26,6 +26,25 @@ LOGGER = logging.getLogger("pass_sync_server")
 MAX_AUDIT_OPERATIONS_PER_SCOPE = 5_000
 
 
+def _read_service_version() -> str:
+    """从仓库根目录 VERSION 读取版本号。
+
+    部署到服务器时该文件通常随包一起发布；缺失时退回 unknown，
+    只是少一行诊断信息，不影响服务功能。
+    """
+    try:
+        candidate = Path(__file__).resolve().parents[2] / "VERSION"
+        value = candidate.read_text(encoding="utf-8").strip()
+        if value:
+            return value
+    except OSError:
+        pass
+    return "unknown"
+
+
+SERVICE_VERSION = _read_service_version()
+
+
 @dataclass(frozen=True)
 class AppConfig:
     host: str
@@ -832,6 +851,7 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
         payload = {
             "ok": True,
             "service": "pass-sync-server",
+            "version": SERVICE_VERSION,
             "timeMs": current_time_ms(),
         }
         self._send_json(HTTPStatus.OK, payload, head_only=head_only)
@@ -1354,7 +1374,8 @@ def main() -> None:
     signal.signal(signal.SIGTERM, handle_signal)
 
     LOGGER.info(
-        "pass-sync-server listening on %s:%s db=%s auth=%s",
+        "[Pass v%s] pass-sync-server listening on %s:%s db=%s auth=%s",
+        SERVICE_VERSION,
         config.host,
         config.port,
         config.db_path,

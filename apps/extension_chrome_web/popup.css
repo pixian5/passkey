@@ -175,6 +175,14 @@ button:active {
   display: none;
 }
 
+.popup-version {
+  margin-top: 2px;
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #7a8496;
+  user-select: all;
+}
+
 .popup-toast {
   position: fixed;
   left: 50%;

@@ -832,3 +832,12 @@ button {
 .sort-modal-pin-btn {
   flex: 0 0 auto;
 }
+
+.options-version {
+  margin: 6px 0 0;
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #6b7a90;
+  user-select: all;
+}

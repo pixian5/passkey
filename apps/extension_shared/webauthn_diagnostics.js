@@ -245,6 +245,9 @@ export function buildPasskeyPageDiagnostic({ payload, extensionVersion }) {
   const diagnostic = {
     atMs: Date.now(),
     extensionVersion: safeString(extensionVersion),
+    // 页面侧（webauthn_injected.js）自报的版本，用于识别「扩展重新加载了、
+    // 但页面还留着旧 content script」的情况。
+    pageVersion: safeString(payload?.pageVersion),
     diagnosticSessionId: safeDiagnosticSessionId(payload?.diagnosticSessionId),
     phase,
     operation: safeString(payload?.operation),

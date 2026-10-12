@@ -109,6 +109,25 @@ test("页面错误诊断会脱敏 URL、邮箱和长令牌", () => {
   assert.equal(diagnostic.pageError.message, "failed [url] [email] [token]");
 });
 
+test("页面诊断同时记录后台版本与页面自报版本，便于识别内容脚本未更新", () => {
+  const diagnostic = buildPasskeyPageDiagnostic({
+    extensionVersion: "1.8.4",
+    payload: {
+      operation: "create",
+      diagnosticSessionId: "req_versioncheck",
+      phase: "page-api-called",
+      origin: "https://example.test",
+      host: "example.test",
+      // content.js 转发时带上的是页面侧注入脚本自报的版本。
+      pageVersion: "1.8.3",
+      details: { method: "credentials.create" },
+    },
+  });
+
+  assert.equal(diagnostic.extensionVersion, "1.8.4");
+  assert.equal(diagnostic.pageVersion, "1.8.3");
+});
+
 test("最近注册报告按同一诊断会话聚合时间线", () => {
   const entries = [
     { operation: "create", diagnosticSessionId: "req_oldsession", phase: "store-response", atMs: 1 },

@@ -4849,6 +4849,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("1") | Some("true") | Some("TRUE")
     );
     validate_startup_security(&host, &token, trusted_loopback_proxy, require_auth)?;
+    // 尽早打印版本：即使后续 vault 打开失败，也能从日志确认跑的是哪一份构建。
+    println!(
+        "[Pass v{}] pass-web starting: data_dir={} static_dir={}",
+        env!("CARGO_PKG_VERSION"),
+        data_dir.display(),
+        static_dir.display()
+    );
     let instance_guard = Arc::new(acquire_instance_guard(&data_dir)?);
     let state = AppState {
         vault: Arc::new(Mutex::new(Vault::open(data_dir)?)),
@@ -4863,7 +4870,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(state)
         .layer(TraceLayer::new_for_http());
     let listener = TcpListener::bind(format!("{host}:{port}")).await?;
-    println!("Pass Web listening on http://{host}:{port}");
+    // 启动即打印版本，便于从容器日志确认线上实际运行的版本。
+    println!("[Pass v{}] pass-web ready: http://{host}:{port}", env!("CARGO_PKG_VERSION"));
     axum::serve(listener, app).await?;
     Ok(())
 }

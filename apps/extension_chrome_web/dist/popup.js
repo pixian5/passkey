@@ -878,6 +878,9 @@
     };
   }
 
+  // extension_version.js
+  var PASS_EXTENSION_VERSION = "1.8.4";
+
   // popup.js
   var STORAGE_KEY_DEVICE_NAME = "pass.deviceName";
   var TOTP_PERIOD_SECONDS = 30;
@@ -928,8 +931,10 @@
     copyPasskeyCreateDiagnosticBtn: document.getElementById("copyPasskeyCreateDiagnostic"),
     passkeyList: document.getElementById("passkeyList"),
     accountList: document.getElementById("accountList"),
-    status: document.getElementById("popupStatus")
+    status: document.getElementById("popupStatus"),
+    version: document.getElementById("popupVersion")
   };
+  var POPUP_LOG_PREFIX = `[Pass v${PASS_EXTENSION_VERSION}]`;
   var currentDomain = "";
   var accounts = [];
   var folders = [];
@@ -961,6 +966,12 @@
     setStatus(`\u521D\u59CB\u5316\u5931\u8D25: ${detail || "\u672A\u77E5\u9519\u8BEF\uFF0C\u8BF7\u67E5\u770B\u6269\u5C55 Service Worker \u63A7\u5236\u53F0"}\uFF1B\u6570\u636E\u672A\u88AB\u4FEE\u6539`);
   });
   async function init() {
+    renderPopupVersion();
+    logPopup("popup ready", {
+      version: PASS_EXTENSION_VERSION,
+      // content script / background 的版本不匹配时，这里能第一时间看出来
+      runtimeId: safeRuntimeId()
+    });
     await resolveCurrentDomain();
     await loadLockSettingsFromStorage();
     bindEvents();
@@ -978,6 +989,26 @@
       loadPasskeys()
     ]);
     renderAccounts();
+  }
+  function safeRuntimeId() {
+    try {
+      return String(chrome.runtime?.id || "").trim();
+    } catch {
+      return "";
+    }
+  }
+  function logPopup(event, details = {}) {
+    try {
+      console.info(POPUP_LOG_PREFIX, event, details);
+    } catch {
+    }
+  }
+  function renderPopupVersion() {
+    if (!dom.version) return;
+    try {
+      dom.version.textContent = `v${PASS_EXTENSION_VERSION}`;
+    } catch {
+    }
   }
   function handleRuntimeMessage(message) {
     if (message?.type !== LOCK_STATE_CHANGED_MESSAGE) return;

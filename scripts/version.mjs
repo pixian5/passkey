@@ -235,6 +235,12 @@ function setVersion(version) {
     `$1${JSON.stringify(version)}`,
     "PASS_EXTENSION_VERSION",
   );
+  replaceExactly(
+    "apps/codex-tauri/src/app_version.js",
+    /(APP_VERSION\s*=\s*)["'][^"']+["']/,
+    `$1${JSON.stringify(version)}`,
+    "APP_VERSION",
+  );
   for (const [target, pattern, description] of documentationVersionTargets) {
     replaceExactly(target, pattern, `$1${version}$2`, description);
   }
@@ -313,6 +319,8 @@ function collectVersions() {
   ]);
   const extensionVersion = fs.readFileSync(absolute("apps/extension_shared/extension_version.js"), "utf8");
   entries.push(["apps/extension_shared/extension_version.js", extensionVersion.match(/PASS_EXTENSION_VERSION\s*=\s*["']([^"']+)["']/)?.[1]]);
+  const appVersion = fs.readFileSync(absolute("apps/codex-tauri/src/app_version.js"), "utf8");
+  entries.push(["apps/codex-tauri/src/app_version.js", appVersion.match(/APP_VERSION\s*=\s*["']([^"']+)["']/)?.[1]]);
   for (const [target, pattern, description] of documentationVersionTargets) {
     entries.push([`${target}:${description}`, fs.readFileSync(absolute(target), "utf8").match(pattern)?.[0].match(/\d+\.\d+\.\d+/)?.[0]]);
   }
