@@ -46,6 +46,7 @@
 | --- | --- |
 | [test-baseline-and-sync-e2e-zh.md](test-baseline-and-sync-e2e-zh.md) | 根级测试入口、临时 Cargo target、Docker/Android 可选套件和同步边界测试约定。 |
 | [20261013-0021-版本与日志埋点补齐扩展与客户端-Step-5-Preview.md](20261013-0021-版本与日志埋点补齐扩展与客户端-Step-5-Preview.md) | 1.8.4 版本号来源、扩展/客户端/同步服务的启动日志与版本显示、pageVersion 不一致告警与排障口诀。 |
+| [20261013-0153-同步服务首上线or.sbbz.tech与部署脚本两处修复-Step-5-Preview.md](20261013-0153-同步服务首上线or.sbbz.tech与部署脚本两处修复-Step-5-Preview.md) | Ubuntu 同步服务首次上线的准备清单（Token/env/证书/Secrets）、deploy.sh 两处缺陷修复、Fake IP 环境下的正确探测方式与运维速查。 |
 | [pass-web-docker-development-zh.md](pass-web-docker-development-zh.md) | Pass Web 的 Docker/OCI 构建、Compose、数据卷、发布、备份、回滚和排障规范。 |
 | [pass-web-three-stage-design-zh.md](pass-web-three-stage-design-zh.md) | Web 端三阶段架构；前两阶段部分落地，第三阶段多用户目标尚未完成。 |
 | [sync-protocol-contract-zh.md](sync-protocol-contract-zh.md) | 旧 V1 本地配对/op-log 设计，仅供历史追溯；当前实现不得新增 V1 端点。 |

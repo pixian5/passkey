@@ -8,7 +8,9 @@
 
 版本 `1.8.4`。继 1.8.3 修复 WebAuthn PRF 序列化后，本轮补齐**版本号与日志埋点**：扩展每个上下文（background / content / 注入脚本 / 弹窗 / 选项页）启动即打印 `[Pass v版本]` 日志，弹窗与选项页右下角显示版本号；页面注入脚本把 `pageVersion` 带进诊断，content script 与 Service Worker 发现「页面版本 ≠ 后台版本」时告警并提示硬刷新标签页——这是上一轮 PRF 排障踩到的最大坑（重载扩展不会更新已打开标签页的内容脚本）。客户端侧同步补齐：Tauri 桌面的 Rust 壳启动打印版本、三端共用管理 UI 标题栏与日志带版本（`app_version.js` 已纳入 `scripts/version.mjs` 的 65 处校验）；Docker Web 的 Rust 后端启动打印版本、`/healthz` 返回版本；同步服务启动日志与 `/healthz` 也带上版本。此前 Bitwarden 无密码解锁因 Pass 缺 PRF 被标为「不支持加密」，修复后重注册即可真正用 Pass 解锁。
 
-详细进度：[`docs/20261013-0021-版本与日志埋点补齐扩展与客户端-Step-5-Preview.md`](docs/20261013-0021-版本与日志埋点补齐扩展与客户端-Step-5-Preview.md)（PRF 实现见 [`docs/20261012-2244-WebAuthn-PRF实现与Bitwarden通行密钥解锁-Step-5-Preview.md`](docs/20261012-2244-WebAuthn-PRF实现与Bitwarden通行密钥解锁-Step-5-Preview.md)）
+Ubuntu 同步服务本轮完成**首次上线部署**（`or.sbbz.tech`，即 `Deploy Sync Server` 工作流的目标机），过程中修掉 `deploy.sh` 两处缺陷：其一，健康检查用 `grep 'DNS:[A-Za-z0-9.-]+'` 读证书 SAN，遇到通配项（`DNS:*.sbbz.tech`）只会取到空串导致部署必失败回滚，现改为逐个 SAN 跳过通配项取具体域名；其二，程序安装到 `/opt/pass-sync-server/` 后读不到仓库根 `VERSION`，启动日志与健康检查只能报 `unknown`，现把 `VERSION` 随程序安装并让版本解析按「环境变量 → 程序同级 → 上两级」依次查找。完整的服务器侧准备项（Token 文件权限与属主、监听地址 env、TLS 证书、GitHub Secrets）、验收记录与运维速查见下方文档。
+
+详细进度：[`docs/20261013-0021-版本与日志埋点补齐扩展与客户端-Step-5-Preview.md`](docs/20261013-0021-版本与日志埋点补齐扩展与客户端-Step-5-Preview.md)（同步服务首次上线：[`docs/20261013-0153-同步服务首上线or.sbbz.tech与部署脚本两处修复-Step-5-Preview.md`](docs/20261013-0153-同步服务首上线or.sbbz.tech与部署脚本两处修复-Step-5-Preview.md)；PRF 实现见 [`docs/20261012-2244-WebAuthn-PRF实现与Bitwarden通行密钥解锁-Step-5-Preview.md`](docs/20261012-2244-WebAuthn-PRF实现与Bitwarden通行密钥解锁-Step-5-Preview.md)）
 
 ## 下一步待实现
 
