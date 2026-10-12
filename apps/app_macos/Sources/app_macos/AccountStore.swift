@@ -3787,8 +3787,7 @@ final class AccountStore: ObservableObject {
         else { return "" }
         let host = components.host ?? ""
         let port = components.port ?? ((components.scheme ?? "") == "https" ? 443 : 80)
-        return (((host == "127.0.0.1" || host == "localhost") && port == 53333)
-            || (host == "or.sbbz.tech" && port == 5443))
+        return ((host == "127.0.0.1" || host == "localhost") && port == 53333)
             ? Self.defaultSelfHostedServerBaseURL
             : trimmed
     }
