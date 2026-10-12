@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import shutil
 import socket
 import sqlite3
 import sys
@@ -18,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pass_sync_server as server_module
 from pass_sync_server import AppConfig, build_server, load_config, parse_ascii_decimal
+
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def sample_bundle(exported_at_ms: int = 1_777_777_777_777) -> bytes:
@@ -897,6 +901,54 @@ class PassSyncServerTests(unittest.TestCase):
             )
         self.assertEqual(context.exception.code, 413)
         context.exception.close()
+
+
+class ServiceVersionTests(unittest.TestCase):
+    """版本号要能在「脱离仓库的安装目录」里被读到，否则线上日志只能报 unknown。"""
+
+    def test_repo_module_reads_root_version(self) -> None:
+        expected = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+        self.assertEqual(server_module.SERVICE_VERSION, expected)
+
+    def test_installed_layout_reads_version_next_to_program(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            install_root = Path(temp_dir) / "opt" / "pass-sync-server"
+            install_root.mkdir(parents=True)
+            shutil.copy2(server_module.__file__, install_root / "pass_sync_server.py")
+            (install_root / "VERSION").write_text("9.9.9-deployed\n", encoding="utf-8")
+
+            spec = importlib.util.spec_from_file_location(
+                "installed_pass_sync_server", install_root / "pass_sync_server.py"
+            )
+            assert spec is not None and spec.loader is not None
+            module = importlib.util.module_from_spec(spec)
+            # 模块里的 dataclass 依赖 sys.modules 中的自身引用来解析注解，必须先登记。
+            sys.modules[spec.name] = module
+            try:
+                spec.loader.exec_module(module)
+            finally:
+                sys.modules.pop(spec.name, None)
+        self.assertEqual(module.SERVICE_VERSION, "9.9.9-deployed")
+
+    def test_missing_version_file_falls_back_to_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            install_root = Path(temp_dir) / "opt" / "pass-sync-server"
+            deep_root = install_root / "a" / "b" / "c"
+            install_root.mkdir(parents=True)
+            deep_root.mkdir(parents=True)
+            shutil.copy2(server_module.__file__, deep_root / "pass_sync_server.py")
+
+            spec = importlib.util.spec_from_file_location(
+                "bare_pass_sync_server", deep_root / "pass_sync_server.py"
+            )
+            assert spec is not None and spec.loader is not None
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            try:
+                spec.loader.exec_module(module)
+            finally:
+                sys.modules.pop(spec.name, None)
+        self.assertEqual(module.SERVICE_VERSION, "unknown")
 
 
 if __name__ == "__main__":

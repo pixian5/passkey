@@ -32,6 +32,7 @@ install -d -m 0700 "${PRE_DEPLOY_DIR}" "${ROLLBACK_DIR}"
 managed_paths=(
   "${INSTALL_DIR}/pass_sync_server.py"
   "${INSTALL_DIR}/backup_sync_db.sh"
+  "${INSTALL_DIR}/VERSION"
   "/etc/systemd/system/pass-sync-server.service"
   "/etc/systemd/system/pass-sync-server-backup.service"
   "/etc/systemd/system/pass-sync-server-backup.timer"
@@ -179,6 +180,10 @@ fi
 
 install -m 0644 "${SCRIPT_DIR}/pass_sync_server.py" "${INSTALL_DIR}/pass_sync_server.py"
 install -m 0755 "${SCRIPT_DIR}/backup_sync_db.sh" "${INSTALL_DIR}/backup_sync_db.sh"
+# 版本号随程序一起发布：安装目录里没有 VERSION 时，服务日志和健康检查只能回报 unknown。
+if [[ -f "${SCRIPT_DIR}/../../VERSION" ]]; then
+  install -m 0644 "${SCRIPT_DIR}/../../VERSION" "${INSTALL_DIR}/VERSION"
+fi
 install -m 0644 "${SCRIPT_DIR}/pass-sync-server.service" /etc/systemd/system/pass-sync-server.service
 install -m 0644 "${SCRIPT_DIR}/pass-sync-server-backup.service" /etc/systemd/system/pass-sync-server-backup.service
 install -m 0644 "${SCRIPT_DIR}/pass-sync-server-backup.timer" /etc/systemd/system/pass-sync-server-backup.timer
@@ -210,10 +215,20 @@ resolve_health_url() {
     # local listener while retaining normal certificate verification.
     health_host="${PASS_SYNC_HEALTH_HOST:-}"
     if [[ -z "${health_host}" ]]; then
-      health_host="$(openssl x509 -in "${tls_cert}" -noout -ext subjectAltName 2>/dev/null | grep -oE 'DNS:[A-Za-z0-9.-]+' | head -n 1 | sed 's/^DNS://' || true)"
+      # 通配 SAN（DNS:*.example.com）既不能做证书校验也不能解析，必须跳过；
+      # 证书常常同时签了具体域名（如 DNS:*.example.com,DNS:example.com），
+      # 这里取第一个非通配条目作为健康检查主机名。
+      san_values="$(openssl x509 -in "${tls_cert}" -noout -ext subjectAltName 2>/dev/null | grep -oE 'DNS:[^,[:space:]]+' | sed 's/^DNS://' || true)"
+      while IFS= read -r san_entry; do
+        if [[ -z "${san_entry}" || "${san_entry}" == *'*'* ]]; then
+          continue
+        fi
+        health_host="${san_entry}"
+        break
+      done <<< "${san_values}"
     fi
     if [[ ! "${health_host}" =~ ^[A-Za-z0-9.-]+$ ]]; then
-      echo "TLS 已启用但无法从证书读取 DNS SAN；请设置 PASS_SYNC_HEALTH_URL 或 PASS_SYNC_HEALTH_HOST" >&2
+      echo "TLS 已启用但证书里没有可用于健康检查的具体域名（只有通配 SAN）；请设置 PASS_SYNC_HEALTH_URL 或 PASS_SYNC_HEALTH_HOST" >&2
       return 1
     fi
     printf 'https://%s:%s/healthz\t%s:%s:127.0.0.1\n' "${health_host}" "${actual_port}" "${health_host}" "${actual_port}"

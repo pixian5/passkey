@@ -144,6 +144,18 @@ class OptionalBearerScriptTests(unittest.TestCase):
         self.assertIn('exit "${failure_status}"', deploy)
         self.assertIn("persist_runtime_setting PASS_SYNC_PORT", deploy)
         self.assertIn("migrated_legacy_env=1", deploy)
+        # 版本号必须随程序安装到 INSTALL_DIR，否则线上日志与健康检查只能报 unknown
+        self.assertIn('${INSTALL_DIR}/VERSION', deploy)
+        self.assertIn('SCRIPT_DIR}/../../VERSION', deploy)
+
+    def test_tls_health_check_prefers_concrete_san_over_wildcard(self) -> None:
+        deploy = (ROOT / "apps" / "sync_server_ubuntu" / "deploy.sh").read_text(encoding="utf-8")
+        # 通配符证书（DNS:*.example.com）不能作为健康检查主机名：既无法校验也无法解析。
+        # 旧写法用 "[A-Za-z0-9.-]+" 取 SAN，遇到通配条目只会取到空串，导致部署误判失败。
+        self.assertNotIn("grep -oE 'DNS:[A-Za-z0-9.-]+'", deploy)
+        self.assertIn("grep -oE 'DNS:[^,[:space:]]+'", deploy)
+        self.assertIn("san_entry", deploy)
+        self.assertIn("通配 SAN（DNS:*.example.com）既不能做证书校验也不能解析", deploy)
 
     def test_backup_service_uses_installed_script(self) -> None:
         service = (ROOT / "apps" / "sync_server_ubuntu" / "pass-sync-server-backup.service").read_text(

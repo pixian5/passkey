@@ -27,17 +27,33 @@ MAX_AUDIT_OPERATIONS_PER_SCOPE = 5_000
 
 
 def _read_service_version() -> str:
-    """从仓库根目录 VERSION 读取版本号。
+    """读取版本号：优先服务端 inferred 的安装目录，其次仓库根目录 VERSION。
 
-    部署到服务器时该文件通常随包一起发布；缺失时退回 unknown，
-    只是少一行诊断信息，不影响服务功能。
+    部署后程序被 install 到 /opt/pass-sync-server/，既不在仓库里也没有 VERSION，
+    所以部署脚本会把仓库根 VERSION 一并装到程序同级；这里按顺序找几个候选位置，
+    全都拿不到时退回 unknown（只少一行诊断信息，不影响服务功能）。
     """
+    script_path = Path(__file__).resolve()
+    candidates: list[Path] = []
+    override = os.environ.get("PASS_SYNC_VERSION_FILE", "").strip()
+    if override:
+        candidates.append(Path(override).expanduser())
+    candidates.extend(
+        [
+            script_path.parent / "VERSION",
+            script_path.parents[1] / "VERSION",
+            script_path.parents[2] / "VERSION",
+        ]
+    )
     try:
-        candidate = Path(__file__).resolve().parents[2] / "VERSION"
-        value = candidate.read_text(encoding="utf-8").strip()
-        if value:
-            return value
-    except OSError:
+        for candidate in candidates:
+            try:
+                value = candidate.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if value:
+                return value
+    except IndexError:
         pass
     return "unknown"
 
