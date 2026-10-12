@@ -461,6 +461,9 @@
             "null"
           ]
         },
+        "hmacSecretB64u": {
+          "type": ["string", "null"]
+        },
         "createdAtMs": {
           "type": "integer",
           "minimum": 0

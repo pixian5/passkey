@@ -89,10 +89,17 @@ export function buildWebAuthnClientDataJSON({
   return new TextEncoder().encode(JSON.stringify(payload));
 }
 
-export function buildCreateClientExtensionResults(extensions) {
+// WebAuthn PRF（hmac-secret）扩展：在注册（create）时若请求 prf，则声明支持；
+// 在断言（get）时按 RP 提供的 salt 计算 HMAC-SHA-256 输出。Pass 把密钥材料保存在
+// 自身加密库里（软件存储），因此可以完整实现 PRF，使像 Bitwarden 这样依赖 PRF 派生
+// 保险库密钥的站点能够用 Pass 托管的通行密钥完成解锁。
+export function buildCreateClientExtensionResults(extensions, { prfEnabled = false } = {}) {
   const results = {};
   if (extensions?.credProps === true) {
     results.credProps = { rk: true };
+  }
+  if (prfEnabled) {
+    results.prf = { enabled: true };
   }
   return results;
 }

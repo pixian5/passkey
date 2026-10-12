@@ -1039,10 +1039,13 @@
     }
     return new TextEncoder().encode(JSON.stringify(payload));
   }
-  function buildCreateClientExtensionResults(extensions) {
+  function buildCreateClientExtensionResults(extensions, { prfEnabled = false } = {}) {
     const results = {};
     if (extensions?.credProps === true) {
       results.credProps = { rk: true };
+    }
+    if (prfEnabled) {
+      results.prf = { enabled: true };
     }
     return results;
   }
@@ -1062,6 +1065,7 @@
   var AUTH_DATA_FLAG_BE = 8;
   var AUTH_DATA_FLAG_BS = 16;
   var AUTH_DATA_FLAG_AT = 64;
+  var PRF_HMAC_SECRET_BYTE_LENGTH = 32;
   function logPasskeyStore(event, details = {}) {
     try {
       console.info(PASSKEY_LOG_PREFIX, event, details);
@@ -1155,6 +1159,8 @@
       alg: selectedAlg,
       usedUserNameFallback
     });
+    const prfRequested = Boolean(publicKey?.extensions?.prf);
+    const hmacSecretB64u = prfRequested ? bytesToBase64url(randomBytes(PRF_HMAC_SECRET_BYTE_LENGTH)) : null;
     const passkeys = await loadPasskeys();
     const excludeIds = normalizeCredentialIdList(publicKey?.excludeCredentials || []);
     logPasskeyStore("create-context", {
@@ -1196,7 +1202,9 @@
       crossOrigin: Boolean(publicKey?.crossOrigin),
       topOrigin: publicKey?.topOrigin
     });
-    const clientExtensionResults = buildCreateClientExtensionResults(publicKey?.extensions);
+    const clientExtensionResults = buildCreateClientExtensionResults(publicKey?.extensions, {
+      prfEnabled: prfRequested
+    });
     const rpIdHash = await sha256(utf8(rpId));
     const authData = concatBytes(
       rpIdHash,
@@ -1222,6 +1230,7 @@
       alg: selectedAlg,
       privateJwk,
       publicJwk,
+      hmacSecretB64u,
       signCount: 0,
       backupEligible: true,
       backupState: true,
@@ -1313,6 +1322,9 @@
       throw new PasskeyError("NotAllowedError", "\u672A\u627E\u5230\u53EF\u7528\u901A\u884C\u5BC6\u94A5", "PASSKEY_NOT_FOUND");
     }
     const selected = candidates[0];
+    const prfEval = resolvePrfEval(publicKey, selected?.credentialIdB64u);
+    const prfResults = prfEval ? await computePrfResults(base64urlToBytes(selected?.hmacSecretB64u), prfEval) : null;
+    const prfClientExtensionResults = prfResults ? { prf: { results: prfResults } } : {};
     const alg = normalizeManagedAlg(selected?.alg);
     const privateKey = await importManagedPrivateKey(alg, selected?.privateJwk);
     const clientDataJSON = buildWebAuthnClientDataJSON({
@@ -1363,7 +1375,7 @@
           signatureB64u: bytesToBase64url(signature),
           userHandleB64u: selected.userHandleB64u || null
         },
-        clientExtensionResults: {}
+        clientExtensionResults: prfClientExtensionResults
       },
       assertionHint: {
         rpId: selected.rpId || rpId,
@@ -1758,6 +1770,49 @@
       sNorm
     );
   }
+  function ensureUint8Array(value) {
+    if (value instanceof Uint8Array) return value;
+    if (value instanceof ArrayBuffer) return new Uint8Array(value);
+    if (ArrayBuffer.isView(value)) {
+      return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    }
+    if (typeof value === "string") return base64urlToBytes(value);
+    return null;
+  }
+  async function computePrfResults(hmacSecretBytes, evalInput) {
+    if (!(hmacSecretBytes instanceof Uint8Array) || hmacSecretBytes.length === 0) return null;
+    const firstBytes = ensureUint8Array(evalInput?.first);
+    if (!firstBytes || firstBytes.length === 0) return null;
+    const key = await crypto.subtle.importKey(
+      "raw",
+      hmacSecretBytes,
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const first = new Uint8Array(await crypto.subtle.sign("HMAC", key, firstBytes));
+    const results = { first: bytesToBase64url(first) };
+    const secondBytes = ensureUint8Array(evalInput?.second);
+    if (secondBytes && secondBytes.length > 0) {
+      const second = new Uint8Array(await crypto.subtle.sign("HMAC", key, secondBytes));
+      results.second = bytesToBase64url(second);
+    }
+    return results;
+  }
+  function resolvePrfEval(publicKey, credentialIdB64u) {
+    const prf = publicKey?.extensions?.prf;
+    if (!prf || typeof prf !== "object") return null;
+    if (prf.eval && prf.eval.first) {
+      return { first: prf.eval.first, second: prf.eval.second };
+    }
+    if (prf.evalByCredentialId && credentialIdB64u) {
+      const entry = prf.evalByCredentialId[String(credentialIdB64u)];
+      if (entry && entry.first) {
+        return { first: entry.first, second: entry.second };
+      }
+    }
+    return null;
+  }
   function bytesToBase64url(bytes) {
     if (!(bytes instanceof Uint8Array)) {
       bytes = new Uint8Array(bytes || []);
@@ -1793,7 +1848,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.8.1";
+  var PASS_EXTENSION_VERSION = "1.8.2";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 40;
@@ -2715,6 +2770,7 @@
       backupState: Boolean(left.backupEligible || right.backupEligible) && Boolean(left.backupState || right.backupState),
       privateJwk: newer.privateJwk || older.privateJwk || null,
       publicJwk: newer.publicJwk || older.publicJwk || null,
+      hmacSecretB64u: newer.hmacSecretB64u || older.hmacSecretB64u || null,
       createdAtMs: Math.min(asNumber(left.createdAtMs), asNumber(right.createdAtMs)),
       updatedAtMs: Math.max(leftUpdated, rightUpdated),
       lastUsedAtMs: Math.max(asNumber(left.lastUsedAtMs), asNumber(right.lastUsedAtMs)) || null,
@@ -5158,6 +5214,7 @@
       backupState: item?.backupEligible === true && item?.backupState === true,
       privateJwk: item?.privateJwk || null,
       publicJwk: item?.publicJwk || null,
+      hmacSecretB64u: item?.hmacSecretB64u || null,
       createdAtMs: Number(item?.createdAtMs || now),
       updatedAtMs: Number(item?.updatedAtMs || item?.createdAtMs || now),
       lastUsedAtMs: item?.lastUsedAtMs == null ? null : Number(item.lastUsedAtMs),

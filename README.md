@@ -6,9 +6,9 @@
 
 ## 当前开发进度
 
-版本 `1.8.1`。已补齐 Safari（苹果浏览器）隔离临时扩展的 10 项真实同步验证，修正文档检查误扫本地备份和 Safari 最低系统配置问题。桌面应用已重新安装启动，临时测试扩展及权限开关已清理恢复。上轮 1.8.0 双架构镜像发布成功；正式 Safari 安装仍缺少原团队签名证书。
+版本 `1.8.2`。已为 Chrome Web 扩展实现 **WebAuthn PRF（hmac-secret）**：注册（create）时生成并保存每凭据 `hmacSecret` 并返回 `prf.enabled`，读取（get）时按 salt 计算 `HMAC-SHA-256` 输出 `prf.results`；同步合并层（JS 真源 + Rust `pass-merge`）与 `pass-data-v2` Schema 同步透传 `hmacSecretB64u`，保证多设备合并不丢密钥。此前 Bitwarden 无密码解锁因 Pass 缺 PRF 被标为「不支持加密」并交还浏览器原生，修复后重注册即可真正用 Pass 解锁。扩展已构建 1.8.2，需在 `chrome://extensions` 重新加载、删除旧 passmac 后重注册。
 
-详细进度：[`docs/20261008-1926-当前开发进度-GPT-6.md`](docs/20261008-1926-当前开发进度-GPT-6.md)
+详细进度：[`docs/20261012-2244-WebAuthn-PRF实现与Bitwarden通行密钥解锁-Step-5-Preview.md`](docs/20261012-2244-WebAuthn-PRF实现与Bitwarden通行密钥解锁-Step-5-Preview.md)
 
 ## 下一步待实现
 

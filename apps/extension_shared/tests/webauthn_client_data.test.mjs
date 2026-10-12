@@ -93,3 +93,15 @@ test("Google Legacy AppID 是路由输入而不是客户端扩展输出", () => 
 test("Google AppID 排除检查是输入，不伪造成客户端扩展输出", () => {
   assert.deepEqual(buildCreateClientExtensionResults({ appidExclude: "https://legacy.example" }), {});
 });
+
+test("Bitwarden 请求 PRF 时声明支持", () => {
+  assert.deepEqual(buildCreateClientExtensionResults({ prf: {} }, { prfEnabled: true }), {
+    prf: { enabled: true },
+  });
+});
+
+test("未请求 PRF 时不返回 prf 扩展", () => {
+  assert.deepEqual(buildCreateClientExtensionResults({ credProps: true }, { prfEnabled: false }), {
+    credProps: { rk: true },
+  });
+});

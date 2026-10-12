@@ -170,6 +170,8 @@ pub struct Passkey {
     pub private_jwk: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_jwk: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hmac_secret_b64u: Option<String>,
     #[serde(default)]
     pub created_at_ms: i64,
     #[serde(default)]

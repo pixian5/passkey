@@ -23,6 +23,8 @@ const AUTH_DATA_FLAG_UV = 0x04;
 const AUTH_DATA_FLAG_BE = 0x08;
 const AUTH_DATA_FLAG_BS = 0x10;
 const AUTH_DATA_FLAG_AT = 0x40;
+// PRF（hmac-secret）扩展所需的每凭据 HMAC 密钥长度（字节）。
+const PRF_HMAC_SECRET_BYTE_LENGTH = 32;
 
 function logPasskeyStore(event, details = {}) {
   try {
@@ -129,6 +131,14 @@ async function createManagedCredential({ origin, host, publicKey }) {
     usedUserNameFallback,
   });
 
+  // WebAuthn PRF：若 RP 在注册时请求 hmac-secret（extensions.prf），则生成并保存每凭据
+  // HMAC 密钥，并在返回的客户端扩展结果中声明支持。Bitwarden 等依赖 PRF 派生保险库密钥的
+  // 站点需要它；缺乏 PRF 时该凭据虽能注册，却会被标记为“不支持加密”而无法用于解锁。
+  const prfRequested = Boolean(publicKey?.extensions?.prf);
+  const hmacSecretB64u = prfRequested
+    ? bytesToBase64url(randomBytes(PRF_HMAC_SECRET_BYTE_LENGTH))
+    : null;
+
   const passkeys = await loadPasskeys();
   const excludeIds = normalizeCredentialIdList(publicKey?.excludeCredentials || []);
   logPasskeyStore("create-context", {
@@ -175,7 +185,9 @@ async function createManagedCredential({ origin, host, publicKey }) {
     crossOrigin: Boolean(publicKey?.crossOrigin),
     topOrigin: publicKey?.topOrigin,
   });
-  const clientExtensionResults = buildCreateClientExtensionResults(publicKey?.extensions);
+  const clientExtensionResults = buildCreateClientExtensionResults(publicKey?.extensions, {
+    prfEnabled: prfRequested,
+  });
 
   const rpIdHash = await sha256(utf8(rpId));
   const authData = concatBytes(
@@ -204,6 +216,7 @@ async function createManagedCredential({ origin, host, publicKey }) {
     alg: selectedAlg,
     privateJwk,
     publicJwk,
+    hmacSecretB64u,
     signCount: 0,
     backupEligible: true,
     backupState: true,
@@ -395,6 +408,13 @@ async function getManagedAssertion({ origin, host, publicKey }) {
   }
   const selected = candidates[0];
 
+  // PRF：若本次 get 请求了 hmac-secret 扩展且凭据带有 hmacSecret，则按 salt 计算 HMAC 输出。
+  const prfEval = resolvePrfEval(publicKey, selected?.credentialIdB64u);
+  const prfResults = prfEval
+    ? await computePrfResults(base64urlToBytes(selected?.hmacSecretB64u), prfEval)
+    : null;
+  const prfClientExtensionResults = prfResults ? { prf: { results: prfResults } } : {};
+
   const alg = normalizeManagedAlg(selected?.alg);
   const privateKey = await importManagedPrivateKey(alg, selected?.privateJwk);
 
@@ -448,9 +468,9 @@ async function getManagedAssertion({ origin, host, publicKey }) {
         authenticatorDataB64u: bytesToBase64url(authenticatorData),
         signatureB64u: bytesToBase64url(signature),
         userHandleB64u: selected.userHandleB64u || null,
+        },
+        clientExtensionResults: prfClientExtensionResults,
       },
-      clientExtensionResults: {},
-    },
     assertionHint: {
       rpId: selected.rpId || rpId,
       userName: String(selected.userName || "").trim(),
@@ -890,6 +910,57 @@ function ecdsaRawSignatureToDer(raw) {
     new Uint8Array([0x02, sNorm.length]),
     sNorm
   );
+}
+
+// 把 PRF salt 输入（ArrayBuffer / Uint8Array / 类视图 / base64url 字符串）统一为 Uint8Array。
+function ensureUint8Array(value) {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  if (typeof value === "string") return base64urlToBytes(value);
+  return null;
+}
+
+// 计算 PRF 输出：对给定 salt 做 HMAC-SHA-256(hmacSecret, salt)。
+// eval.first 必填，eval.second 可选；结果以 base64url 返回，供 clientExtensionResults.prf.results 使用。
+async function computePrfResults(hmacSecretBytes, evalInput) {
+  if (!(hmacSecretBytes instanceof Uint8Array) || hmacSecretBytes.length === 0) return null;
+  const firstBytes = ensureUint8Array(evalInput?.first);
+  if (!firstBytes || firstBytes.length === 0) return null;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    hmacSecretBytes,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const first = new Uint8Array(await crypto.subtle.sign("HMAC", key, firstBytes));
+  const results = { first: bytesToBase64url(first) };
+  const secondBytes = ensureUint8Array(evalInput?.second);
+  if (secondBytes && secondBytes.length > 0) {
+    const second = new Uint8Array(await crypto.subtle.sign("HMAC", key, secondBytes));
+    results.second = bytesToBase64url(second);
+  }
+  return results;
+}
+
+// 从 get 请求的 extensions.prf 中解析本次需要计算的 salt：
+// 支持 eval（凭据无关）与 evalByCredentialId（按凭据 ID）两种形态。
+function resolvePrfEval(publicKey, credentialIdB64u) {
+  const prf = publicKey?.extensions?.prf;
+  if (!prf || typeof prf !== "object") return null;
+  if (prf.eval && prf.eval.first) {
+    return { first: prf.eval.first, second: prf.eval.second };
+  }
+  if (prf.evalByCredentialId && credentialIdB64u) {
+    const entry = prf.evalByCredentialId[String(credentialIdB64u)];
+    if (entry && entry.first) {
+      return { first: entry.first, second: entry.second };
+    }
+  }
+  return null;
 }
 
 function bytesToBase64url(bytes) {

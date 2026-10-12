@@ -434,6 +434,7 @@ function mergeSamePasskey(lhs, rhs, h) {
       && Boolean(left.backupState || right.backupState),
     privateJwk: newer.privateJwk || older.privateJwk || null,
     publicJwk: newer.publicJwk || older.publicJwk || null,
+    hmacSecretB64u: newer.hmacSecretB64u || older.hmacSecretB64u || null,
     createdAtMs: Math.min(asNumber(left.createdAtMs), asNumber(right.createdAtMs)),
     updatedAtMs: Math.max(leftUpdated, rightUpdated),
     lastUsedAtMs: Math.max(asNumber(left.lastUsedAtMs), asNumber(right.lastUsedAtMs)) || null,

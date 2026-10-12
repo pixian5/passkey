@@ -636,6 +636,10 @@ fn merge_same_passkey(lhs: Passkey, rhs: Passkey) -> Passkey {
             .public_jwk
             .clone()
             .or_else(|| older.public_jwk.clone()),
+        hmac_secret_b64u: newer
+            .hmac_secret_b64u
+            .clone()
+            .or_else(|| older.hmac_secret_b64u.clone()),
         created_at_ms: left.created_at_ms.min(right.created_at_ms),
         updated_at_ms: left_updated.max(right_updated),
         last_used_at_ms: {

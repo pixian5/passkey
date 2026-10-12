@@ -4561,6 +4561,7 @@ function normalizePasskeyShape(item) {
     backupState: item?.backupEligible === true && item?.backupState === true,
     privateJwk: item?.privateJwk || null,
     publicJwk: item?.publicJwk || null,
+    hmacSecretB64u: item?.hmacSecretB64u || null,
     createdAtMs: Number(item?.createdAtMs || now),
     updatedAtMs: Number(item?.updatedAtMs || item?.createdAtMs || now),
     lastUsedAtMs: item?.lastUsedAtMs == null ? null : Number(item.lastUsedAtMs),
