@@ -6,7 +6,7 @@
 
 ## 当前开发进度
 
-版本 `1.8.2`。已为 Chrome Web 扩展实现 **WebAuthn PRF（hmac-secret）**：注册（create）时生成并保存每凭据 `hmacSecret` 并返回 `prf.enabled`，读取（get）时按 salt 计算 `HMAC-SHA-256` 输出 `prf.results`；同步合并层（JS 真源 + Rust `pass-merge`）与 `pass-data-v2` Schema 同步透传 `hmacSecretB64u`，保证多设备合并不丢密钥。此前 Bitwarden 无密码解锁因 Pass 缺 PRF 被标为「不支持加密」并交还浏览器原生，修复后重注册即可真正用 Pass 解锁。扩展已构建 1.8.2，需在 `chrome://extensions` 重新加载、删除旧 passmac 后重注册。
+版本 `1.8.3`。已为 Chrome Web 扩展实现 **WebAuthn PRF（hmac-secret）**：注册（create）时生成并保存每凭据 `hmacSecret` 并返回 `prf.enabled`，读取（get）时按 salt 计算 `HMAC-SHA-256` 输出 `prf.results`；同步合并层（JS 真源 + Rust `pass-merge`）与 `pass-data-v2` Schema 同步透传 `hmacSecretB64u`。1.8.3 修复了 PRF salt/结果经 `chrome.runtime.sendMessage` 的 JSON 序列化丢二进制问题（salt 出站转 base64url、结果入站还原 ArrayBuffer）。此前 Bitwarden 无密码解锁因 Pass 缺 PRF 被标为「不支持加密」并交还浏览器原生，修复后重注册即可真正用 Pass 解锁。扩展已构建 1.8.3，需在 `chrome://extensions` 重新加载、删除旧凭据后重注册。
 
 详细进度：[`docs/20261012-2244-WebAuthn-PRF实现与Bitwarden通行密钥解锁-Step-5-Preview.md`](docs/20261012-2244-WebAuthn-PRF实现与Bitwarden通行密钥解锁-Step-5-Preview.md)
 

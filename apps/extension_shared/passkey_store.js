@@ -948,19 +948,27 @@ async function computePrfResults(hmacSecretBytes, evalInput) {
 
 // 从 get 请求的 extensions.prf 中解析本次需要计算的 salt：
 // 支持 eval（凭据无关）与 evalByCredentialId（按凭据 ID）两种形态。
+// 注入层已把 ArrayBuffer salt 序列化为 firstB64u/secondB64u（见 webauthn_injected.js），
+// 这里优先读 base64url 字段，同时兼容直接传入 ArrayBuffer 的调用。
 function resolvePrfEval(publicKey, credentialIdB64u) {
   const prf = publicKey?.extensions?.prf;
   if (!prf || typeof prf !== "object") return null;
-  if (prf.eval && prf.eval.first) {
-    return { first: prf.eval.first, second: prf.eval.second };
-  }
+  const fromEval = pickPrfEvalValues(prf.eval);
+  if (fromEval) return fromEval;
   if (prf.evalByCredentialId && credentialIdB64u) {
     const entry = prf.evalByCredentialId[String(credentialIdB64u)];
-    if (entry && entry.first) {
-      return { first: entry.first, second: entry.second };
-    }
+    const picked = pickPrfEvalValues(entry);
+    if (picked) return picked;
   }
   return null;
+}
+
+function pickPrfEvalValues(values) {
+  if (!values || typeof values !== "object") return null;
+  const first = values.firstB64u ?? values.first;
+  if (!first) return null;
+  const second = values.secondB64u ?? values.second;
+  return { first, second };
 }
 
 function bytesToBase64url(bytes) {

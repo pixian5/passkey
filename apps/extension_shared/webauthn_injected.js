@@ -338,7 +338,7 @@ import {
       attestation: publicKey?.attestation || null,
       authenticatorSelection: publicKey?.authenticatorSelection || null,
       excludeCredentials: serializeCredentialList(publicKey?.excludeCredentials || []),
-      extensions: publicKey?.extensions || null,
+      extensions: serializeExtensions(publicKey?.extensions),
       crossOrigin: frameContext.crossOrigin,
       topOrigin: frameContext.topOrigin,
     };
@@ -356,10 +356,51 @@ import {
       timeout: Number(publicKey?.timeout || 0) || null,
       userVerification: publicKey?.userVerification || null,
       allowCredentials: serializeCredentialList(publicKey?.allowCredentials || []),
-      extensions: publicKey?.extensions || null,
+      extensions: serializeExtensions(publicKey?.extensions),
       crossOrigin: frameContext.crossOrigin,
       topOrigin: frameContext.topOrigin,
     };
+  }
+
+  // WebAuthn 扩展（尤其 PRF/hmac-secret）里的 salt 是 ArrayBuffer/Uint8Array，
+  // 而 chrome.runtime.sendMessage 走 JSON 序列化，二进制会被拍平成 {}。
+  // 这里把二进制字段统一转成 base64url 字符串，保证跨进程传输后仍可还原。
+  function serializeExtensions(extensions) {
+    if (!extensions || typeof extensions !== "object") return null;
+    const out = {};
+    for (const [name, value] of Object.entries(extensions)) {
+      if (name === "prf" && value && typeof value === "object") {
+        out.prf = serializePrfExtension(value);
+        continue;
+      }
+      // 其余扩展保留原始形状（credProps/appidExclude/googleLegacyAppidSupport 等均为纯 JSON）。
+      out[name] = value;
+    }
+    return out;
+  }
+
+  function serializePrfExtension(prf) {
+    const out = {};
+    if (prf.eval && typeof prf.eval === "object") {
+      out.eval = serializePrfValues(prf.eval);
+    }
+    if (prf.evalByCredentialId && typeof prf.evalByCredentialId === "object") {
+      const byId = {};
+      for (const [credentialId, values] of Object.entries(prf.evalByCredentialId)) {
+        if (values && typeof values === "object") byId[credentialId] = serializePrfValues(values);
+      }
+      out.evalByCredentialId = byId;
+    }
+    return out;
+  }
+
+  function serializePrfValues(values) {
+    const out = {};
+    const first = toBase64url(values?.first);
+    if (first) out.firstB64u = first;
+    const second = toBase64url(values?.second);
+    if (second) out.secondB64u = second;
+    return out;
   }
 
   function serializeCredentialList(list) {
@@ -383,6 +424,7 @@ import {
     if (typeof AuthenticatorAttestationResponse === "function") {
       Object.setPrototypeOf(response, AuthenticatorAttestationResponse.prototype);
     }
+    const extensionResults = deserializeClientExtensionResults(credential.clientExtensionResults);
 
     const reportedApiMethods = new Set();
     const reportApiCall = (method, resultNames = []) => {
@@ -397,7 +439,6 @@ import {
       authenticatorAttachment: credential.authenticatorAttachment || "platform",
       response,
       getClientExtensionResults() {
-        const extensionResults = credential.clientExtensionResults || {};
         reportApiCall("PublicKeyCredential.getClientExtensionResults", Object.keys(extensionResults));
         return extensionResults;
       },
@@ -409,7 +450,7 @@ import {
           type: credential.type || "public-key",
           authenticatorAttachment: credential.authenticatorAttachment || "platform",
           response: response.toJSON(),
-          clientExtensionResults: credential.clientExtensionResults || {},
+          clientExtensionResults: extensionResults,
         };
       },
     };
@@ -444,7 +485,7 @@ import {
       },
       responseOwnKeys: Object.keys(response),
       responseJsonKeys: Object.keys(credential?.response || {}),
-      clientExtensionResultNames: Object.keys(credential.clientExtensionResults || {}),
+      clientExtensionResultNames: Object.keys(extensionResults),
       api: {
         credentialToJSON: typeof result.toJSON === "function",
         getClientExtensionResults: typeof result.getClientExtensionResults === "function",
@@ -468,6 +509,7 @@ import {
     if (typeof AuthenticatorAssertionResponse === "function") {
       Object.setPrototypeOf(response, AuthenticatorAssertionResponse.prototype);
     }
+    const extensionResults = deserializeClientExtensionResults(credential.clientExtensionResults);
 
     const result = {
       id: credential.id,
@@ -476,7 +518,7 @@ import {
       authenticatorAttachment: credential.authenticatorAttachment || "platform",
       response,
       getClientExtensionResults() {
-        return credential.clientExtensionResults || {};
+        return extensionResults;
       },
       toJSON() {
         return {
@@ -485,7 +527,7 @@ import {
           type: credential.type || "public-key",
           authenticatorAttachment: credential.authenticatorAttachment || "platform",
           response: response.toJSON(),
-          clientExtensionResults: credential.clientExtensionResults || {},
+          clientExtensionResults: extensionResults,
         };
       },
     };
@@ -493,6 +535,24 @@ import {
       Object.setPrototypeOf(result, PublicKeyCredential.prototype);
     }
     return result;
+  }
+
+  // 后台经 chrome.runtime.sendMessage 返回的扩展结果里，PRF 输出是 base64url 字符串
+  // （见 passkey_store.js），这里还原为 ArrayBuffer，符合 WebAuthn 规范对
+  // clientExtensionResults.prf.results.first/second 的类型要求。
+  function deserializeClientExtensionResults(extensionResults) {
+    if (!extensionResults || typeof extensionResults !== "object") return {};
+    const prf = extensionResults.prf;
+    if (!prf || typeof prf !== "object" || !prf.results) return extensionResults;
+    const results = {};
+    const first = fromBase64url(prf.results.first);
+    if (first && first.byteLength > 0) results.first = first;
+    const second = fromBase64url(prf.results.second);
+    if (second && second.byteLength > 0) results.second = second;
+    return {
+      ...extensionResults,
+      prf: { ...prf, results },
+    };
   }
 
   function shouldFallbackToBrowser(error) {

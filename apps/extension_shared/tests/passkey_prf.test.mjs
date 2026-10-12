@@ -168,6 +168,32 @@ test("get 请求 evalByCredentialId 时按凭据 ID 计算 PRF", async () => {
   assert.equal(decodeBase64url(prf.results.first).toString("hex"), hmacSha256(hmacSecretBytes, salt1).toString("hex"));
 });
 
+test("get 的 PRF salt 以 base64url（firstB64u/secondB64u）传入时同样可计算", async () => {
+  // 注入层经 chrome.runtime.sendMessage 传参时，salt 是 base64url 字符串而非 ArrayBuffer。
+  await ensureDataStorageReady();
+  await setPasskeys([]);
+  await createCredential({ withPrf: true });
+  const stored = await getPasskeys();
+  const hmacSecretBytes = decodeBase64url(stored[0].hmacSecretB64u);
+
+  const salt1 = Buffer.alloc(32, 0x66);
+  const salt2 = Buffer.alloc(32, 0x77);
+  const credential = await getAssertion({
+    prfExtensions: {
+      prf: {
+        eval: {
+          firstB64u: salt1.toString("base64url"),
+          secondB64u: salt2.toString("base64url"),
+        },
+      },
+    },
+  });
+  const prf = credential.clientExtensionResults.prf;
+  assert.ok(prf && prf.results, "应返回 prf.results");
+  assert.equal(decodeBase64url(prf.results.first).toString("hex"), hmacSha256(hmacSecretBytes, salt1).toString("hex"));
+  assert.equal(decodeBase64url(prf.results.second).toString("hex"), hmacSha256(hmacSecretBytes, salt2).toString("hex"));
+});
+
 test("get 未请求 PRF 时不返回扩展结果", async () => {
   await ensureDataStorageReady();
   await setPasskeys([]);

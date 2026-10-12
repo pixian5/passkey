@@ -1802,16 +1802,21 @@
   function resolvePrfEval(publicKey, credentialIdB64u) {
     const prf = publicKey?.extensions?.prf;
     if (!prf || typeof prf !== "object") return null;
-    if (prf.eval && prf.eval.first) {
-      return { first: prf.eval.first, second: prf.eval.second };
-    }
+    const fromEval = pickPrfEvalValues(prf.eval);
+    if (fromEval) return fromEval;
     if (prf.evalByCredentialId && credentialIdB64u) {
       const entry = prf.evalByCredentialId[String(credentialIdB64u)];
-      if (entry && entry.first) {
-        return { first: entry.first, second: entry.second };
-      }
+      const picked = pickPrfEvalValues(entry);
+      if (picked) return picked;
     }
     return null;
+  }
+  function pickPrfEvalValues(values) {
+    if (!values || typeof values !== "object") return null;
+    const first = values.firstB64u ?? values.first;
+    if (!first) return null;
+    const second = values.secondB64u ?? values.second;
+    return { first, second };
   }
   function bytesToBase64url(bytes) {
     if (!(bytes instanceof Uint8Array)) {
@@ -1848,7 +1853,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.8.2";
+  var PASS_EXTENSION_VERSION = "1.8.3";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 40;

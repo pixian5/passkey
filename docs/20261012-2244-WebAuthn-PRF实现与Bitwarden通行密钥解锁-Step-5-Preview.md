@@ -1,6 +1,6 @@
 # WebAuthn PRF 实现与 Bitwarden 通行密钥解锁
 
-> 撰写时间：2026-10-12 22:44 ｜ 模型：Step-5-Preview ｜ 版本：1.8.2
+> 撰写时间：2026-10-12 22:44 ｜ 模型：Step-5-Preview ｜ 版本：1.8.2（后续修订至 1.8.3）
 > 关联：`20261012-2115-Bitwarden通行密钥登录不经过Pass的根因与边界-Step-5-Preview.md`（该文档已随本实现修订）
 > 影响面：Chrome Web 扩展 WebAuthn 托管 + 同步合并层（JS 真源 + Rust）+ Schema
 
@@ -56,3 +56,18 @@ Pass 把通行密钥密钥材料保存在自身加密库（软件存储），握
 - `hmacSecretB64u` 与私钥同属敏感材料，随通行密钥存入加密库并同步；其安全等级等同 `privateJwk`。
 - 同步多台设备时，合并层已透传该字段，其他 Chrome 实例可直接用同一凭据算 PRF，无需再次注册。
 - `buildCreateResultFromStoredPasskey`（同账号重注册复用路径）当前未被调用，本次未改；若日后启用需同样补 PRF。
+
+## 修订记录
+
+### 2026-10-12 22:58（模型 Step-5-Preview，版本 1.8.3）：修复 PRF 跨进程序列化丢 salt
+
+**现象**：1.8.2 下 create 成功且 `clientExtensionResults.names: ["prf"]`（注册诊断实证），但 Bitwarden 紧接着的「读取通行密钥」（带 PRF 的 get）报红字「读取通行密钥时出错」。
+
+**根因**：注入层（isolated world）经 `chrome.runtime.sendMessage` 把 `extensions` **原样**透传给后台，而 `sendMessage` 走 **JSON 序列化**——PRF 的 salt 是 `ArrayBuffer`，JSON 化后变成 `{}`，后台 `resolvePrfEval` 拿不到 salt → PRF 输出为空 → Bitwarden 派生密钥失败。（`challenge` 不受影响，因为它早已被转成 base64url。）
+
+**修复**：
+- 出站：`webauthn_injected.js` 新增 `serializeExtensions`/`serializePrfExtension`/`serializePrfValues`，把 `prf.eval` / `prf.evalByCredentialId` 的 salt 转成 `firstB64u`/`secondB64u`；`passkey_store.js` 的 `resolvePrfEval` 改读 `firstB64u ?? first`。
+- 入站：`buildAssertionCredential`/`buildCreateCredential` 经 `deserializeClientExtensionResults` 把后台返回的 `prf.results.first/second`（base64url）还原为 **ArrayBuffer**，符合 WebAuthn 规范对 `clientExtensionResults.prf.results` 的类型要求。
+- 新增测试「get 的 PRF salt 以 base64url（firstB64u/secondB64u）传入时同样可计算」；`npm test` 185/185。
+
+**教训**：任何经 `chrome.runtime.sendMessage` 传递的 WebAuthn 扩展数据，二进制字段（salt、结果）都必须显式 base64url 编解码，不能依赖原样透传。
