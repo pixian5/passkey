@@ -1853,7 +1853,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.8.5";
+  var PASS_EXTENSION_VERSION = "1.8.6";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 40;
@@ -3191,10 +3191,25 @@
         return asString(item?.credentialIdB64u || item?.id).trim();
       }).filter(Boolean));
     };
+    const allIds = (payload, kind) => {
+      const rawRecords = Array.isArray(payload?.[kind]) ? payload[kind] : [];
+      const normalize = kind === "accounts" ? h.normalizeAccountShape : kind === "folders" ? h.normalizeFolderShape : h.normalizePasskeyShape;
+      const records = rawRecords.map(normalize);
+      return new Set(records.map((item) => {
+        if (kind === "accounts") return asString(item?.recordId || item?.id || item?.accountId).trim().toLowerCase();
+        if (kind === "folders") return h.normalizeFolderId(item?.id);
+        return asString(item?.credentialIdB64u || item?.id).trim();
+      }).filter(Boolean));
+    };
     const mergedTombstones = {
       accounts: tombstoneIds(merged, "accounts"),
       folders: tombstoneIds(merged, "folders"),
       passkeys: tombstoneIds(merged, "passkeys")
+    };
+    const mergedAllIds = {
+      accounts: allIds(merged, "accounts"),
+      folders: allIds(merged, "folders"),
+      passkeys: allIds(merged, "passkeys")
     };
     const requiredTombstones = {
       accounts: tombstoneIds(local, "accounts"),
@@ -3209,11 +3224,20 @@
     const tombClue = (kind, ids) => ids.length ? `${kind}=${ids.length}(${ids.slice(0, 4).join(",")}${ids.length > 4 ? "\u2026" : ""})` : null;
     const droppedTomb = [];
     for (const kind of ["accounts", "folders", "passkeys"]) {
-      const miss = [...requiredTombstones[kind]].filter((id) => !mergedTombstones[kind].has(id));
-      const c = tombClue(kind, miss);
-      if (c) droppedTomb.push(c);
+      const reqSet = requiredTombstones[kind];
+      const mergedTombSet = mergedTombstones[kind];
+      const allMergedSet = mergedAllIds[kind];
+      const miss = [...reqSet].filter((id) => !mergedTombSet.has(id));
+      if (!miss.length) continue;
+      const unflagged = miss.filter((id) => allMergedSet.has(id));
+      const absent = miss.filter((id) => !allMergedSet.has(id));
+      const sample = miss.slice(0, 4).join(",");
+      const tail = miss.length > 4 ? "\u2026" : "";
+      droppedTomb.push(
+        `${kind}:dropped=${miss.length}(req=${reqSet.size},merged=${mergedTombSet.size},unflagged=${unflagged.length},absent=${absent.length}) sample=(${sample}${tail})`
+      );
     }
-    if (droppedTomb.length) reasons.push(`PERMANENT_TOMBSTONES_DROPPED[${droppedTomb.join(";")}]`);
+    if (droppedTomb.length) reasons.push(`PERMANENT_TOMBSTONES_DROPPED[${droppedTomb.join("; ")}; mode=${mode}]`);
     const localNonEmpty = localSummary.accounts + localSummary.folders + localSummary.passkeys > 0;
     const remoteNonEmpty = Boolean(remoteSummary) && remoteSummary.accounts + remoteSummary.folders + remoteSummary.passkeys > 0;
     if (mode === "merge") {

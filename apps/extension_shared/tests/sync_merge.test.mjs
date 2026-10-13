@@ -804,7 +804,7 @@ test("两份独立客户端数据合并后可往返收敛并保留字段、墓�
   assert.deepEqual(convergedFolder.regularAccountIds, ["record-shared", "record-a-only"]);
 });
 
-test('同步安全检查的拒绝原因附带被丢弃的永久墓碑 ID 与类型', () => {
+test('同步安全检查的拒绝原因附带被丢弃的永久墓碑诊断（含 mode 与 unflagged/absent 区分）', () => {
   const local = {
     accounts: [{ ...helpers.normalizeAccountShape({ recordId: "drop-1", accountId: "account-1", isPermanentlyDeleted: true, deletedAtMs: 9 }) }],
     folders: [],
@@ -812,10 +812,36 @@ test('同步安全检查的拒绝原因附带被丢弃的永久墓碑 ID 与类�
     allRegularAccountIds: [],
   };
   const remote = { accounts: [], folders: [], passkeys: [], allRegularAccountIds: [] };
-  // 合并结果里故意不含该墓碑，模拟被合并逻辑丢弃
+  // 合并结果里完全不含该记录（记录消失），模拟被合并逻辑丢弃
   const merged = { accounts: [], folders: [], passkeys: [], allRegularAccountIds: [] };
   const res = evaluateSyncSafety({ local, remote, merged, mode: "merge" }, helpers);
   const perm = res.reasons.find((r) => r.startsWith("PERMANENT_TOMBSTONES_DROPPED"));
   assert.ok(perm, `应报告 PERMANENT_TOMBSTONES_DROPPED，实际: ${JSON.stringify(res.reasons)}`);
-  assert.ok(perm.includes("accounts=1(drop-1)"), `原因应包含冲突类型与 ID，实际: ${perm}`);
+  assert.ok(perm.includes("accounts:dropped=1"), `原因应标明丢弃类型与数量，实际: ${perm}`);
+  assert.ok(perm.includes("absent=1"), `记录消失应为 absent=1，实际: ${perm}`);
+  assert.ok(perm.includes("unflagged=0"), `无合并记录时 unflagged 应为 0，实际: ${perm}`);
+  assert.ok(perm.includes("sample=(drop-1)"), `应包含丢失 ID 样本，实际: ${perm}`);
+  assert.ok(perm.includes("mode=merge"), `应附带 mode，实际: ${perm}`);
+});
+
+test('永久墓碑诊断：记录在合并结果里但标记被清除应计为 unflagged（163 报错主导假设）', () => {
+  const local = {
+    accounts: [{ ...helpers.normalizeAccountShape({ recordId: "drop-1", accountId: "account-1", isPermanentlyDeleted: true, deletedAtMs: 9 }) }],
+    folders: [],
+    passkeys: [],
+    allRegularAccountIds: [],
+  };
+  const remote = { accounts: [], folders: [], passkeys: [], allRegularAccountIds: [] };
+  // 合并结果里该记录还在，但 isPermanentlyDeleted 被清除（163 报错的主导假设）
+  const merged = {
+    accounts: [{ ...helpers.normalizeAccountShape({ recordId: "drop-1", accountId: "account-1", isPermanentlyDeleted: false }) }],
+    folders: [],
+    passkeys: [],
+    allRegularAccountIds: [],
+  };
+  const res = evaluateSyncSafety({ local, remote, merged, mode: "merge" }, helpers);
+  const perm = res.reasons.find((r) => r.startsWith("PERMANENT_TOMBSTONES_DROPPED"));
+  assert.ok(perm, `应报告 PERMANENT_TOMBSTONES_DROPPED，实际: ${JSON.stringify(res.reasons)}`);
+  assert.ok(perm.includes("unflagged=1"), `标记被清除应为 unflagged=1，实际: ${perm}`);
+  assert.ok(perm.includes("absent=0"), `记录仍在应为 absent=0，实际: ${perm}`);
 });
