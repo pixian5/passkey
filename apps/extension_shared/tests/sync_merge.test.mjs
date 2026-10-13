@@ -624,7 +624,7 @@ test("合并结果缺少远端稳定 ID 时必须阻止写入", () => {
   assert.ok(safety.reasons[0].startsWith("REMOTE_ACCOUNTS_DROPPED["));
 });
 
-test("覆盖模式不能丢弃任一侧的永久删除墓碑", () => {
+test("云端覆盖本地采用云端应放行本地墓碑；本地覆盖云端仍需保留远端墓碑", () => {
   const tombstone = helpers.normalizeAccountShape({
     recordId: "record-permanent-delete",
     isDeleted: true,
@@ -636,15 +636,18 @@ test("覆盖模式不能丢弃任一侧的永久删除墓碑", () => {
     password: "old-secret",
   });
 
+  // 「云端覆盖本地」=采用云端：本地永久删除意图按设计被云端覆盖，同一记录远程为活跃时应放行（复活是用户选择）。
+  // 仅当远端墓碑本身在合并结果里丢失时才拦截（防误删远端墓碑）。
   const remoteOverwrite = evaluateSyncSafety({
     local: { accounts: [tombstone] },
     remote: { accounts: [active] },
     merged: { accounts: [active] },
     mode: "remoteOverwriteLocal",
   }, helpers);
-  assert.equal(remoteOverwrite.safe, false);
-  assert.ok(remoteOverwrite.reasons.some((reason) => reason.includes("PERMANENT_TOMBSTONES_DROPPED")));
+  assert.equal(remoteOverwrite.safe, true);
+  assert.ok(!remoteOverwrite.reasons.some((reason) => reason.includes("PERMANENT_TOMBSTONES_DROPPED")));
 
+  // 「本地覆盖云端」仍是 WebDAV 镜像上传所用模式，须忠实反映删除：远端墓碑在合并结果里丢失则拦截。
   const localOverwrite = evaluateSyncSafety({
     local: { accounts: [active] },
     remote: { accounts: [tombstone] },
@@ -844,4 +847,64 @@ test('永久墓碑诊断：记录在合并结果里但标记被清除应计为 u
   assert.ok(perm, `应报告 PERMANENT_TOMBSTONES_DROPPED，实际: ${JSON.stringify(res.reasons)}`);
   assert.ok(perm.includes("unflagged=1"), `标记被清除应为 unflagged=1，实际: ${perm}`);
   assert.ok(perm.includes("absent=0"), `记录仍在应为 absent=0，实际: ${perm}`);
+});
+
+test('云端覆盖本地：本地独有墓碑被弃用应放行（163 报错根因修复）', () => {
+  // 本地把某记录永久删除（本地独有墓碑），云端该记录是活跃的；用户点「云端覆盖本地」=采用云端
+  const local = {
+    accounts: [{ ...helpers.normalizeAccountShape({ recordId: "local-tomb", accountId: "a1", isPermanentlyDeleted: true, deletedAtMs: 9 }) }],
+    folders: [], passkeys: [], allRegularAccountIds: [],
+  };
+  const remote = {
+    accounts: [{ ...helpers.normalizeAccountShape({ recordId: "remote-active", accountId: "a2", isPermanentlyDeleted: false }) }],
+    folders: [], passkeys: [], allRegularAccountIds: [],
+  };
+  // merged == 远端（正确的云端覆盖本地结果）
+  const merged = {
+    accounts: [{ ...helpers.normalizeAccountShape({ recordId: "remote-active", accountId: "a2", isPermanentlyDeleted: false }) }],
+    folders: [], passkeys: [], allRegularAccountIds: [],
+  };
+  const res = evaluateSyncSafety({ local, remote, merged, mode: "remoteOverwriteLocal" }, helpers);
+  assert.ok(res.safe, `云端覆盖本地应放行本地独有墓碑，实际: ${JSON.stringify(res.reasons)}`);
+  assert.ok(!res.reasons.some((r) => r.startsWith("PERMANENT_TOMBSTONES_DROPPED")), `不应有墓碑拦截，实际: ${JSON.stringify(res.reasons)}`);
+});
+
+test('云端覆盖本地：远端墓碑在合并结果里被丢失仍要拦截（防复活）', () => {
+  const local = {
+    accounts: [{ ...helpers.normalizeAccountShape({ recordId: "rec", accountId: "a1", isPermanentlyDeleted: false }) }],
+    folders: [], passkeys: [], allRegularAccountIds: [],
+  };
+  const remote = {
+    accounts: [{ ...helpers.normalizeAccountShape({ recordId: "rec", accountId: "a2", isPermanentlyDeleted: true, deletedAtMs: 9 }) }],
+    folders: [], passkeys: [], allRegularAccountIds: [],
+  };
+  // merged 故意用 local（丢了远端墓碑）模拟覆盖逻辑把墓碑清掉
+  const merged = {
+    accounts: [{ ...helpers.normalizeAccountShape({ recordId: "rec", accountId: "a1", isPermanentlyDeleted: false }) }],
+    folders: [], passkeys: [], allRegularAccountIds: [],
+  };
+  const res = evaluateSyncSafety({ local, remote, merged, mode: "remoteOverwriteLocal" }, helpers);
+  const perm = res.reasons.find((r) => r.startsWith("PERMANENT_TOMBSTONES_DROPPED"));
+  assert.ok(perm, `远端墓碑被丢应拦截，实际: ${JSON.stringify(res.reasons)}`);
+  assert.ok(perm.includes("accounts:dropped=1"), `应标类型与数量，实际: ${perm}`);
+});
+
+test('本地覆盖云端（及 WebDAV 镜像）仍须保留远端墓碑：远端独有墓碑被丢应拦截', () => {
+  const local = {
+    accounts: [{ ...helpers.normalizeAccountShape({ recordId: "local-active", accountId: "a1" }) }],
+    folders: [], passkeys: [], allRegularAccountIds: [],
+  };
+  const remote = {
+    accounts: [{ ...helpers.normalizeAccountShape({ recordId: "remote-tomb", accountId: "a2", isPermanentlyDeleted: true, deletedAtMs: 9 }) }],
+    folders: [], passkeys: [], allRegularAccountIds: [],
+  };
+  const merged = {
+    accounts: [{ ...helpers.normalizeAccountShape({ recordId: "local-active", accountId: "a1" }) }],
+    folders: [], passkeys: [], allRegularAccountIds: [],
+  };
+  // localOverwriteRemote 也是镜像上传模式：远端墓碑在合并结果里丢失必须拦截（防复活）
+  const res = evaluateSyncSafety({ local, remote, merged, mode: "localOverwriteRemote" }, helpers);
+  const perm = res.reasons.find((r) => r.startsWith("PERMANENT_TOMBSTONES_DROPPED"));
+  assert.ok(perm, `本地覆盖云端/镜像应拦截远端墓碑丢失，实际: ${JSON.stringify(res.reasons)}`);
+  assert.ok(perm.includes("accounts:dropped=1"), `应标类型与数量，实际: ${perm}`);
 });

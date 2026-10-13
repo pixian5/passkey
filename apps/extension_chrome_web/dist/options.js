@@ -1,6 +1,6 @@
 (() => {
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.8.6";
+  var PASS_EXTENSION_VERSION = "1.8.7";
 
   // ../../core/pass_core/js/sync_policy.js
   var DEFAULT_DEVICE_NAME = "PassDevice";
@@ -1104,14 +1104,12 @@
       folders: allIds(merged, "folders"),
       passkeys: allIds(merged, "passkeys")
     };
-    const requiredTombstones = {
-      accounts: tombstoneIds(local, "accounts"),
-      folders: tombstoneIds(local, "folders"),
-      passkeys: tombstoneIds(local, "passkeys")
-    };
-    if (remote != null) {
+    const tombstoneSourcePayloads = mode === "remoteOverwriteLocal" ? [remote] : [local, remote];
+    const requiredTombstones = { accounts: /* @__PURE__ */ new Set(), folders: /* @__PURE__ */ new Set(), passkeys: /* @__PURE__ */ new Set() };
+    for (const payload of tombstoneSourcePayloads) {
+      if (payload == null) continue;
       for (const kind of ["accounts", "folders", "passkeys"]) {
-        for (const id of tombstoneIds(remote, kind)) requiredTombstones[kind].add(id);
+        for (const id of tombstoneIds(payload, kind)) requiredTombstones[kind].add(id);
       }
     }
     const tombClue = (kind, ids) => ids.length ? `${kind}=${ids.length}(${ids.slice(0, 4).join(",")}${ids.length > 4 ? "\u2026" : ""})` : null;

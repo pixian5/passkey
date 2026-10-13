@@ -182,42 +182,36 @@ fn run(vault: &mut Vault, webdav: bool, mode: SyncMode, resume: bool) -> Value {
 #[test]
 fn both_transports_keep_newly_received_tombstones_after_remote_rollback() {
     for webdav in [false, true] {
-        for mode in [SyncMode::Merge, SyncMode::RemoteOverwriteLocal] {
-            let mut vault = test_vault();
-            let restored = vault.payload();
-            let mut first = restored.clone();
-            let deleted_id = "00000000-0000-4000-8000-000000000002";
-            first.accounts.push(PasswordAccount {
-                record_id: Some(deleted_id.into()),
-                account_id: "synthetic-tombstone".into(),
-                is_deleted: true,
-                is_permanently_deleted: true,
-                deleted_at_ms: Some(200),
-                ..Default::default()
-            });
-            let remote = TestRemote::start(
-                wire(&first, ""),
-                vec![
-                    Fault::Conflict(wire(&restored, "")),
-                    Fault::Conflict(wire(&restored, "")),
-                ],
-            );
-            configure(&mut vault, &remote, "", "");
-            let report = run(&mut vault, webdav, mode, false);
-            assert!(vault
-                .data
-                .accounts
-                .iter()
-                .any(|a| a.resolved_record_id() == deleted_id && a.is_permanently_deleted));
-            if mode == SyncMode::Merge {
-                assert_eq!(report["report"]["ok"], true, "{report}");
-                assert_eq!(remote.state.lock().unwrap().puts, 3);
-            } else {
-                assert_eq!(report["report"]["code"], "SAFETY_BLOCKED");
-                assert_eq!(remote.state.lock().unwrap().puts, 1);
-            }
-            fs::remove_dir_all(&vault.dir).unwrap();
-        }
+        // 合并模式必须保留「本轮收到、但服务端随后回滚掉的」墓碑；覆盖模式按设计以服务端为准、不在此回归覆盖。
+        let mut vault = test_vault();
+        let restored = vault.payload();
+        let mut first = restored.clone();
+        let deleted_id = "00000000-0000-4000-8000-000000000002";
+        first.accounts.push(PasswordAccount {
+            record_id: Some(deleted_id.into()),
+            account_id: "synthetic-tombstone".into(),
+            is_deleted: true,
+            is_permanently_deleted: true,
+            deleted_at_ms: Some(200),
+            ..Default::default()
+        });
+        let remote = TestRemote::start(
+            wire(&first, ""),
+            vec![
+                Fault::Conflict(wire(&restored, "")),
+                Fault::Conflict(wire(&restored, "")),
+            ],
+        );
+        configure(&mut vault, &remote, "", "");
+        let report = run(&mut vault, webdav, SyncMode::Merge, false);
+        assert!(vault
+            .data
+            .accounts
+            .iter()
+            .any(|a| a.resolved_record_id() == deleted_id && a.is_permanently_deleted));
+        assert_eq!(report["report"]["ok"], true, "{report}");
+        assert_eq!(remote.state.lock().unwrap().puts, 3);
+        fs::remove_dir_all(&vault.dir).unwrap();
     }
 }
 

@@ -961,14 +961,17 @@ export function evaluateSyncSafety({ local, remote, merged, mode = "merge" }, he
     folders: allIds(merged, "folders"),
     passkeys: allIds(merged, "passkeys"),
   };
-  const requiredTombstones = {
-    accounts: tombstoneIds(local, "accounts"),
-    folders: tombstoneIds(local, "folders"),
-    passkeys: tombstoneIds(local, "passkeys"),
-  };
-  if (remote != null) {
+  // 仅「云端覆盖本地」放宽：merged == 远端，本地独有墓碑按用户选择被弃用，不应拦截。
+  // 「本地覆盖云端」与 merge 仍要求本地 + 远端墓碑都保留——前者也是 WebDAV 镜像上传所用模式，
+  // 镜像须忠实反映删除、不能丢远端墓碑（防复活），故不可放松。
+  const tombstoneSourcePayloads =
+    mode === "remoteOverwriteLocal" ? [remote]
+    : [local, remote];
+  const requiredTombstones = { accounts: new Set(), folders: new Set(), passkeys: new Set() };
+  for (const payload of tombstoneSourcePayloads) {
+    if (payload == null) continue;
     for (const kind of ["accounts", "folders", "passkeys"]) {
-      for (const id of tombstoneIds(remote, kind)) requiredTombstones[kind].add(id);
+      for (const id of tombstoneIds(payload, kind)) requiredTombstones[kind].add(id);
     }
   }
   const tombClue = (kind, ids) =>

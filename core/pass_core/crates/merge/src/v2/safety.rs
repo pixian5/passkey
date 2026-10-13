@@ -146,14 +146,32 @@ pub fn evaluate_sync_safety(
     let merged_summary = summarize(merged);
     let mut reasons = Vec::new();
 
-    // 覆盖模式也必须保留永久删除墓碑，否则旧设备可能把活动记录复活。
-    let mut required_account_tombstones = local_summary.permanent_account_ids.clone();
-    let mut required_folder_tombstones = local_summary.permanent_folder_ids.clone();
-    let mut required_passkey_tombstones = local_summary.permanent_passkey_ids.clone();
-    if let Some(remote_summary) = remote_summary.as_ref() {
-        required_account_tombstones.extend(remote_summary.permanent_account_ids.iter().cloned());
-        required_folder_tombstones.extend(remote_summary.permanent_folder_ids.iter().cloned());
-        required_passkey_tombstones.extend(remote_summary.permanent_passkey_ids.iter().cloned());
+    // 仅「云端覆盖本地」放宽：merged == 远端，本地独有墓碑按用户选择被弃用，不应拦截。
+    // 「本地覆盖云端」与 merge 仍要求两端墓碑都保留；前者也是 WebDAV 镜像上传所用模式，
+    // 镜像须忠实反映删除、不可丢远端墓碑（防复活），故不放松。
+    let (use_local, use_remote) = match mode {
+        "remoteOverwriteLocal" => (false, true),
+        _ => (true, true),
+    };
+    let mut required_account_tombstones: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    let mut required_folder_tombstones: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    let mut required_passkey_tombstones: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    if use_local {
+        required_account_tombstones.extend(local_summary.permanent_account_ids.iter().cloned());
+        required_folder_tombstones.extend(local_summary.permanent_folder_ids.iter().cloned());
+        required_passkey_tombstones.extend(local_summary.permanent_passkey_ids.iter().cloned());
+    }
+    if use_remote {
+        if let Some(remote_summary) = remote_summary.as_ref() {
+            required_account_tombstones
+                .extend(remote_summary.permanent_account_ids.iter().cloned());
+            required_folder_tombstones.extend(remote_summary.permanent_folder_ids.iter().cloned());
+            required_passkey_tombstones
+                .extend(remote_summary.permanent_passkey_ids.iter().cloned());
+        }
     }
     if !required_account_tombstones.is_subset(&merged_summary.permanent_account_ids)
         || !required_folder_tombstones.is_subset(&merged_summary.permanent_folder_ids)
@@ -249,43 +267,76 @@ mod tests {
     }
 
     #[test]
-    fn overwrite_modes_cannot_drop_permanent_delete_tombstones() {
-        let tombstone = PasswordAccount {
-            record_id: Some("record-tombstone".into()),
+    fn overwrite_modes_keep_surviving_side_tombstones_only() {
+        // 场景 A：远端墓碑在「云端覆盖本地」时被丢掉（merged 不含远端墓碑）→ 拦截，防复活
+        let remote_tomb = PasswordAccount {
+            record_id: Some("remote-tomb".into()),
             is_deleted: true,
             is_permanently_deleted: true,
             deleted_at_ms: Some(20),
             ..Default::default()
         };
-        let active = PasswordAccount {
-            record_id: Some("record-tombstone".into()),
-            password: "old secret".into(),
+        let local_active = PasswordAccount {
+            record_id: Some("remote-tomb".into()),
+            password: "still here".into(),
             ..Default::default()
         };
-        let local = SyncPayload {
-            accounts: vec![tombstone.clone()],
-            ..SyncPayload::default()
-        };
         let remote = SyncPayload {
-            accounts: vec![active.clone()],
+            accounts: vec![remote_tomb.clone()],
             ..SyncPayload::default()
         };
-
-        let remote_overwrite =
-            evaluate_sync_safety(&local, Some(&remote), &remote, "remoteOverwriteLocal");
-        assert!(!remote_overwrite.safe);
-        assert!(remote_overwrite
+        let local = SyncPayload {
+            accounts: vec![local_active.clone()],
+            ..SyncPayload::default()
+        };
+        // merged 故意用 local（丢了远端墓碑）模拟被覆盖逻辑清除
+        let blocked = evaluate_sync_safety(&local, Some(&remote), &local, "remoteOverwriteLocal");
+        assert!(!blocked.safe, "{:?}", blocked.reasons);
+        assert!(blocked
             .reasons
             .contains(&"PERMANENT_TOMBSTONES_DROPPED".to_string()));
 
-        let local_overwrite =
-            evaluate_sync_safety(&remote, Some(&local), &remote, "localOverwriteRemote");
-        assert!(!local_overwrite.safe);
-        assert!(local_overwrite
-            .reasons
-            .contains(&"PERMANENT_TOMBSTONES_DROPPED".to_string()));
+        // 场景 B：本地独有墓碑在「云端覆盖本地」时被弃用 → 放行（用户显式选择采用云端）
+        let local_tomb = PasswordAccount {
+            record_id: Some("local-only-tomb".into()),
+            is_deleted: true,
+            is_permanently_deleted: true,
+            deleted_at_ms: Some(30),
+            ..Default::default()
+        };
+        let remote_active = PasswordAccount {
+            record_id: Some("remote-active".into()),
+            password: "cloud truth".into(),
+            ..Default::default()
+        };
+        let local2 = SyncPayload {
+            accounts: vec![local_tomb.clone()],
+            ..SyncPayload::default()
+        };
+        let remote2 = SyncPayload {
+            accounts: vec![remote_active.clone()],
+            ..SyncPayload::default()
+        };
+        // merged == 远端（正确的云端覆盖本地结果）
+        let ok = evaluate_sync_safety(&local2, Some(&remote2), &remote2, "remoteOverwriteLocal");
+        assert!(
+            ok.safe,
+            "本地独有墓碑在云端覆盖本地时不应拦截：{:?}",
+            ok.reasons
+        );
 
-        let preserved = evaluate_sync_safety(&local, Some(&remote), &local, "remoteOverwriteLocal");
+        // 场景 C：远端独有墓碑在「本地覆盖云端」时被弃用 → 放行
+        let ok_local =
+            evaluate_sync_safety(&remote2, Some(&local2), &local2, "localOverwriteRemote");
+        assert!(
+            ok_local.safe,
+            "远端独有墓碑在本地覆盖云端时不应拦截：{:?}",
+            ok_local.reasons
+        );
+
+        // 场景 D：本地 + 远端墓碑一致时远端覆盖本地仍放行
+        let preserved =
+            evaluate_sync_safety(&local2, Some(&remote2), &remote2, "remoteOverwriteLocal");
         assert!(preserved.safe, "{:?}", preserved.reasons);
     }
 }

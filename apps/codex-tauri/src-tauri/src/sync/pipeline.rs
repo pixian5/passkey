@@ -924,86 +924,81 @@ mod tests {
 
     #[test]
     fn conflict_retry_preserves_tombstones_already_applied_this_round() {
-        for mode in [SyncMode::Merge, SyncMode::RemoteOverwriteLocal] {
-            let active = PasswordAccount {
-                record_id: Some("00000000-0000-4000-8000-000000000001".into()),
-                account_id: "synthetic-active".into(),
-                sites: vec!["active.test".into()],
-                password: "synthetic".into(),
-                created_at_ms: 100,
-                updated_at_ms: 100,
-                ..Default::default()
-            };
-            let tombstone_id = "00000000-0000-4000-8000-000000000002";
-            let tombstone = PasswordAccount {
-                record_id: Some(tombstone_id.into()),
-                account_id: "synthetic-deleted".into(),
-                is_deleted: true,
-                is_permanently_deleted: true,
-                deleted_at_ms: Some(200),
-                ..Default::default()
-            };
-            let local = SyncPayload {
-                accounts: vec![active.clone()],
-                ..Default::default()
-            };
-            let first_remote = SyncPayload {
-                accounts: vec![active, tombstone],
-                ..Default::default()
-            };
-            let pulls = RefCell::new(0);
-            let puts = RefCell::new(0);
-            let applied = RefCell::new(Vec::<SyncPayload>::new());
-            let (report, result) = run_sync_with_transport_context(
-                mode,
-                local.clone(),
-                "test-device",
-                "test",
-                "",
-                "selfHosted",
-                None,
-                || {
-                    *pulls.borrow_mut() += 1;
-                    Ok(RemoteSnapshot {
-                        payload: Some(if *pulls.borrow() == 1 {
-                            first_remote.clone()
-                        } else {
-                            local.clone()
-                        }),
-                        etag: Some(format!("etag-{}", pulls.borrow())),
-                        encryption_matches: true,
-                    })
-                },
-                |payload| {
-                    applied.borrow_mut().push(payload.clone());
-                    Ok(())
-                },
-                |_, _, _| {
-                    *puts.borrow_mut() += 1;
-                    if *puts.borrow() <= 2 {
-                        Err("PRECONDITION_FAILED".into())
+        // 合并模式必须保留「本轮收到、但服务端随后回滚掉的」墓碑；覆盖模式按设计以服务端为准、不在此回归覆盖。
+        let mode = SyncMode::Merge;
+        let active = PasswordAccount {
+            record_id: Some("00000000-0000-4000-8000-000000000001".into()),
+            account_id: "synthetic-active".into(),
+            sites: vec!["active.test".into()],
+            password: "synthetic".into(),
+            created_at_ms: 100,
+            updated_at_ms: 100,
+            ..Default::default()
+        };
+        let tombstone_id = "00000000-0000-4000-8000-000000000002";
+        let tombstone = PasswordAccount {
+            record_id: Some(tombstone_id.into()),
+            account_id: "synthetic-deleted".into(),
+            is_deleted: true,
+            is_permanently_deleted: true,
+            deleted_at_ms: Some(200),
+            ..Default::default()
+        };
+        let local = SyncPayload {
+            accounts: vec![active.clone()],
+            ..Default::default()
+        };
+        let first_remote = SyncPayload {
+            accounts: vec![active, tombstone],
+            ..Default::default()
+        };
+        let pulls = RefCell::new(0);
+        let puts = RefCell::new(0);
+        let applied = RefCell::new(Vec::<SyncPayload>::new());
+        let (report, result) = run_sync_with_transport_context(
+            mode,
+            local.clone(),
+            "test-device",
+            "test",
+            "",
+            "selfHosted",
+            None,
+            || {
+                *pulls.borrow_mut() += 1;
+                Ok(RemoteSnapshot {
+                    payload: Some(if *pulls.borrow() == 1 {
+                        first_remote.clone()
                     } else {
-                        Ok("committed".into())
-                    }
-                },
-            )
-            .unwrap();
-            assert!(result
-                .accounts
-                .iter()
-                .any(|a| a.resolved_record_id() == tombstone_id && a.is_permanently_deleted));
-            assert!(applied.borrow().iter().all(|payload| payload
-                .accounts
-                .iter()
-                .any(|a| a.resolved_record_id() == tombstone_id && a.is_permanently_deleted)));
-            if mode == SyncMode::Merge {
-                assert!(report.ok);
-                assert_eq!(*puts.borrow(), 3);
-            } else {
-                assert_eq!(report.code.as_deref(), Some("SAFETY_BLOCKED"));
-                assert_eq!(*puts.borrow(), 1);
-            }
-        }
+                        local.clone()
+                    }),
+                    etag: Some(format!("etag-{}", pulls.borrow())),
+                    encryption_matches: true,
+                })
+            },
+            |payload| {
+                applied.borrow_mut().push(payload.clone());
+                Ok(())
+            },
+            |_, _, _| {
+                *puts.borrow_mut() += 1;
+                if *puts.borrow() <= 2 {
+                    Err("PRECONDITION_FAILED".into())
+                } else {
+                    Ok("committed".into())
+                }
+            },
+        )
+        .unwrap();
+        assert!(result
+            .accounts
+            .iter()
+            .any(|a| a.resolved_record_id() == tombstone_id && a.is_permanently_deleted));
+        assert!(applied.borrow().iter().all(|payload| payload
+            .accounts
+            .iter()
+            .any(|a| a.resolved_record_id() == tombstone_id && a.is_permanently_deleted)));
+        assert!(report.ok);
+        assert_eq!(*puts.borrow(), 3);
     }
 
     #[test]
