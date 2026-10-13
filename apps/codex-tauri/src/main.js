@@ -2789,7 +2789,9 @@ const runSyncMode = async (mode, { quiet = false, forceOutboxRetry = !quiet, res
   const fingerprint = primaryFingerprint();
   const previousFingerprint = String(uiPrefs.lastSyncPrimaryFingerprint || "").trim();
   if (!quiet) {
-    // 覆盖模式警告与主同步源指纹变更警告合并为一次浏览器原生确认，避免多次点确定。
+    // 覆盖模式警告与主同步源指纹变更警告合并为「一次程序原生弹窗」（应用内样式弹窗，
+    // 即 requestActionConfirmation 的 #actionConfirmModal），不再使用浏览器原生 window.confirm，
+    // 避免「程序原生弹窗 + 浏览器原生弹窗」两类弹窗叠加导致重复点击。
     const warnings = [];
     if (mode !== "merge") {
       const label = mode === "remoteOverwriteLocal" ? "云端覆盖本地" : "本地覆盖云端";
@@ -2800,7 +2802,13 @@ const runSyncMode = async (mode, { quiet = false, forceOutboxRetry = !quiet, res
     }
     if (warnings.length) {
       const label = mode === "merge" ? "合并" : (mode === "remoteOverwriteLocal" ? "云端覆盖本地" : "本地覆盖云端");
-      if (!window.confirm(`${warnings.join("\n\n")}\n\n确定继续执行${label}？`)) return [];
+      const confirmed = await requestActionConfirmation({
+        title: `${label}确认`,
+        message: `${warnings.join("\n\n")}\n\n确定继续执行${label}？`,
+        confirmText: mode === "merge" ? "继续同步" : "继续覆盖",
+        danger: mode !== "merge",
+      });
+      if (!confirmed) return [];
     }
   }
   const reports = [];
@@ -4207,14 +4215,6 @@ els.btnSyncClearInactiveOutbox?.addEventListener("click", async () => {
   }
 });
 els.btnSyncRemoteOverwrite?.addEventListener("click", async () => {
-  if (!(await requestActionConfirmation({
-    title: "云端覆盖本地",
-    message: "云端覆盖本地会用远端数据替换本机 vault。若远端为空或不可达可能导致数据丢失。",
-    confirmText: "继续覆盖",
-    danger: true,
-  }))) {
-    return;
-  }
   const restore = setButtonBusy(els.btnSyncRemoteOverwrite, "正在同步…");
   try {
     await runSyncMode("remoteOverwriteLocal");
@@ -4225,14 +4225,6 @@ els.btnSyncRemoteOverwrite?.addEventListener("click", async () => {
   }
 });
 els.btnSyncLocalOverwrite?.addEventListener("click", async () => {
-  if (!(await requestActionConfirmation({
-    title: "本地覆盖云端",
-    message: "本地覆盖云端会把本机数据推到服务器并覆盖远端。",
-    confirmText: "继续覆盖",
-    danger: true,
-  }))) {
-    return;
-  }
   const restore = setButtonBusy(els.btnSyncLocalOverwrite, "正在同步…");
   try {
     await runSyncMode("localOverwriteRemote");

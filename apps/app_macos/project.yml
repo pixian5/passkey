@@ -21,8 +21,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pass.desktop
-        MARKETING_VERSION: "1.8.8"
-        CURRENT_PROJECT_VERSION: "188"
+        MARKETING_VERSION: "1.8.9"
+        CURRENT_PROJECT_VERSION: "189"
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: PassMac
         INFOPLIST_KEY_NSHumanReadableCopyright: ""
