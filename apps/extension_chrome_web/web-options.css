@@ -541,7 +541,7 @@ body.is-reordering {
   align-items: flex-start;
 }
 .bundle-import-confirm-card .confirm-findings { max-height: min(500px, 55vh); }
-.confirm-summary { margin: 0; line-height: 1.5; font-weight: 600; }
+.confirm-summary { margin: 0; line-height: 1.6; font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 .confirm-findings { max-height: min(180px, 24vh); margin: 0; white-space: pre-wrap; overflow: auto; }
 .provision-tls-fields { display: grid; gap: 10px; }
 .provision-tls-fields textarea { min-height: 84px; max-height: min(220px, 24vh); resize: vertical; }
