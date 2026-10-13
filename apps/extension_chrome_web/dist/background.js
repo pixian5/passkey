@@ -1853,7 +1853,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.9.0";
+  var PASS_EXTENSION_VERSION = "1.9.2";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 40;
@@ -3768,6 +3768,7 @@
       throw new Error("\u5DF2\u6709\u540C\u6B65\u4EFB\u52A1\u6B63\u5728\u8FDB\u884C\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5");
     }
     autoSyncInFlight = true;
+    beginSyncWindow();
     const lockOwner = createSyncIdempotencyKey();
     try {
       if (!await acquireSyncOperationLock(lockOwner)) {
@@ -3779,6 +3780,7 @@
     } finally {
       await releaseSyncOperationLock(lockOwner);
       autoSyncInFlight = false;
+      endSyncWindow();
     }
   }
   async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), options = {}) {
@@ -3831,10 +3833,13 @@
       remotePulled: true,
       ...fields
     });
-    const localChangedError = () => Object.assign(
-      new Error("\u540C\u6B65\u671F\u95F4\u672C\u5730\u6570\u636E\u5DF2\u53D8\u5316\uFF0C\u5DF2\u4FDD\u7559\u6700\u65B0\u7F16\u8F91\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65"),
-      { code: "LOCAL_CHANGED" }
-    );
+    const localChangedError = async (snapshot) => {
+      const diff = describeSyncPayloadDiff(lastAppliedPayload, snapshot?.payload);
+      return Object.assign(
+        new Error(`\u540C\u6B65\u671F\u95F4\u672C\u5730\u6570\u636E\u5DF2\u53D8\u5316\uFF08\u7248\u672C ${expectedRevision}\u2192${snapshot?.revision}${diff ? `\uFF1B${diff}` : ""}\uFF09\uFF0C\u5DF2\u4FDD\u7559\u6700\u65B0\u7F16\u8F91\uFF0C\u8BF7\u91CD\u65B0\u540C\u6B65`),
+        { code: "LOCAL_CHANGED" }
+      );
+    };
     const assertLocalUnchanged = async () => {
       const snapshot = await getAllDataSnapshot();
       if (snapshot.revision === expectedRevision) return;
@@ -3842,7 +3847,7 @@
         expectedRevision = snapshot.revision;
         return;
       }
-      throw localChangedError();
+      throw await localChangedError(snapshot);
     };
     const applyCandidate = async (payload) => {
       await assertLocalUnchanged();
@@ -4146,6 +4151,46 @@
       allRegularAccountIds: [...payload?.allRegularAccountIds || []],
       folderOrderIds: [...payload?.folderOrderIds || []]
     };
+  }
+  var syncWindowDepth = 0;
+  var syncWindowWaiters = [];
+  function beginSyncWindow() {
+    syncWindowDepth += 1;
+  }
+  function endSyncWindow() {
+    syncWindowDepth = Math.max(0, syncWindowDepth - 1);
+    if (!syncWindowDepth) {
+      for (const resolveWaiter of syncWindowWaiters.splice(0)) resolveWaiter();
+    }
+  }
+  async function waitSyncWindowEnd() {
+    while (syncWindowDepth > 0) {
+      await new Promise((resolveWaiter) => syncWindowWaiters.push(resolveWaiter));
+    }
+  }
+  function describeSyncPayloadDiff(before, after) {
+    const left = sortSyncPayloadCollections(normalizeSyncPayloadShape(before));
+    const right = sortSyncPayloadCollections(normalizeSyncPayloadShape(after));
+    const parts = [];
+    const diffOf = (name, leftItems, rightItems, key) => {
+      if (leftItems.length !== rightItems.length) {
+        parts.push(`${name} ${leftItems.length}\u2192${rightItems.length}`);
+        return;
+      }
+      const mismatchIndex = leftItems.findIndex(
+        (item, position) => JSON.stringify(item) !== JSON.stringify(rightItems[position])
+      );
+      if (mismatchIndex >= 0) {
+        parts.push(`${name}\u6570\u91CF\u4E0D\u53D8\u4F46\u5185\u5BB9\u4E0D\u540C\uFF08\u6837\u4F8B ${String(leftItems[mismatchIndex]?.[key] || "?").slice(0, 16)}\uFF09`);
+      }
+    };
+    diffOf("\u8D26\u53F7", left.accounts, right.accounts, "recordId");
+    diffOf("\u6587\u4EF6\u5939", left.folders, right.folders, "id");
+    diffOf("\u901A\u884C\u5BC6\u94A5", left.passkeys, right.passkeys, "credentialIdB64u");
+    if (JSON.stringify(left.allRegularAccountIds) !== JSON.stringify(right.allRegularAccountIds)) parts.push("\u8D26\u53F7\u6392\u5E8F\u8868\u4E0D\u540C");
+    if (JSON.stringify(left.folderOrderIds) !== JSON.stringify(right.folderOrderIds)) parts.push("\u6587\u4EF6\u5939\u6392\u5E8F\u8868\u4E0D\u540C");
+    if (left.deviceName !== right.deviceName) parts.push("\u8BBE\u5907\u540D\u4E0D\u540C");
+    return parts.join("\u3001");
   }
   async function broadcastWebBridgeData(data) {
     try {
@@ -4674,6 +4719,7 @@
         folderOrderUpdatedDeviceName: source.folderOrderUpdatedDeviceName,
         deviceName: source.deviceName
       });
+      await waitSyncWindowEnd();
       if (syncPayloadEquals(normalizeSyncPayloadShape(await readBusinessDataFromStore()), nextPayload)) {
         return {
           ok: true,

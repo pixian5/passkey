@@ -187,6 +187,38 @@ test('Web 桥同内容回显跳过落库，不推进 revision', async () => {
   assert.equal(h.local().accounts[0].note, 'bridge-real-change');
 });
 
+test('同步窗口内的 Web 桥写入推迟到窗口结束后落库', async () => {
+  // 回显（哪怕是内容不同的真实编辑）落在同步窗口内也不得推进 revision，
+  // 否则收尾 assertLocalUnchanged 必然误报 LOCAL_CHANGED（1.9.1 仍在复现的场景）。
+  const h = harness({});
+  h.setLocal(base);
+  h.context.beginSyncWindow();
+  const edited = JSON.parse(JSON.stringify(base));
+  edited.accounts[0].note = 'bridge-edit-during-sync';
+  const echo = h.context.handleWebBridgeSyncData(edited);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(h.writes.length, 0, '同步窗口内不得落库');
+  h.context.endSyncWindow();
+  assert.equal((await echo).ok, true);
+  assert.equal(h.writes.length, 1);
+  assert.equal(h.local().accounts[0].note, 'bridge-edit-during-sync');
+});
+
+test('LOCAL_CHANGED 报错携带 revision 与差异判决诊断', async () => {
+  const h = harness({ mode: 'localOverwriteRemote', beforePut: async ({ context, current }) => {
+    current.accounts[0].note = 'edited-during-upload';
+    current.accounts[0].noteUpdatedAtMs = 200;
+    current.accounts[0].updatedAtMs = 200;
+    await context.setAllDataToDataStore(current);
+  } });
+  h.setLocal(base);
+  h.addTarget('primary', null);
+  const result = await h.run();
+  assert.equal(result.report.code, 'LOCAL_CHANGED');
+  assert.match(result.report.message, /版本 \d+→\d+/);
+  assert.match(result.report.message, /账号/);
+});
+
 test('业务内容相同也要从旧密钥轮换到新密钥', async () => {
   const oldKey = Buffer.alloc(32, 1).toString('base64url');
   const newKey = Buffer.alloc(32, 2).toString('base64url');

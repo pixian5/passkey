@@ -427,6 +427,7 @@ async function runManagedSync({
     throw new Error("已有同步任务正在进行，请稍后重试");
   }
   autoSyncInFlight = true;
+  beginSyncWindow();
   const lockOwner = createSyncIdempotencyKey();
   try {
     if (!await acquireSyncOperationLock(lockOwner)) {
@@ -438,6 +439,7 @@ async function runManagedSync({
   } finally {
     await releaseSyncOperationLock(lockOwner);
     autoSyncInFlight = false;
+    endSyncWindow();
   }
 }
 
@@ -488,10 +490,13 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
     mergedAccounts: visibleSyncCount(finalPayload.accounts),
     applied, remotePulled: true, ...fields,
   });
-  const localChangedError = () => Object.assign(
-    new Error("同步期间本地数据已变化，已保留最新编辑，请重新同步"),
-    { code: "LOCAL_CHANGED" },
-  );
+  const localChangedError = async (snapshot) => {
+    const diff = describeSyncPayloadDiff(lastAppliedPayload, snapshot?.payload);
+    return Object.assign(
+      new Error(`同步期间本地数据已变化（版本 ${expectedRevision}→${snapshot?.revision}${diff ? `；${diff}` : ""}），已保留最新编辑，请重新同步`),
+      { code: "LOCAL_CHANGED" },
+    );
+  };
   const assertLocalUnchanged = async () => {
     const snapshot = await getAllDataSnapshotFromDataStore();
     if (snapshot.revision === expectedRevision) return;
@@ -501,7 +506,7 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
       expectedRevision = snapshot.revision;
       return;
     }
-    throw localChangedError();
+    throw await localChangedError(snapshot);
   };
   const applyCandidate = async (payload) => {
     await assertLocalUnchanged();
@@ -794,6 +799,53 @@ function sortSyncPayloadCollections(payload) {
     allRegularAccountIds: [...(payload?.allRegularAccountIds || [])],
     folderOrderIds: [...(payload?.folderOrderIds || [])],
   };
+}
+
+// 同步窗口写闸门：窗口内的 Web 桥回显等旁路业务写入推迟到窗口结束后再落库，
+// 确保 revision 不会在 assertLocalUnchanged 的检查区间内被顶掉（等价回显在
+// 窗口结束后被等值守卫跳过；真实编辑推迟落库，留给下一轮同步上传）。
+let syncWindowDepth = 0;
+const syncWindowWaiters = [];
+function beginSyncWindow() {
+  syncWindowDepth += 1;
+}
+function endSyncWindow() {
+  syncWindowDepth = Math.max(0, syncWindowDepth - 1);
+  if (!syncWindowDepth) {
+    for (const resolveWaiter of syncWindowWaiters.splice(0)) resolveWaiter();
+  }
+}
+async function waitSyncWindowEnd() {
+  while (syncWindowDepth > 0) {
+    await new Promise((resolveWaiter) => syncWindowWaiters.push(resolveWaiter));
+  }
+}
+
+// 判决性诊断：把两份同步载荷的差异压缩成一句话（数量变化 / 首个不同样例 /
+// 排序表差异），随 LOCAL_CHANGED 一并上报，一次报错即可定位改写来源。
+function describeSyncPayloadDiff(before, after) {
+  const left = sortSyncPayloadCollections(normalizeSyncPayloadShape(before));
+  const right = sortSyncPayloadCollections(normalizeSyncPayloadShape(after));
+  const parts = [];
+  const diffOf = (name, leftItems, rightItems, key) => {
+    if (leftItems.length !== rightItems.length) {
+      parts.push(`${name} ${leftItems.length}→${rightItems.length}`);
+      return;
+    }
+    const mismatchIndex = leftItems.findIndex(
+      (item, position) => JSON.stringify(item) !== JSON.stringify(rightItems[position]),
+    );
+    if (mismatchIndex >= 0) {
+      parts.push(`${name}数量不变但内容不同（样例 ${String(leftItems[mismatchIndex]?.[key] || "?").slice(0, 16)}）`);
+    }
+  };
+  diffOf("账号", left.accounts, right.accounts, "recordId");
+  diffOf("文件夹", left.folders, right.folders, "id");
+  diffOf("通行密钥", left.passkeys, right.passkeys, "credentialIdB64u");
+  if (JSON.stringify(left.allRegularAccountIds) !== JSON.stringify(right.allRegularAccountIds)) parts.push("账号排序表不同");
+  if (JSON.stringify(left.folderOrderIds) !== JSON.stringify(right.folderOrderIds)) parts.push("文件夹排序表不同");
+  if (left.deviceName !== right.deviceName) parts.push("设备名不同");
+  return parts.join("、");
 }
 
 async function broadcastWebBridgeData(data) {
@@ -1379,6 +1431,10 @@ function handleWebBridgeSyncData(payload) {
       folderOrderUpdatedDeviceName: source.folderOrderUpdatedDeviceName,
       deviceName: source.deviceName,
     });
+    // 同步窗口内推迟落库：先等窗口结束再比较/写入，确保 revision 不会在
+    // 同步的 assertLocalUnchanged 检查区间内变化（等价回显随后被跳过，
+    // 真实编辑推迟落库并留给下一轮同步）。
+    await waitSyncWindowEnd();
     // 与当前库内容一致时直接跳过写入：否则每次 Web 桥回显都会 revision +1，
     // 令进行中的同步在收尾 assertLocalUnchanged 处误报 LOCAL_CHANGED。
     if (syncPayloadEquals(normalizeSyncPayloadShape(await readBusinessDataFromStore()), nextPayload)) {

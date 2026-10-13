@@ -23,6 +23,20 @@ const packageLockTargets = [
   "apps/extension_shared/package-lock.json",
 ];
 
+// 构建产物中的版本戳（由扩展共享层在构建时内联）。纳入 bump + check，
+// 避免"仓库已升版、dist 仍是旧版"导致用户界面标题与实际代码不一致。
+const chromeDistVersionTargets = [
+  "apps/extension_chrome_web/dist/background.js",
+  "apps/extension_chrome_web/dist/content.js",
+  "apps/extension_chrome_web/dist/options.js",
+  "apps/extension_chrome_web/dist/popup.js",
+  "apps/extension_chrome_web/dist/webauthn_injected.js",
+];
+
+const chromeWebAppVersionTargets = [
+  "apps/extension_chrome_web/app_version.js",
+];
+
 const cargoTargets = [
   ["apps/codex-tauri/src-tauri/Cargo.toml", "apps/codex-tauri/src-tauri/Cargo.lock", "codex-tauri"],
   ["apps/pass-web/Cargo.toml", "apps/pass-web/Cargo.lock", "pass-web"],
@@ -235,6 +249,22 @@ function setVersion(version) {
     `$1${JSON.stringify(version)}`,
     "PASS_EXTENSION_VERSION",
   );
+  for (const target of chromeDistVersionTargets) {
+    replaceExactly(
+      target,
+      /(PASS_EXTENSION_VERSION\s*=\s*)["'][^"']+["']/,
+      `$1${JSON.stringify(version)}`,
+      "PASS_EXTENSION_VERSION",
+    );
+  }
+  for (const target of chromeWebAppVersionTargets) {
+    replaceExactly(
+      target,
+      /(APP_VERSION\s*=\s*)["'][^"']+["']/,
+      `$1${JSON.stringify(version)}`,
+      "APP_VERSION",
+    );
+  }
   replaceExactly(
     "apps/codex-tauri/src/app_version.js",
     /(APP_VERSION\s*=\s*)["'][^"']+["']/,
@@ -319,6 +349,14 @@ function collectVersions() {
   ]);
   const extensionVersion = fs.readFileSync(absolute("apps/extension_shared/extension_version.js"), "utf8");
   entries.push(["apps/extension_shared/extension_version.js", extensionVersion.match(/PASS_EXTENSION_VERSION\s*=\s*["']([^"']+)["']/)?.[1]]);
+  for (const target of chromeDistVersionTargets) {
+    const text = fs.readFileSync(absolute(target), "utf8");
+    entries.push([target, text.match(/PASS_EXTENSION_VERSION\s*=\s*["']([^"']+)["']/)?.[1]]);
+  }
+  for (const target of chromeWebAppVersionTargets) {
+    const text = fs.readFileSync(absolute(target), "utf8");
+    entries.push([target, text.match(/APP_VERSION\s*=\s*["']([^"']+)["']/)?.[1]]);
+  }
   const appVersion = fs.readFileSync(absolute("apps/codex-tauri/src/app_version.js"), "utf8");
   entries.push(["apps/codex-tauri/src/app_version.js", appVersion.match(/APP_VERSION\s*=\s*["']([^"']+)["']/)?.[1]]);
   for (const [target, pattern, description] of documentationVersionTargets) {
