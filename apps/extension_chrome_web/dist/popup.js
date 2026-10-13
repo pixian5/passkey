@@ -879,7 +879,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.8.7";
+  var PASS_EXTENSION_VERSION = "1.8.8";
 
   // popup.js
   var STORAGE_KEY_DEVICE_NAME = "pass.deviceName";

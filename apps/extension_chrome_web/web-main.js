@@ -2652,16 +2652,6 @@ const previewValue = (value) => JSON.stringify(value ?? null);
 const isVisibleSyncAccount = (account) => !account?.isPermanentlyDeleted;
 const isVisibleSyncFolder = (folder) => !folder?.isPermanentlyDeleted;
 const isVisibleSyncPasskey = (passkey) => !passkey?.isPermanentlyDeleted;
-const confirmPlaintextSync = () => {
-  return true;
-};
-const confirmOverwriteSync = (mode) => {
-  if (mode === "merge") return true;
-  const label = mode === "remoteOverwriteLocal" ? "云端覆盖本地" : "本地覆盖云端";
-  return window.confirm(
-    `${label}会丢弃一侧的独有修改，且不可通过“合并”自动恢复。\n\n请先使用“预览合并”确认差异。确定继续执行${label}？`
-  );
-};
 const formatSyncPushState = (report) => {
   if (!report) return "";
   if (report.dryRun) return "仅预览";
@@ -2796,8 +2786,23 @@ const renderSyncPreviewDiff = (localPayload, mergedPayload) => {
 
 const runSyncMode = async (mode, { quiet = false, forceOutboxRetry = !quiet, resumeOutbox = false } = {}) => {
   await saveAllSyncRelated();
-  if (!quiet && !confirmPlaintextSync()) return [];
-  if (!quiet && !confirmOverwriteSync(mode)) return [];
+  const fingerprint = primaryFingerprint();
+  const previousFingerprint = String(uiPrefs.lastSyncPrimaryFingerprint || "").trim();
+  if (!quiet) {
+    // 覆盖模式警告与主同步源指纹变更警告合并为一次浏览器原生确认，避免多次点确定。
+    const warnings = [];
+    if (mode !== "merge") {
+      const label = mode === "remoteOverwriteLocal" ? "云端覆盖本地" : "本地覆盖云端";
+      warnings.push(`${label}会丢弃一侧的独有修改，且不可通过“合并”自动恢复。\n\n请先使用“预览合并”确认差异。`);
+    }
+    if (previousFingerprint && previousFingerprint !== fingerprint) {
+      warnings.push(`检测到主同步源与上次成功同步不一致。\n\n上次：${previousFingerprint}\n当前：${fingerprint}\n\n不同设备/客户端应使用同一主源，否则可能产生分叉。`);
+    }
+    if (warnings.length) {
+      const label = mode === "merge" ? "合并" : (mode === "remoteOverwriteLocal" ? "云端覆盖本地" : "本地覆盖云端");
+      if (!window.confirm(`${warnings.join("\n\n")}\n\n确定继续执行${label}？`)) return [];
+    }
+  }
   const reports = [];
   const failures = [];
   const sources = [];
@@ -2810,14 +2815,6 @@ const runSyncMode = async (mode, { quiet = false, forceOutboxRetry = !quiet, res
   const preferred = sources.includes(configuredPrimary) ? configuredPrimary : sources[0];
   if (preferred === "webdav") {
     // WebDAV without reliable ETag cannot be a safe primary; backend also enforces this.
-  }
-  const fingerprint = primaryFingerprint();
-  const previousFingerprint = String(uiPrefs.lastSyncPrimaryFingerprint || "").trim();
-  if (!quiet && previousFingerprint && previousFingerprint !== fingerprint) {
-    const ok = window.confirm(
-      `检测到主同步源与上次成功同步不一致。\n\n上次：${previousFingerprint}\n当前：${fingerprint}\n\n不同设备/客户端应使用同一主源，否则可能产生分叉。确定仍用当前主源继续？`
-    );
-    if (!ok) return [];
   }
   const ordered = [...sources].sort((left, right) => (right === preferred) - (left === preferred));
   if (platformCapabilities.managedMultiSourceSync) {
