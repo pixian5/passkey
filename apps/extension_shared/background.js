@@ -850,10 +850,15 @@ function describeSyncPayloadDiff(before, after) {
 
 async function broadcastWebBridgeData(data) {
   try {
-    await chrome.runtime.sendMessage({
+    // 即发即忘：绝不 await 页面的 ack。页面收到广播后会 persist 并回发
+    // PASS_WEB_BRIDGE_SYNC_DATA；若此处等待 ack，而页面 persist 又在等回显
+    // 响应、回显处理器又在等同步窗口结束（广播本身发生在窗口内），三方
+    // 互相等待会死锁，同步永远停在"正在同步…"。
+    const sending = chrome.runtime.sendMessage({
       type: "PASS_WEB_BRIDGE_DATA_CHANGED",
       payload: normalizeSyncPayloadShape(data),
     });
+    if (sending && typeof sending.catch === "function") sending.catch(() => {});
   } catch {
     // The management page may not be open. The background store remains authoritative.
   }

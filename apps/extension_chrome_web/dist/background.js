@@ -1853,7 +1853,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.9.2";
+  var PASS_EXTENSION_VERSION = "1.9.3";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 40;
@@ -4194,9 +4194,11 @@
   }
   async function broadcastWebBridgeData(data) {
     try {
-      await chrome.runtime.sendMessage({
+      const sending = chrome.runtime.sendMessage({
         type: "PASS_WEB_BRIDGE_DATA_CHANGED",
         payload: normalizeSyncPayloadShape(data)
+      });
+      if (sending && typeof sending.catch === "function") sending.catch(() => {
       });
     } catch {
     }

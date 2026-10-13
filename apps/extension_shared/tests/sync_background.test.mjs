@@ -22,7 +22,7 @@ function between(start, end) {
 const code = [
   between('async function runAutoSyncInternal(', 'async function readBusinessDataFromStore('),
   between('function normalizeSyncPayloadShape(', 'async function broadcastWebBridgeData('),
-  between('async function writeBusinessDataToStore(', 'async function buildRemoteSyncTargetsFromStorage('),
+  between('async function broadcastWebBridgeData(', 'async function buildRemoteSyncTargetsFromStorage('),
   between('function asTimestamp(', 'function parseSyncBundlePayload('),
   between('function parseSyncBundlePayload(', 'async function getDeviceName('),
   between('async function buildSyncBundleFromPayload(', 'function base64EncodeUtf8('),
@@ -55,6 +55,7 @@ function harness({ key = '', fallbackKeys = [], mode = 'merge', beforePut = null
     SYNC_MODE_MERGE: 'merge',
     SYNC_BUNDLE_SCHEMA_V2: 'pass.sync.bundle.v2',
     PASS_EXTENSION_VERSION: 'test',
+    chrome: { runtime: { sendMessage: async () => ({ ok: true }) } },
     buildSyncOperationReport,
     encryptSyncBundleDocument,
     decryptSyncBundleDocument,
@@ -185,6 +186,25 @@ test('Web 桥同内容回显跳过落库，不推进 revision', async () => {
   assert.equal((await h.context.handleWebBridgeSyncData(edited)).ok, true);
   assert.equal(h.writes.length, 1);
   assert.equal(h.local().accounts[0].note, 'bridge-real-change');
+});
+
+test('广播即发即忘：页面 ack 永不返回也不阻塞（1.9.2 死锁回归）', async () => {
+  // 死锁链：同步窗口内广播 await 页面 ack → 页面 persist 回发回显 await 后台
+  // 响应 → 回显闸门 await 同步窗口结束。三方互等，同步永远停在"正在同步…"。
+  // 修复后广播必须不等 ack 立即 resolve。
+  const h = harness({});
+  let releaseAck;
+  h.context.chrome = {
+    runtime: { sendMessage: () => new Promise((resolve) => { releaseAck = resolve; }) },
+  };
+  let settled = false;
+  const done = h.context
+    .broadcastWebBridgeData({ accounts: [], folders: [], passkeys: [] })
+    .then(() => { settled = true; });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(settled, true, 'broadcast 不得等待页面 ack，否则与回显闸门死锁');
+  releaseAck({ ok: true });
+  await done;
 });
 
 test('同步窗口内的 Web 桥写入推迟到窗口结束后落库', async () => {
