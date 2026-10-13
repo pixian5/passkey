@@ -15,8 +15,8 @@ android {
         applicationId = "com.pass.credentialprovider"
         minSdk = 34
         targetSdk = 36
-        versionCode = 194
-        versionName = "1.9.4"
+        versionCode = 195
+        versionName = "1.9.5"
     }
 }
 

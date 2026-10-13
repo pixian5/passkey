@@ -142,7 +142,7 @@ import {
     });
     if (!createDecision.manageable) {
       await notifyFallbackBeforeBrowser("create", createDecision.reason);
-      return originalCreate(options);
+      return await runFallbackCreate(options, createDecision.reason);
     }
 
     const serialized = serializeCreateOptions(options.publicKey);
@@ -175,11 +175,56 @@ import {
       });
       if (shouldFallbackToBrowser(error)) {
         await notifyFallbackBeforeBrowser("create", error?.code || error?.name || "fallback");
-        return originalCreate(options);
+        return await runFallbackCreate(options, error?.code || error?.name || "fallback");
       }
       throw toDomLikeError(error, "NotAllowedError");
     }
   };
+
+  // Pass 故意让位 Chrome 原生后，记录原生 create 的真实结果（成功或报错）。
+  // 否则 Pass 退出后，原生注册到底成功没、失败原因是什么，从日志里完全看不见，
+  // 无法判断"注册失败"到底是 Pass 还是系统认证器的问题。
+  async function runFallbackCreate(options, reason) {
+    try {
+      const credential = await originalCreate(options);
+      logInjected("create-fallback-native-success", {
+        reason,
+        rpId: String(options?.publicKey?.rp?.id || window.location.hostname || ""),
+        userName: String(options?.publicKey?.user?.name || ""),
+        credentialId: credential?.id ? String(credential.id).slice(0, 16) : "",
+        hasResponse: Boolean(credential?.response),
+      });
+      return credential;
+    } catch (nativeError) {
+      logInjected("create-fallback-native-error", {
+        reason,
+        name: String(nativeError?.name || ""),
+        code: String(nativeError?.code ?? ""),
+        message: String(nativeError?.message || ""),
+      });
+      throw nativeError;
+    }
+  }
+
+  async function runFallbackGet(options, reason) {
+    try {
+      const assertion = await originalGet(options);
+      logInjected("get-fallback-native-success", {
+        reason,
+        rpId: String(options?.publicKey?.rpId || window.location.hostname || ""),
+        hasResponse: Boolean(assertion?.response),
+      });
+      return assertion;
+    } catch (nativeError) {
+      logInjected("get-fallback-native-error", {
+        reason,
+        name: String(nativeError?.name || ""),
+        code: String(nativeError?.code ?? ""),
+        message: String(nativeError?.message || ""),
+      });
+      throw nativeError;
+    }
+  }
 
   const patchedGet = async function patchedGet(options) {
     if (!options?.publicKey) {
@@ -196,7 +241,7 @@ import {
     });
     if (!getDecision.manageable) {
       await notifyFallbackBeforeBrowser("get", getDecision.reason);
-      return originalGet(options);
+      return await runFallbackGet(options, getDecision.reason);
     }
 
     const serialized = serializeGetOptions(options.publicKey);
@@ -226,7 +271,7 @@ import {
       });
       if (shouldFallbackToBrowser(error)) {
         await notifyFallbackBeforeBrowser("get", error?.code || error?.name || "fallback");
-        return originalGet(options);
+        return await runFallbackGet(options, error?.code || error?.name || "fallback");
       }
       throw toDomLikeError(error, "NotAllowedError");
     }
