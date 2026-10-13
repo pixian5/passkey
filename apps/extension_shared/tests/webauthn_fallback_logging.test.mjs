@@ -55,13 +55,13 @@ test("Pass 让位原生后记录 create/get 的成功与失败", async () => {
   try {
     await import(pathToFileURL(path.join(appDir, "webauthn_injected.js")).href);
 
-    // 非可托管（attestation direct，与谷歌同因）→ 让位原生，应记录成功。
+    // 非可托管（要求外置安全密钥）→ 让位原生，应记录成功。
     const created = await credentials.create({
       publicKey: {
         rp: { id: "google.com", name: "Google" },
         user: { id: new Uint8Array(8), name: "user@gmail.com" },
         challenge: new Uint8Array(16),
-        attestation: "direct",
+        authenticatorSelection: { authenticatorAttachment: "cross-platform" },
       },
     });
     assert.equal(created.id, "cred-id-1234567890", "原生 create 返回应原样透传");
@@ -78,7 +78,7 @@ test("Pass 让位原生后记录 create/get 的成功与失败", async () => {
           rp: { id: "google.com" },
           user: { id: new Uint8Array(8), name: "user@gmail.com" },
           challenge: new Uint8Array(16),
-          attestation: "direct",
+          authenticatorSelection: { authenticatorAttachment: "cross-platform" },
         },
       }),
       (error) => error.name === "NotAllowedError",

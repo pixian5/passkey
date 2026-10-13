@@ -1,6 +1,6 @@
 (() => {
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.9.5";
+  var PASS_EXTENSION_VERSION = "1.9.6";
 
   // webauthn_client_data.js
   function normalizeHttpOrigin(value) {
@@ -137,7 +137,6 @@
     hasChallenge,
     hasUserId,
     authenticatorAttachment,
-    attestation,
     googleLegacyAppidSupport
   } = {}) {
     if (!hasChallenge || !hasUserId) {
@@ -145,9 +144,6 @@
     }
     if (googleLegacyAppidSupport === true) {
       return { manageable: false, reason: "google-legacy-appid-request" };
-    }
-    if (["direct", "enterprise"].includes(String(attestation || "").toLowerCase())) {
-      return { manageable: false, reason: "attestation-required-by-rp" };
     }
     if (String(authenticatorAttachment || "").toLowerCase() === "cross-platform") {
       return { manageable: false, reason: "cross-platform-requested" };
