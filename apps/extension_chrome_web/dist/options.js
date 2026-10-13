@@ -1099,9 +1099,14 @@
         for (const id of tombstoneIds(remote, kind)) requiredTombstones[kind].add(id);
       }
     }
-    if (["accounts", "folders", "passkeys"].some((kind) => [...requiredTombstones[kind]].some((id) => !mergedTombstones[kind].has(id)))) {
-      reasons.push("PERMANENT_TOMBSTONES_DROPPED");
+    const tombClue = (kind, ids) => ids.length ? `${kind}=${ids.length}(${ids.slice(0, 4).join(",")}${ids.length > 4 ? "\u2026" : ""})` : null;
+    const droppedTomb = [];
+    for (const kind of ["accounts", "folders", "passkeys"]) {
+      const miss = [...requiredTombstones[kind]].filter((id) => !mergedTombstones[kind].has(id));
+      const c = tombClue(kind, miss);
+      if (c) droppedTomb.push(c);
     }
+    if (droppedTomb.length) reasons.push(`PERMANENT_TOMBSTONES_DROPPED[${droppedTomb.join(";")}]`);
     const localNonEmpty = localSummary.accounts + localSummary.folders + localSummary.passkeys > 0;
     const remoteNonEmpty = Boolean(remoteSummary) && remoteSummary.accounts + remoteSummary.folders + remoteSummary.passkeys > 0;
     if (mode === "merge") {
@@ -1123,9 +1128,9 @@
         merged?.passkeys,
         (item) => asString(item?.credentialIdB64u || item?.id).trim()
       );
-      if (missingAccounts.length > 0) reasons.push("LOCAL_ACCOUNTS_DROPPED");
-      if (missingFolders.length > 0) reasons.push("LOCAL_FOLDERS_DROPPED");
-      if (missingPasskeys.length > 0) reasons.push("LOCAL_PASSKEYS_DROPPED");
+      if (missingAccounts.length > 0) reasons.push(`LOCAL_ACCOUNTS_DROPPED[${tombClue("accounts", missingAccounts)}]`);
+      if (missingFolders.length > 0) reasons.push(`LOCAL_FOLDERS_DROPPED[${tombClue("folders", missingFolders)}]`);
+      if (missingPasskeys.length > 0) reasons.push(`LOCAL_PASSKEYS_DROPPED[${tombClue("passkeys", missingPasskeys)}]`);
       const missingRemoteAccounts = missingIdentities(
         remote?.accounts,
         merged?.accounts,
@@ -1141,9 +1146,9 @@
         merged?.passkeys,
         (item) => asString(item?.credentialIdB64u || item?.id).trim()
       );
-      if (missingRemoteAccounts.length > 0) reasons.push("REMOTE_ACCOUNTS_DROPPED");
-      if (missingRemoteFolders.length > 0) reasons.push("REMOTE_FOLDERS_DROPPED");
-      if (missingRemotePasskeys.length > 0) reasons.push("REMOTE_PASSKEYS_DROPPED");
+      if (missingRemoteAccounts.length > 0) reasons.push(`REMOTE_ACCOUNTS_DROPPED[${tombClue("accounts", missingRemoteAccounts)}]`);
+      if (missingRemoteFolders.length > 0) reasons.push(`REMOTE_FOLDERS_DROPPED[${tombClue("folders", missingRemoteFolders)}]`);
+      if (missingRemotePasskeys.length > 0) reasons.push(`REMOTE_PASSKEYS_DROPPED[${tombClue("passkeys", missingRemotePasskeys)}]`);
       return {
         safe: reasons.length === 0,
         reasons,

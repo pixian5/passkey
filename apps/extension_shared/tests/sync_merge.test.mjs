@@ -608,7 +608,8 @@ test("合并结果缺少本地稳定 ID 时必须阻止写入", () => {
     helpers
   );
   assert.equal(safety.safe, false);
-  assert.deepEqual(safety.reasons, ["LOCAL_ACCOUNTS_DROPPED"]);
+  assert.equal(safety.reasons.length, 1);
+  assert.ok(safety.reasons[0].startsWith("LOCAL_ACCOUNTS_DROPPED["));
 });
 
 test("合并结果缺少远端稳定 ID 时必须阻止写入", () => {
@@ -619,7 +620,8 @@ test("合并结果缺少远端稳定 ID 时必须阻止写入", () => {
     helpers
   );
   assert.equal(safety.safe, false);
-  assert.deepEqual(safety.reasons, ["REMOTE_ACCOUNTS_DROPPED"]);
+  assert.equal(safety.reasons.length, 1);
+  assert.ok(safety.reasons[0].startsWith("REMOTE_ACCOUNTS_DROPPED["));
 });
 
 test("覆盖模式不能丢弃任一侧的永久删除墓碑", () => {
@@ -641,7 +643,7 @@ test("覆盖模式不能丢弃任一侧的永久删除墓碑", () => {
     mode: "remoteOverwriteLocal",
   }, helpers);
   assert.equal(remoteOverwrite.safe, false);
-  assert.ok(remoteOverwrite.reasons.includes("PERMANENT_TOMBSTONES_DROPPED"));
+  assert.ok(remoteOverwrite.reasons.some((reason) => reason.includes("PERMANENT_TOMBSTONES_DROPPED")));
 
   const localOverwrite = evaluateSyncSafety({
     local: { accounts: [active] },
@@ -650,7 +652,7 @@ test("覆盖模式不能丢弃任一侧的永久删除墓碑", () => {
     mode: "localOverwriteRemote",
   }, helpers);
   assert.equal(localOverwrite.safe, false);
-  assert.ok(localOverwrite.reasons.includes("PERMANENT_TOMBSTONES_DROPPED"));
+  assert.ok(localOverwrite.reasons.some((reason) => reason.includes("PERMANENT_TOMBSTONES_DROPPED")));
 
   const preserved = evaluateSyncSafety({
     local: { accounts: [tombstone] },
@@ -800,4 +802,20 @@ test("两份独立客户端数据合并后可往返收敛并保留字段、墓�
   assert.deepEqual(round2.allRegularAccountIds, ["record-shared", "record-a-only"]);
   const convergedFolder = round2.folders.find((item) => item.id === "folder-work");
   assert.deepEqual(convergedFolder.regularAccountIds, ["record-shared", "record-a-only"]);
+});
+
+test('同步安全检查的拒绝原因附带被丢弃的永久墓碑 ID 与类型', () => {
+  const local = {
+    accounts: [{ ...helpers.normalizeAccountShape({ recordId: "drop-1", accountId: "account-1", isPermanentlyDeleted: true, deletedAtMs: 9 }) }],
+    folders: [],
+    passkeys: [],
+    allRegularAccountIds: [],
+  };
+  const remote = { accounts: [], folders: [], passkeys: [], allRegularAccountIds: [] };
+  // 合并结果里故意不含该墓碑，模拟被合并逻辑丢弃
+  const merged = { accounts: [], folders: [], passkeys: [], allRegularAccountIds: [] };
+  const res = evaluateSyncSafety({ local, remote, merged, mode: "merge" }, helpers);
+  const perm = res.reasons.find((r) => r.startsWith("PERMANENT_TOMBSTONES_DROPPED"));
+  assert.ok(perm, `应报告 PERMANENT_TOMBSTONES_DROPPED，实际: ${JSON.stringify(res.reasons)}`);
+  assert.ok(perm.includes("accounts=1(drop-1)"), `原因应包含冲突类型与 ID，实际: ${perm}`);
 });
