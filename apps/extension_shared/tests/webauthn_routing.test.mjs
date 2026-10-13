@@ -47,15 +47,19 @@ test("Google Legacy AppID 注册必须交给浏览器的 U2F 外置认证器", (
   );
 });
 
-test("RP 要求 direct 或 enterprise 证明时 Pass 仍接管并出具匿名证明", () => {
-  // Pass 无 FIDO 认证链，托管创建一律返回 fmt="none" + 全零 AAGUID；
-  // 是否接受由 RP 服务端决定，Pass 侧不再因 attestation 让位。
-  for (const attestation of ["direct", "enterprise", "none"]) {
+test("RP 要求 direct 或 enterprise 证明时交给浏览器真实认证器", () => {
+  // 2026-10-13 实测：Pass 接管后谷歌服务端拒绝匿名证明（RpcError + 无法保存），
+  // 让位系统认证器是唯一正确行为。
+  for (const attestation of ["direct", "enterprise"]) {
     assert.deepEqual(
       explainCreateManageability({ hasChallenge: true, hasUserId: true, attestation }),
-      { manageable: true, reason: "managed-by-pass" },
+      { manageable: false, reason: "attestation-required-by-rp" },
     );
   }
+  assert.deepEqual(
+    explainCreateManageability({ hasChallenge: true, hasUserId: true, attestation: "none" }),
+    { manageable: true, reason: "managed-by-pass" },
+  );
 });
 
 test("Pass 通信或超时失败不会静默回退到浏览器原生通行密钥", () => {

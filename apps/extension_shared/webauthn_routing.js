@@ -2,6 +2,7 @@ export function explainCreateManageability({
   hasChallenge,
   hasUserId,
   authenticatorAttachment,
+  attestation,
   googleLegacyAppidSupport,
 } = {}) {
   if (!hasChallenge || !hasUserId) {
@@ -15,11 +16,16 @@ export function explainCreateManageability({
     return { manageable: false, reason: "google-legacy-appid-request" };
   }
 
-  // 2026-10-13 变更：原先只要 RP 要求 direct/enterprise 证明就让位给系统认证器，
-  // 结果谷歌一类站点永远无法把通行密钥存进 Pass。Pass 的托管创建对此是协议正确的：
-  // 返回匿名证明（fmt="none" + 全零 AAGUID），attestation 仍如实序列化上报，
-  // 是否接受由 RP 在服务端决定。见 tests/google_passkey_registration.test.mjs。
-  // 故不再因 attestation 让位，改由 Pass 接管创建。
+  // Pass has no certified attestation key or metadata chain. Let Chrome use
+  // the real system authenticator when the RP explicitly requires proof.
+  // 2026-10-13 实测复盘：1.9.6 曾移除此让位、改由 Pass 接管谷歌注册，凭据
+  // 成功生成并返回（create-bridge-success），但谷歌服务端直接拒绝——页面弹
+  // 「出了点问题：我们无法保存您所做的更改」+ RpcError。实锤谷歌强制校验
+  // attestation，匿名证明（fmt=none）不被接受。让位是唯一正确行为。
+
+  if (["direct", "enterprise"].includes(String(attestation || "").toLowerCase())) {
+    return { manageable: false, reason: "attestation-required-by-rp" };
+  }
 
   if (String(authenticatorAttachment || "").toLowerCase() === "cross-platform") {
     return { manageable: false, reason: "cross-platform-requested" };
