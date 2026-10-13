@@ -493,7 +493,15 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
     { code: "LOCAL_CHANGED" },
   );
   const assertLocalUnchanged = async () => {
-    if ((await getAllDataSnapshotFromDataStore()).revision !== expectedRevision) throw localChangedError();
+    const snapshot = await getAllDataSnapshotFromDataStore();
+    if (snapshot.revision === expectedRevision) return;
+    // revision 变了但业务内容与同步已写入的候选完全一致：属于等价重写（如 Web 桥同内容
+    // 回显、规范化落盘），重新基线即可，不上报并发冲突；内容真正不同才视为并发编辑。
+    if (syncPayloadEquals(normalizeSyncPayloadShape(snapshot.payload), lastAppliedPayload)) {
+      expectedRevision = snapshot.revision;
+      return;
+    }
+    throw localChangedError();
   };
   const applyCandidate = async (payload) => {
     await assertLocalUnchanged();
@@ -1359,7 +1367,7 @@ function handleWebBridgeSyncData(payload) {
       accounts,
       Array.isArray(source.passkeys) ? source.passkeys.map(normalizePasskeyShape) : [],
     );
-    await setAllDataToDataStore({
+    const nextPayload = normalizeSyncPayloadShape({
       accounts,
       folders,
       passkeys,
@@ -1371,6 +1379,17 @@ function handleWebBridgeSyncData(payload) {
       folderOrderUpdatedDeviceName: source.folderOrderUpdatedDeviceName,
       deviceName: source.deviceName,
     });
+    // 与当前库内容一致时直接跳过写入：否则每次 Web 桥回显都会 revision +1，
+    // 令进行中的同步在收尾 assertLocalUnchanged 处误报 LOCAL_CHANGED。
+    if (syncPayloadEquals(normalizeSyncPayloadShape(await readBusinessDataFromStore()), nextPayload)) {
+      return {
+        ok: true,
+        accounts: visibleSyncCount(accounts),
+        folders: visibleSyncCount(folders),
+        passkeys: visibleSyncCount(passkeys),
+      };
+    }
+    await setAllDataToDataStore(nextPayload);
     return {
       ok: true,
       accounts: visibleSyncCount(accounts),

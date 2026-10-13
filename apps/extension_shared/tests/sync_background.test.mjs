@@ -161,6 +161,32 @@ for (const mode of ['merge', 'localOverwriteRemote']) {
   });
 }
 
+test('上传期间的同内容等价重写（Web 桥回显）不触发 LOCAL_CHANGED', async () => {
+  // revision +1 但业务内容与同步候选完全一致：收尾守卫应重新基线并放行，
+  // 而不是把等价重写误报为并发冲突（曾导致覆盖/合并每次都以失败收场）。
+  const h = harness({ mode: 'localOverwriteRemote', beforePut: async ({ context, current }) => {
+    await context.setAllDataToDataStore(current);
+  } });
+  h.setLocal(base);
+  h.addTarget('primary', null);
+  const result = await h.run();
+  assert.equal(result.report.ok, true);
+  assert.ok(!result.report.code);
+  assert.equal(h.puts.length, 1);
+});
+
+test('Web 桥同内容回显跳过落库，不推进 revision', async () => {
+  const h = harness({});
+  h.setLocal(base);
+  assert.equal((await h.context.handleWebBridgeSyncData(base)).ok, true);
+  assert.equal(h.writes.length, 0);
+  const edited = JSON.parse(JSON.stringify(base));
+  edited.accounts[0].note = 'bridge-real-change';
+  assert.equal((await h.context.handleWebBridgeSyncData(edited)).ok, true);
+  assert.equal(h.writes.length, 1);
+  assert.equal(h.local().accounts[0].note, 'bridge-real-change');
+});
+
 test('业务内容相同也要从旧密钥轮换到新密钥', async () => {
   const oldKey = Buffer.alloc(32, 1).toString('base64url');
   const newKey = Buffer.alloc(32, 2).toString('base64url');

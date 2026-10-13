@@ -1853,7 +1853,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.8.9";
+  var PASS_EXTENSION_VERSION = "1.9.0";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 40;
@@ -3836,7 +3836,13 @@
       { code: "LOCAL_CHANGED" }
     );
     const assertLocalUnchanged = async () => {
-      if ((await getAllDataSnapshot()).revision !== expectedRevision) throw localChangedError();
+      const snapshot = await getAllDataSnapshot();
+      if (snapshot.revision === expectedRevision) return;
+      if (syncPayloadEquals(normalizeSyncPayloadShape(snapshot.payload), lastAppliedPayload)) {
+        expectedRevision = snapshot.revision;
+        return;
+      }
+      throw localChangedError();
     };
     const applyCandidate = async (payload) => {
       await assertLocalUnchanged();
@@ -4656,7 +4662,7 @@
         accounts,
         Array.isArray(source.passkeys) ? source.passkeys.map(normalizePasskeyShape) : []
       );
-      await setAllData({
+      const nextPayload = normalizeSyncPayloadShape({
         accounts,
         folders,
         passkeys,
@@ -4668,6 +4674,15 @@
         folderOrderUpdatedDeviceName: source.folderOrderUpdatedDeviceName,
         deviceName: source.deviceName
       });
+      if (syncPayloadEquals(normalizeSyncPayloadShape(await readBusinessDataFromStore()), nextPayload)) {
+        return {
+          ok: true,
+          accounts: visibleSyncCount(accounts),
+          folders: visibleSyncCount(folders),
+          passkeys: visibleSyncCount(passkeys)
+        };
+      }
+      await setAllData(nextPayload);
       return {
         ok: true,
         accounts: visibleSyncCount(accounts),
