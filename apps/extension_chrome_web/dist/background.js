@@ -2824,10 +2824,10 @@
         ...regularOrderFields,
         matchedSites: rightUpdatedAt >= leftUpdatedAt ? right.matchedSites || [] : left.matchedSites || [],
         autoAddMatchingSites: rightUpdatedAt >= leftUpdatedAt ? Boolean(right.autoAddMatchingSites) : Boolean(left.autoAddMatchingSites),
-        isDeleted: false,
-        isPermanentlyDeleted: false,
-        deletedAtMs: null,
-        deletedDeviceName: "",
+        isDeleted: keepDeleted,
+        isPermanentlyDeleted: keepPermanentlyDeleted,
+        deletedAtMs: keepDeleted ? latestDeletedAt || Math.max(leftUpdatedAt, rightUpdatedAt) : null,
+        deletedDeviceName: keepDeleted ? deletedDeviceName || DEFAULT_DEVICE_NAME : "",
         createdAtMs: Math.min(asNumber(left.createdAtMs), asNumber(right.createdAtMs)),
         updatedAtMs: Math.max(leftUpdatedAt, rightUpdatedAt)
       };

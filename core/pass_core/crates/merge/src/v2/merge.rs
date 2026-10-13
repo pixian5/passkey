@@ -760,10 +760,18 @@ fn merge_same_folder(lhs: Folder, rhs: Folder) -> Folder {
             regular_account_ids,
             regular_order_updated_at_ms,
             regular_order_updated_device_name,
-            is_deleted: false,
-            is_permanently_deleted: false,
-            deleted_at_ms: None,
-            deleted_device_name: String::new(),
+            is_deleted: keep_permanently_deleted || keep_deleted,
+            is_permanently_deleted: keep_permanently_deleted,
+            deleted_at_ms: if keep_permanently_deleted || keep_deleted {
+                Some(latest_deleted_at.max(left_updated_at.max(right_updated_at)))
+            } else {
+                None
+            },
+            deleted_device_name: if keep_permanently_deleted || keep_deleted {
+                deleted_device_name.clone()
+            } else {
+                String::new()
+            },
             created_at_ms: left.created_at_ms.min(right.created_at_ms),
             updated_at_ms: left_updated_at.max(right_updated_at),
         };

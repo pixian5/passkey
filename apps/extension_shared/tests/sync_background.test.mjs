@@ -338,6 +338,26 @@ test('快照备份之后、事务提交之前的本地编辑也不会被覆盖',
   assert.equal(h.puts.length, 0);
 });
 
+test('内置「新账号」文件夹的永久墓碑在服务端、本地活跃时合并不再被安全护栏拦截', async () => {
+  const fixedId = harness({}).context.syncMergeHelpers().fixedNewAccountFolderId;
+  const localAccount = {
+    recordId: '00000000-0000-4000-8000-000000000001', accountId: 'syn-fixed', canonicalSite: 'example.test',
+    sites: ['example.test'], username: 'u', password: 'p', note: '', createdAtMs: 100, updatedAtMs: 100,
+    passwordUpdatedAtMs: 100, noteUpdatedAtMs: 100, lastOperatedDeviceName: 'review-device',
+  };
+  const h = harness();
+  h.setLocal({ accounts: [localAccount], folders: [{ id: fixedId, name: '新账号', updatedAtMs: 100 }], passkeys: [], allRegularAccountIds: [] });
+  // 服务端把「新账号」文件夹永久删除（例如桌面端曾永久删除并落盘到服务器）
+  h.addTarget('primary', { accounts: [localAccount], folders: [{ id: fixedId, name: '新账号', isDeleted: true, isPermanentlyDeleted: true, deletedAtMs: 200, updatedAtMs: 200 }], passkeys: [], allRegularAccountIds: [] });
+  const result = await h.run();
+  assert.equal(result.report.ok, true);
+  assert.notEqual(result.report.code, 'SAFETY_BLOCKED');
+  const localFixed = h.local().folders.find((f) => f.id === fixedId);
+  assert.equal(localFixed.isPermanentlyDeleted, true);
+  const remoteFixed = h.remote.get(h.targets[0].url).payload.folders.find((f) => f.id === fixedId);
+  assert.equal(remoteFixed.isPermanentlyDeleted, true);
+});
+
 test('Firefox 与 Safari 的手动和补偿入口调用同一后台并传递原意图', async () => {
   const h = harness({ beforePut: ({ puts }) => {
     if (puts.length === 1) throw Object.assign(new Error('HTTP 503'), { status: 503 });
