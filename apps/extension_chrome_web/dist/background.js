@@ -1853,7 +1853,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.9.3";
+  var PASS_EXTENSION_VERSION = "1.9.4";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 40;
@@ -3469,6 +3469,12 @@
     };
     if (input.code != null && String(input.code)) report.code = String(input.code);
     if (input.etag != null && String(input.etag)) report.etag = String(input.etag);
+    if (Number.isFinite(Number(input.uploadedTargets))) {
+      report.uploadedTargets = Math.max(0, Math.trunc(Number(input.uploadedTargets)));
+    }
+    if (Number.isFinite(Number(input.identicalTargets))) {
+      report.identicalTargets = Math.max(0, Math.trunc(Number(input.identicalTargets)));
+    }
     if (input.revision != null && Number.isFinite(Number(input.revision))) {
       report.revision = Math.max(0, Math.trunc(Number(input.revision)));
     }
@@ -3970,6 +3976,8 @@
     let concurrencyError = null;
     let safetyBlocked = false;
     let confirmedTargets = 0;
+    let uploadedTargets = 0;
+    let identicalTargets = 0;
     for (const target of pushTargets) {
       if (target.pullFailed) continue;
       if (primaryPushFailed && target !== primaryTarget) {
@@ -3998,6 +4006,7 @@
         if (target.remotePayload && target.remoteKeyId === encryptionKeyId && Boolean(target.remoteEncrypted) === Boolean(encryptionKeyId) && syncPayloadEquals(target.remotePayload, candidatePayload)) {
           outboxByTarget.delete(targetKey);
           confirmedTargets += 1;
+          identicalTargets += 1;
           logSyncFlow("push-skipped-remote-already-matches", { label: target.label, operationId });
           continue;
         }
@@ -4016,6 +4025,7 @@
         if (target === primaryTarget) finalPayload = normalizeSyncPayloadShape(result.payload);
         outboxByTarget.delete(targetKey);
         confirmedTargets += 1;
+        uploadedTargets += 1;
         logSyncFlow("push-success", { label: target.label, mode: targetMode, operationId });
       } catch (error) {
         pushErrors.push(`${target.label}: ${error.message}`);
@@ -4068,6 +4078,8 @@
       code: concurrencyError ? "LOCAL_CHANGED" : safetyBlocked ? "SAFETY_BLOCKED" : null,
       pushed: confirmedTargets === targets.length,
       pendingRetry: outboxByTarget.size > 0,
+      uploadedTargets,
+      identicalTargets,
       retryable: Boolean(concurrencyError) || pushErrors.length > 0 && !safetyBlocked,
       stage: concurrencyError ? "checkingLocalConcurrency" : safetyBlocked ? "safetyChecking" : pushErrors.length ? "pushingRemote" : "completed",
       etag: primaryTarget.remoteEtag

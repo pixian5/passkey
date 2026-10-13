@@ -2652,13 +2652,33 @@ const previewValue = (value) => JSON.stringify(value ?? null);
 const isVisibleSyncAccount = (account) => !account?.isPermanentlyDeleted;
 const isVisibleSyncFolder = (folder) => !folder?.isPermanentlyDeleted;
 const isVisibleSyncPasskey = (passkey) => !passkey?.isPermanentlyDeleted;
+// 同步结果必须说清三件事：按哪种模式落地、本地发生了什么、远端到底有没有
+// 真上传。旧的"远端已推送"含糊——pushed 只代表"所有目标已确认"，而确认既
+// 可能是真的上传成功，也可能是远端内容与待提交内容一致、跳过上传。
+const SYNC_APPLIED_TEXT = {
+  merge: "已合并写入本地",
+  remoteOverwriteLocal: "已用云端内容覆盖本地",
+  localOverwriteRemote: "已用本地内容覆盖云端",
+};
 const formatSyncPushState = (report) => {
   if (!report) return "";
   if (report.dryRun) return "仅预览";
-  if (report.applied && report.pushed) return "本地已写入 · 远端已推送";
-  if (report.applied && !report.pushed && report.pendingRetry !== false) return "本地已写入 · 远端未推送（待补偿）";
-  if (report.applied && !report.pushed) return "本地已写入 · 远端未推送";
-  if (!report.applied && report.ok) return "无需写入";
+  const appliedText = SYNC_APPLIED_TEXT[report.mode] || SYNC_APPLIED_TEXT.merge;
+  const uploaded = Math.max(0, Number(report.uploadedTargets || 0));
+  const identical = Math.max(0, Number(report.identicalTargets || 0));
+  const pushDetail = () => {
+    if (uploaded && identical) return `已上传 ${uploaded} 个目标，另 ${identical} 个内容一致未重复上传`;
+    if (uploaded) return `已上传 ${uploaded} 个目标`;
+    if (identical) return `${identical} 个目标内容已一致，未重复上传`;
+    return null;
+  };
+  if (report.applied && report.pushed) {
+    const detail = pushDetail();
+    return detail ? `${appliedText} · ${detail}` : `${appliedText} · 远端已确认一致`;
+  }
+  if (report.applied && !report.pushed && report.pendingRetry) return `${appliedText} · 远端未推送（待补偿重试）`;
+  if (report.applied && !report.pushed) return `${appliedText} · 远端未推送`;
+  if (!report.applied && report.ok) return "两端内容已一致，无需写入";
   return report.ok ? "已完成" : "未完成";
 };
 const shortSyncTrace = (report) => {
@@ -2784,6 +2804,21 @@ const renderSyncPreviewDiff = (localPayload, mergedPayload) => {
   }
 };
 
+// 覆盖说明必须点明三件事：以哪一侧为准、哪一侧被整份替换、丢掉的是哪一侧的
+// 独有修改（以及能不能找回）。旧文案只说"丢弃一侧的独有修改"，用户看不出
+// 到底是丢本地的还是丢云端的。
+const overwriteWarningText = (mode) => (mode === "remoteOverwriteLocal"
+  ? [
+      "云端覆盖本地：以云端内容为准，本地会被云端整份替换。",
+      "本地独有、云端没有的新增与修改将被丢弃，执行后无法通过“合并”自动找回。",
+      "建议先用“预览合并”确认差异。",
+    ].join("\n\n")
+  : [
+      "本地覆盖云端：以本地内容为准，云端会被本地整份替换。",
+      "云端独有、本地没有的新增与修改将被丢弃（含云端已保留的永久删除墓碑），执行后无法通过“合并”自动找回。",
+      "建议先用“预览合并”确认差异。",
+    ].join("\n\n"));
+
 const runSyncMode = async (mode, { quiet = false, forceOutboxRetry = !quiet, resumeOutbox = false } = {}) => {
   await saveAllSyncRelated();
   const fingerprint = primaryFingerprint();
@@ -2794,8 +2829,7 @@ const runSyncMode = async (mode, { quiet = false, forceOutboxRetry = !quiet, res
     // 避免「程序原生弹窗 + 浏览器原生弹窗」两类弹窗叠加导致重复点击。
     const warnings = [];
     if (mode !== "merge") {
-      const label = mode === "remoteOverwriteLocal" ? "云端覆盖本地" : "本地覆盖云端";
-      warnings.push(`${label}会丢弃一侧的独有修改，且不可通过“合并”自动恢复。\n\n请先使用“预览合并”确认差异。`);
+      warnings.push(overwriteWarningText(mode));
     }
     if (previousFingerprint && previousFingerprint !== fingerprint) {
       warnings.push(`检测到主同步源与上次成功同步不一致。\n\n上次：${previousFingerprint}\n当前：${fingerprint}\n\n不同设备/客户端应使用同一主源，否则可能产生分叉。`);

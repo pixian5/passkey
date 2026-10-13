@@ -846,11 +846,32 @@ function confirmOverwriteSync(mode) {
   );
 }
 
+// 与 codex-tauri/src/main.js 保持一致：说清模式、本地发生了什么、远端是否
+// 真的上传（pushed 只代表"所有目标已确认"，确认也可能是内容已一致而跳过上传）。
+const SYNC_APPLIED_TEXT = {
+  merge: "已合并写入本地",
+  remoteOverwriteLocal: "已用云端内容覆盖本地",
+  localOverwriteRemote: "已用本地内容覆盖云端",
+};
 function formatSyncPushState(report) {
   if (!report) return "";
   if (report.dryRun) return "仅预览";
-  if (report.applied && report.pushed) return "本地已写入 · 远端已推送";
-  if (report.applied && !report.pushed) return "本地已写入 · 远端未推送（待补偿）";
+  const appliedText = SYNC_APPLIED_TEXT[report.mode] || SYNC_APPLIED_TEXT.merge;
+  const uploaded = Math.max(0, Number(report.uploadedTargets || 0));
+  const identical = Math.max(0, Number(report.identicalTargets || 0));
+  const pushDetail = () => {
+    if (uploaded && identical) return `已上传 ${uploaded} 个目标，另 ${identical} 个内容一致未重复上传`;
+    if (uploaded) return `已上传 ${uploaded} 个目标`;
+    if (identical) return `${identical} 个目标内容已一致，未重复上传`;
+    return null;
+  };
+  if (report.applied && report.pushed) {
+    const detail = pushDetail();
+    return detail ? `${appliedText} · ${detail}` : `${appliedText} · 远端已确认一致`;
+  }
+  if (report.applied && !report.pushed && report.pendingRetry) return `${appliedText} · 远端未推送（待补偿重试）`;
+  if (report.applied && !report.pushed) return `${appliedText} · 远端未推送`;
+  if (!report.applied && report.ok) return "两端内容已一致，无需写入";
   return report.ok ? "已完成" : "未完成";
 }
 

@@ -608,6 +608,10 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
   let concurrencyError = null;
   let safetyBlocked = false;
   let confirmedTargets = 0;
+  // pushed 只表示"所有目标已确认"；确认既可能来自真实上传，也可能来自
+  // 远端内容已一致而跳过上传。分开计数，界面才能说明到底有没有传数据。
+  let uploadedTargets = 0;
+  let identicalTargets = 0;
   for (const target of pushTargets) {
     if (target.pullFailed) continue;
     if (primaryPushFailed && target !== primaryTarget) {
@@ -640,6 +644,7 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
           && syncPayloadEquals(target.remotePayload, candidatePayload)) {
         outboxByTarget.delete(targetKey);
         confirmedTargets += 1;
+        identicalTargets += 1;
         logSyncFlow("push-skipped-remote-already-matches", { label: target.label, operationId });
         continue;
       }
@@ -657,6 +662,7 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
       if (target === primaryTarget) finalPayload = normalizeSyncPayloadShape(result.payload);
       outboxByTarget.delete(targetKey);
       confirmedTargets += 1;
+      uploadedTargets += 1;
       logSyncFlow("push-success", { label: target.label, mode: targetMode, operationId });
     } catch (error) {
       pushErrors.push(`${target.label}: ${error.message}`);
@@ -701,6 +707,7 @@ async function runAutoSyncInternal(syncSessionId = createSyncIdempotencyKey(), o
     ok: !pushErrors.length, safe: !safetyBlocked, reasons: pushErrors, message,
     code: concurrencyError ? "LOCAL_CHANGED" : safetyBlocked ? "SAFETY_BLOCKED" : null,
     pushed: confirmedTargets === targets.length, pendingRetry: outboxByTarget.size > 0,
+    uploadedTargets, identicalTargets,
     retryable: Boolean(concurrencyError) || (pushErrors.length > 0 && !safetyBlocked),
     stage: concurrencyError ? "checkingLocalConcurrency" : safetyBlocked ? "safetyChecking"
       : pushErrors.length ? "pushingRemote" : "completed",

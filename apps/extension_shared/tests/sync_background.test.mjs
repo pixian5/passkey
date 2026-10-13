@@ -224,6 +224,27 @@ test('同步窗口内的 Web 桥写入推迟到窗口结束后落库', async () 
   assert.equal(h.local().accounts[0].note, 'bridge-edit-during-sync');
 });
 
+test('同步报告区分"真上传"与"内容已一致跳过上传"', async () => {
+  // 旧版 pushed=true 一律渲染"远端已推送"，掩盖了覆盖模式下其实没传任何数据
+  // 的事实。现在必须分别给出 uploadedTargets / identicalTargets。
+  const upload = harness({});
+  upload.setLocal(base);
+  upload.addTarget('primary', null);
+  const uploadResult = await upload.run();
+  assert.equal(uploadResult.report.pushed, true);
+  assert.equal(uploadResult.report.uploadedTargets, 1, '远端为空时应真实上传');
+  assert.equal(uploadResult.report.identicalTargets, 0);
+
+  // 覆盖模式下最终载荷 = 云端原文，与远端逐字节一致 → 走跳过上传分支。
+  const identical = harness({ mode: 'remoteOverwriteLocal' });
+  identical.setLocal(base);
+  identical.addTarget('primary', base);
+  const identicalResult = await identical.run();
+  assert.equal(identicalResult.report.pushed, true);
+  assert.equal(identicalResult.report.identicalTargets, 1, '内容一致时应跳过上传并计为已确认');
+  assert.equal(identicalResult.report.uploadedTargets, 0);
+});
+
 test('LOCAL_CHANGED 报错携带 revision 与差异判决诊断', async () => {
   const h = harness({ mode: 'localOverwriteRemote', beforePut: async ({ context, current }) => {
     current.accounts[0].note = 'edited-during-upload';

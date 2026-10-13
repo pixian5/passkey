@@ -26,6 +26,7 @@ const base = {
 
 for (const [name, input] of [
   ["成功", { ok: true, safe: true, safety: "passed", message: "同步完成", applied: true, pushed: true, remotePulled: true, stage: "completed" }],
+  ["成功含上传明细", { ok: true, safe: true, safety: "passed", message: "同步完成", applied: true, pushed: true, remotePulled: true, stage: "completed", uploadedTargets: 1, identicalTargets: 2 }],
   ["预览", { ok: true, dryRun: true, safe: true, safety: "passed", message: "预览完成", remotePulled: true, stage: "completed" }],
   ["安全阻断", { ok: false, safe: false, safety: "blocked", reasons: ["删除比例过高"], message: "安全检查未通过", remotePulled: true, stage: "safetyChecking" }],
   ["拉取失败", { ok: false, safe: true, safety: "notEvaluated", reasons: ["HTTP 503"], message: "拉取失败", retryable: true, stage: "pullingRemote" }],

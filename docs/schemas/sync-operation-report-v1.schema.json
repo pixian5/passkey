@@ -50,6 +50,16 @@
     "operationId": { "type": "string" },
     "code": { "type": "string" },
     "etag": { "type": "string" },
+    "uploadedTargets": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "真正发起过上传且成功的目标数；与 identicalTargets 互斥计数"
+    },
+    "identicalTargets": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "远端内容与待提交内容一致、跳过上传但仍已确认的目标数"
+    },
     "revision": { "type": "integer", "minimum": 0 }
   }
 }
