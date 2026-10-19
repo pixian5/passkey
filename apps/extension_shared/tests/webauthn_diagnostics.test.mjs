@@ -86,6 +86,68 @@ test("注册诊断只保留协议元数据，不泄露挑战、用户或凭据�
   assert.equal(diagnostic.selfChecks.anonymousAttestationIsConsistent, true);
 });
 
+// 匿名证明（fmt=none）却带着非零 AAGUID = 冒充厂商身份，自检必须报不一致。
+test("匿名证明但 AAGUID 非零时自检报不一致", () => {
+  const nonZeroAaguid = Array.from({ length: 16 }, (_, index) => index + 1);
+  const authenticatorData = Buffer.from([
+    ...new Uint8Array(32), 0x5d, 0, 0, 0, 0,
+    ...nonZeroAaguid,
+    0, 32,
+  ]).toString("base64url");
+  const clientDataJSON = Buffer.from(JSON.stringify({
+    type: "webauthn.create",
+    challenge: Buffer.alloc(32, 3).toString("base64url"),
+    origin: "https://myaccount.google.com",
+    crossOrigin: false,
+  })).toString("base64url");
+  const rawId = Buffer.alloc(32, 7).toString("base64url");
+  const diagnostic = buildPasskeyBridgeDiagnostic({
+    extensionVersion: "1.5.1",
+    phase: "store-response",
+    payload: {
+      operation: "create",
+      diagnosticSessionId: "req_aaguidcheck",
+      origin: "https://myaccount.google.com",
+      host: "myaccount.google.com",
+      sourceContext: { origin: "https://myaccount.google.com", host: "myaccount.google.com" },
+      publicKey: {
+        challengeB64u: "do-not-log-challenge",
+        rp: { id: "google.com" },
+        user: { idB64u: "do-not-log-user", name: "do-not-log-name" },
+        attestation: "none",
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+      },
+    },
+    response: {
+      ok: true,
+      result: {
+        createMode: "created",
+        credential: {
+          attestationFormat: "none",
+          id: "do-not-log-id",
+          rawIdB64u: rawId,
+          type: "public-key",
+          authenticatorAttachment: "platform",
+          response: {
+            clientDataJSONB64u: clientDataJSON,
+            attestationObjectB64u: Buffer.alloc(180, 4).toString("base64url"),
+            authenticatorDataB64u: authenticatorData,
+            publicKeyB64u: Buffer.alloc(91, 5).toString("base64url"),
+            publicKeyAlgorithm: -7,
+            transports: ["internal"],
+          },
+          clientExtensionResults: { credProps: { rk: true } },
+        },
+      },
+    },
+  });
+
+  assert.equal(diagnostic.response.authenticatorData.aaguidIsZero, false);
+  // anonymousAttestation 比 selfChecks 更严：fmt=none 且 AAGUID 必须全零。
+  assert.equal(diagnostic.response.anonymousAttestation, false);
+  assert.equal(diagnostic.selfChecks.anonymousAttestationIsConsistent, false);
+});
+
 test("页面错误诊断会脱敏 URL、邮箱和长令牌", () => {
   const diagnostic = buildPasskeyPageDiagnostic({
     extensionVersion: "1.5.3",

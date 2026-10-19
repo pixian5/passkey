@@ -1137,15 +1137,6 @@
       throw new PasskeyError("SecurityError", "create \u7F3A\u5C11 rpId", "PASSKEY_RP_MISSING");
     }
     assertRpIdAllowedForHost(rpId, host);
-    const attestation = String(publicKey?.attestation || "none").trim().toLowerCase();
-    if (attestation === "direct" || attestation === "enterprise") {
-      logPasskeyStore("create-attestation-unsupported", { rpId, host, attestation });
-      throw new PasskeyError(
-        "NotSupportedError",
-        `\u6258\u7BA1\u5B9E\u73B0\u65E0\u6CD5\u6EE1\u8DB3 ${attestation} \u8BA4\u8BC1\u5668\u8BC1\u660E\u8981\u6C42`,
-        "PASSKEY_USE_BROWSER"
-      );
-    }
     const userId = base64urlToBytes(publicKey?.user?.idB64u || "");
     const rawUserName = String(publicKey?.user?.name || "").trim();
     let userName = rawUserName;
@@ -1159,6 +1150,24 @@
       userName = displayNameRaw || `user_${userHandleB64u.slice(0, 16)}`;
     }
     const displayName = displayNameRaw || userName;
+    const rawAttestation = publicKey?.attestation;
+    const attestation = typeof rawAttestation === "string" ? rawAttestation.trim().toLowerCase() : "none";
+    if (attestation === "direct" || attestation === "enterprise") {
+      logPasskeyStore("create-attestation-unsupported", { rpId, host, attestation });
+      throw new PasskeyError(
+        "NotSupportedError",
+        `\u6258\u7BA1\u5B9E\u73B0\u65E0\u6CD5\u6EE1\u8DB3 ${attestation} \u8BA4\u8BC1\u5668\u8BC1\u660E\u8981\u6C42`,
+        "PASSKEY_USE_BROWSER"
+      );
+    }
+    const attestationTypeIsKnown = ["none", "indirect", ""].includes(attestation);
+    if (!attestationTypeIsKnown || rawAttestation != null && typeof rawAttestation !== "string") {
+      logPasskeyStore("create-attestation-unknown", {
+        rpId,
+        host,
+        attestation: attestationTypeIsKnown ? typeof rawAttestation : attestation
+      });
+    }
     const pubKeyCredParams = Array.isArray(publicKey?.pubKeyCredParams) ? publicKey.pubKeyCredParams : [];
     const selectedAlg = pickSupportedAlgorithm(pubKeyCredParams);
     if (!selectedAlg) {
@@ -1862,7 +1871,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "1.9.8";
+  var PASS_EXTENSION_VERSION = "1.9.9";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 40;

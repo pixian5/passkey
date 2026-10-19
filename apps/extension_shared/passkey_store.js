@@ -107,20 +107,6 @@ async function createManagedCredential({ origin, host, publicKey }) {
   }
   assertRpIdAllowedForHost(rpId, host);
 
-  // 托管实现只能产出匿名证明（fmt=none）。RP 显式要求可验证证明时，这枚凭据
-  // 会被服务端直接拒绝（2026-10-13 谷歌实测：RpcError +「无法保存您所做的更改」）。
-  // 注入脚本的路由层已在此之前让位，这里再补一道防御：任何绕过路由直接调用桥接
-  // 的调用方都应拿到 PASSKEY_USE_BROWSER 走既有让位链路，而不是拿到不合规凭据。
-  const attestation = String(publicKey?.attestation || "none").trim().toLowerCase();
-  if (attestation === "direct" || attestation === "enterprise") {
-    logPasskeyStore("create-attestation-unsupported", { rpId, host, attestation });
-    throw new PasskeyError(
-      "NotSupportedError",
-      `托管实现无法满足 ${attestation} 认证器证明要求`,
-      "PASSKEY_USE_BROWSER"
-    );
-  }
-
   const userId = base64urlToBytes(publicKey?.user?.idB64u || "");
   const rawUserName = String(publicKey?.user?.name || "").trim();
   let userName = rawUserName;
@@ -134,6 +120,31 @@ async function createManagedCredential({ origin, host, publicKey }) {
     userName = displayNameRaw || `user_${userHandleB64u.slice(0, 16)}`;
   }
   const displayName = displayNameRaw || userName;
+
+  // 请求合法性校验（challenge / rpId / user.id）完成后再判断能力边界。
+  // 托管实现只能产出匿名证明（fmt=none）。RP 显式要求可验证证明时，这枚凭据
+  // 会被服务端直接拒绝（2026-10-13 谷歌实测：RpcError +「无法保存您所做的更改」）。
+  // 注入脚本的路由层已在此之前让位，这里再补一道防御：任何绕过路由直接调用桥接
+  // 的调用方都应拿到 PASSKEY_USE_BROWSER 走既有让位链路，而不是拿到不合规凭据。
+  const rawAttestation = publicKey?.attestation;
+  const attestation = typeof rawAttestation === "string" ? rawAttestation.trim().toLowerCase() : "none";
+  if (attestation === "direct" || attestation === "enterprise") {
+    logPasskeyStore("create-attestation-unsupported", { rpId, host, attestation });
+    throw new PasskeyError(
+      "NotSupportedError",
+      `托管实现无法满足 ${attestation} 认证器证明要求`,
+      "PASSKEY_USE_BROWSER"
+    );
+  }
+  // 非法/非字符串的 attestation 值不应被静默当作 none 放行，留日志便于定位调用方错误。
+  const attestationTypeIsKnown = ["none", "indirect", ""].includes(attestation);
+  if (!attestationTypeIsKnown || (rawAttestation != null && typeof rawAttestation !== "string")) {
+    logPasskeyStore("create-attestation-unknown", {
+      rpId,
+      host,
+      attestation: attestationTypeIsKnown ? typeof rawAttestation : attestation,
+    });
+  }
 
   const pubKeyCredParams = Array.isArray(publicKey?.pubKeyCredParams) ? publicKey.pubKeyCredParams : [];
   const selectedAlg = pickSupportedAlgorithm(pubKeyCredParams);

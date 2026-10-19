@@ -64,6 +64,16 @@ fmt === "none" ? aaguidIsZero === true : true
 
 语义不变：匿名证明要求 AAGUID 全零，非匿名格式不受此约束。
 
+## 复审后修正
+
+对 1.9.8 提交本身再审查一遍，又处理了 5 项（都是小改，不改变线上行为）：
+
+1. **守卫位置下移**（`passkey_store.js`）：原先插在 `assertRpIdAllowedForHost` 之后、`user.id` 校验之前，会改变错误优先级——同时缺 `user.id` 且声明 `direct` 时会先得到 `PASSKEY_USE_BROWSER` 而非 `PASSKEY_USER_MISSING`。现移到 `challenge`/`rpId`/`user.id` 校验之后，恢复「先校验请求合法性、再判断能力」的顺序。新增测试锁住该顺序。
+2. **非字符串 attestation 不再静默降级**：`String(publicKey?.attestation || "none")` 会把对象之类变成 `"[object Object]"`、把 `0`/`false` 变成 `"none"` 直接放行。改为 `typeof === "string"` 判定，非法值与非字符串类型都记一条 `create-attestation-unknown` 日志，不再静默当 `none`。
+3. **「不写凭据」断言去空转**：原断言只比较调用前后长度，若前置测试没落库则 `0 === 0` 恒真。现在断言前置长度 ≥ 1，并额外按 `rpId + userName` 精确断言「reject@example.com 下没有凭据」，不依赖测试执行顺序。
+4. **补诊断反向断言**：`anonymousAttestationIsConsistent` 此前只有 `true` 分支被覆盖。新增「`fmt=none` 但 AAGUID 非零」用例，断言 `aaguidIsZero=false`、`anonymousAttestation=false`、`anonymousAttestationIsConsistent=false`。顺带确认 `response.anonymousAttestation` 比 selfCheck 更严（`fmt=none` **且** AAGUID 全零），原测试只覆盖了同时成立的情况。
+5. **当前事实文档补全**（`current-app-extension-implementation-reference-zh.md` 第 32 条）：写明两层防线的分工、守卫的排序位置、仅覆盖扩展侧（macOS 走 `ASAuthorization`、Android 为读取侧 provider，由系统自行处理），以及 `indirect` 与缺省仍由 Pass 托管。
+
 ## 未改动项
 
 **让位前固定 `sleep(FALLBACK_NOTICE_DELAY_MS)` = 1200ms 无条件执行**（`webauthn_injected.js:707-710`）。提示去重有 `FALLBACK_NOTICE_DEDUPE_MS`，但 sleep 没有，每次让位都白等 1.2s，等于从 RP 的 timeout 预算里扣；也让 `webauthn_fallback_logging.test.mjs` 单测要跑约 3.6s。
@@ -74,7 +84,7 @@ fmt === "none" ? aaguidIsZero === true : true
 
 | 项 | 结果 |
 | --- | --- |
-| `apps/extension_shared && npm test` | 202/202 通过（原 200，新增 2 条） |
+| `apps/extension_shared && npm test` | 204/204 通过（1.9.8 后 202，复审修正再 +2） |
 | `node scripts/version.mjs bump` | 1.9.7 → 1.9.8 |
 | `node scripts/version.mjs check` | `VERSION_CHECK_OK 1.9.8 (71 entries)` |
 | `npm run build` + `scripts/build-extension-chrome-web.sh` | dist 已含新判据与 1.9.8 版本戳 |
