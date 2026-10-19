@@ -62,6 +62,17 @@ test("RP 要求 direct 或 enterprise 证明时交给浏览器真实认证器", 
   );
 });
 
+test("indirect 与缺省 attestation 仍由 Pass 托管（规范允许用匿名证明替代）", () => {
+  // indirect 只要求"可被替换的证明"，客户端用 none 替换是规范允许的；
+  // 若日后有人把它并入 direct 让位，会误伤只发 indirect 的站点。
+  for (const attestation of ["indirect", undefined, ""]) {
+    assert.deepEqual(
+      explainCreateManageability({ hasChallenge: true, hasUserId: true, attestation }),
+      { manageable: true, reason: "managed-by-pass" },
+    );
+  }
+});
+
 test("Pass 通信或超时失败不会静默回退到浏览器原生通行密钥", () => {
   assert.equal(shouldFallbackToBrowser({ code: "PASSKEY_NOT_FOUND" }), true);
   assert.equal(shouldFallbackToBrowser({ code: "PASSKEY_USE_BROWSER" }), true);

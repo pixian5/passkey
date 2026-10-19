@@ -107,6 +107,20 @@ async function createManagedCredential({ origin, host, publicKey }) {
   }
   assertRpIdAllowedForHost(rpId, host);
 
+  // 托管实现只能产出匿名证明（fmt=none）。RP 显式要求可验证证明时，这枚凭据
+  // 会被服务端直接拒绝（2026-10-13 谷歌实测：RpcError +「无法保存您所做的更改」）。
+  // 注入脚本的路由层已在此之前让位，这里再补一道防御：任何绕过路由直接调用桥接
+  // 的调用方都应拿到 PASSKEY_USE_BROWSER 走既有让位链路，而不是拿到不合规凭据。
+  const attestation = String(publicKey?.attestation || "none").trim().toLowerCase();
+  if (attestation === "direct" || attestation === "enterprise") {
+    logPasskeyStore("create-attestation-unsupported", { rpId, host, attestation });
+    throw new PasskeyError(
+      "NotSupportedError",
+      `托管实现无法满足 ${attestation} 认证器证明要求`,
+      "PASSKEY_USE_BROWSER"
+    );
+  }
+
   const userId = base64urlToBytes(publicKey?.user?.idB64u || "");
   const rawUserName = String(publicKey?.user?.name || "").trim();
   let userName = rawUserName;
@@ -297,97 +311,6 @@ function isSamePasskeyAccount(item, rpId, userName, userHandleB64u = "") {
     return lhsHandle === rhsHandle;
   }
   return String(item?.userName || "").trim() === String(userName || "").trim();
-}
-
-function dedupePasskeysForAccount(passkeys, keep, rpId, userName) {
-  const keepId = String(keep?.credentialIdB64u || "");
-  return (Array.isArray(passkeys) ? passkeys : []).filter((item) => {
-    if (!(item?.rpId === rpId && String(item?.userName || "").trim() === userName)) {
-      return true;
-    }
-    return String(item?.credentialIdB64u || "") === keepId;
-  });
-}
-
-async function buildCreateResultFromStoredPasskey({
-  existing,
-  challenge,
-  origin,
-  rpId,
-  userName,
-  displayName,
-}) {
-  const credentialIdB64u = String(existing?.credentialIdB64u || "");
-  const credentialId = base64urlToBytes(credentialIdB64u);
-  if (!credentialIdB64u || credentialId.length === 0) {
-    throw new PasskeyError("OperationError", "已存在凭据数据无效", "PASSKEY_EXISTING_CREDENTIAL_INVALID");
-  }
-
-  const alg = normalizeManagedAlg(existing?.alg);
-  const createCompatMethod = normalizeCreateCompatMethod(
-    existing?.createCompatMethod || resolveCreateCompatMethod({ alg, usedUserNameFallback: false })
-  );
-  const publicJwk = existing?.publicJwk || null;
-  let cosePublicKey;
-  try {
-    cosePublicKey = buildCosePublicKeyFromJwk(alg, publicJwk);
-  } catch {
-    throw new PasskeyError("OperationError", "已存在凭据公钥无效", "PASSKEY_EXISTING_PUBLIC_KEY_INVALID");
-  }
-
-  const clientDataJSON = buildWebAuthnClientDataJSON({
-    type: "webauthn.create",
-    challengeB64u: bytesToBase64url(challenge),
-    origin,
-    crossOrigin: Boolean(existing?.crossOrigin),
-    topOrigin: existing?.topOrigin,
-  });
-
-  const rpIdHash = await sha256(utf8(rpId));
-  const signCount = Number(existing?.signCount || 0);
-  const authData = concatBytes(
-    rpIdHash,
-    new Uint8Array([buildManagedAuthenticatorFlags({
-      backupEligible: existing?.backupEligible === true,
-      backupState: existing?.backupState === true,
-      includeAttestedCredentialData: true,
-    })]),
-    uint32be(signCount),
-    ANONYMOUS_AAGUID,
-    uint16be(credentialId.length),
-    credentialId,
-    cosePublicKey
-  );
-
-  const attestationObject = cborEncode(
-    new Map([
-      ["fmt", "none"],
-      ["authData", authData],
-      ["attStmt", new Map()],
-    ])
-  );
-
-  return {
-    credential: {
-      id: credentialIdB64u,
-      rawIdB64u: credentialIdB64u,
-      type: "public-key",
-      authenticatorAttachment: "platform",
-      response: {
-        clientDataJSONB64u: bytesToBase64url(clientDataJSON),
-        attestationObjectB64u: bytesToBase64url(attestationObject),
-        transports: ["internal"],
-      },
-      clientExtensionResults: {},
-    },
-    accountHint: {
-      rpId,
-      username: userName,
-      credentialIdB64u,
-      displayName: displayName || String(existing?.displayName || userName || ""),
-    },
-    createCompatMethod,
-  };
 }
 
 async function getManagedAssertion({ origin, host, publicKey }) {

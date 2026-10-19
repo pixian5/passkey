@@ -167,8 +167,10 @@ function buildCreateSelfChecks({ payload, result, credential, clientData, authen
     responseHasAttestationObject: byteLengthOfBase64url(credential?.response?.attestationObjectB64u) > 0,
     responseHasAuthenticatorData: byteLengthOfBase64url(credential?.response?.authenticatorDataB64u) > 0,
     responseHasPublicKey: byteLengthOfBase64url(credential?.response?.publicKeyB64u) > 0,
-    anonymousAttestationIsConsistent: safeString(credential?.attestationFormat) !== "none"
-      || authenticatorData.aaguidIsZero === true,
+    // 匿名证明要求 AAGUID 全零；非匿名格式不受此约束。
+    anonymousAttestationIsConsistent: safeString(credential?.attestationFormat) === "none"
+      ? authenticatorData.aaguidIsZero === true
+      : true,
     createModePresent: Boolean(safeString(result?.createMode)),
     nonStandardClientExtensionResultNames: clientExtensionResultNames.filter((name) => !recognizedOutputs.has(name)),
   };

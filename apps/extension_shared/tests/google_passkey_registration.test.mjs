@@ -34,8 +34,14 @@ globalThis.chrome = {
 };
 
 const { handlePasskeyBridgeOperation } = await import("../passkey_store.js");
+const { getPasskeys } = await import("../data_store.js");
+const { explainCreateManageability } = await import("../webauthn_routing.js");
 
-test("Google 风格 direct 请求的托管实现保持匿名证明协议正确", async () => {
+// 说明：托管实现只能产出匿名证明（fmt=none）。因此只有 attestation 为 none /
+// indirect / 缺省的请求会真正到达桥接层；direct / enterprise 在注入脚本的路由层
+// 就让位给系统认证器（见下一条测试）。本测试只证明"到达桥接后协议自洽"，
+// 不代表 RP 会接受匿名证明——2026-10-13 谷歌实测已证明它会被服务端拒绝。
+test("到达桥接的托管请求只能产出协议合法的匿名证明", async () => {
   const challenge = Buffer.from("google-passkey-registration-challenge").toString("base64url");
   const userId = Buffer.from("google-user-id").toString("base64url");
   const bridgeResponse = await handlePasskeyBridgeOperation({
@@ -54,7 +60,7 @@ test("Google 风格 direct 请求的托管实现保持匿名证明协议正确",
         { type: "public-key", alg: -7 },
         { type: "public-key", alg: -257 },
       ],
-      attestation: "direct",
+      attestation: "none",
       authenticatorSelection: {
         residentKey: "required",
         requireResidentKey: true,
@@ -101,4 +107,37 @@ test("Google 风格 direct 请求的托管实现保持匿名证明协议正确",
   assert.ok(verification.registrationInfo);
   assert.equal(verification.registrationInfo.fmt, "none");
   assert.equal(verification.registrationInfo.aaguid, "00000000-0000-0000-0000-000000000000");
+});
+
+test("RP 要求 direct/enterprise 时桥接拒绝落库，交由上层让位", async () => {
+  // 两层防线必须同时成立：路由层让位（第一层）+ 桥接层拒绝（第二层，防绕过）。
+  // 桥接抛 PASSKEY_USE_BROWSER，注入脚本的 shouldFallbackToBrowser 会认这个 code
+  // 并走原生让位；同时必须确认没有留下孤儿凭据。
+  const passkeysBefore = await getPasskeys();
+  for (const attestation of ["direct", "enterprise", "DIRECT"]) {
+    assert.deepEqual(
+      explainCreateManageability({ hasChallenge: true, hasUserId: true, attestation }),
+      { manageable: false, reason: "attestation-required-by-rp" },
+    );
+    const response = await handlePasskeyBridgeOperation({
+      operation: "create",
+      origin: "https://myaccount.google.com",
+      host: "myaccount.google.com",
+      publicKey: {
+        challengeB64u: Buffer.from("reject-challenge").toString("base64url"),
+        rp: { id: "google.com", name: "Google" },
+        user: {
+          idB64u: Buffer.from("reject-user-id").toString("base64url"),
+          name: "reject@example.com",
+        },
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+        attestation,
+      },
+    });
+    assert.equal(response.ok, false);
+    assert.equal(response.error.name, "NotSupportedError");
+    assert.equal(response.error.code, "PASSKEY_USE_BROWSER");
+  }
+  const passkeysAfter = await getPasskeys();
+  assert.equal(passkeysAfter.length, passkeysBefore.length, "拒绝路径不得写入凭据");
 });
