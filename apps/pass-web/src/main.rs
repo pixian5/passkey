@@ -4884,6 +4884,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn require_webdav_etag_for_existing_guard_contract() {
+        let non_empty = Some(b"pass-payload".to_vec());
+        let empty = Some(Vec::new());
+
+        assert!(require_webdav_etag_for_existing(&non_empty, &None).is_err());
+        assert!(require_webdav_etag_for_existing(&non_empty, &Some("".into())).is_err());
+        assert!(require_webdav_etag_for_existing(&non_empty, &Some("etag-valid".into())).is_ok());
+        assert!(require_webdav_etag_for_existing(&empty, &None).is_ok());
+        assert!(require_webdav_etag_for_existing(&None, &None).is_ok());
+    }
+
+    #[test]
     fn outbox_retry_uses_fresh_idempotency_key_and_reconciles_remote() {
         let dir = std::env::temp_dir().join(format!("pass-web-sync-outbox-{}", Uuid::new_v4()));
         let mut vault = Vault::open(dir.clone()).unwrap();

@@ -273,7 +273,7 @@ pub fn preview(
 
 #[cfg(test)]
 mod tests {
-    use super::resource_url;
+    use super::{require_etag_for_existing, resource_url};
 
     #[test]
     fn joins_valid_resource_path_without_url_escape_hatches() {
@@ -283,5 +283,24 @@ mod tests {
         );
         assert!(resource_url("https://dav.example.test", "../secrets").is_err());
         assert!(resource_url("http://dav.example.test", "sync.json").is_err());
+    }
+
+    #[test]
+    fn require_etag_for_existing_blocks_missing_etag_on_existing_payload() {
+        let non_empty_body = Some(b"{\"schema\":\"pass.sync.encrypted.v1\"}".to_vec());
+        let empty_body = Some(Vec::new());
+        let none_body = None;
+
+        // 远端已有非空同步包但无 ETag：必须拒绝以防止盲目覆盖
+        assert!(require_etag_for_existing(&non_empty_body, &None).is_err());
+        assert!(require_etag_for_existing(&non_empty_body, &Some("".into())).is_err());
+        assert!(require_etag_for_existing(&non_empty_body, &Some("   ".into())).is_err());
+
+        // 远端已有非空同步包且具备有效 ETag：允许条件写入
+        assert!(require_etag_for_existing(&non_empty_body, &Some("\"etag-12345\"".into())).is_ok());
+
+        // 远端为空或初始首次同步：无 ETag 允许写入
+        assert!(require_etag_for_existing(&empty_body, &None).is_ok());
+        assert!(require_etag_for_existing(&none_body, &None).is_ok());
     }
 }

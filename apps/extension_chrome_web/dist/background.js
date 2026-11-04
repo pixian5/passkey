@@ -1871,7 +1871,7 @@
   }
 
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "2.0.2";
+  var PASS_EXTENSION_VERSION = "2.0.3";
 
   // webauthn_diagnostics.js
   var MAX_DIAGNOSTIC_EVENTS = 40;

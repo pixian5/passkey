@@ -6,20 +6,20 @@
 
 ## 当前开发进度
 
-版本 `2.0.2`。本轮完成**服务端与测试套件 Python SQLite 资源告警根治与门禁强化**：
-1. **SQLite 连接资源告警消除**：全面排查并修复 `apps/sync_server_ubuntu/tests/test_server.py`、`scripts/verify_local_backup.py`、`scripts/backup_and_verify_local.py` 及单测中由 `with sqlite3.connect(...)` 引起的 `ResourceWarning: unclosed database` 遗留问题；引入 `contextlib.closing` 确保事务提交后连接强制释放。
-2. **测试门禁增加资源告警一票否决**：在本地基线 `scripts/test_all.sh` 的 Python 单元测试步骤中显式追加 `-W error::ResourceWarning` 参数，任何未关闭的文件/数据库资源句柄都会直接造成测试阻断，杜绝资源泄露风险。
-3. **Rust 全量零警告与版本自动化持续保持**：保持 2.0.1 达成的全工程三大 Rust 目标 0 警告、CI quality-gates `-D warnings` 强校验，以及 72 处版本单一真实源自动校验通过。
+版本 `2.0.3`。本轮完成**双端并发 CAS 混沌测试、WebDAV ETag 防御加固与 WASM 合并架构定案**：
+1. **双端并发 CAS 与密钥轮换混沌测试落地**：在 `apps/sync_server_ubuntu/tests/test_concurrent_chaos.py` 新增全自动化多端竞态测试矩阵，真实模拟双客户端在同一 revision 下的并发写入、412 冲突捕获后自动 Pull-Merge-Retry 闭环收敛、多端主密钥轮换（Key Rotation）平滑迁移以及相同 Idempotency-Key 丢包重放幂等性（45 项服务端单测全绿）。
+2. **WebDAV ETag 兼容性防御强化**：对齐桌面 Tauri 壳与 Docker Web 端的 WebDAV ETag 护栏契约，补齐单元测试，确保远端无 ETag 时主动拦截并报错，杜绝因无条件覆写造成数据破坏。
+3. **WASM 合并引擎演进架构定案**：输出完整 WASM 架构方案与平滑迁移路径（[`docs/20261104-1120-WASM合并引擎架构方案与迁移路径.md`](docs/20261104-1120-WASM合并引擎架构方案与迁移路径.md)），明确 `pass-merge` 零改造 WASM 编译、MV3 线性内存零拷贝契约及三阶段影子迁移路线，为未来移除 1,077 行 JS 双写奠定基石。
 
-此前 2.0.1 与 1.9.x 关键里程碑回顾：**全工作区 Rust Clippy 零警告扩面**（`pass_core`、`pass-web`、`codex-tauri` 全面达成 0 警告并纳入门禁）；**README 进度版本纳入自动化**（72 处版本统一校验）；**通行密钥 attestation 硬边界定案**（1.9.6–1.9.9 三轮实测：谷歌等站点要求证明时拒绝匿名证明，恢复「有 attestation 要求即让位原生」策略，并在桥接层把守卫下移到合法性校验之后、修正误导性测试）；**WebAuthn PRF 扩展支持**（Bitwarden 通行密钥解锁可用，版本与日志埋点补齐各上下文）；**本地一致性防护**（同步窗口写闸门根治 LOCAL_CHANGED 等价重写误报、广播回显三方死锁修复、墓碑护栏误拦修正、加密 outbox 指数退避补偿）。
+此前 2.0.2 与 2.0.1 关键里程碑回顾：**全工作区 Rust Clippy 与 Python SQLite 零警告清理**（三大 Rust 目标与 Python 套件 0 告警，门禁配置 `-D warnings` 与 `-W error::ResourceWarning`）；**README 进度版本纳入自动化闭环**（72 处版本单一真实源自动校验）；**通行密钥 attestation 硬边界定案与守卫加固**；**WebAuthn PRF 扩展支持**。
 
-详细进度：[`docs/20261104-1105-当前开发进度-antigravity.md`](docs/20261104-1105-当前开发进度-antigravity.md)
+详细进度：[`docs/20261104-1125-当前开发进度-antigravity.md`](docs/20261104-1125-当前开发进度-antigravity.md)
 
 ## 下一步待实现
 
-优先补齐 Safari 原团队签名安装与完整产品路径验收、两台设备同一主源的并发/覆盖/密钥轮换实测，以及明确 Ubuntu 目标后的容器部署验收。后续优化包括 WebDAV 无 ETag 的部署检测、反向代理限流说明和三端同步编排共用核心；现有“密钥留空即明文、不额外确认”策略保持不变。
+优先补齐 Safari 原团队签名安装与完整产品路径验收、Ubuntu 目标容器部署验收、推进 WASM 编译落地与合并引擎双轨制移除。现有“密钥留空即明文、不额外确认”策略保持不变。
 
-详细计划：[`docs/20261104-1105-下一步待实现-antigravity.md`](docs/20261104-1105-下一步待实现-antigravity.md)
+详细计划：[`docs/20261104-1125-下一步待实现-antigravity.md`](docs/20261104-1125-下一步待实现-antigravity.md)
 
 ## 当前入口
 
