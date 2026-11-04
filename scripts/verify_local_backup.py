@@ -9,6 +9,7 @@ and reports hashes/counts only. It never decrypts or prints credential data.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import sqlite3
@@ -31,7 +32,7 @@ def verify(directory: Path) -> dict[str, object]:
     key = directory / "pass-db-key-v1"
     if key.exists() and key.stat().st_size != 32:
         raise ValueError("pass-db-key-v1 must contain 32 bytes")
-    with sqlite3.connect(db) as connection:
+    with contextlib.closing(sqlite3.connect(db)) as connection:
         integrity = connection.execute("PRAGMA integrity_check;").fetchone()[0]
         if integrity != "ok":
             raise ValueError(f"SQLite integrity check failed: {integrity}")

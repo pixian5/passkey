@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import os
@@ -189,7 +190,7 @@ class PassSyncServerTests(unittest.TestCase):
             self.assertEqual([item.scope_revision for item in default_versions], [2, 1])
             self.assertEqual([item.scope_revision for item in other_versions], [1])
             self.assertEqual(repository.current_revision("default"), 2)
-            with sqlite3.connect(db_path) as migrated:
+            with contextlib.closing(sqlite3.connect(db_path)) as migrated:
                 migrated.row_factory = sqlite3.Row
                 row = migrated.execute(
                     "SELECT scope_revision FROM sync_idempotency WHERE scope = ? AND idempotency_key = ?",
@@ -614,7 +615,7 @@ class PassSyncServerTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=5)
         db_path = Path(self.temp_dir.name) / "legacy.sqlite3"
-        with sqlite3.connect(db_path) as connection:
+        with contextlib.closing(sqlite3.connect(db_path)) as connection:
             connection.execute(
                 "CREATE TABLE payloads (scope TEXT PRIMARY KEY, etag TEXT, payload_json TEXT, "
                 "payload_sha256 TEXT, exported_at_ms INTEGER, updated_at_ms INTEGER)"
@@ -623,6 +624,7 @@ class PassSyncServerTests(unittest.TestCase):
                 "INSERT INTO payloads VALUES (?, ?, ?, ?, ?, ?)",
                 ("default", '"old"', json.dumps({"schema": "pass.sync.unknown", "payload": {}}), "old", 1, 1),
             )
+            connection.commit()
         previous = os.environ.get("PASS_SYNC_PURGE_LEGACY")
         os.environ["PASS_SYNC_PURGE_LEGACY"] = "1"
         try:

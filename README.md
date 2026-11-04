@@ -6,20 +6,20 @@
 
 ## 当前开发进度
 
-版本 `2.0.1`。本轮完成**全工作区 Rust Clippy 零警告扩面与版本自动化闭环**：
-1. **Clippy 零警告扩面至应用层**：继 2.0.0 核心库后，本轮全面清理 `apps/pass-web` 与 `apps/codex-tauri/src-tauri` 的所有 Clippy 警告（消除 `pass-web` 的 `needless_borrow` 与 `too_many_arguments`，标记 `codex-tauri` 同步辅助封装的 `dead_code` 豁免）。至此全工作区三大 Rust 目标（`pass_core` 6 个 crate、`pass-web`、`codex-tauri`）全部达成 `cargo clippy --all-targets -- -D warnings` 零警告。
-2. **门禁与 CI 升级**：在本地基线 `scripts/test_all.sh` 中新增 `check_rust_clippy` 门禁（与 `rustfmt` 一票否决同级）；同步升级 GitHub Actions CI `quality-gates` 工作流中的 Clippy 检查为 `-D warnings` 零容忍门禁，杜绝未来代码引入任何警告。
-3. **README 进度版本纳入自动化**：将 `README.md` 进度段落正式纳入 `scripts/version.mjs` 的文档版本检查与自动递增目标（`documentationVersionTargets`），版本单一真实源检查从 71 处扩展为 **72 处**，彻底终结历史版本滞后漂移问题。
+版本 `2.0.2`。本轮完成**服务端与测试套件 Python SQLite 资源告警根治与门禁强化**：
+1. **SQLite 连接资源告警消除**：全面排查并修复 `apps/sync_server_ubuntu/tests/test_server.py`、`scripts/verify_local_backup.py`、`scripts/backup_and_verify_local.py` 及单测中由 `with sqlite3.connect(...)` 引起的 `ResourceWarning: unclosed database` 遗留问题；引入 `contextlib.closing` 确保事务提交后连接强制释放。
+2. **测试门禁增加资源告警一票否决**：在本地基线 `scripts/test_all.sh` 的 Python 单元测试步骤中显式追加 `-W error::ResourceWarning` 参数，任何未关闭的文件/数据库资源句柄都会直接造成测试阻断，杜绝资源泄露风险。
+3. **Rust 全量零警告与版本自动化持续保持**：保持 2.0.1 达成的全工程三大 Rust 目标 0 警告、CI quality-gates `-D warnings` 强校验，以及 72 处版本单一真实源自动校验通过。
 
-此前 2.0.0 与 1.9.x 关键里程碑回顾：**核心库 Clippy 零警告清理**（`pass_core` 16 处修复）；**通行密钥 attestation 硬边界定案**（1.9.6–1.9.9 三轮实测：谷歌等站点要求证明时拒绝匿名证明，恢复「有 attestation 要求即让位原生」策略，并在桥接层把守卫下移到合法性校验之后、修正误导性测试）；**WebAuthn PRF 扩展支持**（Bitwarden 通行密钥解锁可用，版本与日志埋点补齐各上下文）；**三端命令矩阵门禁**（静态解析 Tauri/Web/扩展三端命令集并校验文档计数，命令覆盖 72/72）；**本地一致性防护**（同步窗口写闸门根治 LOCAL_CHANGED 等价重写误报、广播回显三方死锁修复、墓碑护栏误拦修正、加密 outbox 指数退避补偿）。
+此前 2.0.1 与 1.9.x 关键里程碑回顾：**全工作区 Rust Clippy 零警告扩面**（`pass_core`、`pass-web`、`codex-tauri` 全面达成 0 警告并纳入门禁）；**README 进度版本纳入自动化**（72 处版本统一校验）；**通行密钥 attestation 硬边界定案**（1.9.6–1.9.9 三轮实测：谷歌等站点要求证明时拒绝匿名证明，恢复「有 attestation 要求即让位原生」策略，并在桥接层把守卫下移到合法性校验之后、修正误导性测试）；**WebAuthn PRF 扩展支持**（Bitwarden 通行密钥解锁可用，版本与日志埋点补齐各上下文）；**本地一致性防护**（同步窗口写闸门根治 LOCAL_CHANGED 等价重写误报、广播回显三方死锁修复、墓碑护栏误拦修正、加密 outbox 指数退避补偿）。
 
-详细进度：[`docs/20261104-1045-当前开发进度-antigravity.md`](docs/20261104-1045-当前开发进度-antigravity.md)
+详细进度：[`docs/20261104-1105-当前开发进度-antigravity.md`](docs/20261104-1105-当前开发进度-antigravity.md)
 
 ## 下一步待实现
 
 优先补齐 Safari 原团队签名安装与完整产品路径验收、两台设备同一主源的并发/覆盖/密钥轮换实测，以及明确 Ubuntu 目标后的容器部署验收。后续优化包括 WebDAV 无 ETag 的部署检测、反向代理限流说明和三端同步编排共用核心；现有“密钥留空即明文、不额外确认”策略保持不变。
 
-详细计划：[`docs/20261104-1045-下一步待实现-antigravity.md`](docs/20261104-1045-下一步待实现-antigravity.md)
+详细计划：[`docs/20261104-1105-下一步待实现-antigravity.md`](docs/20261104-1105-下一步待实现-antigravity.md)
 
 ## 当前入口
 

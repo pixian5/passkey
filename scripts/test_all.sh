@@ -89,8 +89,8 @@ fi
 if require_command python3 "python"; then
   python_bin="$ROOT/apps/sync_server_ubuntu/.venv/bin/python"
   if [[ ! -x "$python_bin" ]]; then python_bin="$(command -v python3)"; fi
-  run_step "同步服务器 Python 测试" "$python_bin" -m unittest discover -s "$ROOT/apps/sync_server_ubuntu/tests" -p 'test_*.py'
-  run_step "脚本 Python 测试" "$python_bin" -m unittest discover -s "$ROOT/scripts/tests" -p 'test_*.py'
+  run_step "同步服务器 Python 测试" "$python_bin" -W error::ResourceWarning -m unittest discover -s "$ROOT/apps/sync_server_ubuntu/tests" -p 'test_*.py'
+  run_step "脚本 Python 测试" "$python_bin" -W error::ResourceWarning -m unittest discover -s "$ROOT/scripts/tests" -p 'test_*.py'
 else
   python_bin=""
 fi

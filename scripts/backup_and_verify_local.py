@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import shutil
 import sqlite3
 from pathlib import Path
@@ -15,7 +16,7 @@ def create_backup(source: Path, destination: Path) -> dict[str, object]:
     destination.mkdir(parents=True, exist_ok=False)
     source_db = source / "pass.db"
     target_db = destination / "pass.db"
-    with sqlite3.connect(source_db) as connection:
+    with contextlib.closing(sqlite3.connect(source_db)) as connection:
         escaped = str(target_db).replace("'", "''")
         connection.execute(f"VACUUM INTO '{escaped}'")
     # Never copy the raw database key next to the encrypted DB. Restoring a
