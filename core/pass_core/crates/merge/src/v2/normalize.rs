@@ -315,10 +315,10 @@ pub fn normalize_account_shape(mut account: PasswordAccount) -> PasswordAccount 
     account.created_device_name =
         first_non_empty(&[&account.created_device_name], &fallback_device);
     account.deleted_device_name = account.deleted_device_name.trim().to_string();
-    account.site_alias_states = rekey_states(&account.site_alias_states, |k| normalize_domain(k));
-    account.folder_membership_states = rekey_states(&account.folder_membership_states, |k| {
-        normalize_folder_id(k)
-    });
+    // 直接传函数引用，与 normalize_folder_id 的 rekey 用法保持一致
+    account.site_alias_states = rekey_states(&account.site_alias_states, normalize_domain);
+    account.folder_membership_states =
+        rekey_states(&account.folder_membership_states, normalize_folder_id);
     account.passkey_link_states =
         rekey_states(&account.passkey_link_states, |k| k.trim().to_string());
     account
@@ -377,7 +377,7 @@ pub fn normalize_folder_shape(mut folder: Folder) -> Folder {
     } else if !folder.name.trim().is_empty() {
         folder.name.trim().to_string()
     } else {
-        format!("未命名文件夹 {}", &id.chars().take(8).collect::<String>())
+        format!("未命名文件夹 {}", id.chars().take(8).collect::<String>())
     };
     folder.id = id;
     folder.name = name;

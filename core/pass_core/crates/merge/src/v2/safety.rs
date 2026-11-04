@@ -214,10 +214,8 @@ pub fn evaluate_sync_safety(
                 reasons.push("REMOTE_PASSKEYS_DROPPED".to_string());
             }
         }
-    } else if mode == "remoteOverwriteLocal" {
-        if local_non_empty && !remote_non_empty {
-            reasons.push("REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL".to_string());
-        }
+    } else if mode == "remoteOverwriteLocal" && local_non_empty && !remote_non_empty {
+        reasons.push("REMOTE_EMPTY_FOR_NON_EMPTY_LOCAL".to_string());
     }
 
     SyncSafetyReport {
@@ -232,10 +230,12 @@ mod tests {
 
     #[test]
     fn permanent_tombstones_do_not_count_as_visible_data() {
-        let mut tombstone = PasswordAccount::default();
-        tombstone.record_id = Some("record-tombstone".into());
-        tombstone.is_deleted = true;
-        tombstone.is_permanently_deleted = true;
+        let tombstone = PasswordAccount {
+            record_id: Some("record-tombstone".into()),
+            is_deleted: true,
+            is_permanently_deleted: true,
+            ..PasswordAccount::default()
+        };
         let local = SyncPayload {
             accounts: vec![tombstone.clone()],
             ..SyncPayload::default()
@@ -252,8 +252,10 @@ mod tests {
 
     #[test]
     fn visible_data_still_blocks_empty_remote_merge() {
-        let mut account = PasswordAccount::default();
-        account.record_id = Some("record-visible".into());
+        let account = PasswordAccount {
+            record_id: Some("record-visible".into()),
+            ..PasswordAccount::default()
+        };
         let local = SyncPayload {
             accounts: vec![account],
             ..SyncPayload::default()

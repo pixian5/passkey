@@ -78,7 +78,8 @@ pub fn decode_sites(raw: &str) -> Vec<String> {
 /// - Leading `=+-@\\t` get a leading `'`
 /// - Value is always double-quoted; internal quotes doubled
 pub fn escape_csv_cell(value: &str) -> String {
-    let mut sanitized = value.replace('\r', " ").replace('\n', " ");
+    // 单次遍历同时替换 \r 与 \n，避免连续两次 str::replace 分配
+    let mut sanitized = value.replace(['\r', '\n'], " ");
     if sanitized
         .chars()
         .next()

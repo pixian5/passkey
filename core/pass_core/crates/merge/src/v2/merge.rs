@@ -67,6 +67,7 @@ fn prefer_account_source<'a>(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // 两侧字段五元组对照，保持高内聚签名
 fn newer_field(
     lhs_value: &str,
     lhs_updated_at: i64,
@@ -252,7 +253,7 @@ fn merge_folder_membership_states(
         &right.folder_membership_states,
         &left.folder_ids,
         &right.folder_ids,
-        |id| normalize_folder_id(id),
+        normalize_folder_id,
     )
 }
 
@@ -784,7 +785,7 @@ fn merge_same_folder(lhs: Folder, rhs: Folder) -> Folder {
     } else if !right_name.is_empty() {
         right_name.clone()
     } else {
-        format!("未命名文件夹 {}", &id.chars().take(8).collect::<String>())
+        format!("未命名文件夹 {}", id.chars().take(8).collect::<String>())
     };
     if right_updated_at > left_updated_at && !right_name.is_empty() {
         name = right_name;
@@ -834,7 +835,7 @@ pub fn merge_account_collections(
     remote: Vec<PasswordAccount>,
 ) -> Vec<PasswordAccount> {
     let mut merged: Vec<PasswordAccount> = Vec::new();
-    for account in local.into_iter().chain(remote.into_iter()) {
+    for account in local.into_iter().chain(remote) {
         let normalized = normalize_account_shape(account);
         let account_id = normalized.account_id.trim().to_string();
         let record_id = normalized.resolved_record_id();
@@ -873,7 +874,7 @@ pub fn merge_account_collections(
 
 pub fn merge_passkey_collections(local: Vec<Passkey>, remote: Vec<Passkey>) -> Vec<Passkey> {
     let mut merged_by_id: BTreeMap<String, Passkey> = BTreeMap::new();
-    for passkey in local.into_iter().chain(remote.into_iter()) {
+    for passkey in local.into_iter().chain(remote) {
         let normalized = normalize_passkey_shape(passkey);
         let id = normalized.credential_id_b64u.trim().to_string();
         if id.is_empty() {
@@ -906,7 +907,7 @@ pub fn merge_passkey_collections(local: Vec<Passkey>, remote: Vec<Passkey>) -> V
 
 pub fn merge_folder_collections(local: Vec<Folder>, remote: Vec<Folder>) -> Vec<Folder> {
     let mut merged: BTreeMap<String, Folder> = BTreeMap::new();
-    for folder in local.into_iter().chain(remote.into_iter()) {
+    for folder in local.into_iter().chain(remote) {
         let normalized = normalize_folder_shape(folder);
         let id = normalize_folder_id(&normalized.id);
         if id.is_empty() {
@@ -974,8 +975,8 @@ pub fn reconcile_account_folders(
             let previous_ids = normalize_folder_id_list(&normalized.folder_ids);
             let resolved: Vec<String> = previous_ids
                 .iter()
+                .filter(|id| valid_ids.contains(*id))
                 .cloned()
-                .filter(|id| valid_ids.contains(id))
                 .collect();
             let previous_set: std::collections::BTreeSet<_> =
                 previous_ids.iter().cloned().collect();

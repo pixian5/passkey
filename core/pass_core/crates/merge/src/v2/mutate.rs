@@ -163,7 +163,7 @@ mod tests {
     fn restore_clears_delete_markers_but_rejects_permanent() {
         let mut account = sample();
         soft_delete_account(&mut account, 10, "A");
-        assert_eq!(restore_account_fields(&mut account, 11, "A").unwrap(), true);
+        assert!(restore_account_fields(&mut account, 11, "A").unwrap());
         assert!(!account.is_deleted);
         assert_eq!(account.deleted_at_ms, None);
         permanently_delete_account(&mut account, 12, "A");
@@ -190,18 +190,12 @@ mod tests {
             name: "工作".into(),
             ..Default::default()
         };
-        assert_eq!(
-            permanently_delete_folder(&mut folder, 40, "D").unwrap(),
-            true
-        );
+        assert!(permanently_delete_folder(&mut folder, 40, "D").unwrap());
         assert!(folder.is_deleted);
         assert!(folder.is_permanently_deleted);
         assert_eq!(folder.deleted_at_ms, Some(40));
         assert_eq!(folder.deleted_device_name, "D");
-        assert_eq!(
-            permanently_delete_folder(&mut folder, 41, "D").unwrap(),
-            false
-        );
+        assert!(!permanently_delete_folder(&mut folder, 41, "D").unwrap());
 
         let mut fixed = Folder {
             id: FIXED_NEW_ACCOUNT_FOLDER_ID.into(),
