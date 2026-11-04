@@ -186,6 +186,7 @@ fn ensure_field_clocks(payload: &mut SyncPayload, device: &str) {
     }
 }
 
+#[allow(dead_code)]
 pub fn local_payload_from_vault(
     accounts: &[pass_merge::v2::PasswordAccount],
     folders: &[pass_merge::v2::Folder],
@@ -213,6 +214,7 @@ fn local_payload_from_vault_at(
     payload
 }
 
+#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)] // Stable vault/order conversion boundary.
 pub fn local_payload_from_vault_with_order(
     accounts: &[pass_merge::v2::PasswordAccount],

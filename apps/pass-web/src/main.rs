@@ -1314,6 +1314,7 @@ fn sync_mode_for_request(
     requested
 }
 
+#[allow(clippy::too_many_arguments)]
 fn pending_sync_failure(
     v: &mut Vault,
     source_key: &str,
@@ -2530,7 +2531,7 @@ fn run_self_hosted_sync(
         }
     };
     if retry_context.reconcile_remote
-        && sync_wire_matches_key(fetched.body.as_deref(), &key)
+        && sync_wire_matches_key(fetched.body.as_deref(), key)
         && remote.as_ref() == Some(&to_store)
     {
         if local != to_store {
@@ -2693,8 +2694,7 @@ fn run_self_hosted_sync(
                         &previous_key,
                         &v.data.device_name,
                     ) {
-                        if sync_wire_matches_key(probe.body.as_deref(), &key) && remote == to_store
-                        {
+                        if sync_wire_matches_key(probe.body.as_deref(), key) && remote == to_store {
                             clear_sync_outbox(v, &source_key);
                             return Ok(json!({"report": SyncReport {
                                 ok: true,

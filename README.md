@@ -6,17 +6,20 @@
 
 ## 当前开发进度
 
-版本 `2.0.0`。本轮完成**核心库 Clippy 零警告清理与文档版本事实对齐**：`cargo clippy --workspace --all-targets` 对 `pass_core` 全工作区（lib + 测试）达到 0 警告，共清理 16 处（csvio 连续 `str::replace` 合并为字符数组单次替换；merge 的冗余闭包 / `format!` 冗余引用 / `chain` 多余 `into_iter` / 克隆延后到过滤之后；safety 测试改结构体字面量；mutate 测试字面布尔断言改 `assert!`）。全部为编译器指引的等价重写，**零表征漂移**：Rust workspace 42 项测试、JS↔Rust 合并黄金向量对拍（48 个确定性属性用例）与领域 FFI 对拍均原样通过；`newer_field` 保留高内聚 8 参签名并显式 `#[allow(clippy::too_many_arguments)]`。同步修正本文档滞后事实：版本检查项从旧表述「65 处」更正为实际 **71 处**（`node scripts/version.mjs check` 实测 `VERSION_CHECK_OK ... (71 entries)`），`app_version.js` 等版本埋点均在其列。
+版本 `2.0.1`。本轮完成**全工作区 Rust Clippy 零警告扩面与版本自动化闭环**：
+1. **Clippy 零警告扩面至应用层**：继 2.0.0 核心库后，本轮全面清理 `apps/pass-web` 与 `apps/codex-tauri/src-tauri` 的所有 Clippy 警告（消除 `pass-web` 的 `needless_borrow` 与 `too_many_arguments`，标记 `codex-tauri` 同步辅助封装的 `dead_code` 豁免）。至此全工作区三大 Rust 目标（`pass_core` 6 个 crate、`pass-web`、`codex-tauri`）全部达成 `cargo clippy --all-targets -- -D warnings` 零警告。
+2. **门禁与 CI 升级**：在本地基线 `scripts/test_all.sh` 中新增 `check_rust_clippy` 门禁（与 `rustfmt` 一票否决同级）；同步升级 GitHub Actions CI `quality-gates` 工作流中的 Clippy 检查为 `-D warnings` 零容忍门禁，杜绝未来代码引入任何警告。
+3. **README 进度版本纳入自动化**：将 `README.md` 进度段落正式纳入 `scripts/version.mjs` 的文档版本检查与自动递增目标（`documentationVersionTargets`），版本单一真实源检查从 71 处扩展为 **72 处**，彻底终结历史版本滞后漂移问题。
 
-此前 1.9.x 关键里程碑回顾：**通行密钥 attestation 硬边界定案**（1.9.6–1.9.9 三轮实测：谷歌等站点要求证明时拒绝匿名证明，恢复「有 attestation 要求即让位原生」策略，并在桥接层把守卫下移到合法性校验之后、修正误导性测试）；**WebAuthn PRF 扩展支持**（Bitwarden 通行密钥解锁可用，版本与日志埋点补齐各上下文）；**三端命令矩阵门禁**（静态解析 Tauri/Web/扩展三端命令集并校验文档计数，命令覆盖 72/72）；**本地一致性防护**（同步窗口写闸门根治 LOCAL_CHANGED 等价重写误报、广播回显三方死锁修复、墓碑护栏误拦修正、加密 outbox 指数退避补偿）。
+此前 2.0.0 与 1.9.x 关键里程碑回顾：**核心库 Clippy 零警告清理**（`pass_core` 16 处修复）；**通行密钥 attestation 硬边界定案**（1.9.6–1.9.9 三轮实测：谷歌等站点要求证明时拒绝匿名证明，恢复「有 attestation 要求即让位原生」策略，并在桥接层把守卫下移到合法性校验之后、修正误导性测试）；**WebAuthn PRF 扩展支持**（Bitwarden 通行密钥解锁可用，版本与日志埋点补齐各上下文）；**三端命令矩阵门禁**（静态解析 Tauri/Web/扩展三端命令集并校验文档计数，命令覆盖 72/72）；**本地一致性防护**（同步窗口写闸门根治 LOCAL_CHANGED 等价重写误报、广播回显三方死锁修复、墓碑护栏误拦修正、加密 outbox 指数退避补偿）。
 
-详细进度：[`docs/20261104-0942-当前开发进度-claude-opus-5.md`](docs/20261104-0942-当前开发进度-claude-opus-5.md)
+详细进度：[`docs/20261104-1045-当前开发进度-antigravity.md`](docs/20261104-1045-当前开发进度-antigravity.md)
 
 ## 下一步待实现
 
 优先补齐 Safari 原团队签名安装与完整产品路径验收、两台设备同一主源的并发/覆盖/密钥轮换实测，以及明确 Ubuntu 目标后的容器部署验收。后续优化包括 WebDAV 无 ETag 的部署检测、反向代理限流说明和三端同步编排共用核心；现有“密钥留空即明文、不额外确认”策略保持不变。
 
-详细计划：[`docs/20261104-0942-下一步待实现-claude-opus-5.md`](docs/20261104-0942-下一步待实现-claude-opus-5.md)
+详细计划：[`docs/20261104-1045-下一步待实现-antigravity.md`](docs/20261104-1045-下一步待实现-antigravity.md)
 
 ## 当前入口
 
