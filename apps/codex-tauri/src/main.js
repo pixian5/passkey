@@ -32,6 +32,15 @@ import {
   folderIdsOf,
   matchesSearchQuery,
 } from "./vault_filters.js";
+import {
+  createEmptyState,
+  normalizeAppState,
+  createDefaultLockState,
+  normalizeLockState,
+  createDefaultUiPrefs,
+  normalizeUiPrefs,
+  SelectionModel,
+} from "./store.js";
 
 // 统一排障日志前缀：每条日志都带当前应用版本号，方便跨端定位问题来源。
 const LOG_PREFIX = `[Pass v${APP_VERSION}]`;
@@ -304,24 +313,8 @@ const els = {
 let biometricAvailable = null;
 let biometricAutoTried = false;
 
-let state = {
-  activeAccounts: [],
-  deletedAccounts: [],
-  folders: [],
-  passkeys: [],
-  allRegularAccountIds: [],
-  deviceName: "",
-};
-
-let lockState = {
-  enabled: false,
-  locked: false,
-  idleLockMinutes: 5,
-  hasPassword: false,
-  lockPolicy: "onceUntilQuit",
-  preferBiometrics: true,
-  biometricReady: false,
-};
+let state = createEmptyState();
+let lockState = createDefaultLockState();
 let activityTimer = null;
 let totpTimer = null;
 let autoSyncTimer = null;
@@ -330,31 +323,16 @@ let syncOutboxRetryRunning = false;
 let syncOutboxSchedulerFailures = 0;
 let syncOutboxSchedulerNotBeforeMs = 0;
 let filter = { type: "all" };
+const selection = new SelectionModel();
 let selectedId = "";
-let selectedAccountIds = new Set();
+let selectedAccountIds = selection.selectedAccountIds;
 let selectionAnchorId = "";
 let folderSitesTargetId = "";
 let folderModalTargetId = "";
 let accountFolderTarget = null;
 let folderDedupTarget = null;
 let folderDeleteTarget = null;
-let uiPrefs = {
-  fontFamily: "系统默认",
-  textFontSize: 14,
-  buttonFontSize: 13,
-  toastDurationSeconds: 2.5,
-  showPasswordsGlobally: false,
-  exportDirectory: "",
-  autoSyncIntervalMinutes: 0,
-  previousEncryptionKey: "",
-  webdavEnabled: false,
-  webdavBaseUrl: "",
-  webdavRemotePath: "pass-sync-bundle-v2.json",
-  webdavUsername: "",
-  webdavPassword: "",
-  syncPrimarySource: "selfHosted",
-  lastSyncPrimaryFingerprint: "",
-};
+let uiPrefs = createDefaultUiPrefs();
 
 const showToast = (text, level) => {
   const el = els.output || document.querySelector("#output");
@@ -547,12 +525,7 @@ const fillUiPrefsForm = () => {
 const loadUiPrefs = async () => {
   try {
     const p = await invoke("get_ui_prefs");
-    uiPrefs = { ...uiPrefs, ...p };
-    // Coerce numbers (serde may return floats)
-    uiPrefs.textFontSize = Number(uiPrefs.textFontSize || 14);
-    uiPrefs.buttonFontSize = Number(uiPrefs.buttonFontSize || 13);
-    uiPrefs.toastDurationSeconds = Number(uiPrefs.toastDurationSeconds || 2.5);
-    uiPrefs.autoSyncIntervalMinutes = Number(uiPrefs.autoSyncIntervalMinutes || 0);
+    uiPrefs = normalizeUiPrefs(p);
     fillUiPrefsForm();
     applyUiPrefs();
     scheduleAutoSync();
@@ -816,41 +789,24 @@ const filteredAccounts = () => {
 };
 
 const selectOnlyAccount = (key) => {
-  selectedId = key;
-  selectedAccountIds = key ? new Set([key]) : new Set();
-  selectionAnchorId = key;
+  selection.selectOnly(key);
+  selectedId = selection.selectedId;
+  selectedAccountIds = selection.selectedAccountIds;
+  selectionAnchorId = selection.selectionAnchorId;
 };
 
 const toggleAccountSelection = (key) => {
-  if (selectedAccountIds.has(key)) selectedAccountIds.delete(key);
-  else selectedAccountIds.add(key);
-  selectedId = key;
-  // Keep selectionAnchorId unchanged so Shift+click can still expand from original anchor.
-  if (!selectionAnchorId) selectionAnchorId = key;
+  selection.toggle(key);
+  selectedId = selection.selectedId;
+  selectedAccountIds = selection.selectedAccountIds;
+  selectionAnchorId = selection.selectionAnchorId;
 };
 
 const selectAccountRange = (key, orderedKeys) => {
-  const keys = (orderedKeys || []).map(String);
-  const target = String(key || "");
-  // If no anchor yet, fall back to first selected or the target itself.
-  let anchor = selectionAnchorId || selectedId || target;
-  if (!keys.includes(String(anchor))) {
-    // Anchor not in current list (filter changed) — use first selected still visible, else target.
-    const visibleSelected = [...selectedAccountIds].find((id) => keys.includes(String(id)));
-    anchor = visibleSelected || target;
-    selectionAnchorId = anchor;
-  }
-  const anchorIndex = keys.indexOf(String(anchor));
-  const targetIndex = keys.indexOf(target);
-  if (anchorIndex === -1 || targetIndex === -1) {
-    selectOnlyAccount(key);
-    return;
-  }
-  const start = Math.min(anchorIndex, targetIndex);
-  const end = Math.max(anchorIndex, targetIndex);
-  selectedAccountIds = new Set(keys.slice(start, end + 1));
-  selectedId = target;
-  // Do not move anchor — subsequent Shift+clicks expand from the same origin.
+  selection.selectRange(key, orderedKeys);
+  selectedId = selection.selectedId;
+  selectedAccountIds = selection.selectedAccountIds;
+  selectionAnchorId = selection.selectionAnchorId;
 };
 
 /** Update row selected styles without rebuilding the list (avoids flash). */
@@ -863,8 +819,9 @@ const applyAccountSelectionStyles = () => {
 };
 
 const clearAccountSelection = () => {
+  selection.clear();
   selectedId = "";
-  selectedAccountIds.clear();
+  selectedAccountIds = selection.selectedAccountIds;
   selectionAnchorId = "";
 };
 
@@ -2061,20 +2018,12 @@ const closeSettings = () => {
 
 const refreshState = async () => {
   const next = await invoke("get_app_state");
-  state = {
-    activeAccounts: next.activeAccounts || [],
-    deletedAccounts: next.deletedAccounts || [],
-    folders: next.folders || [],
-    passkeys: next.passkeys || [],
-    allRegularAccountIds: next.allRegularAccountIds || [],
-    deviceName: next.deviceName || "",
-  };
+  state = normalizeAppState(next);
   const validIds = new Set([...state.activeAccounts, ...state.deletedAccounts].map(accountKey));
-  selectedAccountIds = new Set([...selectedAccountIds].filter((id) => validIds.has(id)));
-  if (selectedId && !validIds.has(selectedId)) selectedId = "";
-  if (selectionAnchorId && !validIds.has(selectionAnchorId)) {
-    selectionAnchorId = selectedAccountIds.values().next().value || "";
-  }
+  selection.prune(validIds);
+  selectedAccountIds = selection.selectedAccountIds;
+  selectedId = selection.selectedId;
+  selectionAnchorId = selection.selectionAnchorId;
   render();
   await refreshUndoStatus();
   await refreshRedoStatus();
@@ -2249,7 +2198,7 @@ const refreshBiometricAvailability = async () => {
 };
 
 const refreshLock = async ({ probeBiometric = false } = {}) => {
-  lockState = await invoke("get_lock_state");
+  lockState = normalizeLockState(await invoke("get_lock_state"));
   if (probeBiometric || biometricAvailable === null) {
     await refreshBiometricAvailability();
   }
@@ -3409,10 +3358,10 @@ window.addEventListener("keydown", (e) => {
   if (meta && (e.key === "a" || e.key === "A") && !isTextInput && !hasOpenModal) {
     e.preventDefault();
     const visibleIds = filteredAccounts().map(accountKey).filter(Boolean);
-    selectedAccountIds = new Set(visibleIds);
-    selectedId = visibleIds[0] || "";
-    // Keep first item as range anchor for subsequent Shift+click.
-    selectionAnchorId = visibleIds[0] || "";
+    selection.selectAll(visibleIds);
+    selectedAccountIds = selection.selectedAccountIds;
+    selectedId = selection.selectedId;
+    selectionAnchorId = selection.selectionAnchorId;
     applyAccountSelectionStyles();
     if (visibleIds.length) toastSuccess(`已选择 ${visibleIds.length} 个账号`);
     return;
@@ -4287,7 +4236,8 @@ els.btnLockIdle?.addEventListener("click", async () => {
 const doLockNow = async () => {
   await invoke("lock_now");
   await refreshLock();
-  state = { activeAccounts: [], deletedAccounts: [], folders: [], passkeys: [], allRegularAccountIds: [], deviceName: "" };
+  state = createEmptyState();
+  clearAccountSelection();
   closeEdit();
   closeSettings();
   render();
@@ -4336,7 +4286,8 @@ const boot = async () => {
       const prev = lockState.locked;
       await refreshLock();
       if (!prev && lockState.locked) {
-        state = { activeAccounts: [], deletedAccounts: [], folders: [], passkeys: [], allRegularAccountIds: [], deviceName: "" };
+        state = createEmptyState();
+        clearAccountSelection();
         closeEdit();
         closeSettings();
         render();

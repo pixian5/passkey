@@ -1,6 +1,6 @@
 {
   "name": "pass-extension-firefox-shell",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "private": true,
   "description": "Firefox shell for the shared Pass browser extension.",
   "scripts": {

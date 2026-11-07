@@ -11,6 +11,7 @@ const sourceAdapter = resolve(root, "src/adapter.js");
 const sourceTotp = resolve(root, "src/totp.js");
 const sourceUiUtils = resolve(root, "src/ui_utils.js");
 const sourceVaultFilters = resolve(root, "src/vault_filters.js");
+const sourceStore = resolve(root, "src/store.js");
 const sourceStyles = resolve(root, "src/styles.css");
 const sourceSyncOutboxScheduler = resolve(root, "src/sync_outbox_scheduler.js");
 const sourceAppVersion = resolve(root, "src/app_version.js");
@@ -29,6 +30,7 @@ async function syncExtensionUi() {
   await cp(sourceTotp, resolve(extensionDir, "totp.js"));
   await cp(sourceUiUtils, resolve(extensionDir, "ui_utils.js"));
   await cp(sourceVaultFilters, resolve(extensionDir, "vault_filters.js"));
+  await cp(sourceStore, resolve(extensionDir, "store.js"));
   await cp(sourceStyles, resolve(extensionDir, "web-options.css"));
   await cp(sourceSyncOutboxScheduler, resolve(extensionDir, "sync_outbox_scheduler.js"));
   await cp(sourceAppVersion, resolve(extensionDir, "app_version.js"));

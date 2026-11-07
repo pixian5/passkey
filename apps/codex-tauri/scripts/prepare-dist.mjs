@@ -14,6 +14,7 @@ await cp(resolve(root, "src", "adapter.js"), resolve(dist, "src", "adapter.js"))
 await cp(resolve(root, "src", "totp.js"), resolve(dist, "src", "totp.js"));
 await cp(resolve(root, "src", "ui_utils.js"), resolve(dist, "src", "ui_utils.js"));
 await cp(resolve(root, "src", "vault_filters.js"), resolve(dist, "src", "vault_filters.js"));
+await cp(resolve(root, "src", "store.js"), resolve(dist, "src", "store.js"));
 await cp(resolve(root, "src", "sync_outbox_scheduler.js"), resolve(dist, "src", "sync_outbox_scheduler.js"));
 await cp(resolve(root, "src", "styles.css"), resolve(dist, "src", "styles.css"));
 await cp(resolve(root, "node_modules", "jsqr", "dist", "jsQR.js"), resolve(dist, "vendor", "jsQR.js"));
