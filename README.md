@@ -6,20 +6,20 @@
 
 ## 当前开发进度
 
-版本 `2.0.7`。本轮完成**Web 表现层模块化解耦（响应式 Store、状态归一化与选择模型拆分）**：
-1. **状态机与响应式 Store 模块化（`store.js`）**：将保密库状态（`state`）、锁定状态（`lockState`）、用户偏好（`uiPrefs`）归一化收敛至纯函数与对象模型，剥离面向对象的账号多选管理器 [`SelectionModel`](apps/codex-tauri/src/store.js)，封装单选、反选、连续范围选择（Shift+Click）、全选（Cmd/Ctrl+A）与无效 ID 安全剪枝（`prune`）。
-2. **敏感内存擦除与数据安全闭环**：主动锁定与超时锁定统一触发 `createEmptyState()` 与 `selection.clear()`，杜绝私密凭据留存在前端运行态全局变量中；多端通过 `prepare-dist.mjs` 与 `sync-web-ui.mjs` 实现零构建同构分发。
-3. **单测覆盖与经验沉淀**：新增 [`apps/extension_shared/tests/store.test.mjs`](apps/extension_shared/tests/store.test.mjs) 覆盖状态归一化、选择模型边界与 VaultStore 发布订阅，扩展层 Node 自动化单测扩增至 234 项全绿通过。总结沉淀至 [`经验/06-前端表现层解耦与无构建单测.md`](经验/06-前端表现层解耦与无构建单测.md)。
+版本 `2.0.8`。本轮完成**Web 表现层模块化解耦（模态弹窗管理器、忙碌按钮动效与确认框抽象）**：
+1. **弹窗生命周期与忙碌按钮动效解耦（`dialog.js`）**：抽离全端模态弹窗显隐状态辅助函数（`openModal`, `closeModal`, `isModalOpen`, `hasAnyOpenModal`）；提炼高阶工具函数 [`setButtonBusy`](apps/codex-tauri/src/dialog.js)，统一全端 30+ 处异步操作按钮的禁用态、`is-busy` 动画样式与幂等恢复闭包。
+2. **异步确认框与多级 ESC 键拦截解耦**：封装基于 Promise 的异步模态确认基类 `ConfirmationDialog` 与操作确认框 [`ActionConfirmDialog`](apps/codex-tauri/src/dialog.js)，彻底废止阻塞性原生 `window.confirm`；实现 `ModalEscapeHandler` 分级按键分发器，优先阻断二级危险操作确认弹窗，再逐级退出常规弹窗与浮层。
+3. **同构单测与多端分发闭环**：新增 [`apps/extension_shared/tests/dialog.test.mjs`](apps/extension_shared/tests/dialog.test.mjs)（6 项用例），扩展层纯原生单测扩增至 240 项全绿通过；更新 `prepare-dist.mjs` 与 `sync-web-ui.mjs` 保持三端零构建同步。总结沉淀至 [`经验/06-前端表现层解耦与无构建单测.md`](经验/06-前端表现层解耦与无构建单测.md)。
 
-此前里程碑回顾：**2.0.6 Web 表现层工具集与过滤逻辑拆分**（剥离 `ui_utils.js` 与 `vault_filters.js`，Node 单测 228 用例）；**2.0.5 Web 表现层算法解耦**（剥离 `totp.js`，RFC 6238 与 Protobuf 单测闭环）；**2.0.4 Web 界面通信切面解耦与深色模式**（新建 `adapter.js` 抽象 PassClientAdapter，72 命令契约 100% 保持；引入 `color-scheme: light dark` 与语义化设计变量，三端深浅自适应）；**2.0.3 双端并发 CAS 混沌测试与 WebDAV ETag 防御**；**2.0.2 / 2.0.1 零警告与门禁加固**；**2.0.0 核心库 Clippy 零警告**。
+此前里程碑回顾：**2.0.7 Web 表现层响应式 Store 与选择模型拆分**（剥离 `store.js` 与 `SelectionModel`，Node 单测 234 用例）；**2.0.6 Web 表现层工具集与过滤逻辑拆分**（剥离 `ui_utils.js` 与 `vault_filters.js`，Node 单测 228 用例）；**2.0.5 Web 表现层算法解耦**（剥离 `totp.js`，RFC 6238 与 Protobuf 单测闭环）；**2.0.4 Web 界面通信切面解耦与深色模式**（新建 `adapter.js` 抽象 PassClientAdapter，72 命令契约 100% 保持；引入 `color-scheme: light dark` 与语义化设计变量，三端深浅自适应）；**2.0.3 双端并发 CAS 混沌测试与 WebDAV ETag 防御**；**2.0.2 / 2.0.1 零警告与门禁加固**；**2.0.0 核心库 Clippy 零警告**。
 
-详细进度：[`docs/20261108-0345-当前开发进度-antigravity.md`](docs/20261108-0345-当前开发进度-antigravity.md)
+详细进度：[`docs/20261108-0400-当前开发进度-antigravity.md`](docs/20261108-0400-当前开发进度-antigravity.md)
 
 ## 下一步待实现
 
-弹窗表单组件化（`components/dialog.js`）、推进 WASM 合并引擎落地以废除双轨实现、本地存储 Revision 乐观锁闭环。现有“密钥留空即明文、不额外确认”策略保持不变。
+本地存储 Revision 乐观并发锁（Phase 5）、推进 WASM 合并引擎落地以废除双轨实现（Phase 4）、Android 凭据管理提供者健全（Phase 6）。现有“密钥留空即明文、不额外确认”策略保持不变。
 
-详细计划：[`docs/20261108-0345-下一步待实现-antigravity.md`](docs/20261108-0345-下一步待实现-antigravity.md)
+详细计划：[`docs/20261108-0400-下一步待实现-antigravity.md`](docs/20261108-0400-下一步待实现-antigravity.md)
 
 ## 当前入口
 

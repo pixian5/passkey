@@ -41,6 +41,14 @@ import {
   normalizeUiPrefs,
   SelectionModel,
 } from "./store.js";
+import {
+  openModal,
+  closeModal,
+  isModalOpen,
+  hasAnyOpenModal,
+  setButtonBusy,
+  ActionConfirmDialog,
+} from "./dialog.js";
 
 // 统一排障日志前缀：每条日志都带当前应用版本号，方便跨端定位问题来源。
 const LOG_PREFIX = `[Pass v${APP_VERSION}]`;
@@ -3059,27 +3067,23 @@ document.querySelectorAll("[data-close-bundle-import-confirm]").forEach((el) => 
 els.btnBundleImportConfirm?.addEventListener("click", () => closeBundleImportConfirm(true));
 els.btnBundleImportCancel?.addEventListener("click", () => closeBundleImportConfirm(false));
 
-let actionConfirmResolve = null;
-const closeActionConfirm = (confirmed = false) => {
-  if (els.actionConfirmModal) els.actionConfirmModal.hidden = true;
-  const resolve = actionConfirmResolve;
-  actionConfirmResolve = null;
-  resolve?.(confirmed);
+let actionConfirmDialog = null;
+const getActionConfirmDialog = () => {
+  if (!actionConfirmDialog) {
+    actionConfirmDialog = new ActionConfirmDialog({
+      modalEl: els.actionConfirmModal,
+      titleEl: els.actionConfirmTitle,
+      messageEl: els.actionConfirmMessage,
+      confirmBtn: els.btnActionConfirm,
+      cancelBtn: els.btnActionCancel,
+    });
+  }
+  return actionConfirmDialog;
 };
 
-const requestActionConfirmation = ({ title = "确认操作", message, confirmText = "确认", danger = false }) =>
-  new Promise((resolve) => {
-    actionConfirmResolve = resolve;
-    if (els.actionConfirmTitle) els.actionConfirmTitle.textContent = title;
-    if (els.actionConfirmMessage) els.actionConfirmMessage.textContent = message || "确定继续吗？";
-    if (els.btnActionConfirm) {
-      els.btnActionConfirm.textContent = confirmText;
-      els.btnActionConfirm.classList.toggle("primary", !danger);
-      els.btnActionConfirm.classList.toggle("danger", danger);
-    }
-    if (els.actionConfirmModal) els.actionConfirmModal.hidden = false;
-    els.btnActionConfirm?.focus();
-  });
+const closeActionConfirm = (confirmed = false) => getActionConfirmDialog().close(confirmed);
+
+const requestActionConfirmation = (options = {}) => getActionConfirmDialog().requestConfirm(options);
 
 document.querySelectorAll("[data-close-action-confirm]").forEach((el) => {
   el.addEventListener("click", () => closeActionConfirm(false));
@@ -3099,19 +3103,6 @@ const collectProvisionCredential = () => {
     authMode: mode,
     secret,
     privateKeyPassphrase: els.provisionKeyPassphrase?.value || "",
-  };
-};
-
-const setButtonBusy = (button, busyText) => {
-  if (!button) return () => {};
-  const originalText = button.textContent;
-  button.disabled = true;
-  button.classList.add("is-busy");
-  button.textContent = busyText;
-  return () => {
-    button.disabled = false;
-    button.classList.remove("is-busy");
-    button.textContent = originalText;
   };
 };
 
@@ -3352,7 +3343,7 @@ window.addEventListener("keydown", (e) => {
   const meta = isMultiSelectModifier(e);
   const target = e.target instanceof Element ? e.target : null;
   const isTextInput = target?.closest("input, textarea, select, [contenteditable]");
-  const hasOpenModal = Boolean(document.querySelector(".modal:not([hidden])"));
+  const hasOpenModal = hasAnyOpenModal(document);
   // In the account list, Cmd/Ctrl+A mirrors PassMac: select all accounts
   // currently visible under the active filter. Keep native text selection in forms.
   if (meta && (e.key === "a" || e.key === "A") && !isTextInput && !hasOpenModal) {
