@@ -103,3 +103,45 @@ export const sortAccountsList = (list, { mode = "default", regularOrderIds = [] 
   });
   return arr;
 };
+
+export const computeSearchPlaceholder = (filter = { type: "all" }, field = "all") => {
+  const f = filter || { type: "all" };
+  const fieldLabel =
+    field === "site"
+      ? "站点名"
+      : field === "username"
+        ? "用户名"
+        : field === "password"
+          ? "密码"
+          : field === "note"
+            ? "备注"
+            : "";
+  const scope =
+    f.type === "passkeys"
+      ? "通行密钥账号"
+      : f.type === "totp"
+        ? "验证码账号"
+        : f.type === "recycle"
+          ? "回收站账号"
+          : f.type === "folder"
+            ? "当前文件夹账号"
+            : "全部账号";
+  return fieldLabel
+    ? `按${fieldLabel}搜索${scope}（输入即搜）`
+    : `搜索${scope}（输入即搜）`;
+};
+
+export const computeSidebarCounts = (state = {}) => {
+  const active = Array.isArray(state?.activeAccounts) ? state.activeAccounts : [];
+  const deleted = Array.isArray(state?.deletedAccounts) ? state.deletedAccounts : [];
+  const folders = (Array.isArray(state?.folders) ? state.folders : []).filter(
+    (f) => !f.isDeleted && !f.isPermanentlyDeleted
+  );
+  return {
+    all: active.length,
+    passkeys: active.filter(hasPasskey).length,
+    totp: active.filter(hasTotp).length,
+    recycle: deleted.length,
+    folders: folders.length,
+  };
+};

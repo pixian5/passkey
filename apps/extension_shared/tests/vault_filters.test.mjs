@@ -13,6 +13,8 @@ import {
   filterPasskeysForAccount,
   findAccountByAnyId,
   sortAccountsList,
+  computeSearchPlaceholder,
+  computeSidebarCounts,
 } from "../../codex-tauri/src/vault_filters.js";
 
 test("accountKey and accountRecordId extract preferred key with fallbacks", () => {
@@ -159,4 +161,39 @@ test("sortAccountsList respects modes, pinned status, regular order, and updated
   // then unpinned items (sorted by regularOrderIds: r1 before r4)
   const defaultSorted = sortAccountsList(list, { mode: "default", regularOrderIds: ["r1", "r4"] });
   assert.deepEqual(defaultSorted.map((a) => a.recordId), ["r3", "r2", "r1", "r4"]);
+});
+
+test("computeSearchPlaceholder builds clear placeholders based on field and filter", () => {
+  assert.equal(computeSearchPlaceholder({ type: "all" }, "all"), "搜索全部账号（输入即搜）");
+  assert.equal(computeSearchPlaceholder({ type: "all" }, "site"), "按站点名搜索全部账号（输入即搜）");
+  assert.equal(computeSearchPlaceholder({ type: "passkeys" }, "username"), "按用户名搜索通行密钥账号（输入即搜）");
+  assert.equal(computeSearchPlaceholder({ type: "totp" }, "all"), "搜索验证码账号（输入即搜）");
+  assert.equal(computeSearchPlaceholder({ type: "recycle" }, "password"), "按密码搜索回收站账号（输入即搜）");
+  assert.equal(computeSearchPlaceholder({ type: "folder", id: "f1" }, "note"), "按备注搜索当前文件夹账号（输入即搜）");
+});
+
+test("computeSidebarCounts tallies active, passkeys, totp, recycle and active folders", () => {
+  const dummyState = {
+    activeAccounts: [
+      { id: "1", passkeyCredentialIds: ["c1"] },
+      { id: "2", totpSecret: "secret" },
+      { id: "3", passkeyCredentialIds: ["c2"], totpSecret: "secret2" },
+      { id: "4" },
+    ],
+    deletedAccounts: [{ id: "5" }, { id: "6" }],
+    folders: [
+      { id: "f1", name: "Work" },
+      { id: "f2", name: "Personal", isDeleted: true },
+      { id: "f3", name: "Finance", isPermanentlyDeleted: true },
+    ],
+  };
+
+  const counts = computeSidebarCounts(dummyState);
+  assert.deepEqual(counts, {
+    all: 4,
+    passkeys: 2,
+    totp: 2,
+    recycle: 2,
+    folders: 1,
+  });
 });

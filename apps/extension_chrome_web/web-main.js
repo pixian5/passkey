@@ -52,6 +52,8 @@ import {
   filterPasskeysForAccount,
   findAccountByAnyId as findAccountInList,
   sortAccountsList,
+  computeSearchPlaceholder,
+  computeSidebarCounts,
 } from "./vault_filters.js";
 import {
   createEmptyState,
@@ -737,15 +739,12 @@ const clearAccountSelection = () => {
 };
 
 const updateSidebarLabels = () => {
-  const active = state.activeAccounts || [];
-  if (els.labelAll) els.labelAll.textContent = `全部 (${active.length})`;
-  if (els.labelPasskeys) els.labelPasskeys.textContent = `通行密钥 (${active.filter(hasPasskey).length})`;
-  if (els.labelTotp) els.labelTotp.textContent = `验证码 (${active.filter(hasTotp).length})`;
-  if (els.labelRecycle) {
-    els.labelRecycle.textContent = `回收站 (${(state.deletedAccounts || []).length})`;
-  }
-  const folders = (state.folders || []).filter((f) => !f.isDeleted && !f.isPermanentlyDeleted);
-  if (els.labelFolders) els.labelFolders.textContent = `文件夹 (${folders.length})`;
+  const counts = computeSidebarCounts(state);
+  if (els.labelAll) els.labelAll.textContent = `全部 (${counts.all})`;
+  if (els.labelPasskeys) els.labelPasskeys.textContent = `通行密钥 (${counts.passkeys})`;
+  if (els.labelTotp) els.labelTotp.textContent = `验证码 (${counts.totp})`;
+  if (els.labelRecycle) els.labelRecycle.textContent = `回收站 (${counts.recycle})`;
+  if (els.labelFolders) els.labelFolders.textContent = `文件夹 (${counts.folders})`;
 };
 
 const applySidebarActive = () => {
@@ -771,30 +770,7 @@ const setFilter = (next) => {
   filter = next || { type: "all" };
   clearAccountSelection();
   if (els.searchInput) {
-    const field = searchField();
-    const fieldLabel =
-      field === "site"
-        ? "站点名"
-        : field === "username"
-          ? "用户名"
-          : field === "password"
-            ? "密码"
-            : field === "note"
-              ? "备注"
-              : "";
-    const scope =
-      filter.type === "passkeys"
-        ? "通行密钥账号"
-        : filter.type === "totp"
-          ? "验证码账号"
-          : filter.type === "recycle"
-            ? "回收站账号"
-            : filter.type === "folder"
-              ? "当前文件夹账号"
-              : "全部账号";
-    els.searchInput.placeholder = fieldLabel
-      ? `按${fieldLabel}搜索${scope}（输入即搜）`
-      : `搜索${scope}（输入即搜）`;
+    els.searchInput.placeholder = computeSearchPlaceholder(filter, searchField());
   }
   // Re-render list + folders first, then mark the active sidebar item
   // (folders are recreated in render).
