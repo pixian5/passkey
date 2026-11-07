@@ -11,7 +11,7 @@
 2. **WebDAV ETag 兼容性防御强化**：对齐桌面 Tauri 壳与 Docker Web 端的 WebDAV ETag 护栏契约，补齐单元测试，确保远端无 ETag 时主动拦截并报错，杜绝因无条件覆写造成数据破坏。
 3. **WASM 合并引擎演进架构定案**：输出完整 WASM 架构方案与平滑迁移路径（[`docs/20261104-1120-WASM合并引擎架构方案与迁移路径.md`](docs/20261104-1120-WASM合并引擎架构方案与迁移路径.md)），明确 `pass-merge` 零改造 WASM 编译、MV3 线性内存零拷贝契约及三阶段影子迁移路线，为未来移除 1,077 行 JS 双写奠定基石。
 
-此前 2.0.2 与 2.0.1 关键里程碑回顾：**全工作区 Rust Clippy 与 Python SQLite 零警告清理**（三大 Rust 目标与 Python 套件 0 告警，门禁配置 `-D warnings` 与 `-W error::ResourceWarning`）；**README 进度版本纳入自动化闭环**（72 处版本单一真实源自动校验）；**通行密钥 attestation 硬边界定案与守卫加固**；**WebAuthn PRF 扩展支持**。
+此前里程碑回顾：**2.0.2 / 2.0.1 零警告与门禁加固**（三大 Rust 目标与 Python 套件 0 告警，门禁配置 `-D warnings` 与 `-W error::ResourceWarning`；README 进度版本纳入 `version.mjs`，72 处版本单一真实源）；**2.0.0 核心库 Clippy 零警告**（`core/pass_core` 清理，JS↔Rust 对拍与 FFI 零漂移）；**1.9.7–1.9.9 通行密钥 attestation 硬边界定案**（1.9.7 实测谷歌服务端拒绝匿名证明后恢复让位；1.9.8 桥接层补 `direct`/`enterprise` 守卫并修正误导性测试；1.9.9 守卫下移到合法性校验之后、拒绝路径断言去空转。1.9.7 无独立文档，细节以提交 `254ee692` 和 1.9.8/1.9.9 审查记录为准）；**WebAuthn PRF 扩展支持**（自 1.8.2）。
 
 详细进度：[`docs/20261104-1125-当前开发进度-antigravity.md`](docs/20261104-1125-当前开发进度-antigravity.md)
 
