@@ -6,20 +6,20 @@
 
 ## 当前开发进度
 
-版本 `2.0.4`。本轮完成**Web 界面多端通信适配器解耦、原生深色模式与主题 Token 统一**：
-1. **多端统一 RPC 通信适配器解耦（PassClientAdapter）**：新建 `apps/codex-tauri/src/adapter.js`，将原本散落在 `main.js` 巨石代码内的 Chrome Extension Bridge、Tauri IPC、Pass Web HTTP RPC、Token 鉴权、Base64 Blob 下载统一抽象为面向切面的标准适配器；`main.js` 仅保留统一 invoke 转发，命令矩阵 72/72 契约 100% 保持；同步管线自动分发至 `dist/` 与 Chrome Web 扩展目录；新增 5 项自动化适配器单测，测试套件扩增至 209 项全绿通过。
-2. **现代 CSS 主题 Token 与原生深色模式（Dark Mode）统一**：全面重构 `apps/codex-tauri/src/styles.css`，引入 `color-scheme: light dark` 与语义化设计变量（`--card-bg`, `--panel-bg`, `--hover-bg`, `--input-bg`, `--btn-bg`, `--titlebar-bg`, `--modal-backdrop` 等），适配 `@media (prefers-color-scheme: dark)`，消除硬编码色彩与背景，实现桌面端、网页端与浏览器扩展三端统一高质感 Apple 风格深浅自适应。
-3. **构建管线无缝演进**：升级 `prepare-dist.mjs` 与 `sync-web-ui.mjs`，适配器与样式自动镜像到 Web 静态服务包与扩展包，杜绝代码复制漂移。
+版本 `2.0.5`。本轮完成**Web 表现层模块化解耦（TOTP / OTPAuth / Google Authenticator 核心拆分）**：
+1. **TOTP 与迁移解析核心模块化（totp.js）**：将原本堆叠在 4,600+ 行 `apps/codex-tauri/src/main.js` 内部的近 200 行算法与格式解析逻辑剥离为纯原生 ES 模块 [`apps/codex-tauri/src/totp.js`](apps/codex-tauri/src/totp.js)，涵盖 RFC 4648 Base32 解码/编码、RFC 4226 HOTP 计算、RFC 6238 实时动态码生成、`otpauth://totp/` 规范 URI 深度解析，以及 Google Authenticator 迁移协议 Protobuf 解码（Varint 与多账号种子提取）。
+2. **纯计算与 DOM 彻底解耦**：`totp.js` 零 DOM 依赖，纯基于标准 WebCrypto API（`crypto.subtle`），可在 Node.js、浏览器扩展 Service Worker 与前端页面同构运行；自动分发至 `dist/` 与 Chrome Web 扩展目录。
+3. **官方测试向量与自动化单测覆盖**：在 `apps/extension_shared/tests/totp.test.mjs` 新增 8 项自动化测试，覆盖 RFC 6238 官方标准测试向量（附录 B 黄金用例）、Base32 往返、URI 解析与 Google Migration Protobuf 解码，扩展层测试用例数扩增至 217 项全绿通过。
 
-此前里程碑回顾：**2.0.3 双端并发 CAS 混沌测试与 WebDAV ETag 防御**（多端竞态混沌测试覆盖并发 412 冲突收敛、双端密钥轮换平滑迁移与丢包幂等重放；输出 WASM 架构方案与平滑迁移路径）；**2.0.2 / 2.0.1 零警告与门禁加固**（三大 Rust 目标与 Python 套件 0 告警，门禁配置 `-D warnings` 与 `-W error::ResourceWarning`；README 进度版本纳入 `version.mjs`，72 处版本单一真实源）；**2.0.0 核心库 Clippy 零警告**（`core/pass_core` 清理，JS↔Rust 对拍与 FFI 零漂移）；**1.9.7–1.9.9 通行密钥 attestation 硬边界定案**；**WebAuthn PRF 扩展支持**（自 1.8.2）。
+此前里程碑回顾：**2.0.4 Web 界面通信切面解耦与深色模式**（新建 `adapter.js` 抽象 PassClientAdapter，72 命令契约 100% 保持；引入 `color-scheme: light dark` 与语义化设计变量，三端深浅自适应）；**2.0.3 双端并发 CAS 混沌测试与 WebDAV ETag 防御**（多端竞态混沌测试覆盖并发 412 冲突收敛、双端密钥轮换平滑迁移与丢包幂等重放；输出 WASM 架构方案与平滑迁移路径）；**2.0.2 / 2.0.1 零警告与门禁加固**；**2.0.0 核心库 Clippy 零警告**；**1.9.7–1.9.9 通行密钥 attestation 硬边界定案**；**WebAuthn PRF 扩展支持**（自 1.8.2）。
 
-详细进度：[`docs/20261108-0300-当前开发进度-antigravity.md`](docs/20261108-0300-当前开发进度-antigravity.md)
+详细进度：[`docs/20261108-0315-当前开发进度-antigravity.md`](docs/20261108-0315-当前开发进度-antigravity.md)
 
 ## 下一步待实现
 
-表现层巨石代码逐步模块化拆解（原生 ESM）、推进 WASM 合并引擎落地以废除双轨实现、本地存储 Revision 乐观锁闭环。现有“密钥留空即明文、不额外确认”策略保持不变。
+表现层巨石代码持续模块化拆解（ui_utils / vault_filters）、推进 WASM 合并引擎落地以废除双轨实现、本地存储 Revision 乐观锁闭环。现有“密钥留空即明文、不额外确认”策略保持不变。
 
-详细计划：[`docs/20261108-0300-下一步待实现-antigravity.md`](docs/20261108-0300-下一步待实现-antigravity.md)
+详细计划：[`docs/20261108-0315-下一步待实现-antigravity.md`](docs/20261108-0315-下一步待实现-antigravity.md)
 
 ## 当前入口
 
