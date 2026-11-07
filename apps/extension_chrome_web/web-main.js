@@ -86,6 +86,21 @@ import {
   formatSyncDecisionSummaryLines,
   overwriteWarningText,
 } from "./sync_preview.js";
+import {
+  normalizeProvisionCredential,
+  validateProvisionInput,
+  generateProvisionToken,
+  parseExistingServiceError,
+  formatProvisionReplacement,
+  formatBundleImportDetails,
+  provisionStageMessage,
+  formatServerVersionLabel,
+  formatLocalSnapshotLabel,
+  splitSitesInput,
+  formatGoogleAuthImportSummary,
+  formatCsvImportSummary,
+  formatFolderSiteRuleSummary,
+} from "./provision.js";
 
 // 统一排障日志前缀：每条日志都带当前应用版本号，方便跨端定位问题来源。
 const LOG_PREFIX = `[Pass v${APP_VERSION}]`;
@@ -2748,13 +2763,13 @@ const closeProvisionConfirm = (confirmed = false) => {
 
 const requestProvisionReplacement = (report) => new Promise((resolve) => {
   provisionConfirmResolve = resolve;
+  const formatted = formatProvisionReplacement(report);
   if (els.provisionConfirmSummary) {
-    els.provisionConfirmSummary.textContent = report?.summary || "服务器上已存在 Pass 同步服务。";
+    els.provisionConfirmSummary.textContent = formatted.summary;
   }
   if (els.provisionConfirmFindings) {
-    const findings = (report?.findings || []).map((item) => `• ${item}`).join("\n");
-    els.provisionConfirmFindings.textContent = findings;
-    els.provisionConfirmFindings.hidden = !findings;
+    els.provisionConfirmFindings.textContent = formatted.findingsText;
+    els.provisionConfirmFindings.hidden = !formatted.hasFindings;
   }
   if (els.provisionConfirmModal) els.provisionConfirmModal.hidden = false;
   els.btnProvisionConfirmReplace?.focus();
@@ -2787,22 +2802,7 @@ const requestBundleImportConfirmation = (result, diff = null) => new Promise((re
     els.bundleImportConfirmSummary.textContent = result?.message || "可以合并同步包。";
   }
   if (els.bundleImportConfirmDetails) {
-    const details = [
-      `本地账号：${result?.localAccounts ?? "-"}`,
-      `同步包账号：${result?.remoteAccounts ?? "-"}`,
-      `合并后账号：${result?.mergedAccounts ?? "-"}`,
-      result?.reasons?.length
-        ? `安全检查提示：${result.reasons.join("；")}`
-        : "安全检查：通过",
-    ];
-    if (diff?.total) {
-      details.push("", `具体账号差异（${diff.total} 条）：`, ...diff.lines);
-      if (diff.omitted) details.push(`其余 ${diff.omitted} 条差异已省略。`);
-    } else {
-      details.push("", "具体账号差异：无（不会改变本地账号）。");
-    }
-    details.push("", "确认后才会写入本地 vault。");
-    els.bundleImportConfirmDetails.textContent = details.join("\n");
+    els.bundleImportConfirmDetails.textContent = formatBundleImportDetails(result, diff);
   }
   if (els.bundleImportConfirmModal) els.bundleImportConfirmModal.hidden = false;
   els.btnBundleImportConfirm?.focus();
@@ -2838,20 +2838,17 @@ document.querySelectorAll("[data-close-action-confirm]").forEach((el) => {
 els.btnActionConfirm?.addEventListener("click", () => closeActionConfirm(true));
 els.btnActionCancel?.addEventListener("click", () => closeActionConfirm(false));
 
-const collectProvisionCredential = () => {
-  const mode = els.provisionAuthMode?.value || "privateKey";
-  const secret =
-    mode === "password"
-      ? els.provisionSecretPassword?.value || ""
-      : els.provisionSecretKey?.value || "";
-  return {
-    username: (els.provisionSshUser?.value || "root").trim() || "root",
-    port: Number(els.provisionSshPort?.value || 22),
-    authMode: mode,
-    secret,
-    privateKeyPassphrase: els.provisionKeyPassphrase?.value || "",
-  };
-};
+const collectProvisionCredential = () =>
+  normalizeProvisionCredential({
+    username: els.provisionSshUser?.value,
+    port: els.provisionSshPort?.value,
+    authMode: els.provisionAuthMode?.value,
+    secret:
+      (els.provisionAuthMode?.value || "privateKey") === "password"
+        ? els.provisionSecretPassword?.value || ""
+        : els.provisionSecretKey?.value || "",
+    privateKeyPassphrase: els.provisionKeyPassphrase?.value,
+  });
 
 const loadSavedSshCredential = async () => {
   const serverUrl = (els.provisionServerUrl?.value || els.syncBaseUrl?.value || "").trim();
@@ -2902,12 +2899,7 @@ els.btnLoadSshCred?.addEventListener("click", async () => {
 els.btnGenProvisionToken?.addEventListener("click", () => {
   const restore = setButtonBusy(els.btnGenProvisionToken, "正在生成…");
   try {
-    const bytes = new Uint8Array(32);
-    crypto.getRandomValues(bytes);
-    const token = btoa(String.fromCharCode(...bytes))
-      .replace(/=+$/g, "")
-      .replace(/\+/g, "")
-      .replace(/\//g, "");
+    const token = generateProvisionToken();
     if (els.provisionToken) {
       els.provisionToken.value = token;
       delete els.provisionToken.dataset.forceVisible;
@@ -2927,15 +2919,10 @@ els.btnRunProvision?.addEventListener("click", async () => {
   const tlsPrivateKey = (els.provisionTlsPrivateKey?.value || "").trim();
   await persistProvisionDraft();
   const credential = collectProvisionCredential();
-  if (!serverUrl.startsWith("https://")) {
-    setProvisionStatus("服务器地址必须是 HTTPS URL", true);
-    toastWarn("服务器地址必须是 HTTPS URL");
-    return;
-  }
-  // accessToken / syncEncryptionKey may be empty (open server / plaintext sync).
-  if (!credential.secret.trim()) {
-    setProvisionStatus("请填写 SSH 密码或私钥", true);
-    toastWarn("请填写 SSH 密码或私钥");
+  const validation = validateProvisionInput({ serverUrl, credential });
+  if (!validation.valid) {
+    setProvisionStatus(validation.error, true);
+    toastWarn(validation.error);
     return;
   }
   const restoreProvisionButton = setButtonBusy(els.btnRunProvision, "创建服务");
@@ -2949,14 +2936,8 @@ els.btnRunProvision?.addEventListener("click", async () => {
     try {
       await invoke("save_ssh_credential_cmd", { serverUrl, credential });
     } catch (_) {}
-    showProvisionProgress(
-      removeExisting ? "正在删除旧服务并创建新服务…" : "正在通过 SSH 在服务器上创建服务…"
-    );
-    setProvisionStatus(
-      removeExisting
-        ? "正在删除旧服务并创建新服务，请稍候…"
-        : "正在通过 SSH 在服务器上创建服务，请稍候…"
-    );
+    showProvisionProgress(provisionStageMessage("deploy", { removeExisting }));
+    setProvisionStatus(provisionStageMessage("deploy_status", { removeExisting }));
     const result = await invoke("provision_self_hosted_server", {
       serverUrl,
       credential,
@@ -2966,7 +2947,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
       tlsPrivateKey,
       removeExisting: Boolean(removeExisting),
     });
-    showProvisionProgress("正在验证服务连通性…");
+    showProvisionProgress(provisionStageMessage("verify"));
     if (els.syncEnabled) els.syncEnabled.checked = true;
     if (els.syncBaseUrl) els.syncBaseUrl.value = result.endpoint || serverUrl;
     if (els.syncToken) els.syncToken.value = accessToken;
@@ -2987,7 +2968,7 @@ els.btnRunProvision?.addEventListener("click", async () => {
   };
 
   try {
-    showProvisionProgress("正在确认 SSH 服务器身份…");
+    showProvisionProgress(provisionStageMessage("host_key"));
     const hostKey = await invoke("inspect_ssh_host_key_cmd", {
       serverUrl,
       port: credential.port,
@@ -3000,8 +2981,8 @@ els.btnRunProvision?.addEventListener("click", async () => {
         keyLines: hostKey?.keyLines || [],
       });
     }
-    showProvisionProgress("正在检测服务器是否已有旧服务…");
-    setProvisionStatus("正在检测服务器是否已有旧服务…");
+    showProvisionProgress(provisionStageMessage("detect"));
+    setProvisionStatus(provisionStageMessage("detect"));
     const report = await invoke("detect_existing_sync_service", {
       serverUrl,
       credential,
@@ -3021,21 +3002,10 @@ els.btnRunProvision?.addEventListener("click", async () => {
     }
     await runCreate(removeExisting);
   } catch (err) {
-    const raw = String(err ?? "");
-    if (raw.includes("EXISTING_SERVICE:")) {
-      const payload = raw.split("EXISTING_SERVICE:")[1] || "";
-      const parts = payload.split("|");
-      const host = parts[0] || "";
-      const findings = (parts[1] || "")
-        .split("；")
-        .filter(Boolean)
-        .map((x) => `• ${x}`)
-        .join("\n");
+    const conflict = parseExistingServiceError(err);
+    if (conflict) {
       hideProvisionProgress();
-      const ok = await requestProvisionReplacement({
-        summary: `检测到服务器 ${host} 上已有 Pass 同步服务。`,
-        findings: findings ? findings.split("\n").map((item) => item.replace(/^•\s*/, "")) : [],
-      });
+      const ok = await requestProvisionReplacement(conflict);
       if (!ok) {
         setProvisionStatus("已取消：未删除旧服务，也未创建新服务");
         toastWarn("已取消创建服务");
@@ -3052,8 +3022,8 @@ els.btnRunProvision?.addEventListener("click", async () => {
       }
     }
     hideProvisionProgress();
-    setProvisionStatus(raw, true);
-    toastError(`创建服务失败：${raw}`);
+    setProvisionStatus(String(err ?? ""), true);
+    toastError(`创建服务失败：${err}`);
   } finally {
     hideProvisionProgress();
     restoreProvisionButton();
@@ -3209,15 +3179,12 @@ els.webdavEnabled?.addEventListener("change", () => {
 });
 
 const accountPayload = () => ({
-  sites: (els.sites.value || "")
-    .split(/[,，\n]/)
-    .map((site) => site.trim())
-    .filter(Boolean),
-  username: (els.username.value || "").trim(),
-  password: els.password.value || "",
-  totpSecret: normalizedTotpSecret(els.totpSecret.value),
-  recoveryCodes: els.recoveryCodes.value || "",
-  note: els.note.value || "",
+  sites: splitSitesInput(els.sites?.value),
+  username: (els.username?.value || "").trim(),
+  password: els.password?.value || "",
+  totpSecret: normalizedTotpSecret(els.totpSecret?.value),
+  recoveryCodes: els.recoveryCodes?.value || "",
+  note: els.note?.value || "",
 });
 
 const selectedFolderIds = () => [...(els.editFolders?.selectedOptions || [])].map((option) => option.value);
@@ -3285,10 +3252,7 @@ document.addEventListener("click", (e) => {
 els.folderSitesForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!folderSitesTargetId) return;
-  const siteInputs = (els.folderSitesInput?.value || "")
-    .split(/[,，\n]/)
-    .map((site) => site.trim())
-    .filter(Boolean);
+  const siteInputs = splitSitesInput(els.folderSitesInput?.value);
   try {
     const result = await invoke("configure_folder_site_rules", {
       folderId: folderSitesTargetId,
@@ -3297,7 +3261,7 @@ els.folderSitesForm?.addEventListener("submit", async (e) => {
     });
     closeFolderSites();
     await refreshState();
-    toastSuccess(result.message || `已加入 ${result.addedCount || 0} 个账号`);
+    toastSuccess(formatFolderSiteRuleSummary(result));
   } catch (err) {
     toastError(`保存文件夹规则失败：${err}`);
   }
@@ -3482,7 +3446,7 @@ els.fileBrowserCsv?.addEventListener("change", async () => {
     const text = await readFileAsText(file);
     const r = await invoke("import_browser_csv_text", { content: text });
     await refreshState();
-    toastSuccess(r.message || `已导入 ${r.imported} 条`);
+    toastSuccess(formatCsvImportSummary(r));
   } catch (err) {
     toastError(`导入失败：${err}`);
   } finally {
@@ -3505,7 +3469,7 @@ els.fileGoogleAuthenticator?.addEventListener("change", async () => {
     if (!entries.length) throw new Error("没有识别到有效的 Google Authenticator 导出二维码");
     const result = await invoke("import_google_authenticator_totp", { entries });
     await refreshState();
-    toastSuccess(`验证器导入完成：新增 ${result.created}，更新 ${result.updated}，跳过 ${result.skipped}`);
+    toastSuccess(formatGoogleAuthImportSummary(result));
   } catch (err) {
     toastError(`验证器导入失败：${err}`);
   } finally {
@@ -3720,7 +3684,7 @@ els.btnLoadVersions?.addEventListener("click", async () => {
         const row = document.createElement("div");
         row.className = "version-row";
         const span = document.createElement("span");
-        span.textContent = `版本 ${v.id} · 导出 ${formatTimeMs(v.exportedAtMs)} · 保存 ${formatTimeMs(v.savedAtMs)} · ${(v.payloadSha256 || "").slice(0, 12)}`;
+        span.textContent = formatServerVersionLabel(v);
         const btn = document.createElement("button");
         btn.type = "button";
         btn.textContent = "恢复";
@@ -3769,7 +3733,7 @@ const loadLocalSnapshots = async () => {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "version-row local-snapshot-action";
-        const label = `${snapshot.reason} · ${formatTimeMs(snapshot.createdAtMs)} · 账号 ${snapshot.accounts} · 文件夹 ${snapshot.folders} · 通行密钥 ${snapshot.passkeys}`;
+        const label = formatLocalSnapshotLabel(snapshot);
         button.textContent = label;
         button.addEventListener("click", async () => {
           if (!(await requestActionConfirmation({

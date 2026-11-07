@@ -14,6 +14,7 @@ const sourceVaultFilters = resolve(root, "src/vault_filters.js");
 const sourceStore = resolve(root, "src/store.js");
 const sourceDialog = resolve(root, "src/dialog.js");
 const sourceDedup = resolve(root, "src/dedup.js");
+const sourceProvision = resolve(root, "src/provision.js");
 const sourceSyncPreview = resolve(root, "src/sync_preview.js");
 const sourceStyles = resolve(root, "src/styles.css");
 const sourceSyncOutboxScheduler = resolve(root, "src/sync_outbox_scheduler.js");
@@ -36,6 +37,7 @@ async function syncExtensionUi() {
   await cp(sourceStore, resolve(extensionDir, "store.js"));
   await cp(sourceDialog, resolve(extensionDir, "dialog.js"));
   await cp(sourceDedup, resolve(extensionDir, "dedup.js"));
+  await cp(sourceProvision, resolve(extensionDir, "provision.js"));
   await cp(sourceSyncPreview, resolve(extensionDir, "sync_preview.js"));
   await cp(sourceStyles, resolve(extensionDir, "web-options.css"));
   await cp(sourceSyncOutboxScheduler, resolve(extensionDir, "sync_outbox_scheduler.js"));
