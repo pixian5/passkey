@@ -174,6 +174,8 @@ struct VaultData {
     sync_outbox: Vec<SyncOutboxItem>,
     #[serde(default)]
     lock: WebLockData,
+    #[serde(default)]
+    business_revision: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -285,6 +287,8 @@ struct AppStateOutput {
     folders: Vec<Folder>,
     passkeys: Vec<Passkey>,
     all_regular_account_ids: Vec<String>,
+    #[serde(default)]
+    business_revision: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -851,10 +855,22 @@ impl Vault {
         }
         Ok(vault)
     }
-    fn save(&self) -> Result<(), String> {
+    fn save(&mut self) -> Result<(), String> {
+        self.save_with_guard(None)
+    }
+    fn save_with_guard(&mut self, expected_revision: Option<i64>) -> Result<(), String> {
         if !self.persist_enabled || self.defer_persist {
             return Ok(());
         }
+        if let Some(expected) = expected_revision {
+            if self.data.business_revision != expected {
+                return Err(format!(
+                    "LOCAL_CHANGED: 本地业务版本已变化（期望 {expected}，实际 {}），请重新加载",
+                    self.data.business_revision
+                ));
+            }
+        }
+        self.data.business_revision += 1;
         let key = self
             .key
             .as_ref()
@@ -1051,6 +1067,7 @@ fn app_state(v: &VaultData) -> AppStateOutput {
         folders: v.folders.clone(),
         passkeys: v.passkeys.clone(),
         all_regular_account_ids: v.all_regular_account_ids.clone(),
+        business_revision: v.business_revision,
     }
 }
 
@@ -5332,6 +5349,33 @@ mod tests {
         .expect_err("save should fail");
         assert!(!err.is_empty());
         assert_eq!(vault.data.device_name, before);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn local_business_revision_increments_and_guards_against_stale_expected_revision() {
+        let dir = std::env::temp_dir().join(format!("pass-web-revision-{}", Uuid::new_v4()));
+        let mut vault = Vault::open(dir.clone()).unwrap();
+        let initial_rev = vault.data.business_revision;
+
+        // Save with expected revision matching current
+        vault.save_with_guard(Some(initial_rev)).unwrap();
+        assert_eq!(vault.data.business_revision, initial_rev + 1);
+
+        // Stale expected revision must be rejected with LOCAL_CHANGED
+        let err = vault
+            .save_with_guard(Some(initial_rev))
+            .expect_err("Stale revision must be rejected");
+        assert!(err.contains("LOCAL_CHANGED"));
+        assert!(err.contains(&format!("期望 {initial_rev}")));
+
+        // Valid expected revision succeeds
+        vault.save_with_guard(Some(initial_rev + 1)).unwrap();
+        assert_eq!(vault.data.business_revision, initial_rev + 2);
+
+        // App state reflects updated revision
+        let state = app_state(&vault.data);
+        assert_eq!(state.business_revision, initial_rev + 2);
         let _ = fs::remove_dir_all(dir);
     }
 }

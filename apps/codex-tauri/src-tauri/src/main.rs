@@ -103,6 +103,8 @@ struct AppState {
     folders: Vec<Folder>,
     passkeys: Vec<Passkey>,
     all_regular_account_ids: Vec<String>,
+    #[serde(default)]
+    business_revision: i64,
 }
 
 #[derive(Default)]
@@ -382,6 +384,7 @@ fn get_app_state(app: AppHandle, state: tauri::State<AppLockState>) -> Result<Ap
     sort_accounts(&mut accounts);
     apply_folder_order(&mut folders, &folder_order.folder_ids);
     let passkeys = load_passkeys(&conn)?;
+    let business_revision = read_business_revision(&conn)?;
     let active_accounts = accounts
         .iter()
         .filter(|a| !a.is_deleted && !a.is_permanently_deleted)
@@ -399,6 +402,7 @@ fn get_app_state(app: AppHandle, state: tauri::State<AppLockState>) -> Result<Ap
         folders,
         passkeys,
         all_regular_account_ids: all_order.account_ids,
+        business_revision,
     })
 }
 
@@ -3176,6 +3180,22 @@ fn save_account_folder_order_atomic(
     )
 }
 
+const KEY_BUSINESS_REVISION: &str = "business_revision_v1";
+
+fn read_business_revision(conn: &Connection) -> Result<i64, String> {
+    match read_kv(conn, KEY_BUSINESS_REVISION)? {
+        Some(raw) => raw
+            .trim()
+            .parse::<i64>()
+            .map_err(|e| format!("解析本地业务版本失败: {e}")),
+        None => Ok(0),
+    }
+}
+
+fn write_business_revision(conn: &Connection, rev: i64) -> Result<(), String> {
+    write_kv(conn, KEY_BUSINESS_REVISION, &rev.to_string())
+}
+
 fn save_collections_atomic(
     conn: &Connection,
     accounts: Option<&[PasswordAccount]>,
@@ -3184,9 +3204,45 @@ fn save_collections_atomic(
     folder_order: Option<&FolderOrder>,
     passkeys: Option<&[Passkey]>,
 ) -> Result<(), String> {
+    save_collections_atomic_with_guard(
+        conn,
+        accounts,
+        folders,
+        all_order,
+        folder_order,
+        passkeys,
+        None,
+    )
+}
+
+fn save_collections_atomic_with_guard(
+    conn: &Connection,
+    accounts: Option<&[PasswordAccount]>,
+    folders: Option<&[Folder]>,
+    all_order: Option<&AllRegularOrder>,
+    folder_order: Option<&FolderOrder>,
+    passkeys: Option<&[Passkey]>,
+    expected_revision: Option<i64>,
+) -> Result<(), String> {
     let tx = conn
         .unchecked_transaction()
         .map_err(|e| format!("开始多集合写入事务失败: {e}"))?;
+    let changes_business = accounts.is_some()
+        || folders.is_some()
+        || all_order.is_some()
+        || folder_order.is_some()
+        || passkeys.is_some();
+    if changes_business {
+        let current_rev = read_business_revision(&tx)?;
+        if let Some(expected) = expected_revision {
+            if current_rev != expected {
+                return Err(format!(
+                    "LOCAL_CHANGED: 本地业务版本已变化（期望 {expected}，实际 {current_rev}），请重新同步"
+                ));
+            }
+        }
+        write_business_revision(&tx, current_rev + 1)?;
+    }
     if let Some(accounts) = accounts {
         save_accounts(&tx, accounts)?;
     }
@@ -4599,6 +4655,48 @@ mod tests {
         assert_eq!(redo.len(), 1);
         assert_eq!(redo[0].id, "undo-entry");
         assert_eq!(redo[0].payload, current);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn local_business_revision_increments_and_guards_against_stale_expected_revision() {
+        let dir = std::env::temp_dir().join(format!("pass-tauri-revision-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let conn = journal_test_connection(&dir);
+
+        let initial_rev = read_business_revision(&conn).unwrap();
+        assert_eq!(initial_rev, 0);
+
+        let accounts = vec![PasswordAccount {
+            record_id: Some("test-rec".into()),
+            username: "user".into(),
+            ..Default::default()
+        }];
+
+        // Save with expected revision matching current
+        save_collections_atomic_with_guard(&conn, Some(&accounts), None, None, None, None, Some(0))
+            .unwrap();
+        assert_eq!(read_business_revision(&conn).unwrap(), 1);
+
+        // Stale expected revision must be rejected with LOCAL_CHANGED
+        let err = save_collections_atomic_with_guard(
+            &conn,
+            Some(&accounts),
+            None,
+            None,
+            None,
+            None,
+            Some(0),
+        )
+        .expect_err("Stale revision must be rejected");
+        assert!(err.contains("LOCAL_CHANGED"));
+        assert!(err.contains("期望 0，实际 1"));
+
+        // Valid expected revision succeeds
+        save_collections_atomic_with_guard(&conn, Some(&accounts), None, None, None, None, Some(1))
+            .unwrap();
+        assert_eq!(read_business_revision(&conn).unwrap(), 2);
+
         let _ = fs::remove_dir_all(dir);
     }
 }

@@ -20,13 +20,16 @@ test("createEmptyState and normalizeAppState provide deterministic structure", (
   assert.deepEqual(empty.passkeys, []);
   assert.deepEqual(empty.allRegularAccountIds, []);
   assert.equal(empty.deviceName, "");
+  assert.equal(empty.businessRevision, 0);
 
   const normalized = normalizeAppState({
     activeAccounts: [{ id: "acc1" }],
     deviceName: "My MacBook",
+    businessRevision: "42",
   });
   assert.equal(normalized.activeAccounts.length, 1);
   assert.equal(normalized.deviceName, "My MacBook");
+  assert.equal(normalized.businessRevision, 42);
   assert.deepEqual(normalized.deletedAccounts, []);
   assert.deepEqual(normalized.folders, []);
 });

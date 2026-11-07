@@ -12,6 +12,7 @@ export const createEmptyState = () => ({
   passkeys: [],
   allRegularAccountIds: [],
   deviceName: "",
+  businessRevision: 0,
 });
 
 export const normalizeAppState = (raw = {}) => ({
@@ -21,6 +22,7 @@ export const normalizeAppState = (raw = {}) => ({
   passkeys: Array.isArray(raw?.passkeys) ? raw.passkeys : [],
   allRegularAccountIds: Array.isArray(raw?.allRegularAccountIds) ? raw.allRegularAccountIds : [],
   deviceName: typeof raw?.deviceName === "string" ? raw.deviceName : "",
+  businessRevision: Number(raw?.businessRevision ?? raw?.business_revision) || 0,
 });
 
 export const createDefaultLockState = () => ({
