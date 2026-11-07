@@ -14,6 +14,24 @@ import {
   readProtoVarint,
   googleMigrationEntries,
 } from "./totp.js";
+import {
+  TOAST_LEVELS,
+  inferToastLevel,
+  commandMessage,
+  escapeHtml,
+  isApplePlatform,
+  isMultiSelectModifier,
+  compareOptionalOrder,
+} from "./ui_utils.js";
+import {
+  accountKey,
+  accountRecordId,
+  isPinnedAccount,
+  hasTotp,
+  hasPasskey,
+  folderIdsOf,
+  matchesSearchQuery,
+} from "./vault_filters.js";
 
 // 统一排障日志前缀：每条日志都带当前应用版本号，方便跨端定位问题来源。
 const LOG_PREFIX = `[Pass v${APP_VERSION}]`;
@@ -338,36 +356,6 @@ let uiPrefs = {
   lastSyncPrimaryFingerprint: "",
 };
 
-/**
- * Toast levels (see docs + apps/codex-tauri/README.md):
- * - success → green
- * - error   → red
- * - warn    → yellow
- * Prefer toastSuccess / toastError / toastWarn; plain message() auto-detects.
- */
-const TOAST_LEVELS = ["success", "error", "warn"];
-
-const inferToastLevel = (text) => {
-  const s = String(text ?? "");
-  // Explicit failure cues first
-  if (
-    /失败|错误|无法|拒绝|异常|超时|未通过|无效|不能|禁止|未配置|不可达|412|401|403|500|HTTP\s*\d{3}/i.test(
-      s
-    )
-  ) {
-    return "error";
-  }
-  // Warnings / cancellations / empty / risk
-  if (
-    /取消|警告|风险|注意|未写入|未启用|为空|跳过|请先|请填写|可能|暂无|无已保存|停止|安全检查/i.test(
-      s
-    )
-  ) {
-    return "warn";
-  }
-  return "success";
-};
-
 const showToast = (text, level) => {
   const el = els.output || document.querySelector("#output");
   const body = String(text ?? "");
@@ -392,10 +380,6 @@ const message = (text, level) => showToast(text, level);
 const toastSuccess = (text) => showToast(text, "success");
 const toastError = (text) => showToast(text, "error");
 const toastWarn = (text) => showToast(text, "warn");
-const commandMessage = (value, fallback = "") => {
-  if (value && typeof value === "object" && typeof value.message === "string") return value.message;
-  return value == null || value === "" ? fallback : String(value);
-};
 
 const applyUiPrefs = () => {
   const root = document.documentElement;
@@ -759,24 +743,6 @@ window.addEventListener("unhandledrejection", (e) => {
   toastError(`请求失败: ${e.reason || e}`);
 });
 
-const escapeHtml = (s) =>
-  String(s ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-
-const accountKey = (a) => a.recordId || a.id || a.accountId || "";
-
-const hasTotp = (a) => Boolean((a.totpSecret || "").trim());
-const hasPasskey = (a) => (a.passkeyCredentialIds || []).length > 0;
-
-const folderIdsOf = (a) => {
-  const ids = [...(a.folderIds || [])];
-  if (a.folderId) ids.push(a.folderId);
-  return [...new Set(ids.map(String))];
-};
-
 const passkeysForAccount = (a) => {
   const ids = new Set((a.passkeyCredentialIds || []).map(String));
   const sites = new Set((a.sites || []).map((s) => String(s).toLowerCase()));
@@ -790,27 +756,7 @@ const passkeysForAccount = (a) => {
 
 const query = () => (els.searchInput?.value || "").trim().toLowerCase();
 const searchField = () => els.searchField?.value || "all";
-const matchesQuery = (a) => {
-  const q = query();
-  if (!q) return true;
-  const field = searchField();
-  const parts =
-    field === "site"
-      ? a.sites || []
-      : field === "username"
-        ? [a.username, a.accountId]
-        : field === "password"
-          ? [a.password]
-          : field === "note"
-            ? [a.note]
-            : [a.username, a.accountId, a.password, a.note, ...(a.sites || [])];
-  const hay = parts.filter(Boolean).join(" ").toLowerCase();
-  return hay.includes(q);
-};
-
-const isPinnedAccount = (a) => Boolean(a?.isPinned);
-const accountRecordId = (a) =>
-  String(a?.recordId || a?.id || a?.accountId || "").trim();
+const matchesQuery = (a) => matchesSearchQuery(a, query(), searchField());
 
 const accountOrderScopeId = () =>
   filter.type === "folder" && filter.id ? `folder:${filter.id}` : "all";
@@ -822,13 +768,6 @@ const regularOrderIdsForScope = (scopeId = accountOrderScopeId()) => {
     return folder?.regularAccountIds || [];
   }
   return state.allRegularAccountIds || [];
-};
-
-const compareOptionalOrder = (lo, ro) => {
-  if (lo != null && ro != null && lo !== ro) return lo - ro;
-  if (lo != null && ro == null) return -1;
-  if (lo == null && ro != null) return 1;
-  return 0;
 };
 
 const sortAccounts = (list, scopeId = accountOrderScopeId()) => {
@@ -875,15 +814,6 @@ const filteredAccounts = () => {
   }
   return sortAccounts(base.filter(matchesQuery));
 };
-
-const isApplePlatform = () =>
-  /Mac|iPhone|iPad|iPod/i.test(
-    `${navigator.platform || ""} ${navigator.userAgent || ""}`
-  );
-
-/** ⌘ on macOS, Ctrl elsewhere — never Ctrl on Apple (reserved for context menu). */
-const isMultiSelectModifier = (e) =>
-  isApplePlatform() ? Boolean(e.metaKey && !e.ctrlKey) : Boolean(e.metaKey || e.ctrlKey);
 
 const selectOnlyAccount = (key) => {
   selectedId = key;

@@ -6,20 +6,20 @@
 
 ## 当前开发进度
 
-版本 `2.0.5`。本轮完成**Web 表现层模块化解耦（TOTP / OTPAuth / Google Authenticator 核心拆分）**：
-1. **TOTP 与迁移解析核心模块化（totp.js）**：将原本堆叠在 4,600+ 行 `apps/codex-tauri/src/main.js` 内部的近 200 行算法与格式解析逻辑剥离为纯原生 ES 模块 [`apps/codex-tauri/src/totp.js`](apps/codex-tauri/src/totp.js)，涵盖 RFC 4648 Base32 解码/编码、RFC 4226 HOTP 计算、RFC 6238 实时动态码生成、`otpauth://totp/` 规范 URI 深度解析，以及 Google Authenticator 迁移协议 Protobuf 解码（Varint 与多账号种子提取）。
-2. **纯计算与 DOM 彻底解耦**：`totp.js` 零 DOM 依赖，纯基于标准 WebCrypto API（`crypto.subtle`），可在 Node.js、浏览器扩展 Service Worker 与前端页面同构运行；自动分发至 `dist/` 与 Chrome Web 扩展目录。
-3. **官方测试向量与自动化单测覆盖**：在 `apps/extension_shared/tests/totp.test.mjs` 新增 8 项自动化测试，覆盖 RFC 6238 官方标准测试向量（附录 B 黄金用例）、Base32 往返、URI 解析与 Google Migration Protobuf 解码，扩展层测试用例数扩增至 217 项全绿通过。
+版本 `2.0.6`。本轮完成**Web 表现层模块化解耦（UI Utils 与保密库过滤逻辑拆分）**：
+1. **跨平台 UI 工具集模块化（`ui_utils.js`）**：剥离原本内嵌在 4,600+ 行 `apps/codex-tauri/src/main.js` 内部的跨平台交互工具函数，提供 Toast 级别智能推断（`inferToastLevel`）、XSS HTML 转义（`escapeHtml`）、Apple 平台与快捷键识别（`isApplePlatform`, `isMultiSelectModifier`）以及安全排序（`compareOptionalOrder`）。
+2. **保密库检索与过滤逻辑拆分（`vault_filters.js`）**：抽离账号凭证唯一键识别（`accountRecordId`, `accountKey`）、置顶状态判定（`isPinnedAccount`）、双因子与 Passkey 能力识别（`hasTotp`, `hasPasskey`）、文件夹层级归属（`folderIdsOf`）与多维度模糊查询（`matchesSearchQuery`）。
+3. **同构分发与自动化单测覆盖**：更新 `prepare-dist.mjs` 与 `sync-web-ui.mjs` 实现三端同构分发；新增 `ui_utils.test.mjs` 与 `vault_filters.test.mjs` 共 11 项纯原生单测，Node 扩展测试套件扩增至 228 项全绿通过。总结沉淀沉淀至 [`经验/06-前端表现层解耦与无构建单测.md`](经验/06-前端表现层解耦与无构建单测.md)。
 
-此前里程碑回顾：**2.0.4 Web 界面通信切面解耦与深色模式**（新建 `adapter.js` 抽象 PassClientAdapter，72 命令契约 100% 保持；引入 `color-scheme: light dark` 与语义化设计变量，三端深浅自适应）；**2.0.3 双端并发 CAS 混沌测试与 WebDAV ETag 防御**（多端竞态混沌测试覆盖并发 412 冲突收敛、双端密钥轮换平滑迁移与丢包幂等重放；输出 WASM 架构方案与平滑迁移路径）；**2.0.2 / 2.0.1 零警告与门禁加固**；**2.0.0 核心库 Clippy 零警告**；**1.9.7–1.9.9 通行密钥 attestation 硬边界定案**；**WebAuthn PRF 扩展支持**（自 1.8.2）。
+此前里程碑回顾：**2.0.5 Web 表现层模块化解耦（TOTP、OTPAuth 与谷歌迁移协议拆分）**（剥离 `totp.js`，Node 官方用例与 Protobuf 单测闭环）；**2.0.4 Web 界面通信切面解耦与深色模式**（新建 `adapter.js` 抽象 PassClientAdapter，72 命令契约 100% 保持；引入 `color-scheme: light dark` 与语义化设计变量，三端深浅自适应）；**2.0.3 双端并发 CAS 混沌测试与 WebDAV ETag 防御**；**2.0.2 / 2.0.1 零警告与门禁加固**；**2.0.0 核心库 Clippy 零警告**。
 
-详细进度：[`docs/20261108-0315-当前开发进度-antigravity.md`](docs/20261108-0315-当前开发进度-antigravity.md)
+详细进度：[`docs/20261108-0330-当前开发进度-antigravity.md`](docs/20261108-0330-当前开发进度-antigravity.md)
 
 ## 下一步待实现
 
-表现层巨石代码持续模块化拆解（ui_utils / vault_filters）、推进 WASM 合并引擎落地以废除双轨实现、本地存储 Revision 乐观锁闭环。现有“密钥留空即明文、不额外确认”策略保持不变。
+状态机与 Store 抽离（`store.js`）、弹窗表单组件化（`components/dialog.js`）、推进 WASM 合并引擎落地以废除双轨实现、本地存储 Revision 乐观锁闭环。现有“密钥留空即明文、不额外确认”策略保持不变。
 
-详细计划：[`docs/20261108-0315-下一步待实现-antigravity.md`](docs/20261108-0315-下一步待实现-antigravity.md)
+详细计划：[`docs/20261108-0330-下一步待实现-antigravity.md`](docs/20261108-0330-下一步待实现-antigravity.md)
 
 ## 当前入口
 
