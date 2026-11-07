@@ -52,3 +52,42 @@ export const compareOptionalOrder = (lo, ro) => {
   if (lo == null && ro != null) return 1;
   return 0;
 };
+
+export const formatTimeMs = (ms, fallback = "-") => {
+  const n = Number(ms || 0);
+  if (!n) return fallback;
+  const d = new Date(n);
+  if (Number.isNaN(d.getTime())) return String(ms);
+  const yy = String(d.getFullYear()).slice(2);
+  return `${yy}-${d.getMonth() + 1}-${d.getDate()} ${d.getHours()}:${d.getMinutes()}:${d.getSeconds()}`;
+};
+
+export const formatTime = (ms, fallback = "-") => {
+  if (!ms) return fallback;
+  try {
+    const d = new Date(Number(ms));
+    return Number.isNaN(d.getTime()) ? fallback : d.toLocaleString();
+  } catch {
+    return fallback;
+  }
+};
+
+export const readFileAsText = (file) =>
+  new Promise((resolve, reject) => {
+    if (!file) {
+      resolve("");
+      return;
+    }
+    if (typeof FileReader === "undefined") {
+      if (typeof file.text === "function") {
+        file.text().then(resolve, reject);
+        return;
+      }
+      resolve(String(file));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
+    reader.readAsText(file);
+  });

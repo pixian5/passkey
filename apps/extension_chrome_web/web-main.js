@@ -1,4 +1,12 @@
-import { syncOutboxSchedulerDelayMs } from "./sync_outbox_scheduler.js";
+import {
+  syncOutboxSchedulerDelayMs,
+  syncOutboxSourceLabel,
+  formatOutboxModeLabel,
+  formatAutoSyncStatus,
+  summarizeOutboxQueue,
+  formatOutboxItemLine,
+  calculateNextOutboxRetryDelay,
+} from "./sync_outbox_scheduler.js";
 import { APP_VERSION } from "./app_version.js";
 import { defaultAdapter } from "./adapter.js";
 import {
@@ -22,7 +30,15 @@ import {
   isApplePlatform,
   isMultiSelectModifier,
   compareOptionalOrder,
+  formatTimeMs,
+  formatTime,
+  readFileAsText,
 } from "./ui_utils.js";
+import {
+  formatDedupGroupSummary,
+  dedupAccountLabel,
+  calculateFolderDeletionImpact,
+} from "./dedup.js";
 import {
   accountKey,
   accountRecordId,
@@ -573,10 +589,8 @@ const saveUiPrefs = async () => {
 };
 
 const updateAutoSyncStatus = () => {
-  const m = Number(uiPrefs.autoSyncIntervalMinutes || 0);
   if (els.autoSyncStatus) {
-    els.autoSyncStatus.textContent =
-      m > 0 ? `自动同步：每 ${m} 分钟（仅在同步已启用时）` : "自动同步：关闭";
+    els.autoSyncStatus.textContent = formatAutoSyncStatus(uiPrefs.autoSyncIntervalMinutes);
   }
 };
 
@@ -597,13 +611,6 @@ const scheduleAutoSync = () => {
   }, m * 60 * 1000);
 };
 
-const syncOutboxSourceLabel = (sourceKey) => {
-  const kind = String(sourceKey || "").split("|", 1)[0];
-  if (kind === "server") return "自建服务器";
-  if (kind === "webdav") return "WebDAV";
-  return kind || "同步目标";
-};
-
 const isOutboxSourceEnabled = (item) => {
   const kind = String(item?.sourceKey || "").split("|", 1)[0];
   if (kind === "server") return Boolean(els.syncEnabled?.checked);
@@ -616,14 +623,14 @@ const scheduleSyncOutboxRetry = (items) => {
     clearTimeout(syncOutboxTimer);
     syncOutboxTimer = null;
   }
-  if (lockState.locked || syncOutboxRetryRunning) return;
-  const enabledItems = (Array.isArray(items) ? items : [])
-    .filter(isOutboxSourceEnabled)
-    .filter((item) => item?.status !== "paused");
-  if (!enabledItems.length) return;
-  const nextRetryAt = Math.min(...enabledItems.map((item) => Number(item.nextRetryAtMs || 0)));
-  const effectiveRetryAt = Math.max(nextRetryAt, syncOutboxSchedulerNotBeforeMs);
-  const delay = Math.min(Math.max(1000, effectiveRetryAt - Date.now()), 2_147_000_000);
+  const delay = calculateNextOutboxRetryDelay(items, {
+    locked: lockState.locked,
+    running: syncOutboxRetryRunning,
+    notBeforeMs: syncOutboxSchedulerNotBeforeMs,
+    now: Date.now(),
+    isSourceEnabled: isOutboxSourceEnabled,
+  });
+  if (delay == null) return;
   syncOutboxTimer = setTimeout(async () => {
     syncOutboxTimer = null;
     if (lockState.locked || syncOutboxRetryRunning) return;
@@ -662,25 +669,14 @@ const refreshSyncOutboxStatus = async () => {
     const list = Array.isArray(items) ? items : [];
     if (els.syncOutboxPanel) els.syncOutboxPanel.hidden = list.length === 0;
     if (els.syncOutboxStatus) {
-      const waiting = list.filter((item) => item.status !== "paused" && Number(item.nextRetryAtMs || 0) > Date.now()).length;
-      const paused = list.filter((item) => item.status === "paused").length;
-      els.syncOutboxStatus.textContent = list.length
-        ? `补偿任务 ${list.length} 个（等待退避 ${waiting} 个${paused ? `，已暂停 ${paused} 个` : ""}）`
-        : "";
+      els.syncOutboxStatus.textContent = summarizeOutboxQueue(list);
     }
     if (els.syncOutboxList) {
       els.syncOutboxList.innerHTML = "";
       for (const item of list) {
         const row = document.createElement("div");
         row.className = "sync-outbox-row";
-        const retryAt = Number(item.nextRetryAtMs || 0);
-        const retryText = item.status === "paused"
-          ? "已暂停，点击上方按钮恢复"
-          : retryAt > Date.now() ? `下次 ${formatTimeMs(retryAt)}` : "可立即重试";
-        const errorText = String(item.lastError || "同步失败").replace(/\s+/g, " ").slice(0, 220);
-        const modeLabel = item.mode === "localOverwriteRemote" ? "本地覆盖云端"
-          : item.mode === "remoteOverwriteLocal" ? "云端覆盖本地" : "合并同步";
-        row.textContent = `${syncOutboxSourceLabel(item.sourceKey)} · ${modeLabel} · 失败 ${item.attempts || 0} 次 · ${retryText} · ${errorText}`;
+        row.textContent = formatOutboxItemLine(item, { formatTimeFn: formatTimeMs });
         els.syncOutboxList.appendChild(row);
       }
     }
@@ -719,23 +715,6 @@ const refreshSyncKeyHints = async () => {
     }
   } catch (_) {}
 };
-
-const formatTimeMs = (ms) => {
-  const n = Number(ms || 0);
-  if (!n) return "-";
-  const d = new Date(n);
-  if (Number.isNaN(d.getTime())) return String(ms);
-  const yy = String(d.getFullYear()).slice(2);
-  return `${yy}-${d.getMonth() + 1}-${d.getDate()} ${d.getHours()}:${d.getMinutes()}:${d.getSeconds()}`;
-};
-
-const readFileAsText = (file) =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
-    reader.readAsText(file);
-  });
 
 // Surface unexpected errors so "no reaction" is visible.
 window.addEventListener("error", (e) => {
@@ -1065,21 +1044,10 @@ const confirmAccountFolder = async () => {
   }
 };
 
-const formatTime = (ms) => {
-  if (!ms) return "-";
-  try {
-    return new Date(Number(ms)).toLocaleString();
-  } catch {
-    return "-";
-  }
-};
-
 const renderFolderDedupGroups = () => {
   const groups = folderDedupTarget?.groups || [];
   if (els.folderDedupSummary) {
-    els.folderDedupSummary.textContent = groups.length
-      ? `重复组 ${groups.length} 组，按站点别名和用户名分组`
-      : "当前文件夹暂无重复账号";
+    els.folderDedupSummary.textContent = formatDedupGroupSummary(groups);
   }
   if (els.btnKeepLatest) els.btnKeepLatest.disabled = groups.length === 0;
   if (els.btnKeepEarliest) els.btnKeepEarliest.disabled = groups.length === 0;
@@ -1099,7 +1067,7 @@ const renderFolderDedupGroups = () => {
     group.accounts.forEach((account, index) => {
       const row = document.createElement("div");
       row.className = "dedup-account";
-      const label = index === 0 ? "最新" : index === group.accounts.length - 1 ? "最早" : "";
+      const label = dedupAccountLabel(index, group.accounts.length);
       row.innerHTML = `
         <div class="dedup-account-main">
           <div class="dedup-account-id">${label ? `<span class="dedup-keep-label">${label}</span>` : ""}${escapeHtml(account.accountId || accountKey(account) || "账号")}</div>
@@ -1145,30 +1113,9 @@ const closeFolderDedup = () => {
 };
 
 const openFolderDelete = (folder) => {
-  const folderId = String(folder.id);
-  const folderIdLower = folderId.toLowerCase();
-  const activeMembers = (state.activeAccounts || []).filter((account) =>
-    folderIdsOf(account).some((id) => id.toLowerCase() === folderIdLower)
-  );
-  const recycleMembers = (state.deletedAccounts || []).filter((account) =>
-    folderIdsOf(account).some((id) => id.toLowerCase() === folderIdLower)
-  );
-  folderDeleteTarget = {
-    id: folderId,
-    name: folder.name || "未命名文件夹",
-    activeCount: activeMembers.length,
-    recycleCount: recycleMembers.length,
-  };
+  folderDeleteTarget = calculateFolderDeletionImpact(folder, state.activeAccounts, state.deletedAccounts);
   if (els.folderDeleteMessage) {
-    const { activeCount, recycleCount } = folderDeleteTarget;
-    const total = activeCount + recycleCount;
-    if (!total) {
-      els.folderDeleteMessage.textContent =
-        `删除「${folderDeleteTarget.name}」不会删除账号；当前没有账号属于此文件夹。`;
-    } else {
-      els.folderDeleteMessage.textContent =
-        `删除「${folderDeleteTarget.name}」不会删除账号。当前有 ${activeCount} 个活动账号、${recycleCount} 个回收站账号属于此文件夹。删除后，活动账号仍在“全部”（没有其他文件夹的会变为未分类），回收站账号仍在“回收站”；有其他文件夹归属的账号会保留其他归属。`;
-    }
+    els.folderDeleteMessage.textContent = folderDeleteTarget.message;
   }
   if (els.folderDeleteModal) els.folderDeleteModal.hidden = false;
 };

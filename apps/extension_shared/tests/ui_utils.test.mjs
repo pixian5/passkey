@@ -7,6 +7,9 @@ import {
   isApplePlatform,
   isMultiSelectModifier,
   compareOptionalOrder,
+  formatTimeMs,
+  formatTime,
+  readFileAsText,
 } from "../../codex-tauri/src/ui_utils.js";
 
 test("escapeHtml escapes HTML special characters properly", () => {
@@ -66,4 +69,26 @@ test("compareOptionalOrder sorts defined before undefined", () => {
   assert.equal(compareOptionalOrder(0, null) < 0, true);
   assert.equal(compareOptionalOrder(null, 0) > 0, true);
   assert.equal(compareOptionalOrder(null, null), 0);
+});
+
+test("formatTimeMs and formatTime format timestamps with graceful fallbacks", () => {
+  assert.equal(formatTimeMs(0), "-");
+  assert.equal(formatTimeMs(null), "-");
+  assert.equal(formatTimeMs(undefined, "none"), "none");
+
+  // Fixed timestamp: 2026-01-15T12:00:00Z (timestamp: 1768478400000)
+  const ts = 1768478400000;
+  const formattedMs = formatTimeMs(ts);
+  assert.match(formattedMs, /26-\d{1,2}-\d{1,2}/);
+
+  const formattedLocale = formatTime(ts);
+  assert.notEqual(formattedLocale, "-");
+  assert.equal(formatTime(0), "-");
+  assert.equal(formatTime("invalid"), "-");
+});
+
+test("readFileAsText handles empty, string, and object payloads safely", async () => {
+  assert.equal(await readFileAsText(null), "");
+  assert.equal(await readFileAsText("hello world"), "hello world");
+  assert.equal(await readFileAsText({ text: async () => "blob content" }), "blob content");
 });
