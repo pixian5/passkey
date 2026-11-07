@@ -1,5 +1,6 @@
 import { syncOutboxSchedulerDelayMs } from "./sync_outbox_scheduler.js";
 import { APP_VERSION } from "./app_version.js";
+import { defaultAdapter } from "./adapter.js";
 
 // 统一排障日志前缀：每条日志都带当前应用版本号，方便跨端定位问题来源。
 const LOG_PREFIX = `[Pass v${APP_VERSION}]`;
@@ -63,61 +64,7 @@ const applyPlatformCapabilities = (caps = {}) => {
   }
 };
 
-const invoke = async (command, args = {}) => {
-  if (typeof window.__PASS_EXTENSION_INVOKE__ === "function") {
-    return window.__PASS_EXTENSION_INVOKE__(command, args);
-  }
-  const runtime = window.__TAURI__?.core ?? window.__TAURI_INTERNALS__;
-  if (typeof runtime?.invoke === "function") {
-    return runtime.invoke(command, args);
-  }
-  const invokeWeb = async (retryAuth) => {
-    const token = window.localStorage?.getItem("pass.web.authToken") || "";
-    const response = await fetch(`/api/invoke/${encodeURIComponent(command)}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(args || {}),
-    });
-    let body = null;
-    try {
-      body = await response.json();
-    } catch (_) {
-      body = null;
-    }
-    if (response.status === 401 && retryAuth && !token && typeof window.prompt === "function") {
-      const entered = window.prompt("请输入 Pass Web 访问令牌");
-      if (entered?.trim()) {
-        window.localStorage?.setItem("pass.web.authToken", entered.trim());
-        return invokeWeb(false);
-      }
-    }
-    if (!response.ok) {
-      throw new Error(body?.error || `Web API 请求失败（HTTP ${response.status}）`);
-    }
-    const result = body?.result;
-    if (result?.downloadBase64 && typeof document !== "undefined") {
-      try {
-        const binary = atob(result.downloadBase64);
-        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-        const blob = new Blob([bytes], {
-          type: result.downloadMime || "application/octet-stream",
-        });
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(blob);
-        link.download = result.downloadName || "pass-download";
-        link.click();
-        setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-      } catch (error) {
-        console.warn("Web download response could not be materialized", error);
-      }
-    }
-    return result;
-  };
-  return invokeWeb(true);
-};
+const invoke = async (command, args = {}) => defaultAdapter.invoke(command, args);
 
 const $ = (s) => document.querySelector(s);
 

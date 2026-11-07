@@ -6,20 +6,20 @@
 
 ## 当前开发进度
 
-版本 `2.0.3`。本轮完成**双端并发 CAS 混沌测试、WebDAV ETag 防御加固与 WASM 合并架构定案**：
-1. **双端并发 CAS 与密钥轮换混沌测试落地**：在 `apps/sync_server_ubuntu/tests/test_concurrent_chaos.py` 新增全自动化多端竞态测试矩阵，真实模拟双客户端在同一 revision 下的并发写入、412 冲突捕获后自动 Pull-Merge-Retry 闭环收敛、多端主密钥轮换（Key Rotation）平滑迁移以及相同 Idempotency-Key 丢包重放幂等性（45 项服务端单测全绿）。
-2. **WebDAV ETag 兼容性防御强化**：对齐桌面 Tauri 壳与 Docker Web 端的 WebDAV ETag 护栏契约，补齐单元测试，确保远端无 ETag 时主动拦截并报错，杜绝因无条件覆写造成数据破坏。
-3. **WASM 合并引擎演进架构定案**：输出完整 WASM 架构方案与平滑迁移路径（[`docs/20261104-1120-WASM合并引擎架构方案与迁移路径.md`](docs/20261104-1120-WASM合并引擎架构方案与迁移路径.md)），明确 `pass-merge` 零改造 WASM 编译、MV3 线性内存零拷贝契约及三阶段影子迁移路线，为未来移除 1,077 行 JS 双写奠定基石。
+版本 `2.0.4`。本轮完成**Web 界面多端通信适配器解耦、原生深色模式与主题 Token 统一**：
+1. **多端统一 RPC 通信适配器解耦（PassClientAdapter）**：新建 `apps/codex-tauri/src/adapter.js`，将原本散落在 `main.js` 巨石代码内的 Chrome Extension Bridge、Tauri IPC、Pass Web HTTP RPC、Token 鉴权、Base64 Blob 下载统一抽象为面向切面的标准适配器；`main.js` 仅保留统一 invoke 转发，命令矩阵 72/72 契约 100% 保持；同步管线自动分发至 `dist/` 与 Chrome Web 扩展目录；新增 5 项自动化适配器单测，测试套件扩增至 209 项全绿通过。
+2. **现代 CSS 主题 Token 与原生深色模式（Dark Mode）统一**：全面重构 `apps/codex-tauri/src/styles.css`，引入 `color-scheme: light dark` 与语义化设计变量（`--card-bg`, `--panel-bg`, `--hover-bg`, `--input-bg`, `--btn-bg`, `--titlebar-bg`, `--modal-backdrop` 等），适配 `@media (prefers-color-scheme: dark)`，消除硬编码色彩与背景，实现桌面端、网页端与浏览器扩展三端统一高质感 Apple 风格深浅自适应。
+3. **构建管线无缝演进**：升级 `prepare-dist.mjs` 与 `sync-web-ui.mjs`，适配器与样式自动镜像到 Web 静态服务包与扩展包，杜绝代码复制漂移。
 
-此前里程碑回顾：**2.0.2 / 2.0.1 零警告与门禁加固**（三大 Rust 目标与 Python 套件 0 告警，门禁配置 `-D warnings` 与 `-W error::ResourceWarning`；README 进度版本纳入 `version.mjs`，72 处版本单一真实源）；**2.0.0 核心库 Clippy 零警告**（`core/pass_core` 清理，JS↔Rust 对拍与 FFI 零漂移）；**1.9.7–1.9.9 通行密钥 attestation 硬边界定案**（1.9.7 实测谷歌服务端拒绝匿名证明后恢复让位；1.9.8 桥接层补 `direct`/`enterprise` 守卫并修正误导性测试；1.9.9 守卫下移到合法性校验之后、拒绝路径断言去空转。1.9.7 无独立文档，细节以提交 `254ee692` 和 1.9.8/1.9.9 审查记录为准）；**WebAuthn PRF 扩展支持**（自 1.8.2）。
+此前里程碑回顾：**2.0.3 双端并发 CAS 混沌测试与 WebDAV ETag 防御**（多端竞态混沌测试覆盖并发 412 冲突收敛、双端密钥轮换平滑迁移与丢包幂等重放；输出 WASM 架构方案与平滑迁移路径）；**2.0.2 / 2.0.1 零警告与门禁加固**（三大 Rust 目标与 Python 套件 0 告警，门禁配置 `-D warnings` 与 `-W error::ResourceWarning`；README 进度版本纳入 `version.mjs`，72 处版本单一真实源）；**2.0.0 核心库 Clippy 零警告**（`core/pass_core` 清理，JS↔Rust 对拍与 FFI 零漂移）；**1.9.7–1.9.9 通行密钥 attestation 硬边界定案**；**WebAuthn PRF 扩展支持**（自 1.8.2）。
 
-详细进度：[`docs/20261104-1125-当前开发进度-antigravity.md`](docs/20261104-1125-当前开发进度-antigravity.md)
+详细进度：[`docs/20261108-0300-当前开发进度-antigravity.md`](docs/20261108-0300-当前开发进度-antigravity.md)
 
 ## 下一步待实现
 
-优先补齐 Safari 原团队签名安装与完整产品路径验收、Ubuntu 目标容器部署验收、推进 WASM 编译落地与合并引擎双轨制移除。现有“密钥留空即明文、不额外确认”策略保持不变。
+表现层巨石代码逐步模块化拆解（原生 ESM）、推进 WASM 合并引擎落地以废除双轨实现、本地存储 Revision 乐观锁闭环。现有“密钥留空即明文、不额外确认”策略保持不变。
 
-详细计划：[`docs/20261104-1125-下一步待实现-antigravity.md`](docs/20261104-1125-下一步待实现-antigravity.md)
+详细计划：[`docs/20261108-0300-下一步待实现-antigravity.md`](docs/20261108-0300-下一步待实现-antigravity.md)
 
 ## 当前入口
 
