@@ -81,6 +81,92 @@ export const normalizeUiPrefs = (raw = {}) => {
   };
 };
 
+export const computeUiStyleProperties = (uiPrefs = {}) => {
+  const prefs = normalizeUiPrefs(uiPrefs);
+  const textSize = Number(prefs.textFontSize || 14);
+  const buttonSize = Number(prefs.buttonFontSize || 13);
+  const font =
+    !prefs.fontFamily || prefs.fontFamily === "系统默认"
+      ? '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif'
+      : `"${prefs.fontFamily}", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif`;
+  return {
+    font,
+    textSizePx: `${textSize}px`,
+    buttonSizePx: `${buttonSize}px`,
+    scale: String(textSize / 14),
+    btnScale: String(buttonSize / 13),
+  };
+};
+
+export const SECRET_INPUT_IDS = Object.freeze([
+  "password",
+  "totpSecret",
+  "syncToken",
+  "syncEncKey",
+  "prevSyncEncKey",
+  "webdavPassword",
+  "lockPassword",
+  "lockPassword2",
+  "provisionSecretPassword",
+  "provisionKeyPassphrase",
+  "provisionToken",
+  "provisionEncKey",
+]);
+
+export const extractUiPrefsFromElements = (els = {}, currentPrefs = {}) =>
+  normalizeUiPrefs({
+    fontFamily: els.uiFontFamily?.value || "系统默认",
+    textFontSize: Number(els.uiTextSize?.value || 14),
+    buttonFontSize: Number(els.uiButtonSize?.value || 13),
+    toastDurationSeconds: Number(els.uiToastDuration?.value || 2.5),
+    showPasswordsGlobally: Boolean(els.showPasswordsGlobally?.checked),
+    exportDirectory: (els.exportDirectory?.value || "").trim(),
+    autoSyncIntervalMinutes: Number(els.autoSyncInterval?.value || 0),
+    previousEncryptionKey: (els.prevSyncEncKey?.value || "").trim(),
+    webdavEnabled: Boolean(els.webdavEnabled?.checked),
+    webdavBaseUrl: (els.webdavBaseUrl?.value || "").trim(),
+    webdavRemotePath: (els.webdavRemotePath?.value || "pass-sync-bundle-v2.json").trim(),
+    webdavUsername: (els.webdavUsername?.value || "").trim(),
+    webdavPassword: els.webdavPassword?.value || "",
+    syncPrimarySource: els.syncPrimarySource?.value || "selfHosted",
+    lastSyncPrimaryFingerprint: currentPrefs?.lastSyncPrimaryFingerprint || "",
+  });
+
+export const applyUiPrefsToElements = (els = {}, uiPrefs = {}) => {
+  const prefs = normalizeUiPrefs(uiPrefs);
+  if (els.uiFontFamily) els.uiFontFamily.value = prefs.fontFamily || "系统默认";
+  if (els.uiTextSize) {
+    els.uiTextSize.value = String(prefs.textFontSize || 14);
+    if (els.uiTextSizeVal) els.uiTextSizeVal.textContent = String(prefs.textFontSize || 14);
+  }
+  if (els.uiButtonSize) {
+    els.uiButtonSize.value = String(prefs.buttonFontSize || 13);
+    if (els.uiButtonSizeVal) els.uiButtonSizeVal.textContent = String(prefs.buttonFontSize || 13);
+  }
+  if (els.uiToastDuration) {
+    els.uiToastDuration.value = String(prefs.toastDurationSeconds || 2.5);
+    if (els.uiToastDurationVal) {
+      els.uiToastDurationVal.textContent = `${prefs.toastDurationSeconds || 2.5}s`;
+    }
+  }
+  if (els.showPasswordsGlobally) {
+    els.showPasswordsGlobally.checked = Boolean(prefs.showPasswordsGlobally);
+  }
+  if (els.exportDirectory) els.exportDirectory.value = prefs.exportDirectory || "";
+  if (els.autoSyncInterval) {
+    els.autoSyncInterval.value = String(prefs.autoSyncIntervalMinutes || 0);
+  }
+  if (els.prevSyncEncKey) els.prevSyncEncKey.value = prefs.previousEncryptionKey || "";
+  if (els.webdavEnabled) els.webdavEnabled.checked = Boolean(prefs.webdavEnabled);
+  if (els.webdavBaseUrl) els.webdavBaseUrl.value = prefs.webdavBaseUrl || "";
+  if (els.webdavRemotePath) {
+    els.webdavRemotePath.value = prefs.webdavRemotePath || "pass-sync-bundle-v2.json";
+  }
+  if (els.webdavUsername) els.webdavUsername.value = prefs.webdavUsername || "";
+  if (els.webdavPassword) els.webdavPassword.value = prefs.webdavPassword || "";
+  if (els.syncPrimarySource) els.syncPrimarySource.value = prefs.syncPrimarySource || "selfHosted";
+};
+
 /**
  * 账号列表单选 / 多选 / 范围选取模型
  */

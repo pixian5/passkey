@@ -60,6 +60,10 @@ import {
   normalizeLockState,
   createDefaultUiPrefs,
   normalizeUiPrefs,
+  computeUiStyleProperties,
+  SECRET_INPUT_IDS,
+  extractUiPrefsFromElements,
+  applyUiPrefsToElements,
   SelectionModel,
 } from "./store.js";
 import {
@@ -421,39 +425,20 @@ const toastWarn = (text) => showToast(text, "warn");
 
 const applyUiPrefs = () => {
   const root = document.documentElement;
-  const textSize = Number(uiPrefs.textFontSize || 14);
-  const buttonSize = Number(uiPrefs.buttonFontSize || 13);
-  const font =
-    !uiPrefs.fontFamily || uiPrefs.fontFamily === "系统默认"
-      ? '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif'
-      : `"${uiPrefs.fontFamily}", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif`;
+  const style = computeUiStyleProperties(uiPrefs);
 
-  root.style.setProperty("--ui-font", font);
-  root.style.setProperty("--ui-text-size", `${textSize}px`);
-  root.style.setProperty("--ui-button-size", `${buttonSize}px`);
-  root.style.setProperty("--ui-scale", String(textSize / 14));
-  root.style.setProperty("--ui-btn-scale", String(buttonSize / 13));
-  root.style.fontSize = `${textSize}px`;
-  root.style.fontFamily = font;
-  document.body.style.fontSize = `${textSize}px`;
-  document.body.style.fontFamily = font;
+  root.style.setProperty("--ui-font", style.font);
+  root.style.setProperty("--ui-text-size", style.textSizePx);
+  root.style.setProperty("--ui-button-size", style.buttonSizePx);
+  root.style.setProperty("--ui-scale", style.scale);
+  root.style.setProperty("--ui-btn-scale", style.btnScale);
+  root.style.fontSize = style.textSizePx;
+  root.style.fontFamily = style.font;
+  document.body.style.fontSize = style.textSizePx;
+  document.body.style.fontFamily = style.font;
 
   // Global password visibility for form secrets (respect per-field forceVisible).
-  const secretIds = [
-    "password",
-    "totpSecret",
-    "syncToken",
-    "syncEncKey",
-    "prevSyncEncKey",
-    "webdavPassword",
-    "lockPassword",
-    "lockPassword2",
-    "provisionSecretPassword",
-    "provisionKeyPassphrase",
-    "provisionToken",
-    "provisionEncKey",
-  ];
-  for (const id of secretIds) {
+  for (const id of SECRET_INPUT_IDS) {
     const input = document.getElementById(id);
     if (!(input instanceof HTMLInputElement)) continue;
     if (input.dataset.forceVisible === "1") continue;
@@ -507,78 +492,15 @@ const scheduleSaveUiPrefs = () => {
 
 const applyUiPrefsFromFormLive = () => {
   // Pull live values from form controls without waiting for Save button.
-  if (els.uiFontFamily) uiPrefs.fontFamily = els.uiFontFamily.value || "系统默认";
-  if (els.uiTextSize) uiPrefs.textFontSize = Number(els.uiTextSize.value || 14);
-  if (els.uiButtonSize) uiPrefs.buttonFontSize = Number(els.uiButtonSize.value || 13);
-  if (els.uiToastDuration) {
-    uiPrefs.toastDurationSeconds = Number(els.uiToastDuration.value || 2.5);
-  }
-  if (els.showPasswordsGlobally) {
-    uiPrefs.showPasswordsGlobally = Boolean(els.showPasswordsGlobally.checked);
-  }
-  if (els.exportDirectory) uiPrefs.exportDirectory = (els.exportDirectory.value || "").trim();
-  if (els.autoSyncInterval) {
-    uiPrefs.autoSyncIntervalMinutes = Number(els.autoSyncInterval.value || 0);
-  }
-  if (els.prevSyncEncKey) {
-    uiPrefs.previousEncryptionKey = (els.prevSyncEncKey.value || "").trim();
-  }
+  uiPrefs = extractUiPrefsFromElements(els, uiPrefs);
   applyUiPrefs();
   updateAutoSyncStatus();
 };
 
-const collectUiPrefs = () => ({
-  fontFamily: els.uiFontFamily?.value || "系统默认",
-  textFontSize: Number(els.uiTextSize?.value || 14),
-  buttonFontSize: Number(els.uiButtonSize?.value || 13),
-  toastDurationSeconds: Number(els.uiToastDuration?.value || 2.5),
-  showPasswordsGlobally: Boolean(els.showPasswordsGlobally?.checked),
-  exportDirectory: (els.exportDirectory?.value || "").trim(),
-  autoSyncIntervalMinutes: Number(els.autoSyncInterval?.value || 0),
-  previousEncryptionKey: (els.prevSyncEncKey?.value || "").trim(),
-  webdavEnabled: Boolean(els.webdavEnabled?.checked),
-  webdavBaseUrl: (els.webdavBaseUrl?.value || "").trim(),
-  webdavRemotePath: (els.webdavRemotePath?.value || "pass-sync-bundle-v2.json").trim(),
-  webdavUsername: (els.webdavUsername?.value || "").trim(),
-  webdavPassword: els.webdavPassword?.value || "",
-  syncPrimarySource: els.syncPrimarySource?.value || "selfHosted",
-  lastSyncPrimaryFingerprint: uiPrefs.lastSyncPrimaryFingerprint || "",
-});
+const collectUiPrefs = () => extractUiPrefsFromElements(els, uiPrefs);
 
 const fillUiPrefsForm = () => {
-  if (els.uiFontFamily) els.uiFontFamily.value = uiPrefs.fontFamily || "系统默认";
-  if (els.uiTextSize) {
-    els.uiTextSize.value = String(uiPrefs.textFontSize || 14);
-    if (els.uiTextSizeVal) els.uiTextSizeVal.textContent = String(uiPrefs.textFontSize || 14);
-  }
-  if (els.uiButtonSize) {
-    els.uiButtonSize.value = String(uiPrefs.buttonFontSize || 13);
-    if (els.uiButtonSizeVal) els.uiButtonSizeVal.textContent = String(uiPrefs.buttonFontSize || 13);
-  }
-  if (els.uiToastDuration) {
-    els.uiToastDuration.value = String(uiPrefs.toastDurationSeconds || 2.5);
-    if (els.uiToastDurationVal) {
-      els.uiToastDurationVal.textContent = `${uiPrefs.toastDurationSeconds || 2.5}s`;
-    }
-  }
-  if (els.showPasswordsGlobally) {
-    els.showPasswordsGlobally.checked = Boolean(uiPrefs.showPasswordsGlobally);
-  }
-  if (els.exportDirectory) els.exportDirectory.value = uiPrefs.exportDirectory || "";
-  if (els.autoSyncInterval) {
-    els.autoSyncInterval.value = String(uiPrefs.autoSyncIntervalMinutes || 0);
-  }
-  if (els.prevSyncEncKey) els.prevSyncEncKey.value = uiPrefs.previousEncryptionKey || "";
-  if (els.webdavEnabled) els.webdavEnabled.checked = Boolean(uiPrefs.webdavEnabled);
-  if (els.webdavBaseUrl) els.webdavBaseUrl.value = uiPrefs.webdavBaseUrl || "";
-  if (els.webdavRemotePath) {
-    els.webdavRemotePath.value = uiPrefs.webdavRemotePath || "pass-sync-bundle-v2.json";
-  }
-  if (els.webdavUsername) els.webdavUsername.value = uiPrefs.webdavUsername || "";
-  if (els.webdavPassword) els.webdavPassword.value = uiPrefs.webdavPassword || "";
-  if (els.syncPrimarySource) {
-    els.syncPrimarySource.value = uiPrefs.syncPrimarySource || "selfHosted";
-  }
+  applyUiPrefsToElements(els, uiPrefs);
   updateAutoSyncStatus();
 };
 

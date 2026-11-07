@@ -8,6 +8,10 @@ import {
   normalizeLockState,
   createDefaultUiPrefs,
   normalizeUiPrefs,
+  computeUiStyleProperties,
+  SECRET_INPUT_IDS,
+  extractUiPrefsFromElements,
+  applyUiPrefsToElements,
   SelectionModel,
   VaultStore,
 } from "../../codex-tauri/src/store.js";
@@ -62,6 +66,111 @@ test("normalizeUiPrefs merges defaults and validates numeric properties", () => 
   assert.equal(prefs.toastDurationSeconds, 3.5);
   assert.equal(prefs.showPasswordsGlobally, true);
   assert.equal(prefs.webdavRemotePath, "pass-sync-bundle-v2.json");
+});
+
+test("computeUiStyleProperties calculates css variables and font family fallback", () => {
+  const defaultStyles = computeUiStyleProperties();
+  assert.ok(defaultStyles.font.includes("SF Pro Text"));
+  assert.equal(defaultStyles.textSizePx, "14px");
+  assert.equal(defaultStyles.buttonSizePx, "13px");
+  assert.equal(defaultStyles.scale, "1");
+  assert.equal(defaultStyles.btnScale, "1");
+
+  const customStyles = computeUiStyleProperties({
+    fontFamily: "Fira Code",
+    textFontSize: 16,
+    buttonFontSize: 14,
+  });
+  assert.ok(customStyles.font.startsWith('"Fira Code"'));
+  assert.equal(customStyles.textSizePx, "16px");
+  assert.equal(customStyles.buttonSizePx, "14px");
+});
+
+test("SECRET_INPUT_IDS freezes list of all sensitive input IDs across dialogs", () => {
+  assert.ok(Array.isArray(SECRET_INPUT_IDS));
+  assert.ok(SECRET_INPUT_IDS.includes("password"));
+  assert.ok(SECRET_INPUT_IDS.includes("totpSecret"));
+  assert.ok(SECRET_INPUT_IDS.includes("provisionSecretPassword"));
+  assert.ok(SECRET_INPUT_IDS.includes("provisionToken"));
+  assert.equal(Object.isFrozen(SECRET_INPUT_IDS), true);
+});
+
+test("extractUiPrefsFromElements and applyUiPrefsToElements roundtrip UI preferences", () => {
+  const mockElements = {
+    uiFontFamily: { value: "PingFang SC" },
+    uiTextSize: { value: "15" },
+    uiTextSizeVal: { textContent: "" },
+    uiButtonSize: { value: "14" },
+    uiButtonSizeVal: { textContent: "" },
+    uiToastDuration: { value: "3" },
+    uiToastDurationVal: { textContent: "" },
+    showPasswordsGlobally: { checked: true },
+    exportDirectory: { value: "  /backups  " },
+    autoSyncInterval: { value: "10" },
+    prevSyncEncKey: { value: "  oldKey  " },
+    webdavEnabled: { checked: true },
+    webdavBaseUrl: { value: "  https://dav.example.com  " },
+    webdavRemotePath: { value: "  pass-backup.json  " },
+    webdavUsername: { value: "  davuser  " },
+    webdavPassword: { value: "davpass" },
+    syncPrimarySource: { value: "webdav" },
+  };
+
+  const extracted = extractUiPrefsFromElements(mockElements, { lastSyncPrimaryFingerprint: "fp123" });
+  assert.equal(extracted.fontFamily, "PingFang SC");
+  assert.equal(extracted.textFontSize, 15);
+  assert.equal(extracted.buttonFontSize, 14);
+  assert.equal(extracted.toastDurationSeconds, 3);
+  assert.equal(extracted.showPasswordsGlobally, true);
+  assert.equal(extracted.exportDirectory, "/backups");
+  assert.equal(extracted.autoSyncIntervalMinutes, 10);
+  assert.equal(extracted.previousEncryptionKey, "oldKey");
+  assert.equal(extracted.webdavEnabled, true);
+  assert.equal(extracted.webdavBaseUrl, "https://dav.example.com");
+  assert.equal(extracted.webdavRemotePath, "pass-backup.json");
+  assert.equal(extracted.webdavUsername, "davuser");
+  assert.equal(extracted.webdavPassword, "davpass");
+  assert.equal(extracted.syncPrimarySource, "webdav");
+  assert.equal(extracted.lastSyncPrimaryFingerprint, "fp123");
+
+  // Roundtrip back to target elements
+  const targetElements = {
+    uiFontFamily: {},
+    uiTextSize: {},
+    uiTextSizeVal: {},
+    uiButtonSize: {},
+    uiButtonSizeVal: {},
+    uiToastDuration: {},
+    uiToastDurationVal: {},
+    showPasswordsGlobally: {},
+    exportDirectory: {},
+    autoSyncInterval: {},
+    prevSyncEncKey: {},
+    webdavEnabled: {},
+    webdavBaseUrl: {},
+    webdavRemotePath: {},
+    webdavUsername: {},
+    webdavPassword: {},
+    syncPrimarySource: {},
+  };
+  applyUiPrefsToElements(targetElements, extracted);
+  assert.equal(targetElements.uiFontFamily.value, "PingFang SC");
+  assert.equal(targetElements.uiTextSize.value, "15");
+  assert.equal(targetElements.uiTextSizeVal.textContent, "15");
+  assert.equal(targetElements.uiButtonSize.value, "14");
+  assert.equal(targetElements.uiButtonSizeVal.textContent, "14");
+  assert.equal(targetElements.uiToastDuration.value, "3");
+  assert.equal(targetElements.uiToastDurationVal.textContent, "3s");
+  assert.equal(targetElements.showPasswordsGlobally.checked, true);
+  assert.equal(targetElements.exportDirectory.value, "/backups");
+  assert.equal(targetElements.autoSyncInterval.value, "10");
+  assert.equal(targetElements.prevSyncEncKey.value, "oldKey");
+  assert.equal(targetElements.webdavEnabled.checked, true);
+  assert.equal(targetElements.webdavBaseUrl.value, "https://dav.example.com");
+  assert.equal(targetElements.webdavRemotePath.value, "pass-backup.json");
+  assert.equal(targetElements.webdavUsername.value, "davuser");
+  assert.equal(targetElements.webdavPassword.value, "davpass");
+  assert.equal(targetElements.syncPrimarySource.value, "webdav");
 });
 
 test("SelectionModel manages single, toggle, range, and selectAll selection", () => {
