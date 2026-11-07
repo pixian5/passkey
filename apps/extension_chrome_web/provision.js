@@ -207,3 +207,9 @@ export const formatCsvImportSummary = (result = {}) =>
  */
 export const formatFolderSiteRuleSummary = (result = {}) =>
   result?.message || `已加入 ${result?.addedCount ?? 0} 个账号`;
+
+/**
+ * 格式化自建部署动作按钮进行时状态文案
+ */
+export const formatProgressElapsedText = (stageText = "正在处理…", elapsedSeconds = 0) =>
+  `${stageText}${elapsedSeconds > 0 ? ` 已耗时 ${elapsedSeconds}s` : ""}`;

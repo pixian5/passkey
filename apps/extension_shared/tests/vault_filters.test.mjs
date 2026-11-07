@@ -15,6 +15,7 @@ import {
   sortAccountsList,
   computeSearchPlaceholder,
   computeSidebarCounts,
+  parseSidebarFilterTag,
 } from "../../codex-tauri/src/vault_filters.js";
 
 test("accountKey and accountRecordId extract preferred key with fallbacks", () => {
@@ -196,4 +197,17 @@ test("computeSidebarCounts tallies active, passkeys, totp, recycle and active fo
     recycle: 2,
     folders: 1,
   });
+});
+
+test("parseSidebarFilterTag parses standard categories and custom folder IDs", () => {
+  assert.deepEqual(parseSidebarFilterTag("all"), { type: "all" });
+  assert.deepEqual(parseSidebarFilterTag("passkeys"), { type: "passkeys" });
+  assert.deepEqual(parseSidebarFilterTag("totp"), { type: "totp" });
+  assert.deepEqual(parseSidebarFilterTag("recycle"), { type: "recycle" });
+  assert.deepEqual(parseSidebarFilterTag("folder:my-work-folder"), {
+    type: "folder",
+    id: "my-work-folder",
+  });
+  assert.equal(parseSidebarFilterTag("unknown"), null);
+  assert.equal(parseSidebarFilterTag(""), null);
 });

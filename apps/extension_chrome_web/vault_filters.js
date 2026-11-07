@@ -145,3 +145,13 @@ export const computeSidebarCounts = (state = {}) => {
     folders: folders.length,
   };
 };
+
+export const parseSidebarFilterTag = (f = "") => {
+  const str = String(f || "").trim();
+  if (str === "all") return { type: "all" };
+  if (str === "passkeys") return { type: "passkeys" };
+  if (str === "totp") return { type: "totp" };
+  if (str === "recycle") return { type: "recycle" };
+  if (str.startsWith("folder:")) return { type: "folder", id: str.slice("folder:".length) };
+  return null;
+};

@@ -16,6 +16,7 @@ import {
   formatGoogleAuthImportSummary,
   formatCsvImportSummary,
   formatFolderSiteRuleSummary,
+  formatProgressElapsedText,
 } from "../../codex-tauri/src/provision.js";
 
 test("normalizeProvisionCredential sets safe defaults and trims inputs", () => {
@@ -198,4 +199,10 @@ test("formatGoogleAuthImportSummary, formatCsvImportSummary and formatFolderSite
 
   assert.equal(formatFolderSiteRuleSummary({ addedCount: 3 }), "已加入 3 个账号");
   assert.equal(formatFolderSiteRuleSummary({ message: "所有站点均已归档" }), "所有站点均已归档");
+});
+
+test("formatProgressElapsedText renders stage text with elapsed seconds suffix", () => {
+  assert.equal(formatProgressElapsedText("正在连接…", 0), "正在连接…");
+  assert.equal(formatProgressElapsedText("正在部署…", 5), "正在部署… 已耗时 5s");
+  assert.equal(formatProgressElapsedText(undefined, 2), "正在处理… 已耗时 2s");
 });

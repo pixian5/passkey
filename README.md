@@ -6,7 +6,7 @@
 
 ## 当前开发进度
 
-版本 `2.1.7`。本轮完成**Web 表现层模块化解耦（文件夹去重、删除影响计算与补偿队列调度纯算法抽离）**：
+版本 `2.1.8`。本轮完成**Web 表现层模块化解耦（文件夹去重、删除影响计算与补偿队列调度纯算法抽离）**：
 1. **文件夹去重与删除影响计算解耦（[`dedup.js`](apps/codex-tauri/src/dedup.js)）**：新增 `formatDedupGroupSummary` 去重卡片摘要、`dedupAccountLabel` 极值标识，以及 `calculateFolderDeletionImpact` 纯内存计算文件夹删除对活动与回收站账号的影响并输出安全提示，消除直接 DOM 耦合。
 2. **同步补偿队列调度与状态格式化解耦（[`sync_outbox_scheduler.js`](apps/codex-tauri/src/sync_outbox_scheduler.js)）**：收敛 `syncOutboxSourceLabel`、`formatOutboxModeLabel`、`formatAutoSyncStatus`、`summarizeOutboxQueue` 与 `calculateNextOutboxRetryDelay`（支持锁定与运行互斥、退避时延和边界截断）。
 3. **同构单测与多端分发闭环**：新增 [`apps/extension_shared/tests/dedup.test.mjs`](apps/extension_shared/tests/dedup.test.mjs) 并扩充调度器与 UI 工具单测，扩展层纯原生单测扩增至 264 项全绿通过；更新 `prepare-dist.mjs` 与 `sync-web-ui.mjs` 保持三端零构建同步。

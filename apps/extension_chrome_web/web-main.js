@@ -57,6 +57,7 @@ import {
   sortAccountsList,
   computeSearchPlaceholder,
   computeSidebarCounts,
+  parseSidebarFilterTag,
 } from "./vault_filters.js";
 import {
   createEmptyState,
@@ -112,6 +113,7 @@ import {
   formatGoogleAuthImportSummary,
   formatCsvImportSummary,
   formatFolderSiteRuleSummary,
+  formatProgressElapsedText,
 } from "./provision.js";
 
 // 统一排障日志前缀：每条日志都带当前应用版本号，方便跨端定位问题来源。
@@ -2460,12 +2462,8 @@ document.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
     const f = sideBtn.getAttribute("data-filter") || sideBtn.dataset.filter || "";
-    console.log("[pass] filter click", f);
-    if (f === "all") setFilter({ type: "all" });
-    else if (f === "passkeys") setFilter({ type: "passkeys" });
-    else if (f === "totp") setFilter({ type: "totp" });
-    else if (f === "recycle") setFilter({ type: "recycle" });
-    else if (f.startsWith("folder:")) setFilter({ type: "folder", id: f.slice(7) });
+    const parsed = parseSidebarFilterTag(f);
+    if (parsed) setFilter(parsed);
     else toastWarn(`未知筛选: ${f}`);
     return;
   }
@@ -2517,7 +2515,7 @@ const showProvisionProgress = (text) => {
   const updateElapsed = () => {
     const sec = Math.floor((Date.now() - provisionProgressStart) / 1000);
     if (els.btnRunProvision) {
-      els.btnRunProvision.textContent = `${provisionStageText}${sec > 0 ? ` 已耗时 ${sec}s` : ""}`;
+      els.btnRunProvision.textContent = formatProgressElapsedText(provisionStageText, sec);
     }
   };
   updateElapsed();
