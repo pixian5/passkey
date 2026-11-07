@@ -91,3 +91,40 @@ export const readFileAsText = (file) =>
     reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
     reader.readAsText(file);
   });
+
+export const formatUndoRedoTooltip = (status, type = "undo") => {
+  if (!status) {
+    return type === "undo" ? "当前没有可撤销的本地操作" : "当前没有可重做的本地操作";
+  }
+  const fallback = type === "undo" ? "最近一次本地操作" : "待重做的本地操作";
+  return String(status?.title || fallback)
+    .replace(/前自动备份$/, "")
+    .trim();
+};
+
+export const formatOperationHistoryRow = (entry, formatTimeFn = formatTime) => {
+  const stateLabel = entry?.stack === "redo" ? "可重做" : "可撤销";
+  const title = escapeHtml(entry?.title || "本地操作");
+  const time = escapeHtml(formatTimeFn(entry?.createdAtMs));
+  return `<div class="history-row-head"><span class="history-row-title">${title}</span><span class="history-row-meta">${stateLabel}</span></div><div class="history-row-meta">${time}</div>`;
+};
+
+export const formatLockStatusText = (
+  lockState = {},
+  { biometricAvailable = false, canBiometric = false } = {}
+) => {
+  if (!lockState?.enabled) {
+    return "状态：未启用";
+  }
+  const policyTitle = {
+    onceUntilQuit: "退出前不锁定",
+    idleTimeout: `空闲 ${lockState.idleLockMinutes || 5} 分钟锁定`,
+    onBackground: "切到后台锁定",
+  }[lockState.lockPolicy] || "退出前不锁定";
+  const bioHint = canBiometric
+    ? "；可用指纹"
+    : biometricAvailable && lockState.preferBiometrics
+      ? "；指纹待主密码初始化"
+      : "";
+  return `状态：已启用；${lockState.locked ? "已锁定" : "已解锁"}；${policyTitle}${bioHint}`;
+};

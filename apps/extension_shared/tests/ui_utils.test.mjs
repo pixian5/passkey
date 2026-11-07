@@ -10,6 +10,9 @@ import {
   formatTimeMs,
   formatTime,
   readFileAsText,
+  formatUndoRedoTooltip,
+  formatOperationHistoryRow,
+  formatLockStatusText,
 } from "../../codex-tauri/src/ui_utils.js";
 
 test("escapeHtml escapes HTML special characters properly", () => {
@@ -91,4 +94,46 @@ test("readFileAsText handles empty, string, and object payloads safely", async (
   assert.equal(await readFileAsText(null), "");
   assert.equal(await readFileAsText("hello world"), "hello world");
   assert.equal(await readFileAsText({ text: async () => "blob content" }), "blob content");
+});
+
+test("formatUndoRedoTooltip generates contextual hints or empty defaults", () => {
+  assert.equal(formatUndoRedoTooltip(null, "undo"), "当前没有可撤销的本地操作");
+  assert.equal(formatUndoRedoTooltip(null, "redo"), "当前没有可重做的本地操作");
+  assert.equal(formatUndoRedoTooltip({ title: "删除账号前自动备份" }, "undo"), "删除账号");
+  assert.equal(formatUndoRedoTooltip({ title: "修改备注" }, "undo"), "修改备注");
+  assert.equal(formatUndoRedoTooltip({}, "redo"), "待重做的本地操作");
+});
+
+test("formatOperationHistoryRow renders safe HTML row for undo/redo stacks", () => {
+  const dummyFormatTime = (ms) => "2026-01-01 12:00:00";
+  const undoHtml = formatOperationHistoryRow(
+    { title: "新增账号 <test>", stack: "undo", createdAtMs: 12345 },
+    dummyFormatTime
+  );
+  assert.ok(undoHtml.includes("&lt;test&gt;"));
+  assert.ok(undoHtml.includes("可撤销"));
+  assert.ok(undoHtml.includes("2026-01-01 12:00:00"));
+
+  const redoHtml = formatOperationHistoryRow(
+    { title: "重命名文件夹", stack: "redo", createdAtMs: 12345 },
+    dummyFormatTime
+  );
+  assert.ok(redoHtml.includes("可重做"));
+});
+
+test("formatLockStatusText renders policies and biometric hints accurately", () => {
+  assert.equal(formatLockStatusText({ enabled: false }), "状态：未启用");
+  assert.equal(formatLockStatusText(null), "状态：未启用");
+
+  const unlockedIdle = formatLockStatusText(
+    { enabled: true, locked: false, lockPolicy: "idleTimeout", idleLockMinutes: 10 },
+    { canBiometric: true }
+  );
+  assert.equal(unlockedIdle, "状态：已启用；已解锁；空闲 10 分钟锁定；可用指纹");
+
+  const lockedTouch = formatLockStatusText(
+    { enabled: true, locked: true, lockPolicy: "onBackground" },
+    { biometricAvailable: true, canBiometric: false }
+  );
+  assert.equal(lockedTouch, "状态：已启用；已锁定；切到后台锁定");
 });

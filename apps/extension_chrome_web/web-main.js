@@ -33,6 +33,9 @@ import {
   formatTimeMs,
   formatTime,
   readFileAsText,
+  formatUndoRedoTooltip,
+  formatOperationHistoryRow,
+  formatLockStatusText,
 } from "./ui_utils.js";
 import {
   formatDedupGroupSummary,
@@ -1862,64 +1865,40 @@ const refreshState = async () => {
 };
 
 const refreshUndoStatus = async () => {
+  let status = null;
   try {
-    const status = await invoke("get_undo_status");
-    const operationName = String(status?.title || "最近一次本地操作")
-      .replace(/前自动备份$/, "")
-      .trim();
-    const undoTooltip = status ? operationName : "当前没有可撤销的本地操作";
-    if (els.btnUndo) {
-      els.btnUndo.disabled = !status;
-      els.btnUndo.dataset.tooltip = undoTooltip;
-      els.btnUndo.textContent = "撤销";
-    }
-    if (els.historyUndoLatest) {
-      els.historyUndoLatest.disabled = !status;
-      els.historyUndoLatest.dataset.tooltip = undoTooltip;
-      els.historyUndoLatest.textContent = "撤销";
-    }
-  } catch (_) {
-    if (els.btnUndo) {
-      els.btnUndo.disabled = true;
-      els.btnUndo.textContent = "撤销";
-      els.btnUndo.dataset.tooltip = "当前没有可撤销的本地操作";
-    }
-    if (els.historyUndoLatest) {
-      els.historyUndoLatest.disabled = true;
-      els.historyUndoLatest.textContent = "撤销";
-      els.historyUndoLatest.dataset.tooltip = "当前没有可撤销的本地操作";
-    }
+    status = await invoke("get_undo_status");
+  } catch (_) {}
+  const undoTooltip = formatUndoRedoTooltip(status, "undo");
+  const disabled = !status;
+  if (els.btnUndo) {
+    els.btnUndo.disabled = disabled;
+    els.btnUndo.dataset.tooltip = undoTooltip;
+    els.btnUndo.textContent = "撤销";
+  }
+  if (els.historyUndoLatest) {
+    els.historyUndoLatest.disabled = disabled;
+    els.historyUndoLatest.dataset.tooltip = undoTooltip;
+    els.historyUndoLatest.textContent = "撤销";
   }
 };
 
 const refreshRedoStatus = async () => {
+  let status = null;
   try {
-    const status = await invoke("get_redo_status");
-    const operationName = String(status?.title || "待重做的本地操作")
-      .replace(/前自动备份$/, "")
-      .trim();
-    const redoTooltip = status ? operationName : "当前没有可重做的本地操作";
-    if (els.btnRedo) {
-      els.btnRedo.disabled = !status;
-      els.btnRedo.dataset.tooltip = redoTooltip;
-      els.btnRedo.textContent = "重做";
-    }
-    if (els.historyRedoLatest) {
-      els.historyRedoLatest.disabled = !status;
-      els.historyRedoLatest.dataset.tooltip = redoTooltip;
-      els.historyRedoLatest.textContent = "重做";
-    }
-  } catch (_) {
-    if (els.btnRedo) {
-      els.btnRedo.disabled = true;
-      els.btnRedo.textContent = "重做";
-      els.btnRedo.dataset.tooltip = "当前没有可重做的本地操作";
-    }
-    if (els.historyRedoLatest) {
-      els.historyRedoLatest.disabled = true;
-      els.historyRedoLatest.textContent = "重做";
-      els.historyRedoLatest.dataset.tooltip = "当前没有可重做的本地操作";
-    }
+    status = await invoke("get_redo_status");
+  } catch (_) {}
+  const redoTooltip = formatUndoRedoTooltip(status, "redo");
+  const disabled = !status;
+  if (els.btnRedo) {
+    els.btnRedo.disabled = disabled;
+    els.btnRedo.dataset.tooltip = redoTooltip;
+    els.btnRedo.textContent = "重做";
+  }
+  if (els.historyRedoLatest) {
+    els.historyRedoLatest.disabled = disabled;
+    els.historyRedoLatest.dataset.tooltip = redoTooltip;
+    els.historyRedoLatest.textContent = "重做";
   }
 };
 
@@ -1933,8 +1912,7 @@ const renderOperationHistory = (entries = []) => {
   [...entries].reverse().forEach((entry) => {
     const row = document.createElement("div");
     row.className = "history-row";
-    const stateLabel = entry.stack === "redo" ? "可重做" : "可撤销";
-    row.innerHTML = `<div class="history-row-head"><span class="history-row-title">${escapeHtml(entry.title || "本地操作")}</span><span class="history-row-meta">${stateLabel}</span></div><div class="history-row-meta">${escapeHtml(formatTime(entry.createdAtMs))}</div>`;
+    row.innerHTML = formatOperationHistoryRow(entry);
     els.historyList.appendChild(row);
   });
 };
@@ -1977,19 +1955,10 @@ const applyLockUi = () => {
     els.btnUnlock.classList.toggle("primary", !canBiometric);
   }
   if (els.lockStatus) {
-    const policyTitle = {
-      onceUntilQuit: "退出前不锁定",
-      idleTimeout: `空闲 ${lockState.idleLockMinutes || 5} 分钟锁定`,
-      onBackground: "切到后台锁定",
-    }[lockState.lockPolicy] || "退出前不锁定";
-    const bioHint = canBiometric
-      ? "；可用指纹"
-      : biometricAvailable && lockState.preferBiometrics
-        ? "；指纹待主密码初始化"
-        : "";
-    els.lockStatus.textContent = lockState.enabled
-      ? `状态：已启用；${lockState.locked ? "已锁定" : "已解锁"}；${policyTitle}${bioHint}`
-      : "状态：未启用";
+    els.lockStatus.textContent = formatLockStatusText(lockState, {
+      biometricAvailable: Boolean(biometricAvailable),
+      canBiometric,
+    });
   }
   if (els.lockPolicy) {
     els.lockPolicy.value = lockState.lockPolicy || "onceUntilQuit";
