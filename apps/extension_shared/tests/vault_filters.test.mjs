@@ -8,6 +8,11 @@ import {
   hasPasskey,
   folderIdsOf,
   matchesSearchQuery,
+  sameId,
+  moveIdInList,
+  filterPasskeysForAccount,
+  findAccountByAnyId,
+  sortAccountsList,
 } from "../../codex-tauri/src/vault_filters.js";
 
 test("accountKey and accountRecordId extract preferred key with fallbacks", () => {
@@ -75,4 +80,83 @@ test("matchesSearchQuery filters across fields with search criteria", () => {
 
   // Empty query matches all
   assert.equal(matchesSearchQuery(account, "", "all"), true);
+});
+
+test("sameId compares identifier strings case-insensitively", () => {
+  assert.equal(sameId("Folder-123", "folder-123"), true);
+  assert.equal(sameId("ABC", "abc"), true);
+  assert.equal(sameId("abc", "def"), false);
+  assert.equal(sameId("", null), true);
+  assert.equal(sameId(undefined, ""), true);
+});
+
+test("moveIdInList repositions items before or after reference target", () => {
+  const ids = ["a", "b", "c", "d"];
+
+  // Move "d" before "b" -> ["a", "d", "b", "c"]
+  assert.deepEqual(moveIdInList(ids, "d", "b", true), ["a", "d", "b", "c"]);
+
+  // Move "a" after "c" -> ["b", "c", "a", "d"]
+  assert.deepEqual(moveIdInList(ids, "a", "c", false), ["b", "c", "a", "d"]);
+
+  // Move "b" before "c" -> dest === from -> null (no change)
+  assert.equal(moveIdInList(ids, "b", "c", true), null);
+
+  // Non-existent id -> null
+  assert.equal(moveIdInList(ids, "nonexistent", "b", true), null);
+  assert.equal(moveIdInList(ids, "a", "nonexistent", true), null);
+});
+
+test("filterPasskeysForAccount correlates passkeys by credential ID or RP site", () => {
+  const account = {
+    sites: ["github.com", "api.github.com"],
+    passkeyCredentialIds: ["cred-123"],
+  };
+  const passkeys = [
+    { credentialIdB64u: "cred-123", rpId: "other.com" }, // matches credentialId
+    { credentialIdB64u: "cred-456", rpId: "github.com" }, // matches site rpId
+    { credentialIdB64u: "cred-789", rpId: "gitlab.com" }, // no match
+    { credentialIdB64u: "cred-123", rpId: "github.com", isDeleted: true }, // deleted, ignored
+    { credentialIdB64u: "cred-123", rpId: "github.com", isPermanentlyDeleted: true }, // permanently deleted, ignored
+  ];
+
+  const matched = filterPasskeysForAccount(account, passkeys);
+  assert.equal(matched.length, 2);
+  assert.equal(matched[0].credentialIdB64u, "cred-123");
+  assert.equal(matched[1].credentialIdB64u, "cred-456");
+});
+
+test("findAccountByAnyId matches account by recordId, id, or accountId", () => {
+  const accounts = [
+    { recordId: "rec-1", accountId: "acc-1", username: "user1" },
+    { id: "uuid-2", accountId: "acc-2", username: "user2" },
+  ];
+
+  assert.equal(findAccountByAnyId(accounts, "rec-1")?.username, "user1");
+  assert.equal(findAccountByAnyId(accounts, "ACC-1")?.username, "user1");
+  assert.equal(findAccountByAnyId(accounts, "uuid-2")?.username, "user2");
+  assert.equal(findAccountByAnyId(accounts, "acc-2")?.username, "user2");
+  assert.equal(findAccountByAnyId(accounts, "nonexistent"), undefined);
+});
+
+test("sortAccountsList respects modes, pinned status, regular order, and updatedAt", () => {
+  const acc1 = { recordId: "r1", accountId: "a1", username: "Charlie", sites: ["zebra.com"], isPinned: false, updatedAtMs: 100 };
+  const acc2 = { recordId: "r2", accountId: "a2", username: "Alice", sites: ["apple.com"], isPinned: true, pinnedSortOrder: 2, updatedAtMs: 200 };
+  const acc3 = { recordId: "r3", accountId: "a3", username: "Bob", sites: ["banana.com"], isPinned: true, pinnedSortOrder: 1, updatedAtMs: 150 };
+  const acc4 = { recordId: "r4", accountId: "a4", username: "David", sites: ["delta.com"], isPinned: false, updatedAtMs: 300 };
+
+  const list = [acc1, acc2, acc3, acc4];
+
+  // usernameAZ
+  const byUsername = sortAccountsList(list, { mode: "usernameAZ" });
+  assert.deepEqual(byUsername.map((a) => a.username), ["Alice", "Bob", "Charlie", "David"]);
+
+  // siteAZ
+  const bySite = sortAccountsList(list, { mode: "siteAZ" });
+  assert.deepEqual(bySite.map((a) => a.sites[0]), ["apple.com", "banana.com", "delta.com", "zebra.com"]);
+
+  // default mode: pinned items first (sorted by pinnedSortOrder: acc3 then acc2),
+  // then unpinned items (sorted by regularOrderIds: r1 before r4)
+  const defaultSorted = sortAccountsList(list, { mode: "default", regularOrderIds: ["r1", "r4"] });
+  assert.deepEqual(defaultSorted.map((a) => a.recordId), ["r3", "r2", "r1", "r4"]);
 });

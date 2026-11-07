@@ -31,6 +31,11 @@ import {
   hasPasskey,
   folderIdsOf,
   matchesSearchQuery,
+  sameId,
+  moveIdInList,
+  filterPasskeysForAccount,
+  findAccountByAnyId as findAccountInList,
+  sortAccountsList,
 } from "./vault_filters.js";
 import {
   createEmptyState,
@@ -740,16 +745,7 @@ window.addEventListener("unhandledrejection", (e) => {
   toastError(`请求失败: ${e.reason || e}`);
 });
 
-const passkeysForAccount = (a) => {
-  const ids = new Set((a.passkeyCredentialIds || []).map(String));
-  const sites = new Set((a.sites || []).map((s) => String(s).toLowerCase()));
-  return (state.passkeys || []).filter((p) => {
-    if (p.isDeleted || p.isPermanentlyDeleted) return false;
-    if (ids.has(p.credentialIdB64u)) return true;
-    const rp = (p.rpId || "").toLowerCase();
-    return rp && sites.has(rp);
-  });
-};
+const passkeysForAccount = (a) => filterPasskeysForAccount(a, state.passkeys);
 
 const query = () => (els.searchInput?.value || "").trim().toLowerCase();
 const searchField = () => els.searchField?.value || "all";
@@ -769,32 +765,7 @@ const regularOrderIdsForScope = (scopeId = accountOrderScopeId()) => {
 
 const sortAccounts = (list, scopeId = accountOrderScopeId()) => {
   const mode = els.sortMode?.value || "default";
-  const arr = [...list];
-  const cmp = (x, y) => String(x || "").localeCompare(String(y || ""), "en");
-  const regularOrder = new Map(
-    regularOrderIdsForScope(scopeId).map((id, index) => [String(id).toLowerCase(), index])
-  );
-  arr.sort((a, b) => {
-    if (mode === "usernameAZ") return cmp(a.username, b.username);
-    if (mode === "siteAZ") return cmp((a.sites || [])[0], (b.sites || [])[0]);
-    // default: pinned first, then manual order within each section
-    const ap = isPinnedAccount(a);
-    const bp = isPinnedAccount(b);
-    if (ap !== bp) return ap ? -1 : 1;
-    if (ap && bp) {
-      const byPin = compareOptionalOrder(a.pinnedSortOrder, b.pinnedSortOrder);
-      if (byPin) return byPin;
-    } else {
-      const leftRank = regularOrder.get(accountRecordId(a).toLowerCase());
-      const rightRank = regularOrder.get(accountRecordId(b).toLowerCase());
-      const byRegularOrder = compareOptionalOrder(leftRank, rightRank);
-      if (byRegularOrder) return byRegularOrder;
-    }
-    const byUpdated = (b.updatedAtMs || 0) - (a.updatedAtMs || 0);
-    if (byUpdated) return byUpdated;
-    return cmp(a.accountId, b.accountId);
-  });
-  return arr;
+  return sortAccountsList(list, { mode, regularOrderIds: regularOrderIdsForScope(scopeId) });
 };
 
 const filteredAccounts = () => {
@@ -1260,9 +1231,6 @@ const dnd = {
   committing: false,
 };
 
-const sameId = (a, b) =>
-  String(a || "").toLowerCase() === String(b || "").toLowerCase();
-
 const ensureLineEl = () => {
   if (dnd.lineEl && document.body.contains(dnd.lineEl)) return dnd.lineEl;
   const line = document.createElement("div");
@@ -1324,27 +1292,7 @@ const shouldIgnoreClick = (e) => {
   return true;
 };
 
-const moveIdInList = (ids, sourceId, targetId, before) => {
-  const list = ids.map(String);
-  const from = list.findIndex((id) => sameId(id, sourceId));
-  const to = list.findIndex((id) => sameId(id, targetId));
-  if (from < 0 || to < 0) return null;
-  let dest = before ? to : to + 1;
-  if (from < dest) dest -= 1;
-  if (dest === from) return null;
-  const next = [...list];
-  const [moved] = next.splice(from, 1);
-  next.splice(Math.max(0, Math.min(next.length, dest)), 0, moved);
-  return next;
-};
-
-const findAccountByAnyId = (id) =>
-  (state.activeAccounts || []).find(
-    (a) =>
-      sameId(accountKey(a), id) ||
-      sameId(accountRecordId(a), id) ||
-      sameId(a.accountId, id)
-  );
+const findAccountByAnyId = (id) => findAccountInList(state.activeAccounts, id);
 
 const pinScopeAccounts = (pinned) =>
   sortAccounts((state.activeAccounts || []).filter((a) => isPinnedAccount(a) === pinned));

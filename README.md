@@ -6,20 +6,20 @@
 
 ## 当前开发进度
 
-版本 `2.1.0`。本轮完成**Web 表现层模块化解耦（同步预览、差异裁决比对与状态格式化核心抽离）**：
-1. **同步比对与预览算法解耦（[`sync_preview.js`](apps/codex-tauri/src/sync_preview.js)）**：抽离全部纯算法与格式化逻辑，削减 `main.js` 约 160 行内联代码；实现 `calculateSyncPayloadDiff` 纯内存比对本地与合并快照、`summarizeSyncAccountDiff` 生成按字段变更摘要（严格只输出修改字段标签，**绝不泄露密码或密钥**）、`previewRecordKey` 稳定对齐 CRDT 合并身份。
-2. **多端状态诊断与警示文本收敛**：封装 `formatSyncPushState`、`formatSyncDecisionSummaryLines` 与 `overwriteWarningText`，统一三端全场景（预览、覆盖、补偿重试、安全阻断）的状态呈现。
-3. **同构单测与多端分发闭环**：新增 [`apps/extension_shared/tests/sync_preview.test.mjs`](apps/extension_shared/tests/sync_preview.test.mjs)（9 项用例），扩展层纯原生单测扩增至 249 项全绿通过；更新 `prepare-dist.mjs` 与 `sync-web-ui.mjs` 保持三端零构建同步。总结沉淀至 [`经验/06-前端表现层解耦与无构建单测.md`](经验/06-前端表现层解耦与无构建单测.md)。
+版本 `2.1.1`。本轮完成**Web 表现层模块化解耦（实体排序、列表元素位移与 Passkey 关联算法抽离）**：
+1. **实体排序与列表位移纯函数解耦（[`vault_filters.js`](apps/codex-tauri/src/vault_filters.js)）**：实现 `moveIdInList` 纯算法列表元素相对位移、`sortAccountsList` 多模式排序（置顶优先、`regularOrderIds` 显式顺位、更新时间倒序兜底）、`filterPasskeysForAccount` 双重关联过滤（凭据 ID 与 RP 域名匹配，墓碑安全剔除）与 `findAccountByAnyId`。
+2. **表现层主脚本调用精简**：`main.js` 全面接入 `vault_filters.js` 纯函数，消除内联重复逻辑与直接 DOM 比较耦合。
+3. **同构单测与多端分发闭环**：扩充 [`apps/extension_shared/tests/vault_filters.test.mjs`](apps/extension_shared/tests/vault_filters.test.mjs)（新增 5 项用例），扩展层纯原生单测扩增至 254 项全绿通过；更新 `prepare-dist.mjs` 与 `sync-web-ui.mjs` 保持三端零构建同步。
 
-此前里程碑回顾：**2.0.9 本地存储 Revision 乐观并发锁与三端 CAS 契约对齐**（Tauri SQLite、Pass Web 与扩展统一 `businessRevision` 递增与 `LOCAL_CHANGED` 守卫）；**2.0.8 Web 表现层模态弹窗与异步确认框解耦**（剥离 `dialog.js` 与 `ModalEscapeHandler`，Node 单测 240 用例）；**2.0.7 Web 表现层响应式 Store 与选择模型拆分**（剥离 `store.js` 与 `SelectionModel`，Node 单测 234 用例）；**2.0.6 Web 表现层工具集与过滤逻辑拆分**（剥离 `ui_utils.js` 与 `vault_filters.js`，Node 单测 228 用例）；**2.0.5 Web 表现层算法解耦**（剥离 `totp.js`，RFC 6238 与 Protobuf 单测闭环）；**2.0.4 Web 界面通信切面解耦与深色模式**（新建 `adapter.js` 抽象 PassClientAdapter，72 命令契约 100% 保持；引入深浅自适应变量）；**2.0.3 双端并发 CAS 混沌测试与 WebDAV ETag 防御**；**2.0.2 / 2.0.1 零警告与门禁加固**；**2.0.0 核心库 Clippy 零警告**。
+此前里程碑回顾：**2.1.0 Web 表现层同步预览与差异裁决比对解耦**（剥离 `sync_preview.js`，Node 单测 249 用例）；**2.0.9 本地存储 Revision 乐观并发锁与三端 CAS 契约对齐**（Tauri SQLite、Pass Web 与扩展统一 `businessRevision` 递增与 `LOCAL_CHANGED` 守卫）；**2.0.8 Web 表现层模态弹窗与异步确认框解耦**（剥离 `dialog.js` 与 `ModalEscapeHandler`，Node 单测 240 用例）；**2.0.7 Web 表现层响应式 Store 与选择模型拆分**（剥离 `store.js` 与 `SelectionModel`，Node 单测 234 用例）；**2.0.6 Web 表现层工具集与过滤逻辑拆分**（剥离 `ui_utils.js` 与 `vault_filters.js`，Node 单测 228 用例）；**2.0.5 Web 表现层算法解耦**（剥离 `totp.js`，RFC 6238 与 Protobuf 单测闭环）；**2.0.4 Web 界面通信切面解耦与深色模式**（新建 `adapter.js` 抽象 PassClientAdapter，72 命令契约 100% 保持；引入深浅自适应变量）；**2.0.3 双端并发 CAS 混沌测试与 WebDAV ETag 防御**；**2.0.2 / 2.0.1 零警告与门禁加固**；**2.0.0 核心库 Clippy 零警告**。
 
-详细进度：[`docs/20261108-0430-当前开发进度-antigravity.md`](docs/20261108-0430-当前开发进度-antigravity.md)
+详细进度：[`docs/20261108-0445-当前开发进度-antigravity.md`](docs/20261108-0445-当前开发进度-antigravity.md)
 
 ## 下一步待实现
 
 推进 Web 表现层模块化收尾（导入导出与保密库去重逻辑解耦）、推进 WASM 合并引擎落地以废除双轨实现（Phase 4，待用户授权安装目标）、Android 凭据管理提供者健全（Phase 6）、Safari 扩展原团队证书签名与独立发布。现有“密钥留空即明文、不额外确认”策略保持不变。
 
-详细计划：[`docs/20261108-0430-下一步待实现-antigravity.md`](docs/20261108-0430-下一步待实现-antigravity.md)
+详细计划：[`docs/20261108-0445-下一步待实现-antigravity.md`](docs/20261108-0445-下一步待实现-antigravity.md)
 
 ## 当前入口
 

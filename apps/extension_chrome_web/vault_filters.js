@@ -2,6 +2,8 @@
  * 保险库实体识别、排序与条件筛选辅助 (Vault Entity & Filter Utilities)
  */
 
+import { compareOptionalOrder } from "./ui_utils.js";
+
 export const accountKey = (a) => String(a?.recordId || a?.id || a?.accountId || "").trim();
 
 export const accountRecordId = (a) => String(a?.recordId || a?.id || a?.accountId || "").trim();
@@ -34,4 +36,70 @@ export const matchesSearchQuery = (account, queryText = "", field = "all") => {
             : [a.username, a.accountId, a.password, a.note, ...(a.sites || [])];
   const hay = parts.filter(Boolean).join(" ").toLowerCase();
   return hay.includes(q);
+};
+
+export const sameId = (a, b) =>
+  String(a || "").toLowerCase() === String(b || "").toLowerCase();
+
+export const moveIdInList = (ids, sourceId, targetId, before) => {
+  const list = (ids || []).map(String);
+  const from = list.findIndex((id) => sameId(id, sourceId));
+  const to = list.findIndex((id) => sameId(id, targetId));
+  if (from < 0 || to < 0) return null;
+  let dest = before ? to : to + 1;
+  if (from < dest) dest -= 1;
+  if (dest === from) return null;
+  const next = [...list];
+  const [moved] = next.splice(from, 1);
+  next.splice(Math.max(0, Math.min(next.length, dest)), 0, moved);
+  return next;
+};
+
+export const filterPasskeysForAccount = (account, passkeys = []) => {
+  const a = account || {};
+  const ids = new Set((a.passkeyCredentialIds || []).map(String));
+  const sites = new Set((a.sites || []).map((s) => String(s).toLowerCase()));
+  return (passkeys || []).filter((p) => {
+    if (p?.isDeleted || p?.isPermanentlyDeleted) return false;
+    if (ids.has(p?.credentialIdB64u)) return true;
+    const rp = (p?.rpId || "").toLowerCase();
+    return rp && sites.has(rp);
+  });
+};
+
+export const findAccountByAnyId = (accounts, id) =>
+  (accounts || []).find(
+    (a) =>
+      sameId(accountKey(a), id) ||
+      sameId(accountRecordId(a), id) ||
+      sameId(a?.accountId, id)
+  );
+
+export const sortAccountsList = (list, { mode = "default", regularOrderIds = [] } = {}) => {
+  const arr = [...(list || [])];
+  const cmp = (x, y) => String(x || "").localeCompare(String(y || ""), "en");
+  const regularOrder = new Map(
+    (regularOrderIds || []).map((id, index) => [String(id).toLowerCase(), index])
+  );
+  arr.sort((a, b) => {
+    if (mode === "usernameAZ") return cmp(a?.username, b?.username);
+    if (mode === "siteAZ") return cmp((a?.sites || [])[0], (b?.sites || [])[0]);
+    // default: pinned first, then manual order within each section
+    const ap = isPinnedAccount(a);
+    const bp = isPinnedAccount(b);
+    if (ap !== bp) return ap ? -1 : 1;
+    if (ap && bp) {
+      const byPin = compareOptionalOrder(a?.pinnedSortOrder, b?.pinnedSortOrder);
+      if (byPin) return byPin;
+    } else {
+      const leftRank = regularOrder.get(accountRecordId(a).toLowerCase());
+      const rightRank = regularOrder.get(accountRecordId(b).toLowerCase());
+      const byRegularOrder = compareOptionalOrder(leftRank, rightRank);
+      if (byRegularOrder) return byRegularOrder;
+    }
+    const byUpdated = (b?.updatedAtMs || 0) - (a?.updatedAtMs || 0);
+    if (byUpdated) return byUpdated;
+    return cmp(a?.accountId || accountKey(a), b?.accountId || accountKey(b));
+  });
+  return arr;
 };

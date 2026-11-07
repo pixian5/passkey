@@ -1,6 +1,6 @@
 (() => {
   // extension_version.js
-  var PASS_EXTENSION_VERSION = "2.1.0";
+  var PASS_EXTENSION_VERSION = "2.1.1";
 
   // webauthn_client_data.js
   function normalizeHttpOrigin(value) {
