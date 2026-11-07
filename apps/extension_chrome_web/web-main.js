@@ -94,6 +94,9 @@ import {
   summarizeSyncAccountDiff,
   formatSyncDecisionSummaryLines,
   overwriteWarningText,
+  computeSyncSources,
+  computeSyncConfirmationWarnings,
+  formatSyncFailureLine,
 } from "./sync_preview.js";
 import {
   normalizeProvisionCredential,
@@ -2148,41 +2151,28 @@ const runSyncMode = async (mode, { quiet = false, forceOutboxRetry = !quiet, res
   const fingerprint = primaryFingerprint();
   const previousFingerprint = String(uiPrefs.lastSyncPrimaryFingerprint || "").trim();
   if (!quiet) {
-    // 覆盖模式警告与主同步源指纹变更警告合并为「一次程序原生弹窗」（应用内样式弹窗，
-    // 即 requestActionConfirmation 的 #actionConfirmModal），不再使用浏览器原生 window.confirm，
-    // 避免「程序原生弹窗 + 浏览器原生弹窗」两类弹窗叠加导致重复点击。
-    const warnings = [];
-    if (mode !== "merge") {
-      warnings.push(overwriteWarningText(mode));
-    }
-    if (previousFingerprint && previousFingerprint !== fingerprint) {
-      warnings.push(`检测到主同步源与上次成功同步不一致。\n\n上次：${previousFingerprint}\n当前：${fingerprint}\n\n不同设备/客户端应使用同一主源，否则可能产生分叉。`);
-    }
-    if (warnings.length) {
-      const label = mode === "merge" ? "合并" : (mode === "remoteOverwriteLocal" ? "云端覆盖本地" : "本地覆盖云端");
+    const confirmation = computeSyncConfirmationWarnings({
+      mode,
+      previousFingerprint,
+      fingerprint,
+    });
+    if (confirmation.needsConfirmation) {
       const confirmed = await requestActionConfirmation({
-        title: `${label}确认`,
-        message: `${warnings.join("\n\n")}\n\n确定继续执行${label}？`,
-        confirmText: mode === "merge" ? "继续同步" : "继续覆盖",
-        danger: mode !== "merge",
+        title: confirmation.title,
+        message: confirmation.message,
+        confirmText: confirmation.confirmText,
+        danger: confirmation.danger,
       });
       if (!confirmed) return [];
     }
   }
   const reports = [];
   const failures = [];
-  const sources = [];
-  if (els.syncEnabled?.checked) sources.push("selfHosted");
-  if (els.webdavEnabled?.checked) sources.push("webdav");
-  if (!sources.length) {
-    throw new Error("请先启用自建服务器或 WebDAV 同步");
-  }
-  const configuredPrimary = els.syncPrimarySource?.value || "selfHosted";
-  const preferred = sources.includes(configuredPrimary) ? configuredPrimary : sources[0];
-  if (preferred === "webdav") {
-    // WebDAV without reliable ETag cannot be a safe primary; backend also enforces this.
-  }
-  const ordered = [...sources].sort((left, right) => (right === preferred) - (left === preferred));
+  const { sources, preferred, ordered } = computeSyncSources({
+    syncEnabled: Boolean(els.syncEnabled?.checked),
+    webdavEnabled: Boolean(els.webdavEnabled?.checked),
+    configuredPrimary: els.syncPrimarySource?.value || "selfHosted",
+  });
   if (platformCapabilities.managedMultiSourceSync) {
     try {
       const raw = await invoke("sync_now_mode", { mode, forceOutboxRetry, resumeOutbox });
@@ -2192,9 +2182,7 @@ const runSyncMode = async (mode, { quiet = false, forceOutboxRetry = !quiet, res
       report.source = sourceName;
       reports.push(report);
       if (report.ok === false) {
-        const code = report.code ? ` [${report.code}]` : "";
-        const trace = shortSyncTrace(report);
-        failures.push(`${report.source}${code}：${report.message || "同步未完成"}${trace ? `（${trace}）` : ""}`);
+        failures.push(formatSyncFailureLine(report));
       } else if (report.applied || report.pushed || report.dryRun === false) {
         uiPrefs.lastSyncPrimaryFingerprint = fingerprint;
         try { await invoke("set_ui_prefs", { prefs: collectUiPrefs() }); } catch (_) {}
@@ -2215,9 +2203,7 @@ const runSyncMode = async (mode, { quiet = false, forceOutboxRetry = !quiet, res
       const report = { source: source === "selfHosted" ? "自建服务器" : "WebDAV", ...(result.report || {}) };
       reports.push(report);
       if (source === preferred && report.ok === false) {
-        const code = report.code ? ` [${report.code}]` : "";
-        const trace = shortSyncTrace(report);
-        failures.push(`${report.source}${code}：${report.message || "主同步源未完成"}${trace ? `（${trace}）` : ""}`);
+        failures.push(formatSyncFailureLine(report));
         break;
       }
       if (source === preferred && report.ok !== false && (report.applied || report.pushed || report.dryRun === false)) {

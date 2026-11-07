@@ -184,3 +184,64 @@ export const overwriteWarningText = (mode) => (mode === "remoteOverwriteLocal"
       "云端独有、本地没有的新增与修改将被丢弃（含云端已保留的永久删除墓碑），执行后无法通过“合并”自动找回。",
       "建议先用“预览合并”确认差异。",
     ].join("\n\n"));
+
+export const computeSyncSources = ({
+  syncEnabled = false,
+  webdavEnabled = false,
+  configuredPrimary = "selfHosted",
+} = {}) => {
+  const sources = [];
+  if (syncEnabled) sources.push("selfHosted");
+  if (webdavEnabled) sources.push("webdav");
+  if (!sources.length) {
+    throw new Error("请先启用自建服务器或 WebDAV 同步");
+  }
+  const preferred = sources.includes(configuredPrimary) ? configuredPrimary : sources[0];
+  const ordered = [...sources].sort((left, right) => (right === preferred) - (left === preferred));
+  return {
+    sources,
+    preferred,
+    ordered,
+  };
+};
+
+export const computeSyncConfirmationWarnings = ({
+  mode = "merge",
+  previousFingerprint = "",
+  fingerprint = "",
+} = {}) => {
+  const warnings = [];
+  if (mode !== "merge") {
+    warnings.push(overwriteWarningText(mode));
+  }
+  const prev = String(previousFingerprint || "").trim();
+  const curr = String(fingerprint || "").trim();
+  if (prev && curr && prev !== curr) {
+    warnings.push(
+      `检测到主同步源与上次成功同步不一致。\n\n上次：${prev}\n当前：${curr}\n\n不同设备/客户端应使用同一主源，否则可能产生分叉。`
+    );
+  }
+  const label =
+    mode === "merge"
+      ? "合并"
+      : mode === "remoteOverwriteLocal"
+        ? "云端覆盖本地"
+        : "本地覆盖云端";
+  return {
+    needsConfirmation: warnings.length > 0,
+    warnings,
+    label,
+    title: `${label}确认`,
+    message: `${warnings.join("\n\n")}\n\n确定继续执行${label}？`,
+    confirmText: mode === "merge" ? "继续同步" : "继续覆盖",
+    danger: mode !== "merge",
+  };
+};
+
+export const formatSyncFailureLine = (report = {}) => {
+  const code = report?.code ? ` [${report.code}]` : "";
+  const trace = shortSyncTrace(report);
+  const source = report?.source || "同步服务";
+  const message = report?.message || "同步未完成";
+  return `${source}${code}：${message}${trace ? `（${trace}）` : ""}`;
+};

@@ -15,6 +15,9 @@ import {
   summarizeSyncAccountDiff,
   formatSyncDecisionSummaryLines,
   overwriteWarningText,
+  computeSyncSources,
+  computeSyncConfirmationWarnings,
+  formatSyncFailureLine,
 } from "../../codex-tauri/src/sync_preview.js";
 
 test("SYNC_APPLIED_TEXT provides standard Chinese translations for all 3 modes", () => {
@@ -214,4 +217,73 @@ test("overwriteWarningText provides distinct warnings for remote vs local overwr
   const localWarning = overwriteWarningText("localOverwriteRemote");
   assert.match(localWarning, /本地覆盖云端：以本地内容为准，云端会被本地整份替换/);
   assert.match(localWarning, /云端独有、本地没有的新增与修改将被丢弃/);
+});
+
+test("computeSyncSources resolves enabled sources and orders preferred first", () => {
+  assert.throws(
+    () => computeSyncSources({ syncEnabled: false, webdavEnabled: false }),
+    /请先启用自建服务器或 WebDAV 同步/
+  );
+
+  const onlySelfHosted = computeSyncSources({ syncEnabled: true, webdavEnabled: false });
+  assert.deepEqual(onlySelfHosted.sources, ["selfHosted"]);
+  assert.equal(onlySelfHosted.preferred, "selfHosted");
+  assert.deepEqual(onlySelfHosted.ordered, ["selfHosted"]);
+
+  const bothWithWebdavPreferred = computeSyncSources({
+    syncEnabled: true,
+    webdavEnabled: true,
+    configuredPrimary: "webdav",
+  });
+  assert.deepEqual(bothWithWebdavPreferred.sources, ["selfHosted", "webdav"]);
+  assert.equal(bothWithWebdavPreferred.preferred, "webdav");
+  assert.deepEqual(bothWithWebdavPreferred.ordered, ["webdav", "selfHosted"]);
+});
+
+test("computeSyncConfirmationWarnings handles merge and overwrite modes with fingerprint drift", () => {
+  // Merge mode with no fingerprint drift needs no confirmation
+  const mergeNoDrift = computeSyncConfirmationWarnings({
+    mode: "merge",
+    previousFingerprint: "fp1",
+    fingerprint: "fp1",
+  });
+  assert.equal(mergeNoDrift.needsConfirmation, false);
+  assert.equal(mergeNoDrift.danger, false);
+
+  // Merge mode with fingerprint drift requires confirmation
+  const mergeWithDrift = computeSyncConfirmationWarnings({
+    mode: "merge",
+    previousFingerprint: "fp-old",
+    fingerprint: "fp-new",
+  });
+  assert.equal(mergeWithDrift.needsConfirmation, true);
+  assert.equal(mergeWithDrift.danger, false);
+  assert.match(mergeWithDrift.message, /检测到主同步源与上次成功同步不一致/);
+  assert.equal(mergeWithDrift.confirmText, "继续同步");
+
+  // Overwrite mode is always dangerous and requires confirmation
+  const overwrite = computeSyncConfirmationWarnings({
+    mode: "remoteOverwriteLocal",
+    fingerprint: "fp1",
+  });
+  assert.equal(overwrite.needsConfirmation, true);
+  assert.equal(overwrite.danger, true);
+  assert.match(overwrite.message, /云端覆盖本地/);
+  assert.equal(overwrite.confirmText, "继续覆盖");
+});
+
+test("formatSyncFailureLine formats error message with code and session trace", () => {
+  const lineWithTrace = formatSyncFailureLine({
+    source: "自建服务器",
+    code: "ETAG_MISMATCH",
+    message: "远端已有更新版本",
+    syncSessionId: "12345678-abcd-ef01-2345-6789abcdef01",
+  });
+  assert.equal(lineWithTrace, "自建服务器 [ETAG_MISMATCH]：远端已有更新版本（同步编号 6789ABCD）");
+
+  const lineSimple = formatSyncFailureLine({
+    source: "WebDAV",
+    message: "连接超时",
+  });
+  assert.equal(lineSimple, "WebDAV：连接超时");
 });
