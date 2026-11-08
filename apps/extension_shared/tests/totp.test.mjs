@@ -12,6 +12,7 @@ import {
   parseOtpAuthUri,
   readProtoVarint,
   googleMigrationEntries,
+  resolveTotpPasteData,
 } from "../../codex-tauri/src/totp.js";
 
 test("base32 encode and decode roundtrips correctly", () => {
@@ -124,3 +125,36 @@ test("googleMigrationEntries decodes migration URI protobuf data", () => {
   assert.equal(entries[0].site, "exampleservice.com");
   assert.equal(entries[0].secret, base32Encode(secretBytes));
 });
+
+test("resolveTotpPasteData resolves URI, raw secret, and invalid inputs", () => {
+  // Empty
+  assert.equal(resolveTotpPasteData("").success, false);
+  assert.equal(resolveTotpPasteData("   ").success, false);
+
+  // Valid URI
+  const uri = "otpauth://totp/GitHub:alice?secret=JBSWY3DPEHPK3PXP&issuer=GitHub";
+  const uriRes = resolveTotpPasteData(uri);
+  assert.equal(uriRes.success, true);
+  assert.equal(uriRes.isUri, true);
+  assert.equal(uriRes.payload.secret, "JBSWY3DPEHPK3PXP");
+  assert.equal(uriRes.payload.username, "alice");
+  assert.equal(uriRes.payload.site, "github.com");
+  assert.equal(uriRes.message, "已填充 TOTP、站点别名和用户名");
+
+  // Valid Raw Base32 with spaces
+  const rawRes = resolveTotpPasteData("  jbsw y3dp ehpk 3pxp  ");
+  assert.equal(rawRes.success, true);
+  assert.equal(rawRes.isUri, false);
+  assert.equal(rawRes.payload.secret, "JBSWY3DPEHPK3PXP");
+  assert.equal(rawRes.message, "已填充 TOTP 原始密钥");
+
+  // Invalid string with non-base32 characters or too short
+  const invRes = resolveTotpPasteData("short");
+  assert.equal(invRes.success, false);
+  assert.equal(invRes.error, "不是有效的 TOTP 密钥或 otpauth://totp URI");
+
+  const invChars = resolveTotpPasteData("contains 0189 numbers and invalid symbols !@#");
+  assert.equal(invChars.success, false);
+  assert.equal(invChars.error, "不是有效的 TOTP 密钥或 otpauth://totp URI");
+});
+

@@ -155,3 +155,35 @@ export const googleMigrationEntries = (raw) => {
     return site ? [{ site, username, secret: base32Encode(secretBytes) }] : [];
   });
 };
+
+/**
+ * 解析用户从剪贴板或二维码扫描粘贴的 TOTP 输入（支持 otpauth://totp URI 或原始 Base32 密钥）
+ */
+export const resolveTotpPasteData = (rawText) => {
+  const text = String(rawText || "").trim();
+  if (!text) {
+    return { success: false, error: "内容为空" };
+  }
+  const uriPayload = parseOtpAuthUri(text);
+  if (uriPayload) {
+    return {
+      success: true,
+      isUri: true,
+      payload: uriPayload,
+      message: "已填充 TOTP、站点别名和用户名",
+    };
+  }
+  const secret = normalizedTotpSecret(text);
+  if (isValidTotpSecret(secret)) {
+    return {
+      success: true,
+      isUri: false,
+      payload: { secret },
+      message: "已填充 TOTP 原始密钥",
+    };
+  }
+  return {
+    success: false,
+    error: "不是有效的 TOTP 密钥或 otpauth://totp URI",
+  };
+};

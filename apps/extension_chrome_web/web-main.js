@@ -21,6 +21,7 @@ import {
   parseOtpAuthUri,
   readProtoVarint,
   googleMigrationEntries,
+  resolveTotpPasteData,
 } from "./totp.js";
 import {
   TOAST_LEVELS,
@@ -110,6 +111,7 @@ import {
   formatSyncReportSummary,
   formatSyncPreviewMetaText,
   formatSyncDiffTitle,
+  formatMergeSummaryText,
 } from "./sync_preview.js";
 import {
   normalizeProvisionCredential,
@@ -129,6 +131,8 @@ import {
   computeProvisionModalInitialValues,
   computeProvisionAuthVisibility,
   formatProvisionStatusState,
+  formatLocalSnapshotsStatusText,
+  formatLocalSnapshotRestoreWarning,
 } from "./provision.js";
 import {
   isDndDragEvent,
@@ -1744,9 +1748,10 @@ const applyOtpAuthPayload = (payload, includeSiteAndUsername) => {
 
 const pasteTotpRaw = async () => {
   try {
-    const secret = normalizedTotpSecret(await readClipboardText());
-    if (!isValidTotpSecret(secret)) throw new Error("原始密钥不是有效 TOTP");
-    applyOtpAuthPayload({ secret }, false);
+    const raw = await readClipboardText();
+    const res = resolveTotpPasteData(raw);
+    if (!res.success) throw new Error(res.error);
+    applyOtpAuthPayload(res.payload, res.isUri);
   } catch (err) {
     toastError(`粘贴失败：${err}`);
   }
@@ -1754,9 +1759,10 @@ const pasteTotpRaw = async () => {
 
 const pasteTotpUri = async (rawValue = null) => {
   try {
-    const payload = parseOtpAuthUri(rawValue ?? await readClipboardText());
-    if (!payload) throw new Error("不是有效的 otpauth://totp URI");
-    applyOtpAuthPayload(payload, true);
+    const raw = rawValue ?? await readClipboardText();
+    const res = resolveTotpPasteData(raw);
+    if (!res.success || !res.isUri) throw new Error("不是有效的 otpauth://totp URI");
+    applyOtpAuthPayload(res.payload, true);
   } catch (err) {
     toastError(`粘贴失败：${err}`);
   }
@@ -1765,8 +1771,9 @@ const pasteTotpUri = async (rawValue = null) => {
 const pasteTotpQr = async () => {
   try {
     const text = await navigator.clipboard?.readText?.();
-    if (parseOtpAuthUri(text)) {
-      await pasteTotpUri(text);
+    const resolved = resolveTotpPasteData(text);
+    if (resolved.success && resolved.isUri) {
+      applyOtpAuthPayload(resolved.payload, true);
       return;
     }
     if (!navigator.clipboard?.read || !("BarcodeDetector" in window)) {
@@ -1780,9 +1787,13 @@ const pasteTotpQr = async () => {
       const bitmap = await createImageBitmap(await item.getType(imageType));
       const codes = await detector.detect(bitmap);
       bitmap.close?.();
-      if (codes[0]?.rawValue && parseOtpAuthUri(codes[0].rawValue)) {
-        await pasteTotpUri(codes[0].rawValue);
-        return;
+      const codeVal = codes[0]?.rawValue;
+      if (codeVal) {
+        const qrRes = resolveTotpPasteData(codeVal);
+        if (qrRes.success && qrRes.isUri) {
+          applyOtpAuthPayload(qrRes.payload, true);
+          return;
+        }
       }
     }
     throw new Error("二维码内容不是有效的 otpauth://totp URI");
@@ -3531,9 +3542,7 @@ const loadLocalSnapshots = async () => {
   try {
     const list = await invoke("list_local_snapshots");
     if (els.localSnapshotsStatus) {
-      els.localSnapshotsStatus.textContent = list.length
-        ? `共 ${list.length} 个本地安全快照；点击快照条目即可恢复`
-        : "暂无本地安全快照";
+      els.localSnapshotsStatus.textContent = formatLocalSnapshotsStatusText(list.length);
     }
     if (els.localSnapshotsList) {
       els.localSnapshotsList.innerHTML = "";
@@ -3544,12 +3553,8 @@ const loadLocalSnapshots = async () => {
         const label = formatLocalSnapshotLabel(snapshot);
         button.textContent = label;
         button.addEventListener("click", async () => {
-          if (!(await requestActionConfirmation({
-            title: "恢复本地安全快照",
-            message: `${label}\n\n恢复后会替换当前 vault；当前数据会先自动备份。`,
-            confirmText: "恢复快照",
-            danger: true,
-          }))) return;
+          const warning = formatLocalSnapshotRestoreWarning(label);
+          if (!(await requestActionConfirmation(warning))) return;
           const restoreButton = setButtonBusy(button, "正在恢复…");
           try {
             const msg = await invoke("restore_local_snapshot", { snapshotId: snapshot.id });
@@ -3600,7 +3605,7 @@ els.btnMergePreview?.addEventListener("click", async () => {
     const result = typeof raw === "string" ? JSON.parse(raw) : raw;
     if (els.mergeResult) els.mergeResult.hidden = false;
     if (els.mergeSummary) {
-      els.mergeSummary.textContent = `safe=${result.safe}\n${(result.reasons || []).join(", ")}`;
+      els.mergeSummary.textContent = formatMergeSummaryText(result);
     }
     if (els.mergePayloadOut) els.mergePayloadOut.textContent = JSON.stringify(result.payload, null, 2);
     toastSuccess("JSON 合并预览完成");

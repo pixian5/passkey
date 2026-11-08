@@ -278,3 +278,7 @@ export const formatSyncDiffTitle = (totalChanges = 0, addedCount = 0, removedCou
     : "预计不会改变本地数据";
 };
 
+export const formatMergeSummaryText = (result = {}) =>
+  `safe=${Boolean(result?.safe)}\n${(result?.reasons || []).join(", ")}`;
+
+

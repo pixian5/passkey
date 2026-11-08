@@ -22,6 +22,7 @@ import {
   formatSyncReportSummary,
   formatSyncPreviewMetaText,
   formatSyncDiffTitle,
+  formatMergeSummaryText,
 } from "../../codex-tauri/src/sync_preview.js";
 
 test("SYNC_APPLIED_TEXT provides standard Chinese translations for all 3 modes", () => {
@@ -340,4 +341,20 @@ test("formatSyncPreviewMetaText and formatSyncDiffTitle format human readable di
     "文件夹数量变化 -1；通行密钥数量变化 +0。仅显示字段名，不显示密码或密钥内容。"
   );
 });
+
+test("formatMergeSummaryText formats safe flag and reason list", () => {
+  assert.equal(
+    formatMergeSummaryText({ safe: true, reasons: ["passkeys valid"] }),
+    "safe=true\npasskeys valid"
+  );
+  assert.equal(
+    formatMergeSummaryText({ safe: false, reasons: ["missing salt", "version drift"] }),
+    "safe=false\nmissing salt, version drift"
+  );
+  assert.equal(
+    formatMergeSummaryText(null),
+    "safe=false\n"
+  );
+});
+
 

@@ -20,6 +20,8 @@ import {
   computeProvisionModalInitialValues,
   computeProvisionAuthVisibility,
   formatProvisionStatusState,
+  formatLocalSnapshotsStatusText,
+  formatLocalSnapshotRestoreWarning,
 } from "../../codex-tauri/src/provision.js";
 
 test("normalizeProvisionCredential sets safe defaults and trims inputs", () => {
@@ -280,4 +282,19 @@ test("formatProvisionStatusState formats message, error color, and progress over
     color: "var(--muted)",
   });
 });
+
+test("formatLocalSnapshotsStatusText and formatLocalSnapshotRestoreWarning format UI cues", () => {
+  assert.equal(formatLocalSnapshotsStatusText(0), "暂无本地安全快照");
+  assert.equal(
+    formatLocalSnapshotsStatusText(3),
+    "共 3 个本地安全快照；点击快照条目即可恢复"
+  );
+
+  const warn = formatLocalSnapshotRestoreWarning("手动快照 · 2026-11-08 · 账号 10");
+  assert.equal(warn.title, "恢复本地安全快照");
+  assert.equal(warn.confirmText, "恢复快照");
+  assert.equal(warn.danger, true);
+  assert.match(warn.message, /手动快照/);
+});
+
 

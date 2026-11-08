@@ -259,3 +259,19 @@ export const formatProvisionStatusState = (text = "", isError = false, progressA
   };
 };
 
+/**
+ * 格式化本地安全快照状态提示文案
+ */
+export const formatLocalSnapshotsStatusText = (count = 0) =>
+  count > 0 ? `共 ${count} 个本地安全快照；点击快照条目即可恢复` : "暂无本地安全快照";
+
+/**
+ * 构建恢复本地安全快照时的危险操作确认配置
+ */
+export const formatLocalSnapshotRestoreWarning = (label = "") => ({
+  title: "恢复本地安全快照",
+  message: `${label}\n\n恢复后会替换当前 vault；当前数据会先自动备份。`,
+  confirmText: "恢复快照",
+  danger: true,
+});
+
