@@ -2,6 +2,14 @@
  * UI 交互与格式化辅助工具 (UI Utilities)
  */
 
+import {
+  accountKey,
+  accountRecordId,
+  folderIdsOf,
+} from "./vault_filters.js";
+import { splitSitesInput } from "./provision.js";
+import { normalizedTotpSecret } from "./totp.js";
+
 export const TOAST_LEVELS = ["success", "error", "warn"];
 
 export const inferToastLevel = (text) => {
@@ -185,3 +193,91 @@ export const resolveKeyboardAction = (e, {
   }
   return null;
 };
+
+export const formatAccountEditModalConfig = (
+  account = null,
+  filter = { type: "all" },
+  uiPrefs = {}
+) => {
+  const isNew = !account;
+  if (!isNew) {
+    const key = accountKey(account);
+    const recId = accountRecordId(account) || key;
+    return {
+      isNew: false,
+      selectedKey: key,
+      accountId: recId,
+      sites: (account.sites || []).join("\n"),
+      username: account.username || "",
+      password: account.password || "",
+      totpSecret: account.totpSecret || "",
+      recoveryCodes: account.recoveryCodes || "",
+      note: account.note || "",
+      title: "编辑账号",
+      saveButtonText: "保存",
+      folderIds: folderIdsOf(account),
+      deleteButton: {
+        hidden: false,
+        text: filter?.type === "recycle" ? "永久删除" : "移入回收站",
+      },
+      restoreButton: {
+        hidden: filter?.type !== "recycle",
+      },
+      passwordInputType: uiPrefs?.showPasswordsGlobally ? "text" : "password",
+    };
+  }
+
+  const defaultFolderIds =
+    filter?.type === "folder" && filter?.id ? [filter.id] : [];
+  return {
+    isNew: true,
+    selectedKey: "",
+    accountId: "",
+    sites: "",
+    username: "",
+    password: "",
+    totpSecret: "",
+    recoveryCodes: "",
+    note: "",
+    title: "新建账号",
+    saveButtonText: "创建并关闭",
+    folderIds: defaultFolderIds,
+    deleteButton: {
+      hidden: true,
+      text: "移入回收站",
+    },
+    restoreButton: {
+      hidden: true,
+    },
+    passwordInputType: uiPrefs?.showPasswordsGlobally ? "text" : "password",
+  };
+};
+
+export const buildAccountSavePayload = ({
+  sites = "",
+  username = "",
+  password = "",
+  totpSecret = "",
+  recoveryCodes = "",
+  note = "",
+} = {}) => {
+  const siteList = splitSitesInput(sites);
+  if (!siteList.length) {
+    return {
+      error: "请至少填写一个站点",
+      payload: null,
+    };
+  }
+  return {
+    error: null,
+    payload: {
+      sites: siteList,
+      username: String(username || "").trim(),
+      password: String(password || ""),
+      totpSecret: normalizedTotpSecret(totpSecret),
+      recoveryCodes: String(recoveryCodes || ""),
+      note: String(note || ""),
+    },
+  };
+};
+

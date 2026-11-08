@@ -16,6 +16,8 @@ import {
   formatOtpDigitsHtml,
   formatAccountRowHtml,
   resolveKeyboardAction,
+  formatAccountEditModalConfig,
+  buildAccountSavePayload,
 } from "../../codex-tauri/src/ui_utils.js";
 
 test("escapeHtml escapes HTML special characters properly", () => {
@@ -218,3 +220,75 @@ test("resolveKeyboardAction identifies shortcut commands accurately across platf
   assert.equal(resolveKeyboardAction({ key: "Escape" }), "escape");
   assert.equal(resolveKeyboardAction({ key: "Tab" }), null);
 });
+
+test("formatAccountEditModalConfig formats new account and existing account configs", () => {
+  // New account mode in all filter
+  const newCfg = formatAccountEditModalConfig(null, { type: "all" }, { showPasswordsGlobally: false });
+  assert.equal(newCfg.isNew, true);
+  assert.equal(newCfg.title, "新建账号");
+  assert.equal(newCfg.saveButtonText, "创建并关闭");
+  assert.equal(newCfg.deleteButton.hidden, true);
+  assert.equal(newCfg.restoreButton.hidden, true);
+  assert.equal(newCfg.passwordInputType, "password");
+  assert.deepEqual(newCfg.folderIds, []);
+
+  // New account mode in folder filter inherits current folder
+  const folderCfg = formatAccountEditModalConfig(null, { type: "folder", id: "f-work" }, { showPasswordsGlobally: true });
+  assert.deepEqual(folderCfg.folderIds, ["f-work"]);
+  assert.equal(folderCfg.passwordInputType, "text");
+
+  // Existing account in active filter
+  const editCfg = formatAccountEditModalConfig(
+    {
+      id: "acc-1",
+      sites: ["github.com", "api.github.com"],
+      username: "octocat",
+      password: "secret-password",
+      totpSecret: "JBSWY3DPEHPK3PXP",
+      folderId: "f-dev",
+    },
+    { type: "all" }
+  );
+  assert.equal(editCfg.isNew, false);
+  assert.equal(editCfg.title, "编辑账号");
+  assert.equal(editCfg.saveButtonText, "保存");
+  assert.equal(editCfg.username, "octocat");
+  assert.equal(editCfg.sites, "github.com\napi.github.com");
+  assert.equal(editCfg.deleteButton.hidden, false);
+  assert.equal(editCfg.deleteButton.text, "移入回收站");
+  assert.equal(editCfg.restoreButton.hidden, true);
+  assert.deepEqual(editCfg.folderIds, ["f-dev"]);
+
+  // Existing account in recycle filter
+  const recycleCfg = formatAccountEditModalConfig(
+    { id: "acc-2", isDeleted: true },
+    { type: "recycle" }
+  );
+  assert.equal(recycleCfg.deleteButton.text, "永久删除");
+  assert.equal(recycleCfg.restoreButton.hidden, false);
+});
+
+test("buildAccountSavePayload parses form fields and normalizes values", () => {
+  // Empty sites error
+  const emptyRes = buildAccountSavePayload({ sites: "" });
+  assert.equal(emptyRes.error, "请至少填写一个站点");
+  assert.equal(emptyRes.payload, null);
+
+  // Valid payload
+  const valid = buildAccountSavePayload({
+    sites: "example.com\napi.example.com",
+    username: "  user@example.com  ",
+    password: "my-password",
+    totpSecret: "jbsw y3dp ehpk 3pxp",
+    recoveryCodes: "code1, code2",
+    note: "personal note",
+  });
+  assert.equal(valid.error, null);
+  assert.deepEqual(valid.payload.sites, ["example.com", "api.example.com"]);
+  assert.equal(valid.payload.username, "user@example.com");
+  assert.equal(valid.payload.password, "my-password");
+  assert.equal(valid.payload.totpSecret, "JBSWY3DPEHPK3PXP");
+  assert.equal(valid.payload.recoveryCodes, "code1, code2");
+  assert.equal(valid.payload.note, "personal note");
+});
+

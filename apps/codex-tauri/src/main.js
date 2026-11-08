@@ -39,6 +39,8 @@ import {
   formatOtpDigitsHtml,
   formatAccountRowHtml,
   resolveKeyboardAction,
+  formatAccountEditModalConfig,
+  buildAccountSavePayload,
 } from "./ui_utils.js";
 import {
   formatDedupGroupSummary,
@@ -1662,43 +1664,37 @@ const populateFolderSelect = (selected = []) => {
 
 const openEdit = (account = null) => {
   if (!els.editModal) return;
+  const cfg = formatAccountEditModalConfig(account, filter, uiPrefs);
   const card = els.editModal.querySelector(".account-editor-card");
-  const isNew = !account;
-  card?.classList.toggle("account-create-card", isNew);
-  els.editModal.querySelector(".account-folders-field")?.toggleAttribute("hidden", isNew);
-  if (account) {
-    selectOnlyAccount(accountKey(account));
-    els.accountId.value = selectedId;
-    els.sites.value = (account.sites || []).join("\n");
-    els.username.value = account.username || "";
-    els.password.value = account.password || "";
-    els.totpSecret.value = account.totpSecret || "";
-    els.recoveryCodes.value = account.recoveryCodes || "";
-    els.note.value = account.note || "";
-    if (els.editTitle) els.editTitle.textContent = "编辑账号";
-    if (els.btnSaveAccount) els.btnSaveAccount.textContent = "保存";
-    populateFolderSelect(folderIdsOf(account));
-    if (els.btnDelete) {
-      els.btnDelete.hidden = false;
-      els.btnDelete.textContent = filter.type === "recycle" ? "永久删除" : "移入回收站";
-    }
-    if (els.btnRestore) els.btnRestore.hidden = filter.type !== "recycle";
+  card?.classList.toggle("account-create-card", cfg.isNew);
+  els.editModal.querySelector(".account-folders-field")?.toggleAttribute("hidden", cfg.isNew);
+
+  if (!cfg.isNew) {
+    selectOnlyAccount(cfg.selectedKey);
   } else {
     clearAccountSelection();
-    els.accountId.value = "";
     els.accountForm?.reset();
-    if (els.editTitle) els.editTitle.textContent = "新建账号";
-    if (els.btnSaveAccount) els.btnSaveAccount.textContent = "创建并关闭";
-    populateFolderSelect(
-      filter.type === "folder" && filter.id ? [filter.id] : []
-    );
-    if (els.btnDelete) els.btnDelete.hidden = true;
-    if (els.btnRestore) els.btnRestore.hidden = true;
   }
+  els.accountId.value = cfg.accountId;
+  els.sites.value = cfg.sites;
+  els.username.value = cfg.username;
+  els.password.value = cfg.password;
+  els.totpSecret.value = cfg.totpSecret;
+  els.recoveryCodes.value = cfg.recoveryCodes;
+  els.note.value = cfg.note;
+  if (els.editTitle) els.editTitle.textContent = cfg.title;
+  if (els.btnSaveAccount) els.btnSaveAccount.textContent = cfg.saveButtonText;
+  populateFolderSelect(cfg.folderIds);
+  if (els.btnDelete) {
+    els.btnDelete.hidden = cfg.deleteButton.hidden;
+    els.btnDelete.textContent = cfg.deleteButton.text;
+  }
+  if (els.btnRestore) els.btnRestore.hidden = cfg.restoreButton.hidden;
+
   [els.password, els.totpSecret].forEach((input) => {
     if (!input) return;
     delete input.dataset.forceVisible;
-    input.type = uiPrefs.showPasswordsGlobally ? "text" : "password";
+    input.type = cfg.passwordInputType;
   });
   document.querySelectorAll("[data-toggle-secret]").forEach((button) => {
     const input = document.querySelector(`#${button.dataset.toggleSecret}`);
@@ -2998,25 +2994,23 @@ els.webdavEnabled?.addEventListener("change", () => {
   });
 });
 
-const accountPayload = () => ({
-  sites: splitSitesInput(els.sites?.value),
-  username: (els.username?.value || "").trim(),
-  password: els.password?.value || "",
-  totpSecret: normalizedTotpSecret(els.totpSecret?.value),
-  recoveryCodes: els.recoveryCodes?.value || "",
-  note: els.note?.value || "",
-});
-
 const selectedFolderIds = () => [...(els.editFolders?.selectedOptions || [])].map((option) => option.value);
 
 const saveAccount = async () => {
   if (!els.accountForm) return;
-  if (!els.sites?.value.trim()) {
-    toastWarn("请至少填写一个站点");
+  const { error, payload } = buildAccountSavePayload({
+    sites: els.sites?.value,
+    username: els.username?.value,
+    password: els.password?.value,
+    totpSecret: els.totpSecret?.value,
+    recoveryCodes: els.recoveryCodes?.value,
+    note: els.note?.value,
+  });
+  if (error) {
+    toastWarn(error);
     els.sites?.focus();
     return;
   }
-  const payload = accountPayload();
   const folderIds = selectedFolderIds();
   const id = els.accountId.value;
   const restoreButton = setButtonBusy(
