@@ -17,6 +17,9 @@ import {
   formatCsvImportSummary,
   formatFolderSiteRuleSummary,
   formatProgressElapsedText,
+  computeProvisionModalInitialValues,
+  computeProvisionAuthVisibility,
+  formatProvisionStatusState,
 } from "../../codex-tauri/src/provision.js";
 
 test("normalizeProvisionCredential sets safe defaults and trims inputs", () => {
@@ -206,3 +209,75 @@ test("formatProgressElapsedText renders stage text with elapsed seconds suffix",
   assert.equal(formatProgressElapsedText("正在部署…", 5), "正在部署… 已耗时 5s");
   assert.equal(formatProgressElapsedText(undefined, 2), "正在处理… 已耗时 2s");
 });
+
+test("computeProvisionModalInitialValues merges draft and current sync values", () => {
+  const initial = computeProvisionModalInitialValues({
+    draft: {
+      serverUrl: "https://draft.example.com",
+      tlsCertificate: "cert-draft",
+      tlsPrivateKey: "key-draft",
+      accessToken: "token-draft",
+      syncEncryptionKey: "enc-draft",
+    },
+    syncBaseUrl: "https://sync.prod.com",
+    syncToken: "token-prod",
+    syncEncKey: "enc-prod",
+  });
+  assert.deepEqual(initial, {
+    serverUrl: "https://sync.prod.com",
+    tlsCertificate: "cert-draft",
+    tlsPrivateKey: "key-draft",
+    accessToken: "token-prod",
+    syncEncryptionKey: "enc-prod",
+  });
+
+  const empty = computeProvisionModalInitialValues();
+  assert.equal(empty.serverUrl, "https://");
+  assert.equal(empty.accessToken, "");
+});
+
+test("computeProvisionAuthVisibility toggles password vs key row visibility", () => {
+  assert.deepEqual(computeProvisionAuthVisibility("password"), {
+    showPasswordRow: true,
+    showKeyRow: false,
+  });
+  assert.deepEqual(computeProvisionAuthVisibility("privateKey"), {
+    showPasswordRow: false,
+    showKeyRow: true,
+  });
+});
+
+test("formatProvisionStatusState formats message, error color, and progress overrides", () => {
+  // Empty
+  assert.deepEqual(formatProvisionStatusState(""), {
+    hidden: true,
+    text: "",
+    stageText: null,
+    color: "var(--muted)",
+  });
+
+  // Normal status
+  assert.deepEqual(formatProvisionStatusState("连接正常", false, false), {
+    hidden: false,
+    text: "连接正常",
+    stageText: null,
+    color: "var(--muted)",
+  });
+
+  // Error status
+  assert.deepEqual(formatProvisionStatusState("认证失败", true, false), {
+    hidden: false,
+    text: "认证失败",
+    stageText: null,
+    color: "var(--danger)",
+  });
+
+  // When progress active, non-error status updates stageText and hides standalone status box
+  assert.deepEqual(formatProvisionStatusState("正在生成密钥…", false, true), {
+    hidden: true,
+    text: "",
+    stageText: "正在生成密钥…",
+    color: "var(--muted)",
+  });
+});
+

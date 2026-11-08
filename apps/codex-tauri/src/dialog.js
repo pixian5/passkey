@@ -184,3 +184,10 @@ export const formatFolderSitesModalConfig = (folder) => {
     autoAdd: Boolean(folder.autoAddMatchingSites),
   };
 };
+
+export const formatPurgeRecycleWarning = (count = 0) => ({
+  title: "永久删除回收站",
+  message: `将永久删除回收站中的 ${count} 个账号，且无法直接撤销。已自动创建本地安全快照。`,
+  confirmText: "永久删除",
+  danger: true,
+});

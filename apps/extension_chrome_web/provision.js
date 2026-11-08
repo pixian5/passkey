@@ -213,3 +213,49 @@ export const formatFolderSiteRuleSummary = (result = {}) =>
  */
 export const formatProgressElapsedText = (stageText = "正在处理…", elapsedSeconds = 0) =>
   `${stageText}${elapsedSeconds > 0 ? ` 已耗时 ${elapsedSeconds}s` : ""}`;
+
+/**
+ * 计算自建部署弹窗表单初始值
+ */
+export const computeProvisionModalInitialValues = ({
+  draft = {},
+  syncBaseUrl = "",
+  syncToken = "",
+  syncEncKey = "",
+} = {}) => ({
+  serverUrl: String(syncBaseUrl || "").trim() || draft?.serverUrl || "https://",
+  tlsCertificate: draft?.tlsCertificate || "",
+  tlsPrivateKey: draft?.tlsPrivateKey || "",
+  accessToken: syncToken || draft?.accessToken || "",
+  syncEncryptionKey: syncEncKey || draft?.syncEncryptionKey || "",
+});
+
+/**
+ * 计算自建部署认证方式对应的表单行可见性
+ */
+export const computeProvisionAuthVisibility = (authMode = "privateKey") => ({
+  showPasswordRow: authMode === "password",
+  showKeyRow: authMode === "privateKey",
+});
+
+/**
+ * 格式化自建部署状态文本与颜色展示状态
+ */
+export const formatProvisionStatusState = (text = "", isError = false, progressActive = false) => {
+  const value = String(text || "").trim();
+  if (progressActive && !isError) {
+    return {
+      hidden: true,
+      text: "",
+      stageText: value || null,
+      color: "var(--muted)",
+    };
+  }
+  return {
+    hidden: !value,
+    text: value,
+    stageText: null,
+    color: isError ? "var(--danger)" : "var(--muted)",
+  };
+};
+

@@ -86,6 +86,7 @@ import {
   ActionConfirmDialog,
   formatFolderModalConfig,
   formatFolderSitesModalConfig,
+  formatPurgeRecycleWarning,
 } from "./dialog.js";
 import {
   SYNC_APPLIED_TEXT,
@@ -125,6 +126,9 @@ import {
   formatCsvImportSummary,
   formatFolderSiteRuleSummary,
   formatProgressElapsedText,
+  computeProvisionModalInitialValues,
+  computeProvisionAuthVisibility,
+  formatProvisionStatusState,
 } from "./provision.js";
 import {
   isDndDragEvent,
@@ -2433,21 +2437,12 @@ let provisionStageText = "";
 
 const setProvisionStatus = (text, isError = false) => {
   if (!els.provisionStatus) return;
-  const value = String(text || "").trim();
-  if (provisionProgressActive && !isError) {
-    if (value) provisionStageText = value;
-    els.provisionStatus.textContent = "";
-    els.provisionStatus.hidden = true;
-    return;
-  }
-  els.provisionStatus.hidden = !value;
-  els.provisionStatus.textContent = value;
-  els.provisionStatus.style.color = isError ? "var(--danger)" : "var(--muted)";
-  // Empty status must not reserve layout height (avoids crushed footer on short windows).
-  if (!value) {
-    els.provisionStatus.removeAttribute("style");
-    els.provisionStatus.hidden = true;
-  }
+  const status = formatProvisionStatusState(text, isError, provisionProgressActive);
+  if (status.stageText) provisionStageText = status.stageText;
+  els.provisionStatus.hidden = status.hidden;
+  els.provisionStatus.textContent = status.text;
+  if (!status.hidden) els.provisionStatus.style.color = status.color;
+  else els.provisionStatus.removeAttribute("style");
 };
 
 let provisionProgressTimer = null;
@@ -2484,9 +2479,9 @@ const hideProvisionProgress = () => {
 };
 
 const updateProvisionAuthUi = () => {
-  const mode = els.provisionAuthMode?.value || "privateKey";
-  if (els.provisionPasswordRow) els.provisionPasswordRow.hidden = mode !== "password";
-  if (els.provisionKeyRow) els.provisionKeyRow.hidden = mode !== "privateKey";
+  const vis = computeProvisionAuthVisibility(els.provisionAuthMode?.value || "privateKey");
+  if (els.provisionPasswordRow) els.provisionPasswordRow.hidden = !vis.showPasswordRow;
+  if (els.provisionKeyRow) els.provisionKeyRow.hidden = !vis.showKeyRow;
 };
 
 const collectProvisionDraft = () => ({
@@ -2519,14 +2514,17 @@ const openProvisionModal = async () => {
   try {
     draft = (await invoke("get_provision_draft")) || {};
   } catch (_) {}
-  if (els.provisionServerUrl) {
-    els.provisionServerUrl.value =
-      (els.syncBaseUrl?.value || "").trim() || draft.serverUrl || "https://";
-  }
-  if (els.provisionTlsCertificate) els.provisionTlsCertificate.value = draft.tlsCertificate || "";
-  if (els.provisionTlsPrivateKey) els.provisionTlsPrivateKey.value = draft.tlsPrivateKey || "";
-  if (els.provisionToken) els.provisionToken.value = els.syncToken?.value || draft.accessToken || "";
-  if (els.provisionEncKey) els.provisionEncKey.value = els.syncEncKey?.value || draft.syncEncryptionKey || "";
+  const initial = computeProvisionModalInitialValues({
+    draft,
+    syncBaseUrl: els.syncBaseUrl?.value,
+    syncToken: els.syncToken?.value,
+    syncEncKey: els.syncEncKey?.value,
+  });
+  if (els.provisionServerUrl) els.provisionServerUrl.value = initial.serverUrl;
+  if (els.provisionTlsCertificate) els.provisionTlsCertificate.value = initial.tlsCertificate;
+  if (els.provisionTlsPrivateKey) els.provisionTlsPrivateKey.value = initial.tlsPrivateKey;
+  if (els.provisionToken) els.provisionToken.value = initial.accessToken;
+  if (els.provisionEncKey) els.provisionEncKey.value = initial.syncEncryptionKey;
   // Clear per-field forceVisible so global show-passwords can apply.
   for (const id of [
     "provisionSecretPassword",
@@ -2540,7 +2538,7 @@ const openProvisionModal = async () => {
   setProvisionStatus("");
   hideProvisionProgress();
   updateProvisionAuthUi();
-  els.provisionModal.hidden = false;
+  openModal(els.provisionModal);
   applyUiPrefs();
   try {
     await loadSavedSshCredential();
@@ -3154,12 +3152,8 @@ els.btnRestoreAll?.addEventListener("click", async () => {
 els.btnPurgeRecycle?.addEventListener("click", async () => {
   const count = (state.deletedAccounts || []).length;
   if (!count) return;
-  if (!(await requestActionConfirmation({
-    title: "永久删除回收站",
-    message: `将永久删除回收站中的 ${count} 个账号，且无法直接撤销。已自动创建本地安全快照。`,
-    confirmText: "永久删除",
-    danger: true,
-  }))) {
+  const warning = formatPurgeRecycleWarning(count);
+  if (!(await requestActionConfirmation(warning))) {
     return;
   }
   const restore = setButtonBusy(els.btnPurgeRecycle, "正在清空…");

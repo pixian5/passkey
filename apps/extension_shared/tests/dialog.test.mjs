@@ -14,6 +14,7 @@ import {
   isFixedFolder,
   formatFolderModalConfig,
   formatFolderSitesModalConfig,
+  formatPurgeRecycleWarning,
 } from "../../codex-tauri/src/dialog.js";
 
 function createMockElement(initialHidden = true) {
@@ -254,4 +255,13 @@ test("formatFolderSitesModalConfig formats title, matched sites, and autoAdd fla
     autoAdd: true,
   });
 });
+
+test("formatPurgeRecycleWarning builds clear destructive warning message", () => {
+  const warn = formatPurgeRecycleWarning(8);
+  assert.equal(warn.title, "永久删除回收站");
+  assert.equal(warn.danger, true);
+  assert.equal(warn.confirmText, "永久删除");
+  assert.match(warn.message, /8 个账号/);
+});
+
 
