@@ -36,6 +36,9 @@ import {
   formatUndoRedoTooltip,
   formatOperationHistoryRow,
   formatLockStatusText,
+  formatOtpDigitsHtml,
+  formatAccountRowHtml,
+  resolveKeyboardAction,
 } from "./ui_utils.js";
 import {
   formatDedupGroupSummary,
@@ -1561,28 +1564,12 @@ const render = () => {
       row.classList.add("reorderable");
     }
 
-    const title = a.accountId || a.username || (a.sites || [])[0] || "账号";
-    const sites = (a.sites || []).join("  ");
     const pks = passkeysForAccount(a);
-    const pkLine = pks
-      .slice(0, 2)
-      .map((p) => `通行密钥 RP ID: ${p.rpId || "—"} 用户名: ${p.userName || p.displayName || "—"}`)
-      .join(" · ");
-
-    const deleted = a.isDeleted && filter.type !== "recycle"
-      ? `<span class="deleted-tag">已删除</span>`
-      : "";
-    const pinBadge = pinned && !a.isDeleted
-      ? `<span class="pinned-tag" title="置顶">置顶</span>`
-      : "";
-
-    row.innerHTML = `
-      <div class="row-title">${escapeHtml(title)}${pinBadge}${deleted}</div>
-      <div class="row-line row-username">用户名: ${escapeHtml(a.username || "—")}</div>
-      <div class="row-sub row-sites">站点别名: ${escapeHtml(sites || "—")}</div>
-      ${pkLine ? `<div class="row-sub">${escapeHtml(pkLine)}</div>` : ""}
-      <div class="row-otp" data-totp="${escapeHtml((a.totpSecret || "").trim())}" hidden></div>
-    `;
+    row.innerHTML = formatAccountRowHtml(a, {
+      isPinned: pinned,
+      isRecycleFilter: filter.type === "recycle",
+      passkeys: pks,
+    });
 
     const copyOtpFromRow = (e) => {
       if (shouldIgnoreClick(e)) return;
@@ -1673,8 +1660,7 @@ async function refreshTotpRows() {
       }
       node.hidden = false;
       node.setAttribute("data-code", res.code);
-      const shown = formatOtpDisplay(res.code);
-      node.innerHTML = `验证码: <span class="otp-digits">${shown}</span> <span class="otp-remain">(剩余 ${res.remain}s)</span>`;
+      node.innerHTML = formatOtpDigitsHtml(res.code, res.remain);
       node.title = "点击复制验证码";
       node.setAttribute("role", "button");
       node.tabIndex = 0;
@@ -2906,15 +2892,12 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
   btn.addEventListener("click", () => openSettings(btn.dataset.settingsTab || "general"));
 });
 window.addEventListener("keydown", (e) => {
-  // On macOS, Ctrl is reserved for context-menu style interactions;
-  // app shortcuts use ⌘ (meta). Elsewhere Ctrl/Meta both work.
-  const meta = isMultiSelectModifier(e);
   const target = e.target instanceof Element ? e.target : null;
-  const isTextInput = target?.closest("input, textarea, select, [contenteditable]");
+  const isTextInput = Boolean(target?.closest("input, textarea, select, [contenteditable]"));
   const hasOpenModal = hasAnyOpenModal(document);
-  // In the account list, Cmd/Ctrl+A mirrors PassMac: select all accounts
-  // currently visible under the active filter. Keep native text selection in forms.
-  if (meta && (e.key === "a" || e.key === "A") && !isTextInput && !hasOpenModal) {
+  const action = resolveKeyboardAction(e, { isTextInput, hasOpenModal });
+
+  if (action === "selectAll") {
     e.preventDefault();
     const visibleIds = filteredAccounts().map(accountKey).filter(Boolean);
     selection.selectAll(visibleIds);
@@ -2925,23 +2908,40 @@ window.addEventListener("keydown", (e) => {
     if (visibleIds.length) toastSuccess(`已选择 ${visibleIds.length} 个账号`);
     return;
   }
-  // Cmd/Ctrl + , → settings (macOS PassMac parity)
-  if (meta && (e.key === "," || e.code === "Comma")) {
+  if (action === "openSettings") {
     e.preventDefault();
     openSettings("general");
     return;
   }
-  // Cmd/Ctrl + N → new account
-  if (meta && (e.key === "n" || e.key === "N") && !e.shiftKey) {
-    const tag = (e.target && e.target.tagName) || "";
-    if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
-      e.preventDefault();
-      openEdit(null);
-    }
+  if (action === "newAccount") {
+    e.preventDefault();
+    openEdit(null);
     return;
   }
-  if (e.key === "Escape") {
+  if (action === "escape") {
     if (!els.actionConfirmModal?.hidden) {
+      closeActionConfirm(false);
+      return;
+    }
+    if (!els.bundleImportConfirmModal?.hidden) {
+      closeBundleImportConfirm(false);
+      return;
+    }
+    if (!els.provisionConfirmModal?.hidden) {
+      closeProvisionConfirm(false);
+      return;
+    }
+    closeSettings();
+    closeEdit();
+    closeProvisionModal();
+    if (els.folderModal) els.folderModal.hidden = true;
+    closeFolderSites();
+    closeAccountFolderPicker();
+    closeFolderDedup();
+    closeFolderDelete();
+    hideContextMenu();
+  }
+});
       closeActionConfirm(false);
       return;
     }

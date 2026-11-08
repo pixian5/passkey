@@ -128,3 +128,60 @@ export const formatLockStatusText = (
       : "";
   return `状态：已启用；${lockState.locked ? "已锁定" : "已解锁"}；${policyTitle}${bioHint}`;
 };
+
+export const formatOtpDigitsHtml = (code, remainSeconds) => {
+  const digits = !code || code.length !== 6 ? (code || "------") : `${code.slice(0, 3)} ${code.slice(3)}`;
+  return `验证码: <span class="otp-digits">${digits}</span> <span class="otp-remain">(剩余 ${remainSeconds}s)</span>`;
+};
+
+export const formatAccountRowHtml = (account, {
+  isPinned = false,
+  isRecycleFilter = false,
+  passkeys = [],
+} = {}) => {
+  const a = account || {};
+  const title = a.accountId || a.username || (a.sites || [])[0] || "账号";
+  const sites = (a.sites || []).join("  ");
+  const pks = passkeys || [];
+  const pkLine = pks
+    .slice(0, 2)
+    .map((p) => `通行密钥 RP ID: ${p.rpId || "—"} 用户名: ${p.userName || p.displayName || "—"}`)
+    .join(" · ");
+
+  const deleted = a.isDeleted && !isRecycleFilter
+    ? '<span class="deleted-tag">已删除</span>'
+    : "";
+  const pinBadge = isPinned && !a.isDeleted
+    ? '<span class="pinned-tag" title="置顶">置顶</span>'
+    : "";
+
+  return [
+    `<div class="row-title">${escapeHtml(title)}${pinBadge}${deleted}</div>`,
+    `<div class="row-line row-username">用户名: ${escapeHtml(a.username || "—")}</div>`,
+    `<div class="row-sub row-sites">站点别名: ${escapeHtml(sites || "—")}</div>`,
+    pkLine ? `<div class="row-sub">${escapeHtml(pkLine)}</div>` : "",
+    `<div class="row-otp" data-totp="${escapeHtml((a.totpSecret || "").trim())}" hidden></div>`,
+  ].filter(Boolean).join("\n      ");
+};
+
+export const resolveKeyboardAction = (e, {
+  isTextInput = false,
+  hasOpenModal = false,
+  isApple = isApplePlatform(),
+} = {}) => {
+  if (!e) return null;
+  const meta = isMultiSelectModifier(e, isApple);
+  if (meta && (e.key === "a" || e.key === "A") && !isTextInput && !hasOpenModal) {
+    return "selectAll";
+  }
+  if (meta && (e.key === "," || e.code === "Comma")) {
+    return "openSettings";
+  }
+  if (meta && (e.key === "n" || e.key === "N") && !e.shiftKey && !isTextInput) {
+    return "newAccount";
+  }
+  if (e.key === "Escape") {
+    return "escape";
+  }
+  return null;
+};

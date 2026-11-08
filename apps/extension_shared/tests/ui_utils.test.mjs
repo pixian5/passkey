@@ -13,6 +13,9 @@ import {
   formatUndoRedoTooltip,
   formatOperationHistoryRow,
   formatLockStatusText,
+  formatOtpDigitsHtml,
+  formatAccountRowHtml,
+  resolveKeyboardAction,
 } from "../../codex-tauri/src/ui_utils.js";
 
 test("escapeHtml escapes HTML special characters properly", () => {
@@ -136,4 +139,82 @@ test("formatLockStatusText renders policies and biometric hints accurately", () 
     { biometricAvailable: true, canBiometric: false }
   );
   assert.equal(lockedTouch, "状态：已启用；已锁定；切到后台锁定");
+});
+
+test("formatOtpDigitsHtml formats digits with space separation and countdown remain", () => {
+  const html = formatOtpDigitsHtml("123456", 28);
+  assert.equal(html, '验证码: <span class="otp-digits">123 456</span> <span class="otp-remain">(剩余 28s)</span>');
+
+  const fallback = formatOtpDigitsHtml("", 15);
+  assert.equal(fallback, '验证码: <span class="otp-digits">------</span> <span class="otp-remain">(剩余 15s)</span>');
+});
+
+test("formatAccountRowHtml renders titles, tags, passkeys, and OTP bindings safely", () => {
+  const htmlPinned = formatAccountRowHtml(
+    {
+      username: "alice",
+      sites: ["github.com", "api.github.com"],
+      totpSecret: "JBSWY3DPEHPK3PXP",
+    },
+    { isPinned: true, passkeys: [{ rpId: "github.com", userName: "alice" }] }
+  );
+  assert.ok(htmlPinned.includes('<span class="pinned-tag" title="置顶">置顶</span>'));
+  assert.ok(htmlPinned.includes("用户名: alice"));
+  assert.ok(htmlPinned.includes("站点别名: github.com  api.github.com"));
+  assert.ok(htmlPinned.includes("通行密钥 RP ID: github.com 用户名: alice"));
+  assert.ok(htmlPinned.includes('data-totp="JBSWY3DPEHPK3PXP"'));
+
+  const htmlDeleted = formatAccountRowHtml(
+    { username: "bob", isDeleted: true },
+    { isRecycleFilter: false }
+  );
+  assert.ok(htmlDeleted.includes('<span class="deleted-tag">已删除</span>'));
+
+  const htmlInRecycle = formatAccountRowHtml(
+    { username: "bob", isDeleted: true },
+    { isRecycleFilter: true }
+  );
+  assert.equal(htmlInRecycle.includes("deleted-tag"), false);
+});
+
+test("resolveKeyboardAction identifies shortcut commands accurately across platforms", () => {
+  // Select all (Mac: metaKey)
+  assert.equal(
+    resolveKeyboardAction({ key: "a", metaKey: true, ctrlKey: false }, { isApple: true }),
+    "selectAll"
+  );
+  // Select all blocked when typing in text input
+  assert.equal(
+    resolveKeyboardAction({ key: "a", metaKey: true, ctrlKey: false }, { isApple: true, isTextInput: true }),
+    null
+  );
+  // Select all blocked when modal is open
+  assert.equal(
+    resolveKeyboardAction({ key: "a", metaKey: true, ctrlKey: false }, { isApple: true, hasOpenModal: true }),
+    null
+  );
+
+  // Settings: ⌘, or Ctrl+,
+  assert.equal(
+    resolveKeyboardAction({ key: ",", metaKey: true, ctrlKey: false }, { isApple: true }),
+    "openSettings"
+  );
+  assert.equal(
+    resolveKeyboardAction({ code: "Comma", metaKey: false, ctrlKey: true }, { isApple: false }),
+    "openSettings"
+  );
+
+  // New account: ⌘N / Ctrl+N
+  assert.equal(
+    resolveKeyboardAction({ key: "n", metaKey: true, ctrlKey: false }, { isApple: true }),
+    "newAccount"
+  );
+  assert.equal(
+    resolveKeyboardAction({ key: "n", metaKey: true, shiftKey: true }, { isApple: true }),
+    null
+  );
+
+  // Escape
+  assert.equal(resolveKeyboardAction({ key: "Escape" }), "escape");
+  assert.equal(resolveKeyboardAction({ key: "Tab" }), null);
 });
