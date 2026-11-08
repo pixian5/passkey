@@ -45,6 +45,12 @@ export const escapeHtml = (s) =>
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 
+export const formatSecretToggleState = (visible) => ({
+  text: visible ? "◉" : "◎",
+  title: visible ? "隐藏" : "显示",
+  inputType: visible ? "text" : "password",
+});
+
 export const isApplePlatform = (nav = (typeof navigator !== "undefined" ? navigator : null)) =>
   /Mac|iPhone|iPad|iPod/i.test(
     `${nav?.platform || ""} ${nav?.userAgent || ""}`

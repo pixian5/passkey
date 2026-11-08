@@ -4,6 +4,9 @@ import {
   formatDedupGroupSummary,
   dedupAccountLabel,
   calculateFolderDeletionImpact,
+  formatDedupEmptyHtml,
+  formatDedupGroupHeadHtml,
+  formatDedupAccountRowHtml,
 } from "../../codex-tauri/src/dedup.js";
 
 test("formatDedupGroupSummary formats group count or empty state", () => {
@@ -50,3 +53,36 @@ test("calculateFolderDeletionImpact determines account impact and builds warning
   assert.match(populatedImpact.message, /当前有 2 个活动账号、1 个回收站账号属于此文件夹/);
   assert.match(populatedImpact.message, /活动账号仍在“全部”/);
 });
+
+test("formatDedupEmptyHtml, GroupHeadHtml, and AccountRowHtml render safe structure", () => {
+  assert.equal(formatDedupEmptyHtml(), '<div class="dedup-empty">当前文件夹暂无重复账号</div>');
+
+  const head = formatDedupGroupHeadHtml({
+    siteAliases: ["github.com", "api.github.com"],
+    username: "octocat",
+    accounts: [{}, {}],
+  });
+  assert.match(head, /github\.com, api\.github\.com/);
+  assert.match(head, /用户名：octocat · 2 个账号/);
+
+  const row = formatDedupAccountRowHtml(
+    {
+      accountId: "acc-123",
+      sites: ["github.com"],
+      updatedAtMs: 1700000000000,
+      createdAtMs: 1690000000000,
+    },
+    0,
+    2,
+    {
+      formatTimeFn: () => "2026-11-08 12:00:00",
+      accountKeyFn: () => "acc-123",
+    }
+  );
+  assert.match(row, /dedup-keep-label/);
+  assert.match(row, /最新/);
+  assert.match(row, /acc-123/);
+  assert.match(row, /站点：github\.com/);
+  assert.match(row, /更新时间：2026-11-08 12:00:00/);
+});
+

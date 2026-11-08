@@ -21,6 +21,7 @@ import {
   resolveKeyboardAction,
   formatAccountEditModalConfig,
   buildAccountSavePayload,
+  formatSecretToggleState,
 } from "../../codex-tauri/src/ui_utils.js";
 
 test("escapeHtml escapes HTML special characters properly", () => {
@@ -339,5 +340,18 @@ test("formatOperationHistoryEmptyHtml and ListHtml format history list rows prop
   const secondIndex = html.indexOf("新建账号");
   assert.equal(firstIndex < secondIndex, true);
 });
+
+test("formatSecretToggleState formats icon text, title, and input type accurately", () => {
+  const visible = formatSecretToggleState(true);
+  assert.equal(visible.text, "◉");
+  assert.equal(visible.title, "隐藏");
+  assert.equal(visible.inputType, "text");
+
+  const hidden = formatSecretToggleState(false);
+  assert.equal(hidden.text, "◎");
+  assert.equal(hidden.title, "显示");
+  assert.equal(hidden.inputType, "password");
+});
+
 
 

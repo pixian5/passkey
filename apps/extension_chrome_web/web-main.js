@@ -45,11 +45,15 @@ import {
   resolveKeyboardAction,
   formatAccountEditModalConfig,
   buildAccountSavePayload,
+  formatSecretToggleState,
 } from "./ui_utils.js";
 import {
   formatDedupGroupSummary,
   dedupAccountLabel,
   calculateFolderDeletionImpact,
+  formatDedupEmptyHtml,
+  formatDedupGroupHeadHtml,
+  formatDedupAccountRowHtml,
 } from "./dedup.js";
 import {
   accountKey,
@@ -988,7 +992,7 @@ const renderFolderDedupGroups = () => {
   if (!els.folderDedupGroups) return;
   els.folderDedupGroups.innerHTML = "";
   if (!groups.length) {
-    els.folderDedupGroups.innerHTML = '<div class="dedup-empty">当前文件夹暂无重复账号</div>';
+    els.folderDedupGroups.innerHTML = formatDedupEmptyHtml();
     return;
   }
   groups.forEach((group) => {
@@ -996,18 +1000,15 @@ const renderFolderDedupGroups = () => {
     card.className = "dedup-group";
     const head = document.createElement("div");
     head.className = "dedup-group-head";
-    head.innerHTML = `<div><div class="dedup-group-title">${escapeHtml((group.siteAliases || []).join(", ") || "未命名站点")}</div><div class="dedup-account-meta">用户名：${escapeHtml(group.username || "(空用户名)")} · ${group.accounts.length} 个账号</div></div>`;
+    head.innerHTML = formatDedupGroupHeadHtml(group);
     card.appendChild(head);
     group.accounts.forEach((account, index) => {
       const row = document.createElement("div");
       row.className = "dedup-account";
-      const label = dedupAccountLabel(index, group.accounts.length);
-      row.innerHTML = `
-        <div class="dedup-account-main">
-          <div class="dedup-account-id">${label ? `<span class="dedup-keep-label">${label}</span>` : ""}${escapeHtml(account.accountId || accountKey(account) || "账号")}</div>
-          <div class="dedup-account-sites">站点：${escapeHtml((account.sites || []).join(", ") || account.canonicalSite || "-")}</div>
-          <div class="dedup-account-meta">更新时间：${escapeHtml(formatTime(account.updatedAtMs))} · 创建时间：${escapeHtml(formatTime(account.createdAtMs))}</div>
-        </div>`;
+      row.innerHTML = formatDedupAccountRowHtml(account, index, group.accounts.length, {
+        formatTimeFn: formatTime,
+        accountKeyFn: accountKey,
+      });
       const keep = document.createElement("button");
       keep.type = "button";
       keep.className = "primary";
@@ -1717,9 +1718,10 @@ const openEdit = (account = null) => {
   document.querySelectorAll("[data-toggle-secret]").forEach((button) => {
     const input = document.querySelector(`#${button.dataset.toggleSecret}`);
     const visible = input instanceof HTMLInputElement && input.type !== "password";
-    button.textContent = visible ? "◉" : "◎";
-    button.title = visible ? "隐藏" : "显示";
-    button.setAttribute("aria-label", button.title);
+    const { text, title } = formatSecretToggleState(visible);
+    button.textContent = text;
+    button.title = title;
+    button.setAttribute("aria-label", title);
   });
   els.editModal.hidden = false;
   setTimeout(() => els.sites?.focus(), 50);
@@ -2998,9 +3000,10 @@ document.addEventListener("click", (e) => {
   input.type = visible ? "text" : "password";
   if (visible) input.dataset.forceVisible = "1";
   else delete input.dataset.forceVisible;
-  button.textContent = visible ? "◉" : "◎";
-  button.title = visible ? "隐藏" : "显示";
-  button.setAttribute("aria-label", button.title);
+  const { text, title } = formatSecretToggleState(visible);
+  button.textContent = text;
+  button.title = title;
+  button.setAttribute("aria-label", title);
 });
 
 els.folderSitesForm?.addEventListener("submit", async (e) => {
