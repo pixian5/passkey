@@ -82,6 +82,8 @@ import {
   hasAnyOpenModal,
   setButtonBusy,
   ActionConfirmDialog,
+  formatFolderModalConfig,
+  formatFolderSitesModalConfig,
 } from "./dialog.js";
 import {
   SYNC_APPLIED_TEXT,
@@ -101,6 +103,10 @@ import {
   computeSyncSources,
   computeSyncConfirmationWarnings,
   formatSyncFailureLine,
+  computePrimaryFingerprint,
+  formatSyncReportSummary,
+  formatSyncPreviewMetaText,
+  formatSyncDiffTitle,
 } from "./sync_preview.js";
 import {
   normalizeProvisionCredential,
@@ -843,10 +849,12 @@ const showContextMenu = (event, items) => {
 };
 
 const openFolderSites = (folder) => {
-  folderSitesTargetId = String(folder.id);
-  if (els.folderSitesTitle) els.folderSitesTitle.textContent = `加入「${folder.name || "未命名文件夹"}」中的指定网站账号`;
-  if (els.folderSitesInput) els.folderSitesInput.value = (folder.matchedSites || []).join("\n");
-  if (els.folderAutoAdd) els.folderAutoAdd.checked = Boolean(folder.autoAddMatchingSites);
+  const cfg = formatFolderSitesModalConfig(folder);
+  if (!cfg) return;
+  folderSitesTargetId = cfg.targetId;
+  if (els.folderSitesTitle) els.folderSitesTitle.textContent = cfg.title;
+  if (els.folderSitesInput) els.folderSitesInput.value = cfg.sitesText;
+  if (els.folderAutoAdd) els.folderAutoAdd.checked = cfg.autoAdd;
   if (els.folderSitesModal) els.folderSitesModal.hidden = false;
   setTimeout(() => els.folderSitesInput?.focus(), 50);
 };
@@ -2059,11 +2067,12 @@ const renderSyncDecisionSummary = (reports) => {
 };
 
 const primaryFingerprint = () => {
-  const primary = els.syncPrimarySource?.value || "selfHosted";
-  if (primary === "webdav") {
-    return `webdav|${(els.webdavBaseUrl?.value || "").trim().replace(/\/+$/, "")}|${(els.webdavRemotePath?.value || "").trim()}`;
-  }
-  return `selfHosted|${(els.syncBaseUrl?.value || "").trim().replace(/\/+$/, "")}`;
+  return computePrimaryFingerprint({
+    primary: els.syncPrimarySource?.value || "selfHosted",
+    selfHostedBaseUrl: els.syncBaseUrl?.value || "",
+    webdavBaseUrl: els.webdavBaseUrl?.value || "",
+    webdavRemotePath: els.webdavRemotePath?.value || "",
+  });
 };
 
 const renderSyncPreviewDiff = (localPayload, mergedPayload) => {
@@ -2073,13 +2082,11 @@ const renderSyncPreviewDiff = (localPayload, mergedPayload) => {
   els.syncPreviewDiff.innerHTML = "";
   els.syncPreviewDiff.hidden = false;
   const title = document.createElement("strong");
-  title.textContent = totalChanges
-    ? `预计写入本地：新增 ${added.length}，移除 ${removed.length}，修改 ${changed.length}`
-    : "预计不会改变本地数据";
+  title.textContent = formatSyncDiffTitle(totalChanges, added.length, removed.length, changed.length);
   els.syncPreviewDiff.appendChild(title);
   const meta = document.createElement("div");
   meta.className = "sync-preview-diff-meta";
-  meta.textContent = `文件夹数量变化 ${folderDelta >= 0 ? "+" : ""}${folderDelta}；通行密钥数量变化 ${passkeyDelta >= 0 ? "+" : ""}${passkeyDelta}。仅显示字段名，不显示密码或密钥内容。`;
+  meta.textContent = formatSyncPreviewMetaText(folderDelta, passkeyDelta);
   els.syncPreviewDiff.appendChild(meta);
   const details = [...added.map((account) => ({ kind: "新增", account, fields: [] })),
     ...removed.map((account) => ({ kind: "移除", account, fields: [] })),
@@ -2177,7 +2184,7 @@ const runSyncMode = async (mode, { quiet = false, forceOutboxRetry = !quiet, res
   }
   const report = reports[reports.length - 1] || {};
   if (!quiet) {
-    const summary = reports.map((item) => `${item.source}：${item.message || "完成"}${formatSyncPushState(item) ? `（${formatSyncPushState(item)}）` : ""}`).join("；");
+    const summary = formatSyncReportSummary(reports);
     const hasPartialFailure = reports.some((item) => item?.ok === false || item?.pendingRetry);
     if (hasPartialFailure) toastWarn(`同步部分完成：${summary}`);
     else toastSuccess(summary);
@@ -2333,14 +2340,12 @@ document.addEventListener("contextmenu", (e) => {
 
 const openNewFolderDialog = () => {
   try {
-    folderModalTargetId = "";
-    if (els.folderModalTitle) els.folderModalTitle.textContent = "新建文件夹";
-    if (els.newFolderName) els.newFolderName.value = "";
-    if (els.btnCreateFolder) els.btnCreateFolder.textContent = "创建";
-    if (els.folderModal) {
-      els.folderModal.hidden = false;
-      els.folderModal.removeAttribute("hidden");
-    }
+    const cfg = formatFolderModalConfig(null);
+    folderModalTargetId = cfg.targetId;
+    if (els.folderModalTitle) els.folderModalTitle.textContent = cfg.title;
+    if (els.newFolderName) els.newFolderName.value = cfg.name;
+    if (els.btnCreateFolder) els.btnCreateFolder.textContent = cfg.submitText;
+    openModal(els.folderModal);
     toastWarn("请输入文件夹名称");
     setTimeout(() => els.newFolderName?.focus(), 50);
   } catch (err) {
@@ -2349,19 +2354,16 @@ const openNewFolderDialog = () => {
 };
 
 const openRenameFolderDialog = (folder) => {
-  if (!folder || folder.isDeleted || folder.isPermanentlyDeleted) return;
-  if (String(folder.id).toLowerCase() === "f16a2c4e-4a2a-43d5-a670-3f1767d41001") {
-    toastWarn("固定文件夹不可重命名");
+  const cfg = formatFolderModalConfig(folder);
+  if (cfg.error) {
+    toastWarn(cfg.error);
     return;
   }
-  folderModalTargetId = String(folder.id);
-  if (els.folderModalTitle) els.folderModalTitle.textContent = "重命名文件夹";
-  if (els.newFolderName) els.newFolderName.value = folder.name || "";
-  if (els.btnCreateFolder) els.btnCreateFolder.textContent = "保存";
-  if (els.folderModal) {
-    els.folderModal.hidden = false;
-    els.folderModal.removeAttribute("hidden");
-  }
+  folderModalTargetId = cfg.targetId;
+  if (els.folderModalTitle) els.folderModalTitle.textContent = cfg.title;
+  if (els.newFolderName) els.newFolderName.value = cfg.name;
+  if (els.btnCreateFolder) els.btnCreateFolder.textContent = cfg.submitText;
+  openModal(els.folderModal);
   setTimeout(() => {
     els.newFolderName?.focus();
     els.newFolderName?.select();

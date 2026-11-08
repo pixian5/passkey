@@ -18,6 +18,10 @@ import {
   computeSyncSources,
   computeSyncConfirmationWarnings,
   formatSyncFailureLine,
+  computePrimaryFingerprint,
+  formatSyncReportSummary,
+  formatSyncPreviewMetaText,
+  formatSyncDiffTitle,
 } from "../../codex-tauri/src/sync_preview.js";
 
 test("SYNC_APPLIED_TEXT provides standard Chinese translations for all 3 modes", () => {
@@ -287,3 +291,53 @@ test("formatSyncFailureLine formats error message with code and session trace", 
   });
   assert.equal(lineSimple, "WebDAV：连接超时");
 });
+
+test("computePrimaryFingerprint formats selfHosted and webdav identifiers cleanly", () => {
+  assert.equal(
+    computePrimaryFingerprint({
+      primary: "selfHosted",
+      selfHostedBaseUrl: "https://sync.example.com///",
+    }),
+    "selfHosted|https://sync.example.com"
+  );
+
+  assert.equal(
+    computePrimaryFingerprint({
+      primary: "webdav",
+      webdavBaseUrl: "https://dav.example.com/remote.php/webdav//",
+      webdavRemotePath: "/pass/vault.json",
+    }),
+    "webdav|https://dav.example.com/remote.php/webdav|/pass/vault.json"
+  );
+});
+
+test("formatSyncReportSummary formats concise status message with push status", () => {
+  const reports = [
+    { source: "自建服务器", message: "完成", applied: true, pushed: true, mode: "merge" },
+    { source: "WebDAV", message: "已检查", applied: false, ok: true },
+  ];
+  assert.equal(
+    formatSyncReportSummary(reports),
+    "自建服务器：完成（已合并写入本地 · 远端已确认一致）；WebDAV：已检查（两端内容已一致，无需写入）"
+  );
+});
+
+test("formatSyncPreviewMetaText and formatSyncDiffTitle format human readable diffs", () => {
+  assert.equal(
+    formatSyncDiffTitle(5, 2, 1, 2),
+    "预计写入本地：新增 2，移除 1，修改 2"
+  );
+  assert.equal(
+    formatSyncDiffTitle(0, 0, 0, 0),
+    "预计不会改变本地数据"
+  );
+  assert.equal(
+    formatSyncPreviewMetaText(2, -1),
+    "文件夹数量变化 +2；通行密钥数量变化 -1。仅显示字段名，不显示密码或密钥内容。"
+  );
+  assert.equal(
+    formatSyncPreviewMetaText(-1, 0),
+    "文件夹数量变化 -1；通行密钥数量变化 +0。仅显示字段名，不显示密码或密钥内容。"
+  );
+});
+

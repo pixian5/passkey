@@ -141,3 +141,46 @@ export class ModalEscapeHandler {
     return false;
   }
 }
+
+export const FIXED_NEW_ACCOUNT_FOLDER_ID = "f16a2c4e-4a2a-43d5-a670-3f1767d41001";
+
+export const isFixedFolder = (id) =>
+  String(id || "").toLowerCase() === FIXED_NEW_ACCOUNT_FOLDER_ID;
+
+export const formatFolderModalConfig = (folder = null) => {
+  if (folder && !folder.isDeleted && !folder.isPermanentlyDeleted) {
+    if (isFixedFolder(folder.id)) {
+      return {
+        error: "固定文件夹不可重命名",
+        isRename: true,
+        targetId: String(folder.id),
+      };
+    }
+    return {
+      error: null,
+      isRename: true,
+      title: "重命名文件夹",
+      name: folder.name || "",
+      submitText: "保存",
+      targetId: String(folder.id),
+    };
+  }
+  return {
+    error: null,
+    isRename: false,
+    title: "新建文件夹",
+    name: "",
+    submitText: "创建",
+    targetId: "",
+  };
+};
+
+export const formatFolderSitesModalConfig = (folder) => {
+  if (!folder) return null;
+  return {
+    targetId: String(folder.id),
+    title: `加入「${folder.name || "未命名文件夹"}」中的指定网站账号`,
+    sitesText: (folder.matchedSites || []).join("\n"),
+    autoAdd: Boolean(folder.autoAddMatchingSites),
+  };
+};

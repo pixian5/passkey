@@ -10,6 +10,10 @@ import {
   ConfirmationDialog,
   ActionConfirmDialog,
   ModalEscapeHandler,
+  FIXED_NEW_ACCOUNT_FOLDER_ID,
+  isFixedFolder,
+  formatFolderModalConfig,
+  formatFolderSitesModalConfig,
 } from "../../codex-tauri/src/dialog.js";
 
 function createMockElement(initialHidden = true) {
@@ -197,3 +201,57 @@ test("ModalEscapeHandler triggers highest priority open handler", () => {
   assert.equal(firstClosed, true);
   assert.equal(secondClosed, false);
 });
+
+test("isFixedFolder identifies fixed new account folder ID accurately", () => {
+  assert.equal(isFixedFolder(FIXED_NEW_ACCOUNT_FOLDER_ID), true);
+  assert.equal(isFixedFolder("F16A2C4E-4A2A-43D5-A670-3F1767D41001"), true);
+  assert.equal(isFixedFolder("custom-folder"), false);
+  assert.equal(isFixedFolder(null), false);
+});
+
+test("formatFolderModalConfig configures new folder and rename folder dialogs", () => {
+  // New folder mode
+  const newConfig = formatFolderModalConfig(null);
+  assert.deepEqual(newConfig, {
+    error: null,
+    isRename: false,
+    title: "新建文件夹",
+    name: "",
+    submitText: "创建",
+    targetId: "",
+  });
+
+  // Rename folder mode
+  const renameConfig = formatFolderModalConfig({ id: "folder-123", name: "工作" });
+  assert.deepEqual(renameConfig, {
+    error: null,
+    isRename: true,
+    title: "重命名文件夹",
+    name: "工作",
+    submitText: "保存",
+    targetId: "folder-123",
+  });
+
+  // Attempt to rename fixed folder
+  const fixedConfig = formatFolderModalConfig({ id: FIXED_NEW_ACCOUNT_FOLDER_ID });
+  assert.equal(fixedConfig.error, "固定文件夹不可重命名");
+  assert.equal(fixedConfig.isRename, true);
+});
+
+test("formatFolderSitesModalConfig formats title, matched sites, and autoAdd flag", () => {
+  assert.equal(formatFolderSitesModalConfig(null), null);
+
+  const config = formatFolderSitesModalConfig({
+    id: "f-sites",
+    name: "财务",
+    matchedSites: ["bank.com", "tax.gov"],
+    autoAddMatchingSites: true,
+  });
+  assert.deepEqual(config, {
+    targetId: "f-sites",
+    title: "加入「财务」中的指定网站账号",
+    sitesText: "bank.com\ntax.gov",
+    autoAdd: true,
+  });
+});
+

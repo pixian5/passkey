@@ -245,3 +245,36 @@ export const formatSyncFailureLine = (report = {}) => {
   const message = report?.message || "同步未完成";
   return `${source}${code}：${message}${trace ? `（${trace}）` : ""}`;
 };
+
+export const computePrimaryFingerprint = ({
+  primary = "selfHosted",
+  selfHostedBaseUrl = "",
+  webdavBaseUrl = "",
+  webdavRemotePath = "",
+} = {}) => {
+  if (primary === "webdav") {
+    return `webdav|${String(webdavBaseUrl || "").trim().replace(/\/+$/, "")}|${String(webdavRemotePath || "").trim()}`;
+  }
+  return `selfHosted|${String(selfHostedBaseUrl || "").trim().replace(/\/+$/, "")}`;
+};
+
+export const formatSyncReportSummary = (reports = []) => {
+  const list = Array.isArray(reports) ? reports : [reports];
+  return list
+    .filter(Boolean)
+    .map((item) => `${item.source}：${item.message || "完成"}${formatSyncPushState(item) ? `（${formatSyncPushState(item)}）` : ""}`)
+    .join("；");
+};
+
+export const formatSyncPreviewMetaText = (folderDelta = 0, passkeyDelta = 0) => {
+  const fd = folderDelta >= 0 ? `+${folderDelta}` : `${folderDelta}`;
+  const pd = passkeyDelta >= 0 ? `+${passkeyDelta}` : `${passkeyDelta}`;
+  return `文件夹数量变化 ${fd}；通行密钥数量变化 ${pd}。仅显示字段名，不显示密码或密钥内容。`;
+};
+
+export const formatSyncDiffTitle = (totalChanges = 0, addedCount = 0, removedCount = 0, changedCount = 0) => {
+  return totalChanges
+    ? `预计写入本地：新增 ${addedCount}，移除 ${removedCount}，修改 ${changedCount}`
+    : "预计不会改变本地数据";
+};
+
