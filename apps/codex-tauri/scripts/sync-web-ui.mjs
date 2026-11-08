@@ -15,6 +15,7 @@ const sourceStore = resolve(root, "src/store.js");
 const sourceDialog = resolve(root, "src/dialog.js");
 const sourceDedup = resolve(root, "src/dedup.js");
 const sourceProvision = resolve(root, "src/provision.js");
+const sourceDndReorder = resolve(root, "src/dnd_reorder.js");
 const sourceSyncPreview = resolve(root, "src/sync_preview.js");
 const sourceStyles = resolve(root, "src/styles.css");
 const sourceSyncOutboxScheduler = resolve(root, "src/sync_outbox_scheduler.js");
@@ -38,6 +39,7 @@ async function syncExtensionUi() {
   await cp(sourceDialog, resolve(extensionDir, "dialog.js"));
   await cp(sourceDedup, resolve(extensionDir, "dedup.js"));
   await cp(sourceProvision, resolve(extensionDir, "provision.js"));
+  await cp(sourceDndReorder, resolve(extensionDir, "dnd_reorder.js"));
   await cp(sourceSyncPreview, resolve(extensionDir, "sync_preview.js"));
   await cp(sourceStyles, resolve(extensionDir, "web-options.css"));
   await cp(sourceSyncOutboxScheduler, resolve(extensionDir, "sync_outbox_scheduler.js"));

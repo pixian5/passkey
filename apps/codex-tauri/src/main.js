@@ -118,6 +118,16 @@ import {
   formatFolderSiteRuleSummary,
   formatProgressElapsedText,
 } from "./provision.js";
+import {
+  isDndDragEvent,
+  computeDropLineStyle,
+  computeDropPlacement,
+  computeFloatStyle,
+  planFolderReorder,
+  planAccountReorder,
+  applyPinnedSortOrders,
+  computeAccountFolderPickerState,
+} from "./dnd_reorder.js";
 
 // 统一排障日志前缀：每条日志都带当前应用版本号，方便跨端定位问题来源。
 const LOG_PREFIX = `[Pass v${APP_VERSION}]`;
@@ -862,61 +872,33 @@ const orderedSelectedActiveAccounts = () => {
 };
 
 const openAccountFolderPicker = (accountsOrAccount) => {
-  const accounts = Array.isArray(accountsOrAccount) ? accountsOrAccount : [accountsOrAccount];
-  const activeAccounts = accounts.filter((account) => account && !account.isDeleted);
-  const replaceMembership = true;
-  if (!activeAccounts.length) {
-    toastWarn("回收站账号不能添加到文件夹");
+  const currentFolderId = filter.type === "folder" ? String(filter.id || "").toLowerCase() : "";
+  const picker = computeAccountFolderPickerState(state.folders, accountsOrAccount, currentFolderId);
+  if (picker.error) {
+    toastWarn(picker.error);
     return;
   }
-  const folders = (state.folders || []).filter(
-    (folder) => !folder.isDeleted && !folder.isPermanentlyDeleted
-  );
-  if (!folders.length) {
-    toastWarn("暂无可添加的文件夹，请先新建文件夹");
-    return;
-  }
-  const existingByFolder = new Map(
-    activeAccounts.map((account) => [
-      accountKey(account).toLowerCase(),
-      new Set(folderIdsOf(account).map((id) => id.toLowerCase())),
-    ])
-  );
   accountFolderTarget = {
-    ids: activeAccounts.map((account) => accountRecordId(account) || accountKey(account)),
-    names: activeAccounts.map((account) => account.username || account.accountId || "账号"),
-    replaceMembership,
+    ids: picker.targetIds,
+    names: picker.targetNames,
+    replaceMembership: true,
   };
   if (els.accountFolderTitle) {
-    els.accountFolderTitle.textContent = `设置 ${activeAccounts.length} 个账号的文件夹`;
+    els.accountFolderTitle.textContent = picker.title;
   }
-  const currentFolderId = filter.type === "folder" ? String(filter.id || "").toLowerCase() : "";
-  const commonFolderIds = new Set(
-    folders
-      .filter((folder) => activeAccounts.every((account) =>
-        existingByFolder.get(accountKey(account).toLowerCase())?.has(String(folder.id).toLowerCase())
-      ))
-      .map((folder) => String(folder.id).toLowerCase())
-  );
   if (els.accountFolderOptions) {
     els.accountFolderOptions.innerHTML = "";
-    folders.forEach((folder) => {
+    picker.options.forEach((opt) => {
       const label = document.createElement("label");
       label.className = "account-folder-option";
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
-      checkbox.value = folder.id;
-      const folderKey = String(folder.id).toLowerCase();
-      const anyAlreadyAdded = activeAccounts.some((account) =>
-        existingByFolder.get(accountKey(account).toLowerCase())?.has(folderKey)
-      );
-      checkbox.checked = currentFolderId
-        ? folderKey === currentFolderId || commonFolderIds.has(folderKey)
-        : anyAlreadyAdded;
+      checkbox.value = opt.id;
+      checkbox.checked = opt.checked;
       checkbox.disabled = false;
-      checkbox.setAttribute("aria-label", folder.name || folder.id);
+      checkbox.setAttribute("aria-label", opt.name);
       const name = document.createElement("span");
-      name.textContent = folder.name || folder.id;
+      name.textContent = opt.name;
       label.append(checkbox, name);
       els.accountFolderOptions.appendChild(label);
     });
@@ -1121,13 +1103,16 @@ const showLineAt = (targetEl, before) => {
     hideLineEl();
     return;
   }
+  const style = computeDropLineStyle(targetEl.getBoundingClientRect(), before);
+  if (!style) {
+    hideLineEl();
+    return;
+  }
   const line = ensureLineEl();
-  const rect = targetEl.getBoundingClientRect();
-  const y = before ? rect.top : rect.bottom;
   line.hidden = false;
-  line.style.left = `${Math.max(8, rect.left + 4)}px`;
-  line.style.width = `${Math.max(40, rect.width - 8)}px`;
-  line.style.top = `${Math.max(0, y - 1.5)}px`;
+  line.style.left = style.left;
+  line.style.width = style.width;
+  line.style.top = style.top;
 };
 
 const clearSourceMarks = () => {
@@ -1178,21 +1163,14 @@ const accountsForOrderScope = (scopeId = accountOrderScopeId()) => {
 };
 
 const reorderFolderRelative = async (sourceId, targetId, before) => {
-  const folders = (state.folders || []).filter((f) => !f.isDeleted && !f.isPermanentlyDeleted);
-  const ids = folders.map((f) => String(f.id));
-  const next = moveIdInList(ids, sourceId, targetId, before);
-  if (!next) {
+  const plan = planFolderReorder(state.folders, sourceId, targetId, before);
+  if (!plan) {
     toastWarn("位置未变化");
     return false;
   }
   try {
-    await invoke("reorder_folders", { orderedIds: next });
-    const byId = new Map(folders.map((f) => [String(f.id).toLowerCase(), f]));
-    const deleted = (state.folders || []).filter((f) => f.isDeleted || f.isPermanentlyDeleted);
-    state.folders = next
-      .map((id) => byId.get(String(id).toLowerCase()))
-      .filter(Boolean)
-      .concat(deleted);
+    await invoke("reorder_folders", { orderedIds: plan.orderedIds });
+    state.folders = plan.folders;
     renderFolders();
     applySidebarActive();
     toastSuccess("文件夹顺序已更新");
@@ -1209,51 +1187,38 @@ const reorderAccountRelative = async (sourceId, targetId, before) => {
     toastError("未找到拖动的账号");
     return false;
   }
-  const pinned = isPinnedAccount(source);
-  const scopeId = accountOrderScopeId();
-  const group = pinned
-    ? pinScopeAccounts(true)
-    : sortAccounts(
-        accountsForOrderScope(scopeId).filter((a) => !isPinnedAccount(a) && !a.isDeleted),
-        scopeId
-      );
-  const ids = group.map((a) => accountRecordId(a) || accountKey(a));
-  const sourceRec = accountRecordId(source) || accountKey(source);
   const target = findAccountByAnyId(targetId);
   if (!target) {
     toastError("未找到放置目标");
     return false;
   }
-  let targetRec = accountRecordId(target) || accountKey(target);
-  let placeBefore = before;
-  if (isPinnedAccount(target) !== pinned) {
-    if (!ids.length) return false;
-    targetRec = pinned ? ids[ids.length - 1] : ids[0];
-    placeBefore = !pinned;
-  }
-  const next = moveIdInList(ids, sourceRec, targetRec, placeBefore);
-  if (!next) {
+  const scopeId = accountOrderScopeId();
+  const plan = planAccountReorder({
+    sourceAccount: source,
+    targetAccount: target,
+    before,
+    scopeAccounts: sortAccounts(
+      accountsForOrderScope(scopeId).filter((a) => !isPinnedAccount(a) && !a.isDeleted),
+      scopeId
+    ),
+    pinnedAccounts: pinScopeAccounts(true),
+  });
+  if (!plan) {
     toastWarn("位置未变化");
     return false;
   }
   try {
-    await invoke("reorder_accounts", { orderedIds: next, pinned, scopeId });
-    const orderRank = new Map(next.map((id, i) => [String(id).toLowerCase(), i]));
-    if (!pinned && scopeId === "all") {
-      state.allRegularAccountIds = next;
-    } else if (!pinned) {
+    await invoke("reorder_accounts", { orderedIds: plan.orderedIds, pinned: plan.pinned, scopeId });
+    if (!plan.pinned && scopeId === "all") {
+      state.allRegularAccountIds = plan.orderedIds;
+    } else if (!plan.pinned) {
       const folderId = scopeId.slice("folder:".length);
       const folder = (state.folders || []).find((item) => sameId(item.id, folderId));
-      if (folder) folder.regularAccountIds = next;
+      if (folder) folder.regularAccountIds = plan.orderedIds;
     }
-    for (const acc of state.activeAccounts || []) {
-      if (isPinnedAccount(acc) !== pinned) continue;
-      const rid = String(accountRecordId(acc) || accountKey(acc)).toLowerCase();
-      if (!orderRank.has(rid)) continue;
-      if (pinned) acc.pinnedSortOrder = orderRank.get(rid);
-    }
+    state.activeAccounts = applyPinnedSortOrders(state.activeAccounts || [], plan.orderedIds);
     render();
-    toastSuccess(pinned ? "置顶顺序已更新" : "账号顺序已更新");
+    toastSuccess(plan.pinned ? "置顶顺序已更新" : "账号顺序已更新");
     refreshState().catch(() => {});
     return true;
   } catch (err) {
@@ -1314,8 +1279,9 @@ const moveFloatEl = (clientX, clientY) => {
   if (!ghost) return;
   const ox = Number(ghost.dataset.offsetX || 0);
   const oy = Number(ghost.dataset.offsetY || 0);
-  ghost.style.left = `${clientX - ox}px`;
-  ghost.style.top = `${clientY - oy}px`;
+  const style = computeFloatStyle(clientX, clientY, ox, oy);
+  ghost.style.left = style.left;
+  ghost.style.top = style.top;
 };
 
 const updateHoverTarget = (clientX, clientY) => {
@@ -1326,13 +1292,14 @@ const updateHoverTarget = (clientX, clientY) => {
     return;
   }
   const rect = target.getBoundingClientRect();
-  let before = clientY < rect.top + rect.height / 2;
-  if (dnd.kind === "account") {
-    const targetPinned = target.dataset.pinned === "1";
-    if (Boolean(dnd.sourcePinned) !== targetPinned) {
-      before = Boolean(dnd.sourcePinned) ? false : true;
-    }
-  }
+  const targetPinned = target.dataset.pinned === "1";
+  const { before } = computeDropPlacement({
+    clientY,
+    targetRect: rect,
+    kind: dnd.kind,
+    sourcePinned: dnd.sourcePinned,
+    targetPinned,
+  });
   dnd.overId = target.dataset.recordId || target.dataset.id || target.dataset.folderId || "";
   dnd.before = before;
   showLineAt(target, before);
@@ -1367,7 +1334,7 @@ const onMouseDndMove = (e) => {
   const y = e.clientY;
   const dx = x - dnd.startX;
   const dy = y - dnd.startY;
-  if (!dnd.moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
+  if (!dnd.moved && isDndDragEvent(dx, dy)) {
     dnd.moved = true;
     document.body.classList.add("is-reordering");
     ensureFloatEl(x, y);

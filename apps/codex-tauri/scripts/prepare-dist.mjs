@@ -19,6 +19,7 @@ await cp(resolve(root, "src", "dialog.js"), resolve(dist, "src", "dialog.js"));
 await cp(resolve(root, "src", "dedup.js"), resolve(dist, "src", "dedup.js"));
 await cp(resolve(root, "src", "sync_preview.js"), resolve(dist, "src", "sync_preview.js"));
 await cp(resolve(root, "src", "provision.js"), resolve(dist, "src", "provision.js"));
+await cp(resolve(root, "src", "dnd_reorder.js"), resolve(dist, "src", "dnd_reorder.js"));
 await cp(resolve(root, "src", "sync_outbox_scheduler.js"), resolve(dist, "src", "sync_outbox_scheduler.js"));
 await cp(resolve(root, "src", "styles.css"), resolve(dist, "src", "styles.css"));
 await cp(resolve(root, "node_modules", "jsqr", "dist", "jsQR.js"), resolve(dist, "vendor", "jsQR.js"));
