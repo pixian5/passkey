@@ -155,3 +155,50 @@ export const parseSidebarFilterTag = (f = "") => {
   if (str.startsWith("folder:")) return { type: "folder", id: str.slice("folder:".length) };
   return null;
 };
+
+export const filterAccountsByCriteria = (
+  state = {},
+  filter = { type: "all" },
+  queryText = "",
+  searchField = "all"
+) => {
+  let base;
+  if (filter?.type === "recycle") {
+    base = state?.deletedAccounts || [];
+  } else {
+    base = state?.activeAccounts || [];
+    if (filter?.type === "passkeys") base = base.filter(hasPasskey);
+    if (filter?.type === "totp") base = base.filter(hasTotp);
+    if (filter?.type === "folder" && filter?.id) {
+      const fid = String(filter.id).toLowerCase();
+      base = base.filter((a) => folderIdsOf(a).some((id) => id.toLowerCase() === fid));
+    }
+  }
+  return base.filter((a) => matchesSearchQuery(a, queryText, searchField));
+};
+
+export const isSidebarFilterActive = (filterTag = "", currentFilter = { type: "all" }) => {
+  const f = String(filterTag || "");
+  const filter = currentFilter || { type: "all" };
+  if (f === "all" && filter.type === "all") return true;
+  if (f === "passkeys" && filter.type === "passkeys") return true;
+  if (f === "totp" && filter.type === "totp") return true;
+  if (f === "recycle" && filter.type === "recycle") return true;
+  if (
+    f.startsWith("folder:") &&
+    filter.type === "folder" &&
+    f.slice("folder:".length).toLowerCase() === String(filter.id || "").toLowerCase()
+  ) {
+    return true;
+  }
+  return false;
+};
+
+export const formatSidebarCountLabels = (counts = {}) => ({
+  all: `全部 (${counts?.all || 0})`,
+  passkeys: `通行密钥 (${counts?.passkeys || 0})`,
+  totp: `验证码 (${counts?.totp || 0})`,
+  recycle: `回收站 (${counts?.recycle || 0})`,
+  folders: `文件夹 (${counts?.folders || 0})`,
+});
+

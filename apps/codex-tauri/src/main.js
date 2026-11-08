@@ -71,6 +71,9 @@ import {
   computeSearchPlaceholder,
   computeSidebarCounts,
   parseSidebarFilterTag,
+  filterAccountsByCriteria,
+  isSidebarFilterActive,
+  formatSidebarCountLabels,
 } from "./vault_filters.js";
 import {
   createEmptyState,
@@ -738,18 +741,8 @@ const sortAccounts = (list, scopeId = accountOrderScopeId()) => {
 };
 
 const filteredAccounts = () => {
-  let base;
-  if (filter.type === "recycle") base = state.deletedAccounts || [];
-  else {
-    base = state.activeAccounts || [];
-    if (filter.type === "passkeys") base = base.filter(hasPasskey);
-    if (filter.type === "totp") base = base.filter(hasTotp);
-    if (filter.type === "folder") {
-      const fid = filter.id.toLowerCase();
-      base = base.filter((a) => folderIdsOf(a).some((id) => id.toLowerCase() === fid));
-    }
-  }
-  return sortAccounts(base.filter(matchesQuery));
+  const matching = filterAccountsByCriteria(state, filter, query(), searchField());
+  return sortAccounts(matching);
 };
 
 const selectOnlyAccount = (key) => {
@@ -791,29 +784,18 @@ const clearAccountSelection = () => {
 
 const updateSidebarLabels = () => {
   const counts = computeSidebarCounts(state);
-  if (els.labelAll) els.labelAll.textContent = `全部 (${counts.all})`;
-  if (els.labelPasskeys) els.labelPasskeys.textContent = `通行密钥 (${counts.passkeys})`;
-  if (els.labelTotp) els.labelTotp.textContent = `验证码 (${counts.totp})`;
-  if (els.labelRecycle) els.labelRecycle.textContent = `回收站 (${counts.recycle})`;
-  if (els.labelFolders) els.labelFolders.textContent = `文件夹 (${counts.folders})`;
+  const labels = formatSidebarCountLabels(counts);
+  if (els.labelAll) els.labelAll.textContent = labels.all;
+  if (els.labelPasskeys) els.labelPasskeys.textContent = labels.passkeys;
+  if (els.labelTotp) els.labelTotp.textContent = labels.totp;
+  if (els.labelRecycle) els.labelRecycle.textContent = labels.recycle;
+  if (els.labelFolders) els.labelFolders.textContent = labels.folders;
 };
 
 const applySidebarActive = () => {
   document.querySelectorAll(".sidebar .side-item[data-filter]").forEach((btn) => {
     const f = btn.dataset.filter || "";
-    let on = false;
-    if (f === "all" && filter.type === "all") on = true;
-    else if (f === "passkeys" && filter.type === "passkeys") on = true;
-    else if (f === "totp" && filter.type === "totp") on = true;
-    else if (f === "recycle" && filter.type === "recycle") on = true;
-    else if (
-      f.startsWith("folder:") &&
-      filter.type === "folder" &&
-      f.slice(7).toLowerCase() === String(filter.id || "").toLowerCase()
-    ) {
-      on = true;
-    }
-    btn.classList.toggle("active", on);
+    btn.classList.toggle("active", isSidebarFilterActive(f, filter));
   });
 };
 

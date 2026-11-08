@@ -16,6 +16,9 @@ import {
   computeSearchPlaceholder,
   computeSidebarCounts,
   parseSidebarFilterTag,
+  filterAccountsByCriteria,
+  isSidebarFilterActive,
+  formatSidebarCountLabels,
 } from "../../codex-tauri/src/vault_filters.js";
 
 test("accountKey and accountRecordId extract preferred key with fallbacks", () => {
@@ -211,3 +214,70 @@ test("parseSidebarFilterTag parses standard categories and custom folder IDs", (
   assert.equal(parseSidebarFilterTag("unknown"), null);
   assert.equal(parseSidebarFilterTag(""), null);
 });
+
+test("filterAccountsByCriteria filters accounts by folder, passkeys, totp, recycle, and search query", () => {
+  const dummyState = {
+    activeAccounts: [
+      { id: "1", sites: ["github.com"], username: "dev", passkeyCredentialIds: ["pk1"], folderIds: ["f1"] },
+      { id: "2", sites: ["google.com"], username: "work", totpSecret: "secret", folderIds: ["f2"] },
+      { id: "3", sites: ["gitlab.com"], username: "dev", folderIds: ["f1"] },
+    ],
+    deletedAccounts: [
+      { id: "4", sites: ["legacy.com"], username: "old" },
+    ],
+  };
+
+  // All active
+  assert.equal(filterAccountsByCriteria(dummyState, { type: "all" }).length, 3);
+
+  // Recycle
+  const recycle = filterAccountsByCriteria(dummyState, { type: "recycle" });
+  assert.equal(recycle.length, 1);
+  assert.equal(recycle[0].id, "4");
+
+  // Passkeys
+  const pk = filterAccountsByCriteria(dummyState, { type: "passkeys" });
+  assert.equal(pk.length, 1);
+  assert.equal(pk[0].id, "1");
+
+  // Totp
+  const totp = filterAccountsByCriteria(dummyState, { type: "totp" });
+  assert.equal(totp.length, 1);
+  assert.equal(totp[0].id, "2");
+
+  // Folder
+  const f1 = filterAccountsByCriteria(dummyState, { type: "folder", id: "f1" });
+  assert.equal(f1.length, 2);
+
+  // Search query
+  const searched = filterAccountsByCriteria(dummyState, { type: "all" }, "gitlab");
+  assert.equal(searched.length, 1);
+  assert.equal(searched[0].id, "3");
+});
+
+test("isSidebarFilterActive and formatSidebarCountLabels format sidebar accurately", () => {
+  assert.equal(isSidebarFilterActive("all", { type: "all" }), true);
+  assert.equal(isSidebarFilterActive("passkeys", { type: "passkeys" }), true);
+  assert.equal(isSidebarFilterActive("totp", { type: "totp" }), true);
+  assert.equal(isSidebarFilterActive("recycle", { type: "recycle" }), true);
+  assert.equal(isSidebarFilterActive("folder:f1", { type: "folder", id: "f1" }), true);
+  assert.equal(isSidebarFilterActive("folder:F1", { type: "folder", id: "f1" }), true);
+  assert.equal(isSidebarFilterActive("folder:f2", { type: "folder", id: "f1" }), false);
+  assert.equal(isSidebarFilterActive("all", { type: "recycle" }), false);
+
+  const labels = formatSidebarCountLabels({
+    all: 10,
+    passkeys: 3,
+    totp: 4,
+    recycle: 1,
+    folders: 2,
+  });
+  assert.deepEqual(labels, {
+    all: "全部 (10)",
+    passkeys: "通行密钥 (3)",
+    totp: "验证码 (4)",
+    recycle: "回收站 (1)",
+    folders: "文件夹 (2)",
+  });
+});
+
