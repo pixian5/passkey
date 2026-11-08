@@ -15,6 +15,12 @@ import {
   formatFolderModalConfig,
   formatFolderSitesModalConfig,
   formatPurgeRecycleWarning,
+  buildFolderContextMenuItems,
+  buildDeletedAccountContextMenuItems,
+  buildBatchAccountContextMenuItems,
+  buildAccountContextMenuItems,
+  buildSidebarContextMenuItems,
+  buildFolderHeadContextMenuItems,
 } from "../../codex-tauri/src/dialog.js";
 
 function createMockElement(initialHidden = true) {
@@ -263,5 +269,101 @@ test("formatPurgeRecycleWarning builds clear destructive warning message", () =>
   assert.equal(warn.confirmText, "永久删除");
   assert.match(warn.message, /8 个账号/);
 });
+
+test("buildFolderContextMenuItems returns four standard folder actions", () => {
+  let renameCalled = false;
+  let deleteCalled = false;
+  const items = buildFolderContextMenuItems({ id: "f1", name: "Dev" }, {
+    onRename: () => { renameCalled = true; },
+    onDelete: () => { deleteCalled = true; },
+  });
+  assert.equal(items.length, 4);
+  assert.equal(items[0].label, "重命名");
+  assert.equal(items[1].label, "加入指定网站全部账号");
+  assert.equal(items[2].label, "文件夹内去重");
+  assert.equal(items[3].label, "删除文件夹");
+  assert.equal(items[3].danger, true);
+
+  items[0].action();
+  assert.equal(renameCalled, true);
+  items[3].action();
+  assert.equal(deleteCalled, true);
+});
+
+test("buildDeletedAccountContextMenuItems returns restore and permanent delete actions", () => {
+  const items = buildDeletedAccountContextMenuItems();
+  assert.equal(items.length, 2);
+  assert.equal(items[0].label, "恢复");
+  assert.equal(items[1].label, "删除");
+  assert.equal(items[1].danger, true);
+});
+
+test("buildBatchAccountContextMenuItems handles pinned and unpinned selections", () => {
+  const unpinnedItems = buildBatchAccountContextMenuItems({ allPinned: false });
+  assert.equal(unpinnedItems.length, 3);
+  assert.equal(unpinnedItems[0].label, "添加到文件夹");
+  assert.equal(unpinnedItems[1].label, "置顶");
+  assert.equal(unpinnedItems[2].label, "移入回收站");
+  assert.equal(unpinnedItems[2].danger, true);
+
+  const pinnedItems = buildBatchAccountContextMenuItems({ allPinned: true });
+  assert.equal(pinnedItems[1].label, "取消置顶");
+});
+
+test("buildAccountContextMenuItems handles single account state variants", () => {
+  const normalItems = buildAccountContextMenuItems({
+    isPinned: false,
+    isDeleted: false,
+    onAddToFolder: () => {},
+    onTogglePin: () => {},
+    onEdit: () => {},
+    onSoftDelete: () => {},
+  });
+  assert.equal(normalItems.length, 4);
+  assert.deepEqual(
+    normalItems.map((i) => i.label),
+    ["添加到文件夹", "置顶", "编辑账号", "移入回收站"]
+  );
+
+  const pinnedItems = buildAccountContextMenuItems({
+    isPinned: true,
+    isDeleted: false,
+    onAddToFolder: () => {},
+    onTogglePin: () => {},
+    onEdit: () => {},
+    onSoftDelete: () => {},
+  });
+  assert.equal(pinnedItems[1].label, "取消置顶");
+
+  const deletedItems = buildAccountContextMenuItems({
+    isPinned: false,
+    isDeleted: true,
+    onAddToFolder: () => {},
+    onTogglePin: () => {},
+    onEdit: () => {},
+    onSoftDelete: () => {},
+  });
+  assert.deepEqual(
+    deletedItems.map((i) => i.label),
+    ["添加到文件夹", "编辑账号"]
+  );
+});
+
+test("buildSidebarContextMenuItems handles recycle bin and general views", () => {
+  const recycleItems = buildSidebarContextMenuItems("recycle");
+  assert.equal(recycleItems.length, 2);
+  assert.equal(recycleItems[0].label, "清空回收站");
+  assert.equal(recycleItems[0].danger, true);
+  assert.equal(recycleItems[1].label, "全部恢复");
+
+  const generalItems = buildSidebarContextMenuItems("all");
+  assert.equal(generalItems.length, 1);
+  assert.equal(generalItems[0].label, "新建账号");
+
+  const folderHeadItems = buildFolderHeadContextMenuItems();
+  assert.equal(folderHeadItems.length, 1);
+  assert.equal(folderHeadItems[0].label, "新建文件夹");
+});
+
 
 

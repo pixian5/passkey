@@ -35,7 +35,10 @@ import {
   formatTime,
   readFileAsText,
   formatUndoRedoTooltip,
+  computeUndoRedoButtonState,
   formatOperationHistoryRow,
+  formatOperationHistoryEmptyHtml,
+  formatOperationHistoryListHtml,
   formatLockStatusText,
   formatOtpDigitsHtml,
   formatAccountRowHtml,
@@ -88,6 +91,12 @@ import {
   formatFolderModalConfig,
   formatFolderSitesModalConfig,
   formatPurgeRecycleWarning,
+  buildFolderContextMenuItems,
+  buildDeletedAccountContextMenuItems,
+  buildBatchAccountContextMenuItems,
+  buildAccountContextMenuItems,
+  buildSidebarContextMenuItems,
+  buildFolderHeadContextMenuItems,
 } from "./dialog.js";
 import {
   SYNC_APPLIED_TEXT,
@@ -112,6 +121,7 @@ import {
   formatSyncPreviewMetaText,
   formatSyncDiffTitle,
   formatMergeSummaryText,
+  formatSyncDiffDetailItems,
 } from "./sync_preview.js";
 import {
   normalizeProvisionCredential,
@@ -1846,17 +1856,13 @@ const refreshUndoStatus = async () => {
   try {
     status = await invoke("get_undo_status");
   } catch (_) {}
-  const undoTooltip = formatUndoRedoTooltip(status, "undo");
-  const disabled = !status;
-  if (els.btnUndo) {
-    els.btnUndo.disabled = disabled;
-    els.btnUndo.dataset.tooltip = undoTooltip;
-    els.btnUndo.textContent = "撤销";
-  }
-  if (els.historyUndoLatest) {
-    els.historyUndoLatest.disabled = disabled;
-    els.historyUndoLatest.dataset.tooltip = undoTooltip;
-    els.historyUndoLatest.textContent = "撤销";
+  const { disabled, tooltip, text } = computeUndoRedoButtonState(status, "undo");
+  for (const el of [els.btnUndo, els.historyUndoLatest]) {
+    if (el) {
+      el.disabled = disabled;
+      el.dataset.tooltip = tooltip;
+      el.textContent = text;
+    }
   }
 };
 
@@ -1865,33 +1871,19 @@ const refreshRedoStatus = async () => {
   try {
     status = await invoke("get_redo_status");
   } catch (_) {}
-  const redoTooltip = formatUndoRedoTooltip(status, "redo");
-  const disabled = !status;
-  if (els.btnRedo) {
-    els.btnRedo.disabled = disabled;
-    els.btnRedo.dataset.tooltip = redoTooltip;
-    els.btnRedo.textContent = "重做";
-  }
-  if (els.historyRedoLatest) {
-    els.historyRedoLatest.disabled = disabled;
-    els.historyRedoLatest.dataset.tooltip = redoTooltip;
-    els.historyRedoLatest.textContent = "重做";
+  const { disabled, tooltip, text } = computeUndoRedoButtonState(status, "redo");
+  for (const el of [els.btnRedo, els.historyRedoLatest]) {
+    if (el) {
+      el.disabled = disabled;
+      el.dataset.tooltip = tooltip;
+      el.textContent = text;
+    }
   }
 };
 
 const renderOperationHistory = (entries = []) => {
   if (!els.historyList) return;
-  els.historyList.innerHTML = "";
-  if (!entries.length) {
-    els.historyList.innerHTML = '<div class="history-empty">暂无本地操作记录</div>';
-    return;
-  }
-  [...entries].reverse().forEach((entry) => {
-    const row = document.createElement("div");
-    row.className = "history-row";
-    row.innerHTML = formatOperationHistoryRow(entry);
-    els.historyList.appendChild(row);
-  });
+  els.historyList.innerHTML = formatOperationHistoryListHtml(entries, formatTime);
 };
 
 const refreshOperationHistory = async () => {
@@ -1899,7 +1891,7 @@ const refreshOperationHistory = async () => {
     const entries = await invoke("get_operation_history");
     renderOperationHistory(entries || []);
   } catch (err) {
-    if (els.historyList) els.historyList.innerHTML = `<div class="history-empty">读取历史失败：${escapeHtml(err)}</div>`;
+    if (els.historyList) els.historyList.innerHTML = formatOperationHistoryEmptyHtml(err);
   }
 };
 
@@ -2088,32 +2080,29 @@ const primaryFingerprint = () => {
 
 const renderSyncPreviewDiff = (localPayload, mergedPayload) => {
   if (!els.syncPreviewDiff) return;
-  const { added, removed, changed, folderDelta, passkeyDelta, totalChanges } =
-    calculateSyncPayloadDiff(localPayload, mergedPayload);
+  const diff = calculateSyncPayloadDiff(localPayload, mergedPayload);
   els.syncPreviewDiff.innerHTML = "";
   els.syncPreviewDiff.hidden = false;
   const title = document.createElement("strong");
-  title.textContent = formatSyncDiffTitle(totalChanges, added.length, removed.length, changed.length);
+  title.textContent = formatSyncDiffTitle(diff.totalChanges, diff.added.length, diff.removed.length, diff.changed.length);
   els.syncPreviewDiff.appendChild(title);
   const meta = document.createElement("div");
   meta.className = "sync-preview-diff-meta";
-  meta.textContent = formatSyncPreviewMetaText(folderDelta, passkeyDelta);
+  meta.textContent = formatSyncPreviewMetaText(diff.folderDelta, diff.passkeyDelta);
   els.syncPreviewDiff.appendChild(meta);
-  const details = [...added.map((account) => ({ kind: "新增", account, fields: [] })),
-    ...removed.map((account) => ({ kind: "移除", account, fields: [] })),
-    ...changed.map((item) => ({ kind: "修改", ...item }))].slice(0, 50);
-  if (details.length) {
+  const { lines, truncatedText } = formatSyncDiffDetailItems(diff, 50);
+  if (lines.length) {
     const list = document.createElement("ul");
-    for (const item of details) {
+    for (const line of lines) {
       const row = document.createElement("li");
-      row.textContent = `${item.kind}：${previewAccountLabel(item.account)}${item.fields.length ? `（${item.fields.join("、")}）` : ""}`;
+      row.textContent = line;
       list.appendChild(row);
     }
     els.syncPreviewDiff.appendChild(list);
-    if (added.length + removed.length + changed.length > details.length) {
+    if (truncatedText) {
       const more = document.createElement("div");
       more.className = "sync-preview-diff-meta";
-      more.textContent = `其余 ${added.length + removed.length + changed.length - details.length} 条变化已省略。`;
+      more.textContent = truncatedText;
       els.syncPreviewDiff.appendChild(more);
     }
   }
@@ -2216,16 +2205,12 @@ document.addEventListener("contextmenu", (e) => {
     const folderId = String(folderButton.dataset.filter || "").slice(7);
     const folder = (state.folders || []).find((item) => String(item.id) === folderId);
     if (!folder) return;
-    showContextMenu(e, [
-      { label: "重命名", action: () => openRenameFolderDialog(folder) },
-      { label: "加入指定网站全部账号", action: () => openFolderSites(folder) },
-      { label: "文件夹内去重", action: () => openFolderDedup(folder) },
-      {
-        label: "删除文件夹",
-        danger: true,
-        action: () => openFolderDelete(folder),
-      },
-    ]);
+    showContextMenu(e, buildFolderContextMenuItems(folder, {
+      onRename: () => openRenameFolderDialog(folder),
+      onAddSites: () => openFolderSites(folder),
+      onDedup: () => openFolderDedup(folder),
+      onDelete: () => openFolderDelete(folder),
+    }));
     return;
   }
 
@@ -2241,32 +2226,25 @@ document.addEventListener("contextmenu", (e) => {
     if (account.isDeleted) {
       selectOnlyAccount(key);
       applyAccountSelectionStyles();
-      showContextMenu(e, [
-        {
-          label: "恢复",
-          action: async () => {
-            await invoke("restore_account", { id: accountRecordId(account) || accountKey(account) });
-            await refreshState();
-            toastSuccess("已恢复");
-          },
+      showContextMenu(e, buildDeletedAccountContextMenuItems({
+        onRestore: async () => {
+          await invoke("restore_account", { id: accountRecordId(account) || accountKey(account) });
+          await refreshState();
+          toastSuccess("已恢复");
         },
-        {
-          label: "删除",
-          danger: true,
-          action: async () => {
-            const confirmed = await requestActionConfirmation({
-              title: "删除回收站账号",
-              message: "删除后将无法恢复，确定继续吗？",
-              confirmText: "删除",
-              danger: true,
-            });
-            if (!confirmed) return;
-            await invoke("hard_delete_account", { id: accountRecordId(account) || accountKey(account) });
-            await refreshState();
-            toastSuccess("已删除");
-          },
+        onDelete: async () => {
+          const confirmed = await requestActionConfirmation({
+            title: "删除回收站账号",
+            message: "删除后将无法恢复，确定继续吗？",
+            confirmText: "删除",
+            danger: true,
+          });
+          if (!confirmed) return;
+          await invoke("hard_delete_account", { id: accountRecordId(account) || accountKey(account) });
+          await refreshState();
+          toastSuccess("已删除");
         },
-      ]);
+      }));
       return;
     }
     if (!selectedAccountIds.has(key)) {
@@ -2276,55 +2254,31 @@ document.addEventListener("contextmenu", (e) => {
     const selectedAccounts = orderedSelectedActiveAccounts();
     if (selectedAccounts.length > 1 && selectedAccounts.some((item) => !item.isDeleted)) {
       const allPinned = selectedAccounts.every((item) => isPinnedAccount(item));
-      showContextMenu(e, [
-        {
-          label: "添加到文件夹",
-          action: () => openAccountFolderPicker(selectedAccounts),
-        },
-        {
-          label: allPinned ? "取消置顶" : "置顶",
-          action: () => setAccountsPinned(selectedAccounts, !allPinned),
-        },
-        {
-          label: "移入回收站",
-          danger: true,
-          action: () => softDeleteAccounts(selectedAccounts),
-        },
-      ]);
+      showContextMenu(e, buildBatchAccountContextMenuItems({
+        allPinned,
+        onAddToFolder: () => openAccountFolderPicker(selectedAccounts),
+        onTogglePin: () => setAccountsPinned(selectedAccounts, !allPinned),
+        onSoftDelete: () => softDeleteAccounts(selectedAccounts),
+      }));
       return;
     }
-    const items = [];
-    items.push({
-      label: "添加到文件夹",
-      action: () => openAccountFolderPicker(account),
-    });
-    if (!account.isDeleted) {
-      items.push({
-        label: isPinnedAccount(account) ? "取消置顶" : "置顶",
-        action: () => togglePinAccount(account),
-      });
-    }
-    items.push({
-      label: "编辑账号",
-      action: () => {
+    showContextMenu(e, buildAccountContextMenuItems({
+      isPinned: isPinnedAccount(account),
+      isDeleted: false,
+      onAddToFolder: () => openAccountFolderPicker(account),
+      onTogglePin: () => togglePinAccount(account),
+      onEdit: () => {
         selectOnlyAccount(key);
         openEdit(account);
         render();
       },
-    });
-    if (!account.isDeleted) {
-      items.push({
-        label: "移入回收站",
-        danger: true,
-        action: async () => {
-          const id = accountRecordId(account) || accountKey(account);
-          await invoke("soft_delete_account", { id });
-          await refreshState();
-          toastSuccess("已移入回收站");
-        },
-      });
-    }
-    showContextMenu(e, items);
+      onSoftDelete: async () => {
+        const id = accountRecordId(account) || accountKey(account);
+        await invoke("soft_delete_account", { id });
+        await refreshState();
+        toastSuccess("已移入回收站");
+      },
+    }));
     return;
   }
 
@@ -2332,20 +2286,19 @@ document.addEventListener("contextmenu", (e) => {
     ? e.target.closest("#sidebar .side-item[data-filter]")
     : null;
   if (sideButton) {
-    if (sideButton.dataset.filter === "recycle") {
-      showContextMenu(e, [
-        { label: "清空回收站", danger: true, action: () => els.btnPurgeRecycle?.click() },
-        { label: "全部恢复", action: () => els.btnRestoreAll?.click() },
-      ]);
-      return;
-    }
-    showContextMenu(e, [{ label: "新建账号", action: () => openEdit(null) }]);
+    showContextMenu(e, buildSidebarContextMenuItems(sideButton.dataset.filter || "", {
+      onPurgeRecycle: () => els.btnPurgeRecycle?.click(),
+      onRestoreAll: () => els.btnRestoreAll?.click(),
+      onNewAccount: () => openEdit(null),
+    }));
     return;
   }
 
   const folderHead = e.target instanceof Element ? e.target.closest("#folderHead") : null;
   if (folderHead) {
-    showContextMenu(e, [{ label: "新建文件夹", action: () => openNewFolderDialog() }]);
+    showContextMenu(e, buildFolderHeadContextMenuItems({
+      onNewFolder: () => openNewFolderDialog(),
+    }));
   }
 });
 
@@ -2894,28 +2847,6 @@ window.addEventListener("keydown", (e) => {
   }
   if (action === "escape") {
     if (!els.actionConfirmModal?.hidden) {
-      closeActionConfirm(false);
-      return;
-    }
-    if (!els.bundleImportConfirmModal?.hidden) {
-      closeBundleImportConfirm(false);
-      return;
-    }
-    if (!els.provisionConfirmModal?.hidden) {
-      closeProvisionConfirm(false);
-      return;
-    }
-    closeSettings();
-    closeEdit();
-    closeProvisionModal();
-    if (els.folderModal) els.folderModal.hidden = true;
-    closeFolderSites();
-    closeAccountFolderPicker();
-    closeFolderDedup();
-    closeFolderDelete();
-    hideContextMenu();
-  }
-});
       closeActionConfirm(false);
       return;
     }

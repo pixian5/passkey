@@ -191,3 +191,53 @@ export const formatPurgeRecycleWarning = (count = 0) => ({
   confirmText: "永久删除",
   danger: true,
 });
+
+export const buildFolderContextMenuItems = (folder, { onRename, onAddSites, onDedup, onDelete } = {}) => [
+  { label: "重命名", action: onRename },
+  { label: "加入指定网站全部账号", action: onAddSites },
+  { label: "文件夹内去重", action: onDedup },
+  { label: "删除文件夹", danger: true, action: onDelete },
+];
+
+export const buildDeletedAccountContextMenuItems = ({ onRestore, onDelete } = {}) => [
+  { label: "恢复", action: onRestore },
+  { label: "删除", danger: true, action: onDelete },
+];
+
+export const buildBatchAccountContextMenuItems = ({ allPinned = false, onAddToFolder, onTogglePin, onSoftDelete } = {}) => [
+  { label: "添加到文件夹", action: onAddToFolder },
+  { label: allPinned ? "取消置顶" : "置顶", action: onTogglePin },
+  { label: "移入回收站", danger: true, action: onSoftDelete },
+];
+
+export const buildAccountContextMenuItems = ({ isPinned = false, isDeleted = false, onAddToFolder, onTogglePin, onEdit, onSoftDelete } = {}) => {
+  const items = [];
+  if (typeof onAddToFolder === "function") {
+    items.push({ label: "添加到文件夹", action: onAddToFolder });
+  }
+  if (!isDeleted && typeof onTogglePin === "function") {
+    items.push({ label: isPinned ? "取消置顶" : "置顶", action: onTogglePin });
+  }
+  if (typeof onEdit === "function") {
+    items.push({ label: "编辑账号", action: onEdit });
+  }
+  if (!isDeleted && typeof onSoftDelete === "function") {
+    items.push({ label: "移入回收站", danger: true, action: onSoftDelete });
+  }
+  return items;
+};
+
+export const buildSidebarContextMenuItems = (filter = "", { onPurgeRecycle, onRestoreAll, onNewAccount } = {}) => {
+  if (filter === "recycle") {
+    return [
+      { label: "清空回收站", danger: true, action: onPurgeRecycle },
+      { label: "全部恢复", action: onRestoreAll },
+    ];
+  }
+  return [{ label: "新建账号", action: onNewAccount }];
+};
+
+export const buildFolderHeadContextMenuItems = ({ onNewFolder } = {}) => [
+  { label: "新建文件夹", action: onNewFolder },
+];
+

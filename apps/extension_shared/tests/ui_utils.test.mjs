@@ -11,7 +11,10 @@ import {
   formatTime,
   readFileAsText,
   formatUndoRedoTooltip,
+  computeUndoRedoButtonState,
   formatOperationHistoryRow,
+  formatOperationHistoryEmptyHtml,
+  formatOperationHistoryListHtml,
   formatLockStatusText,
   formatOtpDigitsHtml,
   formatAccountRowHtml,
@@ -291,4 +294,50 @@ test("buildAccountSavePayload parses form fields and normalizes values", () => {
   assert.equal(valid.payload.recoveryCodes, "code1, code2");
   assert.equal(valid.payload.note, "personal note");
 });
+
+test("computeUndoRedoButtonState returns correct disabled, tooltip, and label attributes", () => {
+  const emptyUndo = computeUndoRedoButtonState(null, "undo");
+  assert.equal(emptyUndo.disabled, true);
+  assert.equal(emptyUndo.text, "撤销");
+  assert.match(emptyUndo.tooltip, /没有可撤销/);
+
+  const activeUndo = computeUndoRedoButtonState({ title: "删除账号前自动备份" }, "undo");
+  assert.equal(activeUndo.disabled, false);
+  assert.equal(activeUndo.text, "撤销");
+  assert.equal(activeUndo.tooltip, "删除账号");
+
+  const emptyRedo = computeUndoRedoButtonState(null, "redo");
+  assert.equal(emptyRedo.disabled, true);
+  assert.equal(emptyRedo.text, "重做");
+  assert.match(emptyRedo.tooltip, /没有可重做/);
+
+  const activeRedo = computeUndoRedoButtonState({ title: "修改密码" }, "redo");
+  assert.equal(activeRedo.disabled, false);
+  assert.equal(activeRedo.text, "重做");
+  assert.equal(activeRedo.tooltip, "修改密码");
+});
+
+test("formatOperationHistoryEmptyHtml and ListHtml format history list rows properly", () => {
+  assert.match(formatOperationHistoryEmptyHtml(), /暂无本地操作记录/);
+  assert.match(formatOperationHistoryEmptyHtml("网络超时"), /读取历史失败：网络超时/);
+
+  const emptyList = formatOperationHistoryListHtml([]);
+  assert.match(emptyList, /暂无本地操作记录/);
+
+  const entries = [
+    { title: "新建账号", createdAtMs: 1700000000000, stack: "undo" },
+    { title: "更新密码", createdAtMs: 1700000060000, stack: "redo" },
+  ];
+  const html = formatOperationHistoryListHtml(entries, () => "2026-11-08 12:00:00");
+  assert.match(html, /history-row/);
+  assert.match(html, /更新密码/);
+  assert.match(html, /可重做/);
+  assert.match(html, /新建账号/);
+  assert.match(html, /可撤销/);
+  // Entries should be reversed so newest appears first
+  const firstIndex = html.indexOf("更新密码");
+  const secondIndex = html.indexOf("新建账号");
+  assert.equal(firstIndex < secondIndex, true);
+});
+
 

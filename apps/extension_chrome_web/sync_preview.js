@@ -281,4 +281,34 @@ export const formatSyncDiffTitle = (totalChanges = 0, addedCount = 0, removedCou
 export const formatMergeSummaryText = (result = {}) =>
   `safe=${Boolean(result?.safe)}\n${(result?.reasons || []).join(", ")}`;
 
+export const formatSyncDiffDetailItems = (diff = {}, maxItems = 50) => {
+  const added = Array.isArray(diff.added) ? diff.added : [];
+  const removed = Array.isArray(diff.removed) ? diff.removed : [];
+  const changed = Array.isArray(diff.changed) ? diff.changed : [];
+
+  const items = [
+    ...added.map((account) => ({ kind: "新增", account, fields: [] })),
+    ...removed.map((account) => ({ kind: "移除", account, fields: [] })),
+    ...changed.map((item) => ({ kind: "修改", ...item })),
+  ];
+
+  const total = items.length;
+  const sliced = items.slice(0, maxItems);
+  const lines = sliced.map((item) => {
+    const label = previewAccountLabel(item.account);
+    const fieldsHint = item.fields && item.fields.length ? `（${item.fields.join("、")}）` : "";
+    return `${item.kind}：${label}${fieldsHint}`;
+  });
+
+  const omittedCount = Math.max(0, total - maxItems);
+  const truncatedText = omittedCount > 0 ? `其余 ${omittedCount} 条变化已省略。` : "";
+
+  return {
+    total,
+    displayedCount: sliced.length,
+    lines,
+    truncatedText,
+  };
+};
+
 

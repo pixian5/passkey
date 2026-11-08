@@ -23,6 +23,7 @@ import {
   formatSyncPreviewMetaText,
   formatSyncDiffTitle,
   formatMergeSummaryText,
+  formatSyncDiffDetailItems,
 } from "../../codex-tauri/src/sync_preview.js";
 
 test("SYNC_APPLIED_TEXT provides standard Chinese translations for all 3 modes", () => {
@@ -356,5 +357,33 @@ test("formatMergeSummaryText formats safe flag and reason list", () => {
     "safe=false\n"
   );
 });
+
+test("formatSyncDiffDetailItems creates preview lines and truncates excessive entries", () => {
+  const emptyRes = formatSyncDiffDetailItems({});
+  assert.equal(emptyRes.total, 0);
+  assert.equal(emptyRes.displayedCount, 0);
+  assert.deepEqual(emptyRes.lines, []);
+  assert.equal(emptyRes.truncatedText, "");
+
+  const diff = {
+    added: [{ sites: ["site1.com"], username: "alice" }],
+    removed: [{ sites: ["site2.com"], username: "bob" }],
+    changed: [{ account: { sites: ["site3.com"], username: "carol" }, fields: ["password", "totp"] }],
+  };
+  const res = formatSyncDiffDetailItems(diff, 2);
+  assert.equal(res.total, 3);
+  assert.equal(res.displayedCount, 2);
+  assert.equal(res.lines.length, 2);
+  assert.match(res.lines[0], /新增：site1\.com/);
+  assert.match(res.lines[1], /移除：site2\.com/);
+  assert.equal(res.truncatedText, "其余 1 条变化已省略。");
+
+  const fullRes = formatSyncDiffDetailItems(diff, 10);
+  assert.equal(fullRes.total, 3);
+  assert.equal(fullRes.displayedCount, 3);
+  assert.match(fullRes.lines[2], /修改：site3\.com · carol（password、totp）/);
+  assert.equal(fullRes.truncatedText, "");
+});
+
 
 

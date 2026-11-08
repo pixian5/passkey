@@ -110,11 +110,35 @@ export const formatUndoRedoTooltip = (status, type = "undo") => {
     .trim();
 };
 
+export const computeUndoRedoButtonState = (status, type = "undo") => ({
+  disabled: !status,
+  tooltip: formatUndoRedoTooltip(status, type),
+  text: type === "undo" ? "撤销" : "重做",
+});
+
 export const formatOperationHistoryRow = (entry, formatTimeFn = formatTime) => {
   const stateLabel = entry?.stack === "redo" ? "可重做" : "可撤销";
   const title = escapeHtml(entry?.title || "本地操作");
   const time = escapeHtml(formatTimeFn(entry?.createdAtMs));
   return `<div class="history-row-head"><span class="history-row-title">${title}</span><span class="history-row-meta">${stateLabel}</span></div><div class="history-row-meta">${time}</div>`;
+};
+
+export const formatOperationHistoryEmptyHtml = (error = null) => {
+  if (error) {
+    return `<div class="history-empty">读取历史失败：${escapeHtml(error)}</div>`;
+  }
+  return '<div class="history-empty">暂无本地操作记录</div>';
+};
+
+export const formatOperationHistoryListHtml = (entries = [], formatTimeFn = formatTime) => {
+  const list = Array.isArray(entries) ? entries : [];
+  if (!list.length) {
+    return formatOperationHistoryEmptyHtml();
+  }
+  return [...list]
+    .reverse()
+    .map((entry) => `<div class="history-row">${formatOperationHistoryRow(entry, formatTimeFn)}</div>`)
+    .join("");
 };
 
 export const formatLockStatusText = (
