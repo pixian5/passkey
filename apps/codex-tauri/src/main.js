@@ -7,6 +7,15 @@ import {
   formatOutboxItemLine,
   calculateNextOutboxRetryDelay,
 } from "./sync_outbox_scheduler.js";
+import {
+  buildLocalSyncPayload as createLocalSyncPayload,
+  extractPayload as parsePayloadData,
+  validateSyncBundlePayload,
+  formatExportBrowserFileName,
+  formatSyncBundleExportFileName,
+  formatImportExportError,
+  computeBundleImportStats,
+} from "./vault_import_export.js";
 import { APP_VERSION } from "./app_version.js";
 import { defaultAdapter } from "./adapter.js";
 import {
@@ -2025,18 +2034,9 @@ const scheduleSyncSettingsSave = () => {
   element.addEventListener("change", scheduleSyncSettingsSave);
 });
 
-const buildLocalSyncPayload = () => ({
-  accounts: [...(state.activeAccounts || []), ...(state.deletedAccounts || [])],
-  folders: state.folders || [],
-  passkeys: state.passkeys || [],
-});
+const buildLocalSyncPayload = () => createLocalSyncPayload(state);
 
-const extractPayload = (text, label) => {
-  const raw = (text || "").trim();
-  if (!raw) throw new Error(`${label} 为空`);
-  const obj = JSON.parse(raw);
-  return obj?.payload ?? obj;
-};
+const extractPayload = (text, label) => parsePayloadData(text, label);
 
 const runSyncNow = async ({ quiet = false, forceOutboxRetry = !quiet, resumeOutbox = quiet } = {}) => {
   return runSyncMode("merge", { quiet, forceOutboxRetry, resumeOutbox });
@@ -3149,7 +3149,7 @@ els.btnExport?.addEventListener("click", async () => {
       const r = await invoke("export_csv");
       toastSuccess(`CSV：${r.csvPath}`);
     } catch (e2) {
-      toastError(`导出失败：${err}`);
+      toastError(formatImportExportError("export", err));
     }
   } finally {
     restore();
@@ -3162,7 +3162,7 @@ const exportBrowser = async (format, btn) => {
     const r = await invoke("export_browser_csv_cmd", { format, path: null });
     toastSuccess(r.message || r.path);
   } catch (err) {
-    toastError(`导出失败：${err}`);
+    toastError(formatImportExportError("export", err));
   } finally {
     restore();
   }
@@ -3183,7 +3183,7 @@ els.fileBrowserCsv?.addEventListener("change", async () => {
     await refreshState();
     toastSuccess(formatCsvImportSummary(r));
   } catch (err) {
-    toastError(`导入失败：${err}`);
+    toastError(formatImportExportError("csv", err));
   } finally {
     els.fileBrowserCsv.value = "";
     restore();
@@ -3206,7 +3206,7 @@ els.fileGoogleAuthenticator?.addEventListener("change", async () => {
     await refreshState();
     toastSuccess(formatGoogleAuthImportSummary(result));
   } catch (err) {
-    toastError(`验证器导入失败：${err}`);
+    toastError(formatImportExportError("qr", err));
   } finally {
     if (els.fileGoogleAuthenticator) els.fileGoogleAuthenticator.value = "";
     restore();
@@ -3226,7 +3226,7 @@ els.btnExportBundle?.addEventListener("click", async () => {
     const r = await invoke("export_sync_bundle", { path: directory });
     toastSuccess(r.message || r.path);
   } catch (err) {
-    toastError(`导出同步包失败：${err}`);
+    toastError(formatImportExportError("export", err));
   } finally {
     restore();
   }
@@ -3261,7 +3261,7 @@ els.fileSyncBundle?.addEventListener("change", async () => {
     await refreshState();
     toastSuccess(result2.message || "同步包已合并写入");
   } catch (err) {
-    toastError(`导入同步包失败：${err}`);
+    toastError(formatImportExportError("bundle", err));
   } finally {
     els.fileSyncBundle.value = "";
     restore();

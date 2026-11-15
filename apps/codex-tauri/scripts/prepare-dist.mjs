@@ -21,6 +21,7 @@ await cp(resolve(root, "src", "sync_preview.js"), resolve(dist, "src", "sync_pre
 await cp(resolve(root, "src", "provision.js"), resolve(dist, "src", "provision.js"));
 await cp(resolve(root, "src", "dnd_reorder.js"), resolve(dist, "src", "dnd_reorder.js"));
 await cp(resolve(root, "src", "sync_outbox_scheduler.js"), resolve(dist, "src", "sync_outbox_scheduler.js"));
+await cp(resolve(root, "src", "vault_import_export.js"), resolve(dist, "src", "vault_import_export.js"));
 await cp(resolve(root, "src", "styles.css"), resolve(dist, "src", "styles.css"));
 await cp(resolve(root, "node_modules", "jsqr", "dist", "jsQR.js"), resolve(dist, "vendor", "jsQR.js"));
 

@@ -19,6 +19,7 @@ const sourceDndReorder = resolve(root, "src/dnd_reorder.js");
 const sourceSyncPreview = resolve(root, "src/sync_preview.js");
 const sourceStyles = resolve(root, "src/styles.css");
 const sourceSyncOutboxScheduler = resolve(root, "src/sync_outbox_scheduler.js");
+const sourceVaultImportExport = resolve(root, "src/vault_import_export.js");
 const sourceAppVersion = resolve(root, "src/app_version.js");
 const sourceHtml = resolve(root, "index.html");
 const coreJs = resolve(repoRoot, "core/pass_core/js/sync_merge_core.js");
@@ -43,6 +44,7 @@ async function syncExtensionUi() {
   await cp(sourceSyncPreview, resolve(extensionDir, "sync_preview.js"));
   await cp(sourceStyles, resolve(extensionDir, "web-options.css"));
   await cp(sourceSyncOutboxScheduler, resolve(extensionDir, "sync_outbox_scheduler.js"));
+  await cp(sourceVaultImportExport, resolve(extensionDir, "vault_import_export.js"));
   await cp(sourceAppVersion, resolve(extensionDir, "app_version.js"));
   await cp(coreJs, resolve(extensionDir, "sync_merge_core.js"));
   await cp(csvCoreJs, resolve(extensionDir, "csv_core.js"));
